@@ -100,7 +100,7 @@ homebrew_casks:
     description: "Fast Ansible Galaxy collections installer for CI."
     license: MIT
     binaries:
-      - go-galaxy
+      - dist/go-galaxy
     hooks:
       post:
         install: |
