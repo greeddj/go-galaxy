@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  tests_and_checks:
+    name: Tests and Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run check
+        run: |
+          go vet ./...;
+          go tool staticcheck ./...;
+          go tool govulncheck ./...;
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          install-mode: binary
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          file: ./coverage.out
+          flags: unittests
+          fail_ci_if_error: false
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [tests_and_checks]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build binary
+        run: |
+          mkdir -p ./dist;
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ./dist/go-galaxy -ldflags="-s -w -extldflags '-static' -X github.com/greeddj/go-galaxy/cmd/go-galaxy.BuiltBy=ci" ./cmd/go-galaxy
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-galaxy-binary
+          path: ./dist/go-galaxy
+          retention-days: 1

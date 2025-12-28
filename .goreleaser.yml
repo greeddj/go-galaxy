@@ -1,0 +1,114 @@
+version: 2
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+builds:
+  - id: go-galaxy
+    main: ./cmd/go-galaxy/main.go
+    binary: ./dist/go-galaxy
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/greeddj/go-galaxy/cmd/go-galaxy.Version={{.Version}}
+      - -X github.com/greeddj/go-galaxy/cmd/go-galaxy.Commit={{.ShortCommit}}
+      - -X github.com/greeddj/go-galaxy/cmd/go-galaxy.Date={{.Date}}
+      - -X github.com/greeddj/go-galaxy/cmd/go-galaxy.BuiltBy=goreleaser
+archives:
+  - id: go-galaxy
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+      - requirements.yml
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+dockers:
+  - id: amd64
+    ids:
+      - go-galaxy
+    goos: linux
+    goarch: amd64
+    image_templates:
+      - "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}-amd64"
+      - "ghcr.io/greeddj/{{ .ProjectName }}:latest-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+  - id: arm64
+    ids:
+      - go-galaxy
+    goos: linux
+    goarch: arm64
+    image_templates:
+      - "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}-arm64"
+      - "ghcr.io/greeddj/{{ .ProjectName }}:latest-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+docker_manifests:
+  - name_template: "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}-amd64"
+      - "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/greeddj/{{ .ProjectName }}:latest"
+    image_templates:
+      - "ghcr.io/greeddj/{{ .ProjectName }}:latest-amd64"
+      - "ghcr.io/greeddj/{{ .ProjectName }}:latest-arm64"
+homebrew_casks:
+  - name: go-galaxy
+    repository:
+      owner: greeddj
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/greeddj/go-galaxy
+    description: "Fast Ansible Galaxy collections installer for CI."
+    license: MIT
+    binaries:
+      - go-galaxy
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/go-galaxy"]
+          end
+release:
+  github:
+    owner: greeddj
+    name: go-galaxy
+  prerelease: auto

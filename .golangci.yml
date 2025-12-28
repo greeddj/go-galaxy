@@ -1,0 +1,56 @@
+version: "2"
+linters:
+  default: all
+  disable:
+    - wsl
+    - wsl_v5
+    - wrapcheck
+    - varnamelen
+    - tagliatelle
+    - noinlineerr
+    - nlreturn
+    - nilerr
+    - ireturn
+    - exhaustruct
+    - testpackage
+    - paralleltest
+  settings:
+    depguard:
+      rules:
+        main:
+          allow:
+            - $gostd
+            - github.com/greeddj/go-galaxy
+            - github.com/BurntSushi/toml
+            - github.com/Masterminds/semver
+            - github.com/briandowns/spinner
+            - github.com/klauspost/pgzip
+            - github.com/psvmcc/hub
+            - github.com/urfave/cli/v2
+            - go.etcd.io/bbolt
+            - gopkg.in/yaml.v3
+    lll:
+      line-length: 140
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - revive
+        text: 'package-comments: should have a package comment'
+      - linters:
+          - staticcheck
+        text: at least one file in a package should have a package comment
+    paths:
+      - vendor
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
