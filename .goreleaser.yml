@@ -34,7 +34,6 @@ archives:
     files:
       - LICENSE
       - README.md
-      - requirements.yml
 checksum:
   name_template: 'checksums.txt'
 snapshot:
