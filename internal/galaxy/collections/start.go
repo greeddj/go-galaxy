@@ -32,7 +32,7 @@ type installPlan struct {
 func Start(ctx context.Context, cfg *config.Config, runtime *infra.Infra) error {
 	err := runInstall(ctx, cfg, runtime)
 	if err != nil {
-		runtime.Output.PersistentPrintf("❌ Error: %s", err.Error())
+		runtime.Output.Errorf("Error: %s", err.Error())
 	}
 	return err
 }
@@ -162,7 +162,7 @@ func initInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) 
 		}
 	}
 	if err := backend.RecordProject(ctx, cfg.RequirementsFile, cfg.DownloadPath); err != nil {
-		runtime.Output.PersistentPrintf("⚠️ Failed to record project: %v", err)
+		runtime.Output.Printf("⚠️ Failed to record project: %v", err)
 	}
 
 	return &installState{
@@ -179,7 +179,7 @@ func loadRoots(cfg *config.Config, runtime *infra.Infra) (*rootPreparation, erro
 		return nil, fmt.Errorf("failed to load requirements file: %w", err)
 	}
 	if rolesFound {
-		runtime.Output.PersistentPrintf("⚠️ requirements.yml contains roles, but roles are not supported.")
+		runtime.Output.Printf("⚠️ requirements.yml contains roles, but roles are not supported.")
 	}
 	runtime.Output.Printf("🧩 prepare roots")
 	prep, err := prepareRoots(cfg, collectionsDirect)
@@ -245,13 +245,13 @@ func installLevels(
 				defer func() { <-sem }()
 				meta, ok, prefetchErr := prefetch.Wait(col.key())
 				if ok && prefetchErr != nil {
-					runtime.Output.PersistentPrintf("⚠️ Prefetch failed for %s: %v", col.key(), prefetchErr)
+					runtime.Output.Printf("⚠️ Prefetch failed for %s: %v", col.key(), prefetchErr)
 				}
 				if err := installCollection(ctx, col, depsCtx, depKeys, meta); err != nil {
-					runtime.Output.PersistentPrintf("❌ Failed: %s.%s error: %s", col.Namespace, col.Name, err)
+					runtime.Output.Errorf("Failed: %s.%s error: %s", col.Namespace, col.Name, err)
 					atomic.AddInt32(&failures, 1)
 				} else {
-					runtime.Output.PersistentPrintf("✅ Installed: %s.%s", col.Namespace, col.Name)
+					runtime.Output.Okf("Installed: %s.%s", col.Namespace, col.Name)
 				}
 			})
 		}

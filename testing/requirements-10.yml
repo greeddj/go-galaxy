@@ -1,0 +1,12 @@
+---
+collections:
+  - name: community.general
+  - name: ansible.posix
+  - name: amazon.aws
+  - name: ansible.utils
+  - name: ansible.netcommon
+  - name: ansible.windows
+  - name: community.docker
+  - name: community.crypto
+  - name: community.windows
+  - name: kubernetes.core

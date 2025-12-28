@@ -150,7 +150,7 @@ func resolveDependencies(
 
 func writeGalaxyInfoIfPresent(runtime *infra.Infra, cfg *config.Config, meta *types.GalaxyCollectionVersionInfo) {
 	if err := writeGalaxyInfo(cfg, meta); err != nil {
-		runtime.Output.PersistentPrintf("⚠️ Failed to write GALAXY.yml: %v", err)
+		runtime.Output.Printf("⚠️ Failed to write GALAXY.yml: %v", err)
 	}
 }
 
@@ -398,7 +398,7 @@ func resolveMetadata(
 	runtime.Output.DebugSincef(metaStart, "%s", "metadata "+col.key())
 	if err != nil {
 		if cacheHit {
-			runtime.Output.PersistentPrintf("⚠️ Failed to load metadata for %s: %v", col.key(), err)
+			runtime.Output.Printf("⚠️ Failed to load metadata for %s: %v", col.key(), err)
 			return nil, helpers.ErrMetadataUnavailable
 		}
 		return nil, fmt.Errorf("failed to load metadata: %w", err)
@@ -430,14 +430,14 @@ func installDependencies(ctx context.Context, installPath string, depsCtx instal
 	for fqdn, version := range parsed.CollectionInfo.Dependencies {
 		parts := strings.Split(fqdn, ".")
 		if len(parts) != helpers.CollectionNameParts {
-			runtime.Output.PersistentPrintf("⚠️ Skipping invalid dependency: %s", fqdn)
+			runtime.Output.Printf("⚠️ Skipping invalid dependency: %s", fqdn)
 			continue
 		}
 		depCol := collection{Namespace: parts[0], Name: parts[1], Version: version, Source: cfg.Server}
 		deps = append(deps, depCol.key())
 		runtime.Output.Printf("🔁 Installing dependency: %s %s", fqdn, version)
 		if err := installCollection(ctx, depCol, depsCtx, nil, nil); err != nil {
-			runtime.Output.PersistentPrintf("⚠️ Failed to install dependency: %s: %v", fqdn, err)
+			runtime.Output.Printf("⚠️ Failed to install dependency: %s: %v", fqdn, err)
 		}
 	}
 	return deps, nil

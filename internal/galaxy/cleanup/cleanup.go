@@ -40,7 +40,7 @@ func Start(ctx context.Context, cfg *config.Config, runtime *infra.Infra) error 
 	var err error
 	defer func() {
 		if err != nil {
-			runtime.Output.PersistentPrintf("❌ Error: %s", err.Error())
+			runtime.Output.Errorf("Error: %s", err.Error())
 		}
 	}()
 
@@ -126,7 +126,7 @@ func buildReachable(runtime *infra.Infra, registry *store.ProjectRegistry) (map[
 		}
 		roots, err := loadRequirements(project.RequirementsFile, "")
 		if err != nil {
-			runtime.Output.PersistentPrintf("⚠️ Failed to load requirements %s: %v", project.RequirementsFile, err)
+			runtime.Output.Printf("⚠️ Failed to load requirements %s: %v", project.RequirementsFile, err)
 			continue
 		}
 		for _, root := range roots {
@@ -155,13 +155,13 @@ func removeUnused(
 		}
 		removed++
 		if cfg.DryRun {
-			runtime.Output.PersistentPrintf("🧹 remove %s", key)
+			runtime.Output.Printf("🧹 remove %s", key)
 			continue
 		}
 		if err := removeInstalled(ctx, inst, backend.Artifacts()); err != nil {
 			return removed, err
 		}
-		runtime.Output.PersistentPrintf("🧹 remove %s", key)
+		runtime.Output.Printf("🧹 remove %s", key)
 		if st != nil {
 			st.DeleteInstalled(key)
 			st.DeleteGraph(key)

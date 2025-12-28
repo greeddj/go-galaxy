@@ -2,72 +2,14 @@
 
 Fast Ansible Galaxy collections installer for CI.
 
-Cold install time comparison (used `requirements.yml` from this repo):
+![Cold install time comparison](docs/benchmarks-cold-install.png)
 
-![Cold install time comparison](docs/benchmarks-cold-install.svg)
-<details>
-<summary>Logs</summary>
+Files used for comparison:
 
-```shell
-➜ rm -rf ~/.ansible collection
-➜ time ansible-galaxy collection install -r requirements.yml -p collections
-Starting galaxy collection install process
-Process install dependency map
-Starting collection install process
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/amarao-ip-0.1.11.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/amarao-ip-0.1.11-0e1sb701
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/ansible-posix-2.0.0.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/ansible-posix-2.0.0-y7n_aw2j
-Installing 'amarao.ip:0.1.11' to '/Users/greeddj/.ansible/collections/ansible_collections/amarao/ip'
-amarao.ip:0.1.11 was installed successfully
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-crypto-3.0.1.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/community-crypto-3.0.1-od_6f_ct
-Installing 'ansible.posix:2.0.0' to '/Users/greeddj/.ansible/collections/ansible_collections/ansible/posix'
-ansible.posix:2.0.0 was installed successfully
-'ansible.utils:6.0.0' is already installed, skipping.
-Installing 'community.crypto:3.0.1' to '/Users/greeddj/.ansible/collections/ansible_collections/community/crypto'
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-11.1.0.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/community-general-11.1.0-jik19n84
-community.crypto:3.0.1 was installed successfully
-Installing 'community.general:11.1.0' to '/Users/greeddj/.ansible/collections/ansible_collections/community/general'
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-libvirt-1.3.1.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/community-libvirt-1.3.1-1mdcf635
-community.general:11.1.0 was installed successfully
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-postgresql-4.1.0.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/community-postgresql-4.1.0-uanswhbv
-Installing 'community.libvirt:1.3.1' to '/Users/greeddj/.ansible/collections/ansible_collections/community/libvirt'
-community.libvirt:1.3.1 was installed successfully
-Installing 'community.postgresql:4.1.0' to '/Users/greeddj/.ansible/collections/ansible_collections/community/postgresql'
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/containers-podman-1.17.0.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/containers-podman-1.17.0-9_souarj
-community.postgresql:4.1.0 was installed successfully
-Installing 'containers.podman:1.17.0' to '/Users/greeddj/.ansible/collections/ansible_collections/containers/podman'
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/serverscom-mitogen-1.4.0.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/serverscom-mitogen-1.4.0-b7hxg5wt
-containers.podman:1.17.0 was installed successfully
-'kubernetes.core:6.2.0' is already installed, skipping.
-Installing 'serverscom.mitogen:1.4.0' to '/Users/greeddj/.ansible/collections/ansible_collections/serverscom/mitogen'
-Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/t_systems_mms-acme-3.0.1.tar.gz to /Users/greeddj/.ansible/tmp/ansible-local-4026ctu00ql9/tmpz9g71ez5/t_systems_mms-acme-3.0.1-mn316wg7
-serverscom.mitogen:1.4.0 was installed successfully
-Installing 't_systems_mms.acme:3.0.1' to '/Users/greeddj/.ansible/collections/ansible_collections/t_systems_mms/acme'
-t_systems_mms.acme:3.0.1 was installed successfully
-'amazon.aws:10.1.2' is already installed, skipping.
-'openstack.cloud:2.5.0' is already installed, skipping.
-'azure.azcollection:3.12.0' is already installed, skipping.
-ansible-galaxy collection install -r requirements.yml -p collections 2.62s user 1.04s system 8% cpu 41.962 total
+- `testing/requirements-100.yml`
+- `testing/requirements-10.yml`
+- `testing/requirements-1.yml`
 
-➜ rm -rf ~/.cache/go-galaxy collections
-➜ time go-galaxy i -r requirements.yml -p collections
-✅ Installed: amarao.ip
-✅ Installed: community.libvirt
-✅ Installed: kubernetes.core
-✅ Installed: community.postgresql
-✅ Installed: ansible.utils
-✅ Installed: openstack.cloud
-✅ Installed: containers.podman
-✅ Installed: azure.azcollection
-✅ Installed: community.crypto
-✅ Installed: amazon.aws
-✅ Installed: serverscom.mitogen
-✅ Installed: ansible.posix
-✅ Installed: community.general
-✅ Installed: t_systems_mms.acme
-🤩 All done. Took 6s
-go-galaxy i -r requirements.yml  0.44s user 0.89s system 30% cpu 6.084 total
-```
-</details>
 
 ## Scope
 
@@ -88,6 +30,35 @@ go-galaxy i -r requirements.yml  0.44s user 0.89s system 30% cpu 6.084 total
 - `cleanup` command to remove unreachable collections.
 
 ## Install
+
+### Go
+
+```bash
+go install github.com/greeddj/go-galaxy/cmd/go-galaxy@latest
+```
+
+Binary is installed into `$(go env GOPATH)/bin` (usually `~/go/bin`).
+
+### Homebrew (macOS)
+
+```bash
+brew tap greeddj/tap
+brew install go-galaxy
+```
+
+### Podman
+
+```bash
+podman run --rm -v "$PWD":/work -w /work ghcr.io/greeddj/go-galaxy:latest --help
+```
+
+Example install:
+
+```bash
+podman run --rm -v "$PWD":/work -w /work ghcr.io/greeddj/go-galaxy:latest i -r requirements.yml -p ./collections
+```
+
+### Build from source
 
 ```bash
 go build -o ./dist/go-galaxy ./cmd/go-galaxy

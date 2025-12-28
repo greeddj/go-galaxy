@@ -12,6 +12,9 @@ const (
 	spinnerDelay   = 100 * time.Millisecond
 	spinnerCharSet = 14
 	spinnerColor   = "green"
+	ansiRed        = "\x1b[31m"
+	ansiGreen      = "\x1b[32m"
+	ansiReset      = "\x1b[0m"
 )
 
 // Progress renders CLI progress output with optional spinner.
@@ -63,6 +66,16 @@ func (p *Progress) PersistentPrintf(format string, args ...any) {
 	if p.v {
 		fmt.Printf("%s\n", fmt.Sprintf(format, args...)) //nolint:forbidigo
 	}
+}
+
+// Okf prints a success message with a colored marker.
+func (p *Progress) Okf(format string, args ...any) {
+	p.PersistentPrintf("%s✔%s "+format, append([]any{ansiGreen, ansiReset}, args...)...)
+}
+
+// Errorf prints an error message with a colored marker.
+func (p *Progress) Errorf(format string, args ...any) {
+	p.PersistentPrintf("%s✗%s "+format, append([]any{ansiRed, ansiReset}, args...)...)
 }
 
 // Debugf prints a debug message when verbose mode is enabled.

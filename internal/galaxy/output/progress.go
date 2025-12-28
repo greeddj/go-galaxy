@@ -6,6 +6,8 @@ import "time"
 type Printer interface {
 	Printf(format string, args ...any)
 	PersistentPrintf(format string, args ...any)
+	Okf(format string, args ...any)
+	Errorf(format string, args ...any)
 	Debugf(format string, args ...any)
 	DebugSincef(startTime time.Time, format string, args ...any)
 }
@@ -18,4 +20,14 @@ func Printf(printer Printer, format string, args ...any) {
 // PersistentPrintf proxies persistent output to the printer.
 func PersistentPrintf(printer Printer, format string, args ...any) {
 	printer.PersistentPrintf(format, args...)
+}
+
+// Okf proxies a success message to the printer.
+func Okf(printer Printer, format string, args ...any) {
+	printer.Okf(format, args...)
+}
+
+// Errorf proxies an error message to the printer.
+func Errorf(printer Printer, format string, args ...any) {
+	printer.Errorf(format, args...)
 }

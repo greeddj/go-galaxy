@@ -12,6 +12,14 @@ import (
 	"github.com/urfave/cli/v2"
 )
 
+//nolint:gochecknoglobals
+var (
+	Version = "dev"
+	Commit  = "0000000"
+	Date    = "unknown"
+	BuiltBy = "manual"
+)
+
 // main is the CLI entry point.
 func main() {
 	os.Exit(run())
@@ -19,10 +27,6 @@ func main() {
 
 // run configures and executes the CLI, returning the exit code.
 func run() int {
-	Version := "dev"
-	Commit := "0000000"
-	Date := "unknown"
-	BuiltBy := "manual"
 	appName := "go-galaxy"
 
 	app := cli.NewApp()
