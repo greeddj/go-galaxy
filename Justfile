@@ -31,7 +31,7 @@ run: check lint test
 	@echo "===== Run {{PROJECT}} ====="
 	go run -race ./cmd/{{ PROJECT }}
 
-build:
+build: check lint test
 	@echo "===== Build {{PROJECT}} ====="
 	mkdir -p dist
 	test -f dist/{{PROJECT}} && rm -f dist/{{PROJECT}} || echo "Not exist dist/{{PROJECT}}"
