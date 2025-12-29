@@ -17,10 +17,10 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/greeddj/go-galaxy/cmd/go-galaxy.Version={{.Version}}
-      - -X github.com/greeddj/go-galaxy/cmd/go-galaxy.Commit={{.ShortCommit}}
-      - -X github.com/greeddj/go-galaxy/cmd/go-galaxy.Date={{.Date}}
-      - -X github.com/greeddj/go-galaxy/cmd/go-galaxy.BuiltBy=goreleaser
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.Date={{.Date}}
+      - -X main.BuiltBy=goreleaser
 archives:
   - id: go-galaxy
     name_template: >-

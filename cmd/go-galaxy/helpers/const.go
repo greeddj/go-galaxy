@@ -10,4 +10,5 @@ const (
 	defaultCollectionsPath      = ".collections"
 	defaultRequirementsFilePath = "requirements.yml"
 	defaultAnsibleConfigPath    = "ansible.cfg"
+	latestVersionURL            = "https://api.github.com/repos/greeddj/go-galaxy/releases/latest"
 )
