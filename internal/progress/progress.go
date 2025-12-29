@@ -12,9 +12,9 @@ const (
 	spinnerDelay   = 100 * time.Millisecond
 	spinnerCharSet = 14
 	spinnerColor   = "green"
-	ansiRed        = "\x1b[31m"
-	ansiGreen      = "\x1b[32m"
-	ansiReset      = "\x1b[0m"
+	ansiRed        = "\x1b[1m\x1b[31m"
+	ansiGreen      = "\x1b[1m\x1b[32m"
+	ansiReset      = "\x1b[1m\x1b[0m"
 	ok             = ansiGreen + "✔" + ansiReset
 	fail           = ansiRed + "✗" + ansiReset
 )
