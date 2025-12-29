@@ -27,6 +27,7 @@ func Install() *cli.Command {
 		Action: func(c *cli.Context) error {
 			cfg, err := config.BuildCollectionConfig(c)
 			if err != nil {
+				progress.Errorf("%s", err.Error())
 				return err
 			}
 			p := progress.New(cfg.Verbose, cfg.Quiet)

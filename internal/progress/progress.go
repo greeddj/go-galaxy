@@ -15,6 +15,8 @@ const (
 	ansiRed        = "\x1b[31m"
 	ansiGreen      = "\x1b[32m"
 	ansiReset      = "\x1b[0m"
+	ok             = ansiGreen + "✔" + ansiReset
+	fail           = ansiRed + "✗" + ansiReset
 )
 
 // Progress renders CLI progress output with optional spinner.
@@ -46,6 +48,16 @@ func New(verbose, quiet bool) *Progress {
 	return p
 }
 
+// Okf prints a success message with a colored marker. For standalone use.
+func Okf(format string, args ...any) {
+	fmt.Printf(ok+" "+format+"\n", args...) //nolint:forbidigo
+}
+
+// Errorf prints an error message with a colored marker. For standalone use.
+func Errorf(format string, args ...any) {
+	fmt.Printf(fail+" "+format+"\n", args...) //nolint:forbidigo
+}
+
 // Printf updates the spinner line or prints a log line.
 func (p *Progress) Printf(format string, args ...any) {
 	if p.s != nil && !p.v {
@@ -70,12 +82,12 @@ func (p *Progress) PersistentPrintf(format string, args ...any) {
 
 // Okf prints a success message with a colored marker.
 func (p *Progress) Okf(format string, args ...any) {
-	p.PersistentPrintf("%s✔%s "+format, append([]any{ansiGreen, ansiReset}, args...)...)
+	p.PersistentPrintf(ok+" "+format, args...)
 }
 
 // Errorf prints an error message with a colored marker.
 func (p *Progress) Errorf(format string, args ...any) {
-	p.PersistentPrintf("%s✗%s "+format, append([]any{ansiRed, ansiReset}, args...)...)
+	p.PersistentPrintf(fail+" "+format, args...)
 }
 
 // Debugf prints a debug message when verbose mode is enabled.
