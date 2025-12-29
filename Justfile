@@ -29,7 +29,7 @@ check: deps
 
 run: check lint test
 	@echo "===== Run {{PROJECT}} ====="
-	go run -race ./cmd/{{ PROJECT }}
+	go run -race ./cmd/{{ PROJECT }}/main.go
 
 build: check lint test
 	@echo "===== Build {{PROJECT}} ====="
@@ -42,3 +42,7 @@ build_linux: check
 	mkdir -p dist
 	test -f dist/{{PROJECT}} && rm -f dist/{{PROJECT}} || echo "Not exist dist/{{PROJECT}}"
 	GOOS="linux" GOARCH="amd64" CGO_ENABLED=0 go build -trimpath -ldflags="{{LDFLAGS}}" -o dist/{{PROJECT}} ./cmd/{{ PROJECT }}/main.go
+
+oci executor="podman" tag="local": build_linux
+	@echo "===== Build Local OCI {{PROJECT}} ====="
+	{{executor}} build -t {{PROJECT}}:{{tag}} -f Dockerfile .

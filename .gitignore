@@ -31,7 +31,7 @@ go.work.sum
 /.collections*
 /.cache/
 /testing/*
-!/testing/minio-docker-compose.yaml
+!/testing/docker-compose.yaml
 !/testing/requirements-*.yml
 
 

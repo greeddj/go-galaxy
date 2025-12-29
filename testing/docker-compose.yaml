@@ -1,0 +1,75 @@
+x-go-galaxy-env: &go_galaxy_env
+  GO_GALAXY_S3_ENDPOINT: http://minio-svc:9000
+  GO_GALAXY_S3_ACCESS_KEY: local-user
+  GO_GALAXY_S3_SECRET_KEY: local-password
+  GO_GALAXY_REQUIREMENTS_FILE: /requirements.yml
+  GO_GALAXY_COLLECTIONS_PATH: /collections
+
+services:
+  # podman compose -f testing/docker-compose.yaml up -d minio-svc
+  minio-svc:
+    image: quay.io/minio/minio:latest
+    command: server /data/minio/ --console-address ":9001" --address ":9000"
+    environment:
+      MINIO_ROOT_USER: local-user
+      MINIO_ROOT_PASSWORD: local-password
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    hostname: minio
+    volumes:
+      - minio-data:/data
+
+  # podman compose -f testing/docker-compose.yaml run --rm go-galaxy-requirements-1
+  go-galaxy-requirements-1:
+    image: ghcr.io/greeddj/go-galaxy:latest
+    environment:
+      <<: *go_galaxy_env
+      GO_GALAXY_S3_BUCKET: galaxy-cache-1
+    depends_on:
+      minio-svc:
+        condition: service_healthy
+    volumes:
+      - ./requirements-1.yml:/requirements.yml:ro
+      - collections-data-1:/collections:rw
+
+  # podman compose -f testing/docker-compose.yaml run --rm go-galaxy-requirements-10
+  go-galaxy-requirements-10:
+    image: ghcr.io/greeddj/go-galaxy:latest
+    environment:
+      <<: *go_galaxy_env
+      GO_GALAXY_S3_BUCKET: galaxy-cache-10
+    depends_on:
+      minio-svc:
+        condition: service_healthy
+    volumes:
+      - ./requirements-10.yml:/requirements.yml:ro
+      - collections-data-10:/collections:rw
+
+  # podman compose -f testing/docker-compose.yaml run --rm go-galaxy-requirements-100
+  go-galaxy-requirements-100:
+    image: ghcr.io/greeddj/go-galaxy:latest
+    environment:
+      <<: *go_galaxy_env
+      GO_GALAXY_S3_BUCKET: galaxy-cache-100
+    depends_on:
+      minio-svc:
+        condition: service_healthy
+    volumes:
+      - ./requirements-100.yml:/requirements.yml:ro
+      - collections-data-100:/collections:rw
+
+
+# podman compose -f testing/docker-compose.yaml down minio-svc
+# podman volume rm testing_minio-data testing_collections-data-1 testing_collections-data-10 testing_collections-data-100
+volumes:
+  minio-data:
+    driver: local
+  collections-data-1:
+    driver: local
+  collections-data-10:
+    driver: local
+  collections-data-100:
+    driver: local
