@@ -2,6 +2,8 @@
 
 Fast Ansible Galaxy collections installer for CI.
 
+> **Note:** This project was created in collaboration with the GPT 5.2 Codex.
+
 ![Cold install time comparison](docs/benchmarks-cold-install.png)
 
 Files used for comparison:
@@ -10,6 +12,11 @@ Files used for comparison:
 - `testing/requirements-10.yml`
 - `testing/requirements-1.yml`
 
+## Motivation
+
+CI pipelines often spend minutes downloading and unpacking Galaxy collections.
+go-galaxy is built to reduce that wait time with faster installs and smarter caching,
+so pipelines finish sooner and changes ship faster.
 
 ## Scope
 
