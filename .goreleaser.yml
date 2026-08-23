@@ -1,18 +1,5 @@
 version: 2
-# No `before.hooks` here, and the two things it must not grow back are worth
-# stating rather than rediscovering.
-#
-# Not `go test ./...`. What gates a tag is the release workflow, whose first
-# job calls the CI workflow and whose second waits on it, so by the time
-# goreleaser runs, this tree has already been through go vet, staticcheck,
-# govulncheck, fieldalignment, golangci-lint and a race-enabled test run. A
-# second, weaker pass over the same tree buys nothing and costs a few minutes
-# of every release.
-#
-# Not `go mod tidy`. A release must build the dependency set that was
-# committed and reviewed, and tidy rewrites go.mod/go.sum in the working tree
-# the release is cut from - a dependency change nobody signed off on, landing
-# in the one build that gets published.
+
 builds:
   - id: go-galaxy
     main: ./cmd/go-galaxy/main.go
@@ -31,6 +18,7 @@ builds:
       - -X main.Commit={{.ShortCommit}}
       - -X main.Date={{.Date}}
       - -X main.BuiltBy=goreleaser
+
 archives:
   - id: archive
     ids:
@@ -43,43 +31,27 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # docs/ rides along with README.md because the README is an index: on its
-    # own it ships a page of links to files the archive would not contain.
-    # CONTRIBUTING.md is in that index too and `docs/*.md` does not reach it,
-    # so it is named on its own rather than left as the one dead link.
     files:
       - LICENSE
       - README.md
       - CONTRIBUTING.md
       - docs/*.md
-  # The raw binaries the README's install snippet curls. An archive cannot
-  # serve that flow: `releases/latest/download/<name>` resolves only a name
-  # that does not carry the version, and a CI step dropping one file into
-  # /usr/local/bin should not have to untar it first.
   - id: binary
     ids:
       - go-galaxy
     formats:
       - binary
     name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+
 checksum:
   name_template: 'checksums.txt'
-# One SPDX document per published thing, so an operator can answer "what is in
-# this" without unpacking it. Both entries are needed because the two archive
-# entries above publish two different shapes: `binary` catalogs the raw
-# per-platform binaries, `archive` the tar.gz. syft reads the Go build info
-# embedded in the binary, so the dependency list is the one actually linked in.
+
 sboms:
   - id: binary
     artifacts: binary
   - id: archive
     artifacts: archive
-# Keyless cosign, signing checksums.txt rather than each asset: everything the
-# release publishes is listed in it by digest, so one signature plus one sha256
-# check authenticates any single asset a user downloads - see "Verifying a
-# release" in the README for the two-command flow. Keyless means the signing
-# identity is the release workflow itself, proved by an OIDC token, so there is
-# no private key to hold, rotate, or leak.
+
 signs:
   - cmd: cosign
     signature: "${artifact}.sigstore.json"
@@ -89,32 +61,19 @@ signs:
       - "${artifact}"
       - "--yes"
     artifacts: checksum
+
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
+
 changelog:
   sort: asc
   filters:
-    # Scope-aware, because most of the tree's commits carry one: `^docs:` on
-    # its own leaves every `docs(cache):` in the published notes. The `!` is
-    # deliberately not matched here - filtering runs before grouping, so a
-    # breaking `chore!:` has to survive this stage to reach the group below.
     exclude:
       - '^docs(\([^)]*\))?:'
       - '^test(\([^)]*\))?:'
       - '^chore(\([^)]*\))?:'
       - Merge pull request
       - Merge branch
-  # A commit lands in the first group, by declaration order, whose regexp
-  # matches it, and `order` only sorts the sections in the rendered notes - so
-  # the breaking pattern is declared above feat and fix, which it overlaps, and
-  # the group carrying no regexp is the catch-all that drains whatever is left
-  # and has to come last.
-  #
-  # The regexp is matched against the bare subject line, so a `BREAKING CHANGE:`
-  # footer in the commit body never reaches this stage: the `!` marker in the
-  # subject is the only way a breaking change gets its own section. Scopes are
-  # matched with `[^)]*` rather than the `[[:word:]]+` of GoReleaser's own
-  # examples because ours are package paths and carry slashes.
   groups:
     - title: 'Breaking changes'
       regexp: '^[[:alnum:]]+(\([^)]*\))?!:'
@@ -127,63 +86,35 @@ changelog:
       order: 2
     - title: 'Others'
       order: 999
-dockers:
-  - id: amd64
+
+dockers_v2:
+  - id: go-galaxy
     ids:
       - go-galaxy
-    goos: linux
-    goarch: amd64
-    image_templates:
-      - "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}-amd64"
-      - "ghcr.io/greeddj/{{ .ProjectName }}:latest-amd64"
     dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--platform=linux/amd64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-  - id: arm64
-    ids:
-      - go-galaxy
-    goos: linux
-    goarch: arm64
-    image_templates:
-      - "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}-arm64"
-      - "ghcr.io/greeddj/{{ .ProjectName }}:latest-arm64"
-    dockerfile: Dockerfile
-    use: buildx
-    build_flag_templates:
-      - "--platform=linux/arm64"
-      - "--label=org.opencontainers.image.created={{.Date}}"
-      - "--label=org.opencontainers.image.title={{.ProjectName}}"
-      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
-      - "--label=org.opencontainers.image.version={{.Version}}"
-docker_manifests:
-  - name_template: "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}"
-    image_templates:
-      - "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}-amd64"
-      - "ghcr.io/greeddj/{{ .ProjectName }}:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/greeddj/{{ .ProjectName }}:latest"
-    image_templates:
-      - "ghcr.io/greeddj/{{ .ProjectName }}:latest-amd64"
-      - "ghcr.io/greeddj/{{ .ProjectName }}:latest-arm64"
-# The published images and manifests, signed by the same keyless identity as
-# checksums.txt above. Signatures are attached in the registry beside the
-# image, so `cosign verify` needs nothing but the image reference.
+    images:
+      - "ghcr.io/greeddj/{{ .ProjectName }}"
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+
 docker_signs:
   - cmd: cosign
     args:
       - "sign"
       - "${artifact}@${digest}"
       - "--yes"
-    artifacts: all
+
 homebrew_casks:
   - name: go-galaxy
-    # The tar.gz archives alone. Without this the cask would also be offered
-    # the raw per-platform binaries of the `binary` entry above, which are
-    # published under names they do not carry on disk.
     ids:
       - archive
     repository:
@@ -192,26 +123,9 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://github.com/greeddj/go-galaxy
     description: "Fast Ansible Galaxy collections and roles installer for CI."
-    # No `license:`. Casks accept the key and drop it - goreleaser's own struct
-    # tag says so - and a key that does nothing reads like one that does.
     binaries:
       - go-galaxy
-    # `prerelease: auto` below publishes an `-rc` tag as a GitHub prerelease,
-    # but a cask upload has no such notion of its own: without this, tagging a
-    # release candidate would overwrite the tap's only go-galaxy.rb and hand
-    # the prerelease to every `brew upgrade` on every machine. `auto` skips the
-    # tap whenever the version carries a prerelease part.
     skip_upload: auto
-    # Homebrew quarantines what a cask stages, and macOS refuses to run a
-    # quarantined binary this project cannot get notarized - that needs an
-    # Apple Developer ID it does not have. So the choice is between a cask
-    # that clears the attribute and no cask at all: without this hook
-    # `brew install` would complete and leave behind something that does not
-    # run.
-    #
-    # What that costs is disclosed where the person running the install will
-    # see it - `brew info` prints the caveats - and not only in the README and
-    # docs/security.md, which they may never open.
     caveats: |
       These builds are not Apple-notarized, so this cask clears the macOS
       quarantine attribute from the binary it installs. That skips a Gatekeeper
@@ -223,21 +137,11 @@ homebrew_casks:
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/go-galaxy"]
           end
+
 release:
   github:
     owner: greeddj
     name: go-galaxy
   prerelease: auto
-  # The page opens with the tag's own message, so what a release says about
-  # itself is written when it is cut rather than committed here ahead of time,
-  # and the grouped changelog follows it. `header.from_file` would say this
-  # directly and is GoReleaser Pro; `--release-notes` is not, but it replaces
-  # the body whole and would drop that changelog.
-  #
-  # This is what makes an annotated tag load-bearing - `git tag -a` or `-s`.
-  # For a lightweight tag .TagBody falls back to the body of the commit the
-  # tag points at, and here that is a paragraph of implementation reasoning
-  # the release page never asked for. A tag carrying no body renders nothing,
-  # which is the harmless case.
   header: |
     {{ .TagBody }}

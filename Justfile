@@ -70,6 +70,6 @@ build_linux: check
 oci executor="podman" tag="local": build_linux
 	@echo "===== Build Local OCI {{PROJECT}} ====="
 	rm -rf dist/oci
-	mkdir -p dist/oci
-	cp dist/{{PROJECT}} dist/oci/{{PROJECT}}
-	{{executor}} build -t {{PROJECT}}:{{tag}} -f Dockerfile dist/oci
+	mkdir -p dist/oci/linux/amd64
+	cp dist/{{PROJECT}} dist/oci/linux/amd64/{{PROJECT}}
+	{{executor}} build --platform=linux/amd64 -t {{PROJECT}}:{{tag}} -f Dockerfile dist/oci

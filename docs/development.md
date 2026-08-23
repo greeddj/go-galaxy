@@ -78,6 +78,11 @@ keyless cosign signatures, SPDX SBOMs, multi-arch images, a Homebrew cask
 committed to `greeddj/homebrew-tap`, and a build-provenance attestation. See
 [Security](security.md#verifying-a-release) for the verifying side of that.
 
+Three of those treat a prerelease tag as a prerelease rather than as a release:
+the GitHub release is marked one, the Homebrew cask is not written to the tap,
+and the `latest` image tag does not move. Only the version-tagged image is
+published for an `-rc`.
+
 Because that first job is a full gate, `.goreleaser.yml` runs no `before`
 hooks: a plain `go test ./...` inside the release job would be re-testing a
 tree that had already passed the same suite with `-race` and every static
