@@ -81,7 +81,17 @@ committed to `greeddj/homebrew-tap`, and a build-provenance attestation. See
 Because that first job is a full gate, `.goreleaser.yml` runs no `before`
 hooks: a plain `go test ./...` inside the release job would be re-testing a
 tree that had already passed the same suite with `-race` and every static
-check, minutes earlier.
+check, minutes earlier. The release also moves the lightweight `v1` tag, so
+`uses: greeddj/go-galaxy@v1` resolves - the one tag in this repository that
+does not fix a state, and the reason the `Justfile`'s `git describe` carries
+`--match`. A prerelease tag does not move it.
+
+`.github/workflows/action.yml` is the only test the composite action at
+`action.yml` has, because what that action does - download a published release
+and run it - exists nowhere inside the module for `go test` to reach. It
+installs a real collection from galaxy.ansible.com on Linux and macOS, so it is
+the one thing here that depends on somebody else's service, and it runs on a
+change to the action or to itself rather than on every push.
 
 GoReleaser groups the release notes out of commit subjects, so the subject line
 is the only thing deciding whether a change is published and where. Those rules

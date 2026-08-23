@@ -106,6 +106,20 @@ and is checked against a brute-force oracle and a fuzzer. See
 
 ## Install
 
+### GitHub Actions
+
+```yaml
+      - uses: greeddj/go-galaxy@v1
+        with:
+          collections-path: ./collections
+          frozen: true
+```
+
+A composite action that installs the release binary, checks it against the
+release's `checksums.txt`, and keys `actions/cache` on `go-galaxy hash`. Linux
+and macOS runners; every input is in
+[Reproducible CI](docs/ci.md#github-actions).
+
 ### Go
 
 ```bash

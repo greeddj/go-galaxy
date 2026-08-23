@@ -1,0 +1,193 @@
+name: go-galaxy
+description: Install Ansible Galaxy collections and roles, fast, with a content-addressed cache
+author: greeddj
+
+branding:
+  icon: package
+  color: purple
+
+inputs:
+  version:
+    description: >-
+      The go-galaxy release to install, with or without the leading `v`. Left
+      empty, the action installs the release its own reference names - so
+      `uses: greeddj/go-galaxy@v1.2.0` installs 1.2.0 - and falls back to the
+      latest release when the reference names no release, which is the case for
+      a branch and for the moving `v1` tag. 1.1.0 is the floor: it is the first
+      release publishing the raw per-platform binaries this action fetches.
+    required: false
+    default: ''
+  requirements:
+    description: >-
+      Path to the requirements file to install from. Empty leaves go-galaxy's
+      own resolution alone, which is `requirements.yml` unless
+      `GO_GALAXY_REQUIREMENTS_FILE` says otherwise - passing `-r` here would
+      win over that variable and make it look ignored.
+    required: false
+    default: ''
+  collections-path:
+    description: Where collections are installed. Empty leaves go-galaxy's own default.
+    required: false
+    default: ''
+  roles-path:
+    description: Where roles are installed. Empty leaves go-galaxy's own default.
+    required: false
+    default: ''
+  frozen:
+    description: Install exactly what the lockfile pins, and fail if it does not match.
+    required: false
+    default: 'false'
+  offline:
+    description: Make no network call at all. An artifact that is not cached is a failure.
+    required: false
+    default: 'false'
+  args:
+    description: >-
+      Extra arguments appended to the install command, split on whitespace.
+      Quote nothing here that contains a space.
+    required: false
+    default: ''
+  install:
+    description: >-
+      Run the install. Set to `false` to put go-galaxy on PATH and stop, for a
+      job that drives it itself.
+    required: false
+    default: 'true'
+  cache:
+    description: >-
+      Restore and save `~/.cache/go-galaxy`, keyed by `go-galaxy hash`. Set to
+      `false` if the job sets `GO_GALAXY_CACHE_DIR` itself, since the cached
+      path would then be the wrong one.
+    required: false
+    default: 'true'
+
+outputs:
+  version:
+    description: The release actually installed, without the leading `v`.
+    value: ${{ steps.install-binary.outputs.version }}
+  cache-hit:
+    description: Whether the cache was restored from an exact key match.
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install go-galaxy
+      id: install-binary
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+
+        # goreleaser builds linux and darwin only, and amd64 and arm64 only.
+        # Anything else is refused by name rather than left to fail on a 404,
+        # which reads as a network problem rather than as an unsupported runner.
+        case "${{ runner.os }}" in
+          Linux) os=linux ;;
+          macOS) os=darwin ;;
+          *) echo "::error::go-galaxy publishes no build for ${{ runner.os }}"; exit 1 ;;
+        esac
+        case "${{ runner.arch }}" in
+          X64) arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::go-galaxy publishes no build for ${{ runner.arch }}"; exit 1 ;;
+        esac
+
+        # An empty `version` resolves from the reference this action was used
+        # at. `@v1.2.0` names a release; `@v1` and `@main` do not, and fall back
+        # to the latest one. github.action_ref is empty for a local `uses: ./`.
+        version="${INPUT_VERSION#v}"
+        if [ -z "$version" ]; then
+          case "$ACTION_REF" in
+            v[0-9]*.[0-9]*.[0-9]*) version="${ACTION_REF#v}" ;;
+            *) version=latest ;;
+          esac
+        fi
+
+        releases=https://github.com/greeddj/go-galaxy/releases
+        if [ "$version" = latest ]; then
+          base="$releases/latest/download"
+        else
+          base="$releases/download/v$version"
+        fi
+
+        asset="go-galaxy-$os-$arch"
+        bin="$RUNNER_TEMP/go-galaxy-bin"
+        mkdir -p "$bin"
+        cd "$bin"
+
+        # checksums.txt is fetched beside the binary and the binary is checked
+        # against it. That is the same file the release signs with cosign, so a
+        # workflow that wants the stronger guarantee can verify the signature
+        # and this hash chains to it.
+        curl --proto '=https' --tlsv1.2 -sSLf -o "$asset" "$base/$asset"
+        curl --proto '=https' --tlsv1.2 -sSLf -o checksums.txt "$base/checksums.txt"
+
+        # Exactly one line, or refuse by name. `shasum -c` does fail on a file
+        # naming nothing, with "no properly formatted SHA checksum lines
+        # found" - which describes the file rather than what happened, and
+        # what happened is that this release publishes no such asset.
+        grep -E "  ${asset}\$" checksums.txt > asset.sha256 || true
+        if [ "$(wc -l < asset.sha256)" -ne 1 ]; then
+          echo "::error::checksums.txt for $version names no $asset"
+          exit 1
+        fi
+        shasum -a 256 -c asset.sha256
+
+        mv "$asset" go-galaxy
+        chmod +x go-galaxy
+        rm -f checksums.txt asset.sha256
+        echo "$bin" >> "$GITHUB_PATH"
+
+        if [ "$version" = latest ]; then
+          version="$("$bin/go-galaxy" --version | sed -n 's/^v\{0,1\}\([0-9][^ ]*\).*/\1/p')"
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Compute cache key
+      id: cache-key
+      if: inputs.cache == 'true' && inputs.install == 'true'
+      shell: bash
+      run: echo "value=$(go-galaxy hash)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore cache
+      id: cache
+      if: inputs.cache == 'true' && inputs.install == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/go-galaxy
+        key: go-galaxy-${{ runner.os }}-${{ runner.arch }}-${{ steps.install-binary.outputs.version }}-${{ steps.cache-key.outputs.value }}
+        restore-keys: go-galaxy-${{ runner.os }}-${{ runner.arch }}-${{ steps.install-binary.outputs.version }}-
+
+    - name: Install collections and roles
+      if: inputs.install == 'true'
+      shell: bash
+      env:
+        INPUT_REQUIREMENTS: ${{ inputs.requirements }}
+        INPUT_COLLECTIONS_PATH: ${{ inputs.collections-path }}
+        INPUT_ROLES_PATH: ${{ inputs.roles-path }}
+        INPUT_FROZEN: ${{ inputs.frozen }}
+        INPUT_OFFLINE: ${{ inputs.offline }}
+        INPUT_ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail
+        # Every flag below is added only when its input asks for it, so an
+        # unset input leaves the matching GO_GALAXY_* variable in charge. A
+        # flag passed unconditionally would silently outrank the environment.
+        args=(install)
+        # `if` rather than `cond && args+=(...)`: the latter is safe only while
+        # it is not the last line of the script, since a false condition then
+        # becomes the script's exit status under `set -e`.
+        if [ -n "$INPUT_REQUIREMENTS" ]; then args+=(-r "$INPUT_REQUIREMENTS"); fi
+        if [ "$INPUT_FROZEN" = "true" ]; then args+=(--frozen); fi
+        if [ "$INPUT_OFFLINE" = "true" ]; then args+=(--offline); fi
+        if [ -n "$INPUT_COLLECTIONS_PATH" ]; then args+=(-p "$INPUT_COLLECTIONS_PATH"); fi
+        if [ -n "$INPUT_ROLES_PATH" ]; then args+=(--roles-path "$INPUT_ROLES_PATH"); fi
+        # Deliberately unquoted: `args` is a free-form tail the caller writes,
+        # and splitting it on whitespace is what makes `--no-deps --verbose`
+        # two arguments rather than one.
+        # shellcheck disable=SC2206
+        if [ -n "$INPUT_ARGS" ]; then args+=($INPUT_ARGS); fi
+        go-galaxy "${args[@]}"

@@ -1,0 +1,86 @@
+name: Action
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'action.yml'
+      - '.github/workflows/action.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'action.yml'
+      - '.github/workflows/action.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, version: '', label: 'ubuntu, from the reference' }
+          - { os: macos-latest, version: '', label: 'macos, from the reference' }
+          - { os: ubuntu-latest, version: '1.1.0', label: 'ubuntu, pinned to 1.1.0' }
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Install collections through the action
+        id: action
+        uses: ./
+        with:
+          version: ${{ matrix.version }}
+          requirements: testing/requirements-1.yml
+          collections-path: ./collections
+
+      - name: Check what the action reported and left behind
+        shell: bash
+        env:
+          WANT_VERSION: ${{ matrix.version }}
+          GOT_VERSION: ${{ steps.action.outputs.version }}
+          CACHE_HIT: ${{ steps.action.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [ -n "$WANT_VERSION" ]; then
+            # A pinned row must report and run the release it named, or the
+            # versioned URL resolved to something else.
+            test "$GOT_VERSION" = "$WANT_VERSION" \
+              || { echo "::error::the action reported $GOT_VERSION, not $WANT_VERSION"; exit 1; }
+            go-galaxy --version | grep -qF "$WANT_VERSION" \
+              || { echo "::error::the binary on PATH is not $WANT_VERSION"; exit 1; }
+          else
+            test -n "$GOT_VERSION" \
+              || { echo "::error::the action reported no version"; exit 1; }
+          fi
+          test -x "$(command -v go-galaxy)" \
+            || { echo "::error::go-galaxy is not on PATH"; exit 1; }
+          # The collection the fixture asks for, at the layout ansible expects.
+          test -d ./collections/ansible_collections/community/general \
+            || { echo "::error::community.general is not installed"; exit 1; }
+          echo "installed $GOT_VERSION, cache-hit=$CACHE_HIT"
+
+  binary_only:
+    name: Binary only
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Put go-galaxy on PATH without installing
+        uses: ./
+        with:
+          install: 'false'
+          cache: 'false'
+
+      - name: Check that nothing was installed
+        shell: bash
+        run: |
+          set -euo pipefail
+          go-galaxy --version
+          test ! -e ./collections \
+            || { echo "::error::install: false installed something anyway"; exit 1; }

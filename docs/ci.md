@@ -60,6 +60,9 @@ wrote, so adding this version to such a pipeline changes no cache key.
 
 ## GitHub Actions
 
+This repository publishes a composite action that does the whole of it -
+download, checksum check, cache key, restore, install, save:
+
 ```yaml
 name: ansible-collections
 on: [push, pull_request]
@@ -68,8 +71,91 @@ jobs:
   install:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
+      - uses: greeddj/go-galaxy@v1
+        with:
+          collections-path: ./collections
+          frozen: true
+```
+
+It downloads the release binary, checks it against the release's own
+`checksums.txt`, and refuses to go on if that file names no such asset. Then it
+computes `go-galaxy hash` over your requirements, restores `~/.cache/go-galaxy`
+under that key, installs, and saves the cache on the way out.
+
+Reference it by exact release, `greeddj/go-galaxy@v1.2.0`, or by the major tag
+`@v1`, which moves with each release. The reference also decides which
+go-galaxy is installed: an exact one installs that release, while `@v1` and a
+branch install the latest, and the `version` input overrides either.
+
+Linux and macOS runners only - those are the platforms the release builds for,
+and any other is refused by name rather than left to fail on a download.
+
+| Input | Default | What it does |
+| :-- | :-- | :-- |
+| `requirements` | go-galaxy's default | `-r` |
+| `collections-path` | go-galaxy's default | `-p` |
+| `roles-path` | go-galaxy's default | `--roles-path` |
+| `frozen` | `false` | Install exactly what the lockfile pins |
+| `offline` | `false` | Make no network call; an uncached artifact is a failure |
+| `args` | empty | Extra arguments, split on whitespace |
+| `install` | `true` | `false` puts go-galaxy on PATH and stops |
+| `cache` | `true` | Restore and save `~/.cache/go-galaxy` |
+| `version` | from the reference | The release to install, 1.1.0 or later |
+
+Every input adds its flag only when set, so an input you leave alone leaves the
+matching `GO_GALAXY_*` variable in charge rather than silently outranking it.
+
+### Everything else, through the environment
+
+The action covers the common flags and nothing more. The rest of the surface -
+`GO_GALAXY_TOKEN`, the per-host git and url credentials, the `ANSIBLE_*`
+settings in [Configuration](configuration.md) - reaches go-galaxy through the
+environment, and a composite action inherits it: workflow-level `env`,
+job-level `env`, and `env` on the step that calls the action all reach it.
+
+```yaml
+      - uses: greeddj/go-galaxy@v1
+        env:
+          GO_GALAXY_TOKEN: ${{ secrets.GALAXY_TOKEN }}
+          GO_GALAXY_GIT_HUB_URL: https://github.com/acme/
+          GO_GALAXY_GIT_HUB_USERNAME: x-access-token
+          GO_GALAXY_GIT_HUB_PASSWORD: ${{ secrets.GH_PAT }}
+        with:
+          frozen: true
+          args: --no-deps --required-valid-signature-count 1
+```
+
+**Put no secret in `args`.** That input becomes argv, and argv is readable by
+any other process on the runner for the life of the run; the environment route
+is the one this tool documents for every secret it takes, and the reason
+`--token` exists only for interactive use. See
+[Security](security.md#security--trust-model).
+
+Outputs are `version`, the release actually installed, and `cache-hit`.
+
+Three of those are worth a sentence. `install: false` is for a job that drives
+go-galaxy itself - several commands, or `lock` and `outdated` rather than
+`install` - and wants only the binary on PATH. Set `cache: false` if the job
+sets `GO_GALAXY_CACHE_DIR` itself, because the action caches the default path
+and would otherwise save an empty one. And `version` will not go below 1.1.0,
+which is the first release to publish the raw per-platform binaries the action
+fetches; earlier releases shipped archives only.
+
+The cache key carries the go-galaxy release alongside the runner platform and
+`go-galaxy hash`, so one repository can pin one workflow to `@v1.2.0` and let
+another track `@v1` without the two sharing a cache. They must not: the cache
+snapshot is versioned, and a binary handed a snapshot from a newer one refuses
+it rather than rebuilding. The price is a cold run on the first job after an
+upgrade.
+
+### Without the action
+
+The same thing by hand, for a runner the action does not cover or a pipeline
+that wants every step visible:
+
+```yaml
       - name: Install go-galaxy
         run: |
           curl -sSL https://github.com/greeddj/go-galaxy/releases/latest/download/go-galaxy-linux-amd64 \

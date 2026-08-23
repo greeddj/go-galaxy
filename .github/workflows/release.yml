@@ -8,20 +8,12 @@ on:
 permissions:
   contents: write
   packages: write
-  # cosign signs keyless: the signing identity is this workflow, proved by an
-  # OIDC token, so there is no private key anywhere. attest-build-provenance
-  # needs the same token plus somewhere to record what it produced.
   id-token: write
   attestations: write
 
 jobs:
-  # The CI workflow does not run on tags, so the gate has to be called from
-  # here. `needs` only resolves job ids defined in this same file, which is why
-  # naming CI's job id alone was never enough to gate anything.
   tests_and_checks:
     uses: ./.github/workflows/ci.yml
-    # Named one at a time rather than `secrets: inherit`, which would also
-    # hand the called workflow the tap token it has no use for.
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
@@ -53,14 +45,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # goreleaser shells out to both of these: cosign for the signs and
-      # docker_signs stages, syft for sboms. Neither ships on the runner, and a
-      # missing one fails the release rather than skipping the stage.
-      #
-      # cosign is pinned to a full version rather than a floating major, unlike
-      # every other action here: sigstore publishes 4.x releases but has never
-      # moved a `v4` tag, so `@v4` resolves to nothing and fails the job during
-      # set-up, before a step runs. Dependabot bumps it the same as the rest.
       - name: Install cosign
         uses: sigstore/cosign-installer@v4.1.2
 
@@ -75,32 +59,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
-          # The Homebrew cask is committed to greeddj/homebrew-tap, another
-          # repository, which GITHUB_TOKEN cannot write to whatever its
-          # permissions say here. This is a PAT that can.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
-      # Provenance answers a question a signature does not: not "is this the
-      # file that was published" but "which workflow, at which commit, built
-      # it". Recorded per asset, so `gh attestation verify` works on a single
-      # downloaded binary without the rest of the release.
-      #
-      # Guarded rather than left to the default `success()`, because goreleaser
-      # publishes the tap last, after the GitHub release and the images are
-      # already up. A tap token that has expired therefore fails the step above
-      # with everything but the cask published, and an unguarded step here
-      # would be skipped - leaving a real release with no provenance at all.
-      # The hashFiles check is what keeps that from becoming a second, noisier
-      # failure when goreleaser instead died before producing anything: no
-      # checksums file, nothing to attest, nothing published either.
       - name: Attest build provenance
         if: ${{ !cancelled() && hashFiles('dist/checksums.txt') != '' }}
         uses: actions/attest-build-provenance@v4
         with:
-          # checksums.txt, not a path glob: goreleaser publishes the raw
-          # binaries under names they do not carry on disk (every one of them
-          # is a file called `go-galaxy` inside a per-target directory), so a
-          # glob would either miss them or attest four subjects of the same
-          # name. The checksums file already pairs every published name with
-          # its digest.
           subject-checksums: dist/checksums.txt
+
+      - name: Move the major tag
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          major="${TAG%%.*}"
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"
