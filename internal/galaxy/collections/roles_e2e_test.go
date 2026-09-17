@@ -702,13 +702,15 @@ func TestRoleOutdated(t *testing.T) {
 	printer := &lineCapturingPrinter{}
 	f.runtime = infra.New(printer, f.galaxy.Client())
 	f.runtime.Git = f.git
+	// Verbose, because base's up-to-date line is printed only then.
+	f.cfg.Verbose = true
 	if err := collections.Outdated(context.Background(), f.cfg, f.runtime); err != nil {
 		t.Fatalf("Outdated: %v", err)
 	}
 	for _, want := range []string{
 		"Outdated: role geerlingguy.docker 1.9.0 -> 1.10.0",
 		"Outdated: role app " + fakeCommit("role-app-1") + " -> " + fakeCommit("role-app-2"),
-		"Up to date: role base@" + fakeCommit("role-base-1"),
+		"Up to date: role base == " + fakeCommit("role-base-1"),
 		": 1 up to date, 2 outdated, 0 failed",
 	} {
 		if !printer.hasLineContaining(want) {

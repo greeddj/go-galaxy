@@ -80,7 +80,7 @@ func Outdated(ctx context.Context, cfg *config.Config, runtime *infra.Infra) err
 	// error agree with each other. reportOutdated itself mutates nothing.
 	slices.SortFunc(results, func(a, b outdatedEntry) int { return strings.Compare(a.Name, b.Name) })
 
-	reportOutdated(runtime, results, src.label)
+	reportOutdated(runtime, results, src.label, cfg.Verbose)
 
 	var failures failureRecorder
 	for _, r := range results {
@@ -337,19 +337,28 @@ func isNewerVersion(latest, locked string) (bool, error) {
 	return l.GreaterThan(c), nil
 }
 
-// reportOutdated prints one line per locked collection plus a trailing
-// summary, entirely through the Printer so every line is sanitized and
-// --quiet-aware like the rest of the program's output.
+// reportOutdated prints one line per entry that needs attention plus a
+// trailing summary, entirely through the Printer so every line is sanitized
+// and --quiet-aware like the rest of the program's output.
 //
-// Every line here is result tier (Okf/Updatef/Errorf/PersistentPrintf),
-// matching the fact that this report is itself the run's product: an
-// up-to-date entry uses Okf since there is nothing to do, an outdated entry
-// uses Updatef, whose marker says neither success nor failure, and a failed
-// lookup uses Errorf on stderr so a diagnostic never contaminates stdout;
-// the trailing summary is a total rather than a verdict about any one
-// collection, so it carries no marker at all. Result tier means --quiet
-// suppresses none of these four lines - it only ever suppresses the
-// transient tier - which is a
+// An up-to-date entry gets a line only under --verbose. The report exists to
+// name what to act on, and a line per current entry buries the few that are
+// not; the summary still counts every entry, so a default run loses no
+// total. Under --verbose that line is the one install prints for a subject it
+// has nothing left to do for - the success marker, then the version as
+// OkVersionf's dimmed "== <version>" tag - so the same fact reads the same
+// way in both commands.
+//
+// Every line here is result tier (OkVersionf/Updatef/Errorf/
+// PersistentPrintf), matching the fact that this report is itself the run's
+// product: an up-to-date entry uses OkVersionf since there is nothing to do,
+// an outdated entry uses Updatef, whose marker says neither success nor
+// failure, and a failed lookup uses Errorf on stderr so a diagnostic never
+// contaminates stdout; the trailing summary is a total rather than a verdict
+// about any one collection, so it carries no marker at all. Result tier means
+// --quiet suppresses none of the lines this report prints - it only ever
+// suppresses the transient tier, and --quiet and --verbose never hold
+// together (config ignores the first when the second is set) - which is a
 // deliberate divergence from classifyDryRun's own dry-run report mapping:
 // reporting "there is a newer version available" through a green checkmark
 // would be a wrong statement, so the two reports are not aligned on purpose.
@@ -365,15 +374,16 @@ func isNewerVersion(latest, locked string) (bool, error) {
 // standing in for the other. Clean still runs over the whole formatted line
 // and is what bounds r.Err, whose text comes from a Galaxy server. On the
 // up-to-date and outdated lines there is no overlap at all - Clean alone
-// bounds r.Name there - which is why the property is pinned on Clean itself
-// (internal/safeout) and on every Printer tier (internal/progress) rather
-// than on this call site.
+// bounds r.Name there, and on the up-to-date line it bounds the version tag
+// too, cleaned apart from the message - which is why the property is pinned
+// on Clean itself (internal/safeout) and on every Printer tier
+// (internal/progress) rather than on this call site.
 //
 // Quoting only this one line is deliberate: the up-to-date and outdated
 // lines are the normal report an operator reads on every run, and
 // %q-quoting a name that is almost always benign would make that ordinary
 // report harder to read.
-func reportOutdated(runtime *infra.Infra, results []outdatedEntry, lockPath string) {
+func reportOutdated(runtime *infra.Infra, results []outdatedEntry, lockPath string, verbose bool) {
 	upToDate, outdated, failed := 0, 0, 0
 	for _, r := range results {
 		switch {
@@ -384,7 +394,9 @@ func reportOutdated(runtime *infra.Infra, results []outdatedEntry, lockPath stri
 			runtime.Output.Updatef("Outdated: %s %s -> %s", r.Name, r.Locked, r.Latest)
 			outdated++
 		default:
-			runtime.Output.Okf("Up to date: %s@%s", r.Name, r.Locked)
+			if verbose {
+				runtime.Output.OkVersionf(r.Locked, "Up to date: %s", r.Name)
+			}
 			upToDate++
 		}
 	}

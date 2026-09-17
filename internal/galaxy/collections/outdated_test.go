@@ -200,36 +200,46 @@ func (p recordingPrinter) recordf(tier, format string, args ...any) {
 	*p.calls = append(*p.calls, recordedCall{tier: tier, msg: fmt.Sprintf(format, args...)})
 }
 
-// TestReportOutdatedTiers pins reportOutdated's design table: an up-to-date
-// entry lands on Okf, an outdated entry on Updatef, a failed lookup on
-// Errorf, and the trailing summary on PersistentPrintf - never on the
-// transient Printf tier, which --quiet would swallow. The three per-entry
-// tiers are three different markers, which is what makes the report read as
-// three verdicts rather than as one marked line and one bare one; the
-// summary is a total about no single collection, so it carries none.
+// outdatedTierFixture is one entry of each verdict reportOutdated tells
+// apart, in report order: up to date, outdated, failed.
+func outdatedTierFixture() []outdatedEntry {
+	return []outdatedEntry{
+		{Name: "ns.current", Locked: "1.0.0", Newer: false},
+		{Name: "ns.stale", Locked: "1.0.0", Latest: "2.0.0", Newer: true},
+		{Name: "ns.broken", Locked: "1.0.0", Err: errTestBoom},
+	}
+}
+
+// TestReportOutdatedTiers pins reportOutdated's design table under
+// --verbose, the one mode that prints all four lines: an up-to-date entry
+// lands on OkVersionf with its version as the tag, an outdated entry on
+// Updatef, a failed lookup on Errorf, and the trailing summary on
+// PersistentPrintf - never on the transient Printf tier, which --quiet would
+// swallow. The three per-entry tiers are three different markers, which is
+// what makes the report read as three verdicts rather than as one marked
+// line and one bare one; the summary is a total about no single collection,
+// so it carries none.
 //
-// Mutation: changing the up-to-date line from Okf to PersistentPrintf makes
-// the "up to date lands on Okf" assertion below fail with
-// `reportOutdated: up-to-date line tier = "PersistentPrintf", want "Okf"` -
-// run and confirmed.
+// Mutation: changing the up-to-date line from OkVersionf to PersistentPrintf
+// makes the "up to date lands on OkVersionf" assertion below fail with
+// `reportOutdated: up-to-date line tier = "PersistentPrintf", want
+// "OkVersionf"` - run and confirmed.
 func TestReportOutdatedTiers(t *testing.T) {
 	t.Parallel()
 	printer := newRecordingPrinter()
 	runtime := infra.New(printer, nil)
 
-	results := []outdatedEntry{
-		{Name: "ns.current", Locked: "1.0.0", Newer: false},
-		{Name: "ns.stale", Locked: "1.0.0", Latest: "2.0.0", Newer: true},
-		{Name: "ns.broken", Locked: "1.0.0", Err: errTestBoom},
-	}
-	reportOutdated(runtime, results, "/tmp/lockfile.yml")
+	reportOutdated(runtime, outdatedTierFixture(), "/tmp/lockfile.yml", true)
 
 	calls := *printer.calls
 	if len(calls) != 4 {
 		t.Fatalf("reportOutdated recorded %d calls, want 4: %+v", len(calls), calls)
 	}
-	if calls[0].tier != "Okf" {
-		t.Errorf("reportOutdated: up-to-date line tier = %q, want %q", calls[0].tier, "Okf")
+	if calls[0].tier != "OkVersionf" {
+		t.Errorf("reportOutdated: up-to-date line tier = %q, want %q", calls[0].tier, "OkVersionf")
+	}
+	if want := "Up to date: ns.current == 1.0.0"; calls[0].msg != want {
+		t.Errorf("reportOutdated: up-to-date line = %q, want %q", calls[0].msg, want)
 	}
 	if calls[1].tier != "Updatef" {
 		t.Errorf("reportOutdated: outdated line tier = %q, want %q", calls[1].tier, "Updatef")
@@ -254,6 +264,35 @@ func TestReportOutdatedTiers(t *testing.T) {
 	}
 }
 
+// TestReportOutdatedHidesUpToDateUnlessVerbose pins that a default run
+// prints only what needs attention: the outdated line, the failed lookup and
+// the summary, with the up-to-date entry still counted in that summary
+// rather than dropped from it.
+//
+// Mutation: removing the verbose guard around the up-to-date line makes the
+// call-count check below fail with `reportOutdated recorded 4 calls, want 3`
+// - run and confirmed.
+func TestReportOutdatedHidesUpToDateUnlessVerbose(t *testing.T) {
+	t.Parallel()
+	printer := newRecordingPrinter()
+	runtime := infra.New(printer, nil)
+
+	reportOutdated(runtime, outdatedTierFixture(), "/tmp/lockfile.yml", false)
+
+	calls := *printer.calls
+	if len(calls) != 3 {
+		t.Fatalf("reportOutdated recorded %d calls, want 3: %+v", len(calls), calls)
+	}
+	for i, tier := range []string{"Updatef", "Errorf", "PersistentPrintf"} {
+		if calls[i].tier != tier {
+			t.Errorf("reportOutdated: line %d tier = %q, want %q", i, calls[i].tier, tier)
+		}
+	}
+	if want := "/tmp/lockfile.yml: 1 up to date, 1 outdated, 1 failed"; calls[2].msg != want {
+		t.Errorf("reportOutdated: summary = %q, want %q", calls[2].msg, want)
+	}
+}
+
 // TestOutdatedReportsInNameOrder pins the direction of the comparison
 // Outdated sorts its results with, which no other test in this package
 // reaches: TestReportOutdatedTiers hands reportOutdated an already-ordered
@@ -268,7 +307,7 @@ func TestReportOutdatedTiers(t *testing.T) {
 //
 // KILLING MUTATION, run for real: swapping the comparison to
 // strings.Compare(b.Name, a.Name) fails this test on the loop below, with
-// `report line 0 = "Up to date: acme.gamma@1.0.0", want a line for
+// `report line 0 = "Up to date: acme.gamma == 1.0.0", want a line for
 // acme.alpha` - never on the length check above it, which a reordering
 // leaves satisfied. Reverting the argument order made it pass again.
 func TestOutdatedReportsInNameOrder(t *testing.T) {
@@ -298,13 +337,14 @@ func TestOutdatedReportsInNameOrder(t *testing.T) {
 	}
 
 	printer := &capturingPrinter{}
-	cfg := &config.Config{Server: srv.URL(), RequirementsFile: reqPath, Workers: 1}
+	// Verbose, because an up-to-date entry is reported only then.
+	cfg := &config.Config{Server: srv.URL(), RequirementsFile: reqPath, Workers: 1, Verbose: true}
 	if err := Outdated(context.Background(), cfg, infra.New(printer, srv.Client())); err != nil {
 		t.Fatalf("Outdated: err = %v, want nil", err)
 	}
 
-	// Every collection is at its latest version, so each lands on the Okf tier
-	// and the summary line lands elsewhere - leaving oks holding exactly the
+	// Every collection is at its latest version, so each lands on the success
+	// tier and the summary line lands elsewhere - leaving oks holding exactly the
 	// per-collection lines, in report order.
 	if len(printer.oks) != len(names) {
 		t.Fatalf("recorded %d up-to-date lines, want %d: %v", len(printer.oks), len(names), printer.oks)

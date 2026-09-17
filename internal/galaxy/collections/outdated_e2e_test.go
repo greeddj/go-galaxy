@@ -283,12 +283,14 @@ func assertOutdatedRefusesName(t *testing.T, hostileName string) {
 // above: the identical fixture with a name inside the alphabet must reach the
 // report. It is registered on the fake server so the lookup succeeds and the
 // run exits cleanly, which is what proves the refusals come from the name and
-// not from the fixture.
+// not from the fixture. A newer version is registered beside the locked one
+// so the entry is outdated, the verdict a default run prints a line for.
 func testOutdatedReportsAWellFormedName(t *testing.T) {
 	root := t.TempDir()
 	reqPath := filepath.Join(root, "requirements.yml")
 	s := fakegalaxy.New(t)
 	s.AddVersion("acme", "widgets", "1.0.0", nil)
+	s.AddVersion("acme", "widgets", "2.0.0", nil)
 	saveOutdatedLockfile(t, reqPath, s.URL(), lockfile.Entry{Name: "acme.widgets", Version: "1.0.0"})
 
 	cfg := &config.Config{Server: s.URL(), RequirementsFile: reqPath, Workers: 1}
@@ -308,14 +310,20 @@ func testOutdatedReportsAWellFormedName(t *testing.T) {
 	}
 }
 
-// TestOutdatedQuietStillReportsAndSplitsStreams proves every one of
-// reportOutdated's four lines is result tier: --quiet suppresses none of
-// them, and a failed lookup still lands on stderr while the other three
-// stay on stdout.
-//
-// Deliberately not t.Parallel(); see
-// TestOutdatedSanitizesServerReasonPhrase's own doc comment for why.
-func TestOutdatedQuietStillReportsAndSplitsStreams(t *testing.T) {
+// outdatedVerdictsRun is what runOutdatedVerdicts observed: each stream's
+// bytes, the lockfile path the summary line names, and the run's error.
+type outdatedVerdictsRun struct {
+	err      error
+	lockPath string
+	stdout   []byte
+	stderr   []byte
+}
+
+// runOutdatedVerdicts runs outdated through a real progress.Progress over a
+// lockfile holding one entry of each verdict - acme.current up to date,
+// acme.stale outdated, acme.missing a lookup that 404s.
+func runOutdatedVerdicts(t *testing.T, verbose, quiet bool) outdatedVerdictsRun {
+	t.Helper()
 	root := t.TempDir()
 	reqPath := filepath.Join(root, "requirements.yml")
 
@@ -325,7 +333,8 @@ func TestOutdatedQuietStillReportsAndSplitsStreams(t *testing.T) {
 	s.AddVersion("acme", "stale", "2.0.0", nil)
 	// acme.missing is never registered, so its root-metadata lookup 404s.
 
-	lockPath := saveOutdatedLockfile(t, reqPath, s.URL(),
+	var run outdatedVerdictsRun
+	run.lockPath = saveOutdatedLockfile(t, reqPath, s.URL(),
 		lockfile.Entry{Name: "acme.current", Version: "1.0.0"},
 		lockfile.Entry{Name: "acme.stale", Version: "1.0.0"},
 		lockfile.Entry{Name: "acme.missing", Version: "1.0.0"},
@@ -335,22 +344,39 @@ func TestOutdatedQuietStillReportsAndSplitsStreams(t *testing.T) {
 		Server:           s.URL(),
 		RequirementsFile: reqPath,
 		Workers:          2,
-		Quiet:            true,
+		Verbose:          verbose,
+		Quiet:            quiet,
 	}
 
-	var outErr error
-	stdout, stderr := captureStdIO(t, func() {
+	run.stdout, run.stderr = captureStdIO(t, func() {
 		printer := progress.New(cfg.Verbose, cfg.Quiet)
 		defer printer.Close()
 		runtime := infra.New(printer, s.Client())
-		outErr = collections.Outdated(context.Background(), cfg, runtime)
+		run.err = collections.Outdated(context.Background(), cfg, runtime)
 	})
-	if outErr == nil {
+	return run
+}
+
+// TestOutdatedQuietStillReportsAndSplitsStreams proves every line a default
+// report prints is result tier: --quiet suppresses none of them, and a
+// failed lookup still lands on stderr while the outdated line and the
+// summary stay on stdout. The up-to-date entry has no line to suppress -
+// only --verbose prints one - and is still counted in the summary.
+//
+// Deliberately not t.Parallel(); see
+// TestOutdatedSanitizesServerReasonPhrase's own doc comment for why.
+func TestOutdatedQuietStillReportsAndSplitsStreams(t *testing.T) {
+	run := runOutdatedVerdicts(t, false, true)
+	stdout, stderr, lockPath := run.stdout, run.stderr, run.lockPath
+	if run.err == nil {
 		t.Fatal("expected an error from the failed acme.missing lookup")
 	}
 
-	if !bytes.Contains(stdout, []byte("Up to date: acme.current@1.0.0")) {
-		t.Errorf("expected the up-to-date line on stdout despite --quiet, got stdout=%q", stdout)
+	if bytes.Contains(stdout, []byte("Up to date")) {
+		t.Errorf("expected no up-to-date line without --verbose, got stdout=%q", stdout)
+	}
+	if !bytes.Contains(stdout, []byte(lockPath+": 1 up to date, 1 outdated, 1 failed")) {
+		t.Errorf("expected the summary to count the unprinted up-to-date entry, got stdout=%q", stdout)
 	}
 	if !bytes.Contains(stdout, []byte("Outdated: acme.stale 1.0.0 -> 2.0.0")) {
 		t.Errorf("expected the outdated line on stdout despite --quiet, got stdout=%q", stdout)
@@ -363,6 +389,27 @@ func TestOutdatedQuietStillReportsAndSplitsStreams(t *testing.T) {
 	}
 	if !bytes.Contains(stderr, []byte(`Lookup failed: "acme.missing"@1.0.0`)) {
 		t.Errorf("expected the failure line on stderr, got stderr=%q", stderr)
+	}
+}
+
+// TestOutdatedVerboseReportsUpToDate proves --verbose adds the up-to-date
+// line on stdout in the shape install prints a settled subject in: the
+// success marker, the name, then the version as "== <version>" rather than
+// joined to the name with an @.
+//
+// Deliberately not t.Parallel(); see
+// TestOutdatedSanitizesServerReasonPhrase's own doc comment for why.
+func TestOutdatedVerboseReportsUpToDate(t *testing.T) {
+	run := runOutdatedVerdicts(t, true, false)
+	stdout, lockPath := run.stdout, run.lockPath
+	if run.err == nil {
+		t.Fatal("expected an error from the failed acme.missing lookup")
+	}
+	if !bytes.Contains(stdout, []byte("✔ Up to date: acme.current == 1.0.0\n")) {
+		t.Errorf("expected the up-to-date line on stdout under --verbose, got stdout=%q", stdout)
+	}
+	if !bytes.Contains(stdout, []byte(lockPath+": 1 up to date, 1 outdated, 1 failed")) {
+		t.Errorf("expected the summary line on stdout, got stdout=%q", stdout)
 	}
 }
 

@@ -31,6 +31,8 @@ func TestGitOutdatedReportsCommitDrift(t *testing.T) {
 	f.runtime = infra.New(printer, f.galaxy.Client())
 	f.runtime.Git = f.git
 	f.cfg.MetricsFile = filepath.Join(t.TempDir(), "metrics.json")
+	// Verbose, because the lib's up-to-date line is printed only then.
+	f.cfg.Verbose = true
 	if err := collections.Outdated(context.Background(), f.cfg, f.runtime); err != nil {
 		t.Fatalf("Outdated: %v", err)
 	}
@@ -39,7 +41,7 @@ func TestGitOutdatedReportsCommitDrift(t *testing.T) {
 	if !printer.hasLineContaining(wantApp) {
 		t.Fatalf("report lacks %q:\n%v", wantApp, printer.snapshot())
 	}
-	if wantLib := "Up to date: acme.lib@" + lib.Version; !printer.hasLineContaining(wantLib) {
+	if wantLib := "Up to date: acme.lib == " + lib.Version; !printer.hasLineContaining(wantLib) {
 		t.Fatalf("report lacks %q:\n%v", wantLib, printer.snapshot())
 	}
 	lockPath := lockfile.ResolveDefaultPath(f.reqPath, "")
