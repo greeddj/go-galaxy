@@ -11,7 +11,10 @@ import (
 
 // ansibleBOM is the leading UTF-8 byte order mark some ansible.cfg files
 // carry (e.g. when authored by editors that default to BOM-prefixed UTF-8).
-// ansible's own configparser-based reader tolerates it, so we strip it too.
+// ansible decodes the file as plain utf-8, so configparser meets the mark
+// before the first header and refuses the whole file ("File contains no
+// section headers"). This reader strips it and reads the header after it
+// instead, the leniency it shows every other line configparser refuses.
 const ansibleBOM = "\uFEFF"
 
 // signatureKeyNames are the four [galaxy] keys ansible reads its signature
@@ -155,14 +158,23 @@ func isINISpace(r rune) bool {
 	return unicode.IsSpace(r) || (r >= '\x1c' && r <= '\x1f')
 }
 
-// sectionName reports whether t is a "[section]" header and, if so, returns
-// its trimmed inner name. Section names are matched case-sensitively.
+// sectionName reports whether t is a section header and, if so, returns its
+// name, reading it the way configparser's SECTCRE, `\[(?P<header>.+)\]` applied
+// with re.match, does: t opens with '[', the name runs to the LAST ']' on the
+// line and holds at least one character, and whatever follows that ']' is
+// ignored, so "[galaxy] # note" is the [galaxy] section. The name is taken as
+// written, neither trimmed nor case-folded, so "[ galaxy ]" names a section
+// called " galaxy ", which ansible does not read as [galaxy] and neither does
+// this parser.
 func sectionName(t string) (string, bool) {
-	if !strings.HasPrefix(t, "[") || !strings.HasSuffix(t, "]") {
+	if !strings.HasPrefix(t, "[") {
 		return "", false
 	}
-	name := strings.TrimSpace(t[1 : len(t)-1])
-	return name, name != ""
+	end := strings.LastIndexByte(t, ']')
+	if end < len("[x") {
+		return "", false
+	}
+	return t[1:end], true
 }
 
 // splitKeyValue splits t on the first '=' or ':' delimiter, whichever

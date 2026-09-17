@@ -248,6 +248,96 @@ func TestParseAnsibleConfigSections(t *testing.T) {
 	})
 }
 
+// TestParseAnsibleConfigSectionHeaderGrammar pins sectionName to configparser's
+// SECTCRE, `\[(?P<header>.+)\]` applied with re.match: whatever follows the
+// last ']' is ignored, the name runs to that last ']' rather than the first,
+// and the name is not trimmed. Every want is what CPython 3.14's
+// ConfigParser(inline_comment_prefixes=(';',)) returned for the same input, so
+// the rows that leave a tracked section unread are fidelity too: ansible does
+// not read "[ galaxy ]" as [galaxy] either.
+//
+// KILLING MUTATION, run and reverted, in sectionName (ansiblecfg.go) - require
+// the line to end with ']', as the parser once did. The five rows with text
+// after the ']' fail, among them:
+//
+//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
+//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:
+//	ServerList: ServerTimeout: SignatureKeys:[]}}, want {GalaxyServers:map[]
+//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:https://x
+//	ServerList: ServerTimeout: SignatureKeys:[]}}
+//
+// KILLING MUTATION, run and reverted, in sectionName (ansiblecfg.go) - trim the
+// name with strings.TrimSpace. Only the two rows with spaces inside the
+// brackets fail.
+//
+// KILLING MUTATION, run and reverted, in sectionName (ansiblecfg.go) - end the
+// name at the first ']' instead of the last. Only "the last bracket ends the
+// name" fails.
+//
+// KILLING MUTATION, run and reverted, in sectionName (ansiblecfg.go) - weaken
+// the length guard to end < 1, letting an empty name through. Only "brackets
+// with nothing between them are not a header" fails: its key line is read as a
+// header, and the url below it lands under no section.
+func TestParseAnsibleConfigSectionHeaderGrammar(t *testing.T) {
+	t.Parallel()
+	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
+		{
+			name:  "a hash comment after the header is ignored",
+			input: "[galaxy] # note\nserver = https://x",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+		{
+			name:  "text glued after the header is ignored",
+			input: "[galaxy]x\nserver = https://x",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+		{
+			name:  "a glued semicolon after the header is ignored",
+			input: "[galaxy];note\nserver = https://x",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+		{
+			name:  "trailing text after a galaxy_server header is ignored",
+			input: "[galaxy_server.prod] primary hub\nurl = https://x",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				"prod": {"url": "https://x"},
+			}},
+		},
+		{
+			name:  "a header line wins over the delimiter after it",
+			input: "[galaxy_server.prod]\nurl = https://prod\n[galaxy] = oops\nserver = https://x",
+			want: ansibleConfig{
+				GalaxyServers: map[string]map[string]string{"prod": {"url": "https://prod"}},
+				Galaxy:        ansibleGalaxyConfig{Server: "https://x"},
+			},
+		},
+		{
+			name:  "the last bracket ends the name",
+			input: "[galaxy] [note]\nserver = https://x",
+			want:  ansibleConfig{},
+		},
+		{
+			name:  "brackets with nothing between them are not a header",
+			input: "[galaxy_server.prod]\n[]: note\nurl = https://x",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				"prod": {"[]": "note", "url": "https://x"},
+			}},
+		},
+		{
+			name:  "spaces inside the brackets are part of the name",
+			input: "[ galaxy ]\nserver = https://x",
+			want:  ansibleConfig{},
+		},
+		{
+			name:  "spaces inside a galaxy_server header are part of the id",
+			input: "[galaxy_server. prod ]\nurl = https://x",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				" prod ": {"url": "https://x"},
+			}},
+		},
+	})
+}
+
 // TestParseAnsibleConfigLexicalQuirks checks line-ending, BOM, whitespace,
 // key-case, and empty-input handling.
 func TestParseAnsibleConfigLexicalQuirks(t *testing.T) {
@@ -259,7 +349,7 @@ func TestParseAnsibleConfigLexicalQuirks(t *testing.T) {
 			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
 		},
 		{
-			name:  "leading BOM stripped",
+			name:  "leading BOM stripped, a file ansible refuses",
 			input: "\uFEFF[defaults]\ncollections_path=x",
 			want:  ansibleConfig{Defaults: ansibleDefaultsConfig{CollectionsPath: "x"}},
 		},

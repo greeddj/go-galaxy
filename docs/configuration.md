@@ -5,15 +5,18 @@
 `ansible.cfg` is discovered in ansible's own order - `$ANSIBLE_CONFIG`,
 `./ansible.cfg`, `~/.ansible.cfg`, `/etc/ansible/ansible.cfg` - and parsed as
 INI the way ansible parses it (CPython's `configparser`, with `;` as its only
-inline comment marker), not as TOML. Three consequences follow from matching
+inline comment marker), not as TOML. Four consequences follow from matching
 ansible rather than a stricter parser: a quoted value keeps its quotes, so
 `collections_path = "./c"` sets the literal `"./c"` and you should drop the
 quotes; a `#` after a value is part of it, so
 `server = https://galaxy.ansible.com # note` is a bad URL rather than a URL
-with a note; and a `;` that follows whitespace starts a comment running to the
-end of the line, so `server = https://galaxy.ansible.com ; note` is the URL
-alone, while the `;` in `token = abc;def`, with no whitespace before it, stays
-in the token.
+with a note; a `;` that follows whitespace starts a comment running to the end
+of the line, so `server = https://galaxy.ansible.com ; note` is the URL alone,
+while the `;` in `token = abc;def`, with no whitespace before it, stays in the
+token; and a section header's name runs to the last `]` on its line and is
+taken as written, so `[galaxy] # prod` is the `[galaxy]` section, while
+`[ galaxy ]` is a section named ` galaxy ` that neither ansible nor go-galaxy
+reads as `[galaxy]`.
 
 Discovery keeps one of ansible's exceptions too: `./ansible.cfg` is not
 considered at all when the current directory is world-writable, since any
