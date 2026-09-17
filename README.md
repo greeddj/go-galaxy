@@ -175,7 +175,9 @@ go-galaxy install -r requirements.yml -p ./collections --roles-path ./roles
 ```
 
 Running `go-galaxy` with no command runs `install`, so a bare invocation
-performs a full install rather than printing help. One `install` handles the
+performs a full install rather than printing help; a word that names no
+command is refused as an argument to `install` rather than ignored, since
+nothing is named on the command line. One `install` handles the
 `collections:` and the `roles:` lists of the same file, as `ansible-galaxy
 install -r` does; there is no separate role subcommand.
 

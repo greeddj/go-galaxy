@@ -17,6 +17,15 @@ go-galaxy cleanup
 Running `go-galaxy` with no command runs `install`, so a bare invocation
 performs a full install rather than printing help.
 
+No command but `explain` takes a positional argument: collections and roles
+are named in the requirements file, never on the command line, and an argument
+a command does not take is refused as a usage error (`2`) before anything
+runs, naming every argument it refused. That includes a first word that names
+no command, which reaches `install` as an argument - `go-galaxy collection
+install ns.name` is refused rather than installing the requirements file with
+`ns.name` silently dropped, and so is `go-galaxy help`, since there is no help
+command - help is `--help`. `explain` takes exactly one.
+
 - `install` (`i`) - install the collections and the roles of `requirements.yml`, as `ansible-galaxy install -r` does; there is no separate role subcommand. Collections go under `--download-path`, roles under `--roles-path` (see [install options](#install-options)). Roles install after the collections and only when every collection level succeeded, so a collection failure never leaves roles half-installed against a broken tree; a run with no `roles:` entries never creates the roles directory. Each role is reported on its own line (`Installed: role <name> == <version>`, `Skipping install, already installed: role <name>@<version>`, `Failed: role <name> == <version> error: ...`), and the completion line counts roles only when the run had any, so a collections-only run reads as it always did.
 - `lock` (`l`) - resolve and write `galaxy.lock` for reproducible CI. See [lock](#lock) below for its `--frozen` drift gate and its `--dry-run` preview.
 - `warm` (`w`) - populate the artifact + extracted caches without installing (for CI image bake). A role is warmed like a collection - its artifact into the artifact cache and its tree into the extracted store, recorded in the warmed set under `role:<name>@<version>` so a role and a collection sharing a `name@version` never overwrite each other's entry - and reported as `Cached: role <name> == <version>`, the shape a collection's own `Cached: <namespace>.<name> == <version>` line takes. No roles directory is touched. Requires a cache: `--no-cache` is rejected as a usage error rather than downloading everything and discarding it. A warmed collection's extracted tree is protected from `cleanup` for 30 days after its last warm, so a machine that warms and then stops warming eventually reclaims the space. Under `--dry-run`, `warm` reports per collection whether it is already warm or would be warmed, downloads no artifact, and writes no warmed entry; it still rejects `--no-cache` as a usage error regardless of `--dry-run`, since `--no-cache` leaves warm nothing to do either way - see [install options](#install-options) for the full `--dry-run` semantics.

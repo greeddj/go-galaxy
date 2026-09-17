@@ -828,10 +828,11 @@ func isNoCandidateError(err error) bool {
 
 // isUsageError reports whether err is a configuration or CLI-input sentinel
 // (invalid flags, malformed requirements, or a missing path). Split into
-// six sub-checks purely to stay under the cyclomatic-complexity budget;
-// the six together still cover the exact same sentinel set.
+// sub-checks purely to stay under the cyclomatic-complexity budget; together
+// they still cover the exact same sentinel set.
 func isUsageError(err error) bool {
-	return isConfigUsageError(err) ||
+	return isCommandLineUsageError(err) ||
+		isConfigUsageError(err) ||
 		isGalaxyServerConfigError(err) ||
 		isCollectionNameUsageError(err) ||
 		isCollectionListUsageError(err) ||
@@ -839,6 +840,16 @@ func isUsageError(err error) bool {
 		isGitUsageError(err) ||
 		isRoleUsageError(err) ||
 		isURLUsageError(err)
+}
+
+// isCommandLineUsageError reports whether err says the command line cannot be
+// run as written because of something go-galaxy judged rather than urfave:
+// positional arguments a command does not take
+// (helpers.ErrUnexpectedArguments). A flag urfave cannot parse never reaches
+// this class, since urfave returns it from Run without an error value to
+// classify and handleResult exits ExitUsage for that shape directly.
+func isCommandLineUsageError(err error) bool {
+	return errors.Is(err, helpers.ErrUnexpectedArguments)
 }
 
 // isRoleUsageError reports whether err says a roles: entry, as written in

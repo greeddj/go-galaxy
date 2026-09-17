@@ -26,15 +26,13 @@ var (
 // version was chosen and which other collections depend on it.
 func Explain() *cli.Command {
 	return &cli.Command{
-		Name:      "explain",
-		Aliases:   []string{"why"},
-		Usage:     "Explain why a collection or role was resolved to its locked version",
-		ArgsUsage: "<namespace.name | role name>",
-		Flags:     cliflags.LockInspectFlags(),
+		Name:         "explain",
+		Aliases:      []string{"why"},
+		Usage:        "Explain why a collection or role was resolved to its locked version",
+		ArgsUsage:    "<namespace.name | role name>",
+		Flags:        cliflags.LockInspectFlags(),
+		ArgValidator: explainArguments,
 		Action: func(_ context.Context, c *cli.Command) error {
-			if c.NArg() < 1 {
-				return errExplainNoTarget
-			}
 			target := c.Args().First()
 			reqPath := c.String("requirements-file")
 			lockPath := lockfile.ResolveDefaultPath(reqPath, c.String("lock-file"))
@@ -53,6 +51,23 @@ func Explain() *cli.Command {
 			}
 			return printExplain(os.Stdout, lf, target, rootSet, roleRootSet)
 		},
+	}
+}
+
+// explainArguments is explain's own ArgValidator, declared so that the root's
+// NoArguments does not refuse the one argument explain takes. It holds explain
+// to exactly one: a missing target is errExplainNoTarget, and every argument
+// after the first is refused by name rather than dropped, since "explain a b"
+// explaining only a would read as an answer about both.
+func explainArguments(_ context.Context, c *cli.Command) error {
+	args := c.Args().Slice()
+	switch {
+	case len(args) == 0:
+		return errExplainNoTarget
+	case len(args) > 1:
+		return unexpectedArguments(c, args[1:], "one")
+	default:
+		return nil
 	}
 }
 

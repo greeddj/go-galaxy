@@ -246,3 +246,178 @@ func TestRootCommandRecordsUrfaveUsageReports(t *testing.T) {
 		}
 	})
 }
+
+// TestRootCommandRefusesPositionalArguments pins that a positional argument no
+// command takes is refused before any action runs, as a usage error: the
+// captured error is helpers.ErrUnexpectedArguments, it classifies
+// exitcode.ExitUsage, and its message names every refused argument. The first
+// row is the defect this exists for - a word that names no command reached
+// install as an argument, and install ran on the requirements file.
+//
+// The accepted rows are the positive controls, and they are what make the
+// refusals mean something: install with no argument - named, and reached as
+// the default command both with its own flags and with root flags alone -
+// explain with its one and hash with none all get past validation and fail
+// in their actions instead, each on a file that does not exist, so a
+// validator refusing everything, or refusing install alone, cannot pass.
+// GO_GALAXY_ANSIBLE_CONFIG names a missing file, which stops every install
+// action at config.BuildCollectionConfig before it discovers the developer's
+// ansible.cfg or opens a cache, so no row, and no regression that lets one
+// reach an action, reads or writes anything outside t.TempDir.
+//
+// KILLING MUTATION, run and reverted, in newRootCommand (main.go) - delete the
+// ArgValidator: commands.NoArguments line. The four rows refused by the root's
+// validator fail and the explain row does not, since explain declares its own:
+//
+//	main_test.go:309: a first word that names no command: captured error =
+//	ansible config file not found: .../001/ansible.cfg, want errors.Is match
+//	with unexpected arguments
+//
+// KILLING MUTATION, run and reverted, in explainArguments (explain.go) - return
+// nil for more than one argument. Only the explain row fails:
+//
+//	main_test.go:309: explain beyond its one argument: captured error =
+//	lockfile not found: .../001/galaxy.lock, want errors.Is match with
+//	unexpected arguments
+//
+// KILLING MUTATION, run and reverted, in unexpectedArguments (arguments.go) -
+// drop the clause naming the default command. The three rows routed to install
+// fail and the hash row, which must not carry the clause, passes:
+//
+//	main_test.go:317: a first word that names no command: message =
+//	"unexpected arguments \"collection\" \"install\" \"ns.name\": install takes
+//	none", want it to contain "unexpected arguments \"collection\" \"install\"
+//	\"ns.name\": install takes none, and is what runs when the first word names
+//	no command"
+//
+// KILLING MUTATION, run and reverted, in NoArguments (arguments.go) - delete
+// the zero-argument early return, so every command is refused. The three
+// install rows and the hash row among the accepted fail, the explain one does
+// not:
+//
+//	main_test.go:325: install as the default command with root flags only:
+//	captured error = unexpected arguments : install takes none, and is what runs
+//	when the first word names no command, want errors.Is match with ansible
+//	config file not found
+func TestRootCommandRefusesPositionalArguments(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GO_GALAXY_ANSIBLE_CONFIG", dir+"/ansible.cfg")
+	refused, accepted := positionalArgumentCases(dir)
+	for _, tt := range refused {
+		captured := runRootCommand(t, tt.args)
+		if !errors.Is(captured, helpers.ErrUnexpectedArguments) {
+			t.Errorf("%s: captured error = %v, want errors.Is match with %v", tt.name, captured, helpers.ErrUnexpectedArguments)
+			continue
+		}
+		if code := exitcode.FromError(captured); code != exitcode.ExitUsage {
+			t.Errorf("%s: exit code = %d, want %d", tt.name, code, exitcode.ExitUsage)
+		}
+		msg := captured.Error()
+		if !strings.Contains(msg, tt.wantMessage) {
+			t.Errorf("%s: message = %q, want it to contain %q", tt.name, msg, tt.wantMessage)
+		} else if tt.notWant != "" && strings.Contains(msg, tt.notWant) {
+			t.Errorf("%s: message = %q, want it not to contain %q", tt.name, msg, tt.notWant)
+		}
+	}
+	for _, tt := range accepted {
+		captured := runRootCommand(t, tt.args)
+		if !errors.Is(captured, tt.wantErr) {
+			t.Errorf("%s: captured error = %v, want errors.Is match with %v", tt.name, captured, tt.wantErr)
+		}
+	}
+}
+
+// positionalArgumentCase is one row of TestRootCommandRefusesPositionalArguments.
+// wantMessage and notWant are read only for a refused row, wantErr only for an
+// accepted one.
+type positionalArgumentCase struct {
+	wantErr     error
+	name        string
+	wantMessage string
+	notWant     string
+	args        []string
+}
+
+// defaultCommandClause is the clause a refusal by install carries and a refusal
+// by any other command must not.
+const defaultCommandClause = ", and is what runs when the first word names no command"
+
+// positionalArgumentCases builds TestRootCommandRefusesPositionalArguments'
+// refused and accepted rows over files under dir that do not exist, split out
+// from the test function purely to stay under the funlen budget.
+func positionalArgumentCases(dir string) ([]positionalArgumentCase, []positionalArgumentCase) {
+	missingReq := dir + "/requirements.yml"
+	installFlags := []string{"--cache-dir", dir + "/cache", "--dry-run", "-r", missingReq}
+	inspectFlags := []string{"-r", missingReq, "--lock-file", dir + "/galaxy.lock"}
+
+	refused := []positionalArgumentCase{
+		{
+			name:        "a first word that names no command",
+			args:        append([]string{"collection", "install", "ns.name"}, installFlags...),
+			wantMessage: `unexpected arguments "collection" "install" "ns.name": install takes none` + defaultCommandClause,
+		},
+		{
+			name:        "an argument to install named on the command line",
+			args:        append([]string{"install", "ns.name"}, installFlags...),
+			wantMessage: `unexpected arguments "ns.name": install takes none` + defaultCommandClause,
+		},
+		{
+			name:        "help is not a command",
+			args:        append([]string{"help"}, installFlags...),
+			wantMessage: `unexpected arguments "help": install takes none` + defaultCommandClause,
+		},
+		{
+			name:        "a command other than the default",
+			args:        append([]string{"hash", "extra"}, inspectFlags...),
+			wantMessage: `unexpected arguments "extra": hash takes none`,
+			notWant:     defaultCommandClause,
+		},
+		{
+			name:        "explain beyond its one argument",
+			args:        append([]string{"explain", "ns.a", "ns.b", "ns.c"}, inspectFlags...),
+			wantMessage: `unexpected arguments "ns.b" "ns.c": explain takes one`,
+		},
+	}
+	accepted := []positionalArgumentCase{
+		{
+			name:    "install named with none",
+			args:    append([]string{"install"}, installFlags...),
+			wantErr: helpers.ErrAnsibleConfigNotFound,
+		},
+		{
+			name:    "install as the default command with its own flags",
+			args:    installFlags,
+			wantErr: helpers.ErrAnsibleConfigNotFound,
+		},
+		{
+			name:    "install as the default command with root flags only",
+			args:    []string{"--cache-dir", dir + "/cache", "--dry-run"},
+			wantErr: helpers.ErrAnsibleConfigNotFound,
+		},
+		{
+			name:    "explain with its one argument",
+			args:    append([]string{"explain", "ns.a"}, inspectFlags...),
+			wantErr: helpers.ErrLockfileMissing,
+		},
+		{
+			name:    "hash with none",
+			args:    append([]string{"hash"}, inspectFlags...),
+			wantErr: os.ErrNotExist,
+		},
+	}
+	return refused, accepted
+}
+
+// runRootCommand runs a fresh root command over args and returns the error
+// ExitErrHandler captured, the value handleResult classifies. A fresh command
+// per call is required, since urfave mutates command and flag state across a
+// Run; Writer is discarded, as in TestRootCommandRecordsUrfaveUsageReports, so
+// nothing urfave itself prints there reaches the test output.
+func runRootCommand(t *testing.T, args []string) error {
+	t.Helper()
+	var captured error
+	cmd, _ := newRootCommand(func(err error) { captured = err }, io.Discard)
+	cmd.Writer = io.Discard
+	_ = cmd.Run(context.Background(), append([]string{"go-galaxy"}, args...))
+	return captured
+}

@@ -69,9 +69,13 @@ func (r *errRecorder) Write(p []byte) (int, error) {
 }
 
 // newRootCommand builds the root command. onErr, when non-nil, receives what
-// urfave hands ExitErrHandler - an action, before or after failure. A nil
-// onErr captures nothing, which is what a caller inspecting only the
-// command's shape wants; run passes a real one.
+// urfave hands ExitErrHandler - an argument validator, before, flag action,
+// action or after failure. A nil onErr captures nothing, which is what a
+// caller inspecting only the command's shape wants; run passes a real one.
+//
+// ArgValidator is commands.NoArguments, declared here so every command inherits
+// it: an argument no command takes, a first word that names no command
+// included, is refused before any action runs rather than silently dropped.
 //
 // errOut is where urfave prints the usage errors it reports itself. It is
 // wrapped in the returned *errRecorder rather than installed bare, and the
@@ -120,6 +124,7 @@ func newRootCommand(onErr func(error), errOut io.Writer) (*cli.Command, *errReco
 		HideHelpCommand:        true,
 		UseShortOptionHandling: true,
 		DefaultCommand:         "install",
+		ArgValidator:           commands.NoArguments,
 		Version:                buildinfo.Version(Version, Commit, Date, BuiltBy),
 		ErrWriter:              report,
 		Flags:                  cliflags.CommonFlags(),
@@ -151,7 +156,8 @@ func run() int {
 		_, _ = fmt.Fprintln(c.Writer, c.Root().Version)
 	}
 
-	// cmdErr captures action/before/after/flag-action errors via ExitErrHandler.
+	// cmdErr captures argument-validator/before/flag-action/action/after errors
+	// via ExitErrHandler.
 	// A flag failure never reaches this handler at all - urfave returns it from
 	// Run instead - so handleResult judges that shape through report.written.
 	var cmdErr error

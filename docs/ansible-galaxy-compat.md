@@ -210,7 +210,14 @@ code means, and what an installed tree looks like. Every "ansible does X"
 claim in this subsection is read against ansible-core 2.21.2. One of them is
 a property rather than an inventory and is stated once here: a flag this tool
 does not define is a usage error naming the flag and exits `2`, which is how
-`-U`, `--force`, `--force-with-deps` and `--pre` surface.
+`-U`, `--force`, `--force-with-deps` and `--pre` surface. A positional argument
+surfaces the same way: ansible takes collection and role names, paths and URLs
+on the command line, while here they come only from the requirements file, so
+`ansible-galaxy collection install ns.name` rewritten as `go-galaxy install
+ns.name` - or left as `go-galaxy collection install ns.name`, whose first word
+names no command and so reaches `install` as an argument - exits `2` naming
+the arguments it refused, rather than installing the requirements file
+without them.
 
 - **The resolve decides the version, not what is already installed.** ansible
   prefers a collection that is already present and does not query the Galaxy

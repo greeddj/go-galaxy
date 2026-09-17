@@ -1673,3 +1673,25 @@ func TestMetadataRequestBuildFailedClassifiesNetwork(t *testing.T) {
 		t.Errorf("FromError(wrapped) = %d, want %d", got, ExitNetwork)
 	}
 }
+
+// TestCommandLineUsageErrorsMapToExitUsage pins isCommandLineUsageError's
+// sentinel, helpers.ErrUnexpectedArguments, to ExitUsage, bare and wrapped,
+// since the argument validators in cmd/go-galaxy/commands raise it both ways.
+// A test of its own for the reason
+// TestMetadataRequestBuildFailedClassifiesNetwork gives: a new row in a table
+// above would move every line citation below it.
+//
+// KILLING MUTATION, run and reverted, in isCommandLineUsageError
+// (exitcode.go) - return false. Both shapes fail:
+//
+//	exitcode_test.go:1694: FromError(unexpected arguments) = 1, want 2
+//	exitcode_test.go:1694: FromError(unexpected arguments: explain takes one) = 1, want 2
+func TestCommandLineUsageErrorsMapToExitUsage(t *testing.T) {
+	t.Parallel()
+	sentinel := helpers.ErrUnexpectedArguments
+	for _, err := range []error{sentinel, fmt.Errorf("%w: explain takes one", sentinel)} {
+		if got := FromError(err); got != ExitUsage {
+			t.Errorf("FromError(%v) = %d, want %d", err, got, ExitUsage)
+		}
+	}
+}

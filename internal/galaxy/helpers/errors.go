@@ -597,6 +597,13 @@ var (
 	// integer number of seconds nor a valid positive Go duration string.
 	ErrInvalidTimeout = errors.New("invalid timeout")
 
+	// ErrUnexpectedArguments indicates positional arguments a command does not
+	// take. With install as the root's default command, a first word that
+	// names no command arrives here too, as an argument to install - which is
+	// how "go-galaxy collection install ns.name" is refused rather than
+	// installing the requirements file with no word about ns.name.
+	ErrUnexpectedArguments = errors.New("unexpected arguments")
+
 	// ErrAnsibleConfigNotFound indicates an explicitly requested ansible.cfg
 	// path does not exist.
 	ErrAnsibleConfigNotFound = errors.New("ansible config file not found")
