@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/cliflags"
+	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 	"github.com/greeddj/go-galaxy/internal/safeout"
 	"github.com/urfave/cli/v3"
@@ -18,7 +19,11 @@ import (
 const requirementsYAML = "requirements.yml"
 
 var (
-	errExplainNoTarget = errors.New("explain: collection name (ns.name) is required")
+	// errExplainNoTarget wraps helpers.ErrMissingArgument, so explain run with
+	// no name exits as the usage error it is, the class an argument explain
+	// does not take already exits with.
+	errExplainNoTarget = fmt.Errorf("%w: explain takes one, a collection name (namespace.name) or a role name",
+		helpers.ErrMissingArgument)
 	errExplainNotFound = errors.New("collection or role not found in lockfile")
 )
 

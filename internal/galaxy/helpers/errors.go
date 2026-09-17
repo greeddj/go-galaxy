@@ -604,6 +604,10 @@ var (
 	// installing the requirements file with no word about ns.name.
 	ErrUnexpectedArguments = errors.New("unexpected arguments")
 
+	// ErrMissingArgument indicates a command that takes a positional argument
+	// was run without it: explain with no collection or role to explain.
+	ErrMissingArgument = errors.New("missing argument")
+
 	// ErrAnsibleConfigNotFound indicates an explicitly requested ansible.cfg
 	// path does not exist.
 	ErrAnsibleConfigNotFound = errors.New("ansible config file not found")

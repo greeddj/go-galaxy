@@ -24,7 +24,8 @@ runs, naming every argument it refused. That includes a first word that names
 no command, which reaches `install` as an argument - `go-galaxy collection
 install ns.name` is refused rather than installing the requirements file with
 `ns.name` silently dropped, and so is `go-galaxy help`, since there is no help
-command - help is `--help`. `explain` takes exactly one.
+command - help is `--help`. `explain` takes exactly one, and run with none it
+is refused as a usage error (`2`) the same way.
 
 - `install` (`i`) - install the collections and the roles of `requirements.yml`, as `ansible-galaxy install -r` does; there is no separate role subcommand. Collections go under `--download-path`, roles under `--roles-path` (see [install options](#install-options)). Roles install after the collections and only when every collection level succeeded, so a collection failure never leaves roles half-installed against a broken tree; a run with no `roles:` entries never creates the roles directory. Each role is reported on its own line (`Installed: role <name> == <version>`, `Skipping install, already installed: role <name>@<version>`, `Failed: role <name> == <version> error: ...`), and the completion line counts roles only when the run had any, so a collections-only run reads as it always did.
 - `lock` (`l`) - resolve and write `galaxy.lock` for reproducible CI. See [lock](#lock) below for its `--frozen` drift gate and its `--dry-run` preview.

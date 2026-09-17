@@ -845,11 +845,13 @@ func isUsageError(err error) bool {
 // isCommandLineUsageError reports whether err says the command line cannot be
 // run as written because of something go-galaxy judged rather than urfave:
 // positional arguments a command does not take
-// (helpers.ErrUnexpectedArguments). A flag urfave cannot parse never reaches
+// (helpers.ErrUnexpectedArguments), or the one a command requires and was not
+// given (helpers.ErrMissingArgument). A flag urfave cannot parse never reaches
 // this class, since urfave returns it from Run without an error value to
 // classify and handleResult exits ExitUsage for that shape directly.
 func isCommandLineUsageError(err error) bool {
-	return errors.Is(err, helpers.ErrUnexpectedArguments)
+	return errors.Is(err, helpers.ErrUnexpectedArguments) ||
+		errors.Is(err, helpers.ErrMissingArgument)
 }
 
 // isRoleUsageError reports whether err says a roles: entry, as written in

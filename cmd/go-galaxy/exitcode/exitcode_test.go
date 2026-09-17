@@ -1674,24 +1674,27 @@ func TestMetadataRequestBuildFailedClassifiesNetwork(t *testing.T) {
 	}
 }
 
-// TestCommandLineUsageErrorsMapToExitUsage pins isCommandLineUsageError's
-// sentinel, helpers.ErrUnexpectedArguments, to ExitUsage, bare and wrapped,
-// since the argument validators in cmd/go-galaxy/commands raise it both ways.
-// A test of its own for the reason
+// TestCommandLineUsageErrorsMapToExitUsage pins isCommandLineUsageError's two
+// sentinels to ExitUsage, each bare and wrapped, since the argument validators
+// in cmd/go-galaxy/commands raise both shapes: helpers.ErrUnexpectedArguments
+// for an argument a command does not take, helpers.ErrMissingArgument for the
+// one explain requires. A test of its own for the reason
 // TestMetadataRequestBuildFailedClassifiesNetwork gives: a new row in a table
 // above would move every line citation below it.
 //
 // KILLING MUTATION, run and reverted, in isCommandLineUsageError
-// (exitcode.go) - return false. Both shapes fail:
+// (exitcode.go) - delete the helpers.ErrMissingArgument clause. Only that
+// sentinel's two rows fail:
 //
-//	exitcode_test.go:1694: FromError(unexpected arguments) = 1, want 2
-//	exitcode_test.go:1694: FromError(unexpected arguments: explain takes one) = 1, want 2
+//	exitcode_test.go:1696: FromError(missing argument) = 1, want 2
+//	exitcode_test.go:1696: FromError(missing argument: explain takes one) = 1, want 2
 func TestCommandLineUsageErrorsMapToExitUsage(t *testing.T) {
 	t.Parallel()
-	sentinel := helpers.ErrUnexpectedArguments
-	for _, err := range []error{sentinel, fmt.Errorf("%w: explain takes one", sentinel)} {
-		if got := FromError(err); got != ExitUsage {
-			t.Errorf("FromError(%v) = %d, want %d", err, got, ExitUsage)
+	for _, sentinel := range []error{helpers.ErrUnexpectedArguments, helpers.ErrMissingArgument} {
+		for _, err := range []error{sentinel, fmt.Errorf("%w: explain takes one", sentinel)} {
+			if got := FromError(err); got != ExitUsage {
+				t.Errorf("FromError(%v) = %d, want %d", err, got, ExitUsage)
+			}
 		}
 	}
 }

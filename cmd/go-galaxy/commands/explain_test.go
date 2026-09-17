@@ -8,21 +8,24 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/greeddj/go-galaxy/cmd/go-galaxy/exitcode"
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 )
 
 // TestExplainRequiresATarget pins explainArguments' zero-argument branch: a
-// missing target is refused as errExplainNoTarget before the action runs. Any
-// other outcome, nil included, fails the errors.Is check. The flags point into
-// t.TempDir, so an action a faulty validator lets through reads no galaxy.lock
-// from the working directory or the environment.
+// missing target is refused as errExplainNoTarget before the action runs, and
+// exits as a usage error. Any other outcome, nil included, fails the errors.Is
+// check. The flags point into t.TempDir, so an action a faulty validator lets
+// through reads no galaxy.lock from the working directory or the environment.
 //
 // KILLING MUTATION, run and reverted, in explainArguments (explain.go) -
-// return nil for zero arguments:
+// return nil for zero arguments. Both assertions fail, the second because a
+// missing lockfile exits 6:
 //
-//	explain_test.go:35: explain with no target: error = lockfile not found:
-//	.../001/galaxy.lock, want errors.Is match with explain: collection name
-//	(ns.name) is required
+//	explain_test.go:38: explain with no target: error = lockfile not found:
+//	.../001/galaxy.lock, want errors.Is match with missing argument: explain
+//	takes one, a collection name (namespace.name) or a role name
+//	explain_test.go:41: explain with no target: exit code = 6, want 2
 func TestExplainRequiresATarget(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -33,6 +36,9 @@ func TestExplainRequiresATarget(t *testing.T) {
 	})
 	if !errors.Is(err, errExplainNoTarget) {
 		t.Errorf("explain with no target: error = %v, want errors.Is match with %v", err, errExplainNoTarget)
+	}
+	if got := exitcode.FromError(err); got != exitcode.ExitUsage {
+		t.Errorf("explain with no target: exit code = %d, want %d", got, exitcode.ExitUsage)
 	}
 }
 
