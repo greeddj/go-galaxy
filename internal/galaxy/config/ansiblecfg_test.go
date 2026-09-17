@@ -67,10 +67,12 @@ func TestParseAnsibleConfigDelimiters(t *testing.T) {
 	})
 }
 
-// TestParseAnsibleConfigValueFidelity checks that values are stored
-// verbatim: quotes and inline comments are not stripped. ansible.cfg is
-// read by CPython's configparser, not a TOML parser, so drop-in fidelity
-// requires reproducing that behavior rather than "helpfully" cleaning it up.
+// TestParseAnsibleConfigValueFidelity checks that values are stored as
+// ansible reads them: quotes are kept and a trailing '#' is part of the value.
+// ansible.cfg is read by CPython's configparser, not a TOML parser, so
+// drop-in fidelity requires reproducing that behavior rather than
+// "helpfully" cleaning it up. The one thing configparser does strip, a ';'
+// comment, is TestParseAnsibleConfigInlineSemicolonComment's.
 func TestParseAnsibleConfigValueFidelity(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -84,10 +86,93 @@ func TestParseAnsibleConfigValueFidelity(t *testing.T) {
 			input: "[galaxy]\nserver = https://x # prod",
 			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x # prod"}},
 		},
+	})
+}
+
+// TestParseAnsibleConfigInlineSemicolonComment pins the inline comment ansible
+// configures its parser with, inline_comment_prefixes=(';',): a ';' that
+// follows whitespace starts a comment running to the end of the line, on a key
+// line and on a section header alike, while a ';' glued to the text before it
+// stays in the value. Every want below is what CPython 3.14's
+// ConfigParser(inline_comment_prefixes=(';',)) returned for the same input.
+//
+// The "glued" rows are the positive control for the stripping rows: a parser
+// that cut at every ';' would pass the first rows and fail these, which is why
+// a URL query or a token carrying ';' is here beside the comments.
+//
+// KILLING MUTATION, run and reverted, in parseAnsibleConfig (ansiblecfg.go) -
+// delete the stripInlineComment call. Every stripping row fails, the glued
+// rows pass:
+//
+//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
+//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir:/c ; note Server:
+//	ServerList: ServerTimeout: SignatureKeys:[]}}, want {GalaxyServers:map[]
+//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir:/c Server:
+//	ServerList: ServerTimeout: SignatureKeys:[]}}
+//
+// KILLING MUTATION, run and reverted, in isINISpace (ansiblecfg.go) - return
+// unicode.IsSpace(r) alone. Only "an information separator counts as
+// whitespace" fails, since U+001C is the one kind of whitespace Python and Go
+// disagree on (it sits unprinted between "x" and ";" in the got value):
+//
+//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
+//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:https://x;prod
+//	ServerList: ServerTimeout: SignatureKeys:[]}}, want {GalaxyServers:map[]
+//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:https://x
+//	ServerList: ServerTimeout: SignatureKeys:[]}}
+func TestParseAnsibleConfigInlineSemicolonComment(t *testing.T) {
+	t.Parallel()
+	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
 		{
-			name:  "inline trailing semicolon comment preserved",
+			name:  "semicolon after a space starts a comment",
 			input: "[galaxy]\ncache_dir = /c ; note",
-			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{CacheDir: "/c ; note"}},
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{CacheDir: "/c"}},
+		},
+		{
+			name:  "semicolon after a tab starts a comment",
+			input: "[galaxy]\nserver = https://x\t;prod",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+		{
+			name:  "an information separator counts as whitespace",
+			input: "[galaxy]\nserver = https://x\x1c;prod",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+		{
+			name:  "the first semicolon after whitespace wins",
+			input: "[galaxy]\nserver_list = a;b c ;d ;e",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{ServerList: "a;b c"}},
+		},
+		{
+			name:  "a hash before the comment stays in the value",
+			input: "[galaxy]\nserver = https://x # prod ; note",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x # prod"}},
+		},
+		{
+			name:  "comment on a section header",
+			input: "[galaxy] ; main section\nserver = https://x",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+		{
+			name:  "comment after a galaxy_server url",
+			input: "[galaxy_server.prod]\nurl = https://prod.example ; primary hub",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				"prod": {"url": "https://prod.example"},
+			}},
+		},
+		{
+			name:  "glued semicolon stays in a token",
+			input: "[galaxy_server.prod]\ntoken = abc;def",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				"prod": {"token": "abc;def"},
+			}},
+		},
+		{
+			name:  "glued semicolons stay in a url query",
+			input: "[galaxy_server.prod]\nurl = https://x/api/?a=1;b=2",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				"prod": {"url": "https://x/api/?a=1;b=2"},
+			}},
 		},
 	})
 }
@@ -197,8 +282,9 @@ func TestParseAnsibleConfigLexicalQuirks(t *testing.T) {
 }
 
 // TestParseAnsibleConfigServerList checks that [galaxy] server_list is
-// captured as a plain string, with the same drop-in ansible.cfg fidelity
-// (verbatim value, last-occurrence-wins) as every other [galaxy] key.
+// captured as a plain string, read the way every other [galaxy] key is
+// (quotes and a trailing '#' kept, a ';' comment after whitespace removed,
+// last occurrence wins).
 func TestParseAnsibleConfigServerList(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -345,14 +431,15 @@ func TestParseAnsibleConfigGalaxyServerSections(t *testing.T) {
 }
 
 // TestParseAnsibleConfigGalaxyServerSectionsFidelity checks that a
-// [galaxy_server.<id>] section gets the same drop-in ansible.cfg fidelity
-// (verbatim values, case-sensitive section matching, lowercased keys) as
-// every other section this parser tracks.
+// [galaxy_server.<id>] section is read the way every other section this
+// parser tracks is: values as ansible reads them (quotes and a trailing '#'
+// kept, a ';' comment after whitespace removed), section names matched
+// case-sensitively, keys lowercased.
 func TestParseAnsibleConfigGalaxyServerSectionsFidelity(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
 		{
-			name: "quoted value and inline comment preserved verbatim",
+			name: "quoted value and trailing hash preserved verbatim",
 			input: "[galaxy_server.prod]\n" +
 				`url = "https://prod.example"` + "\n" +
 				"token = abc123 # comment\n",
@@ -374,6 +461,97 @@ func TestParseAnsibleConfigGalaxyServerSectionsFidelity(t *testing.T) {
 			input: "[galaxy_server.prod]\nURL = https://x\n",
 			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
 				"prod": {"url": "https://x"},
+			}},
+		},
+	})
+}
+
+// TestParseAnsibleConfigInformationSeparatorTrim pins the trimming half of
+// isINISpace, which TestParseAnsibleConfigInlineSemicolonComment's separator
+// row leaves open: configparser strips the whitespace str.isspace names from a
+// line, a key and a value, U+001C through U+001F included. Each row puts the
+// separator where exactly one trim can remove it - around a header only the
+// line trim reaches, before the delimiter only the key trim, after it only the
+// value trim - so each trim is pinned by a row of its own. Every want is what
+// CPython 3.14's ConfigParser(inline_comment_prefixes=(';',)) returned.
+//
+// KILLING MUTATION, run and reverted, in parseAnsibleConfig (ansiblecfg.go) -
+// trim the line with strings.TrimSpace. Only the header row fails, the key and
+// value rows pass:
+//
+//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
+//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:
+//	ServerList: ServerTimeout: SignatureKeys:[]}}, want {GalaxyServers:map[]
+//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:https://x
+//	ServerList: ServerTimeout: SignatureKeys:[]}}
+//
+// KILLING MUTATION, run and reverted, in splitKeyValue (ansiblecfg.go) - trim
+// the key with strings.TrimSpace, and separately the value. Each fails only
+// its own row, with the same shape of output as above.
+func TestParseAnsibleConfigInformationSeparatorTrim(t *testing.T) {
+	t.Parallel()
+	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
+		{
+			name:  "an information separator is trimmed around a section header",
+			input: "\x1c[galaxy]\x1c\nserver = https://x",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+		{
+			name:  "an information separator is trimmed from a key",
+			input: "[galaxy]\nserver\x1c = https://x",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+		{
+			name:  "an information separator is trimmed from the start of a value",
+			input: "[galaxy]\nserver =\x1chttps://x",
+			want:  ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: "https://x"}},
+		},
+	})
+}
+
+// TestParseAnsibleConfigRefusedHeaderClosesSection pins what happens under a
+// line that opens like a section header but is not one: a header whose ';'
+// comment cut off its ']', and one never closed. configparser refuses such a
+// file outright, so there is no ansible reading to match; what matters is that
+// the keys below the line are not filed under the section above it. Otherwise
+// the dev url below becomes prod's url, and prod's token, which the same-file
+// pairing rule lets through, is sent to the dev host.
+//
+// The last row is the positive control: a line starting with '[' that is a
+// key line to configparser too keeps its section, so the reset is not simply
+// "any line starting with '['".
+//
+// KILLING MUTATION, run and reverted, in parseAnsibleConfig (ansiblecfg.go) -
+// delete the section = "" reset. Both refused-header rows fail:
+//
+//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[prod:map[token:t
+//	url:https://dev.example]] Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir:
+//	Server: ServerList: ServerTimeout: SignatureKeys:[]}}, want
+//	{GalaxyServers:map[prod:map[token:t url:https://prod.example]] Defaults:{CollectionsPath:
+//	RolesPath:} Galaxy:{CacheDir: Server: ServerList: ServerTimeout: SignatureKeys:[]}}
+func TestParseAnsibleConfigRefusedHeaderClosesSection(t *testing.T) {
+	t.Parallel()
+	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
+		{
+			name: "a header cut short by a comment closes the section before it",
+			input: "[galaxy_server.prod]\nurl = https://prod.example\ntoken = t\n" +
+				"[galaxy_server.dev ;scratch hub]\nurl = https://dev.example\n",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				"prod": {"url": "https://prod.example", "token": "t"},
+			}},
+		},
+		{
+			name:  "a header never closed closes the section before it",
+			input: "[galaxy_server.prod]\ntoken = t\n[galaxy_server.dev\nurl = https://dev.example\n",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				"prod": {"token": "t"},
+			}},
+		},
+		{
+			name:  "a key line starting with a bracket keeps its section",
+			input: "[galaxy_server.prod]\n[note = x\nurl = https://prod.example\n",
+			want: ansibleConfig{GalaxyServers: map[string]map[string]string{
+				"prod": {"[note": "x", "url": "https://prod.example"},
 			}},
 		},
 	})

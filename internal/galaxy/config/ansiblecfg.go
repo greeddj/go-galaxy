@@ -5,6 +5,8 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ansibleBOM is the leading UTF-8 byte order mark some ansible.cfg files
@@ -67,9 +69,11 @@ type ansibleConfig struct {
 
 // parseAnsibleConfig reads an ansible.cfg (INI-style) file and extracts the
 // handful of keys this tool cares about. It deliberately mirrors CPython's
-// configparser semantics as used by ansible: values are not unquoted and
-// inline comments are not stripped, since ansible.cfg is not TOML and we
-// aim for drop-in fidelity with how ansible itself reads it.
+// configparser as ansible constructs it, ConfigParser(inline_comment_prefixes=
+// (';',)), since ansible.cfg is not TOML and we aim for drop-in fidelity with
+// how ansible itself reads it: values are not unquoted, and the only inline
+// comment is the one stripInlineComment removes, so a '#' after a value stays
+// part of it.
 func parseAnsibleConfig(r io.Reader) (ansibleConfig, error) {
 	cfg := ansibleConfig{}
 	section := ""
@@ -83,10 +87,11 @@ func parseAnsibleConfig(r io.Reader) (ansibleConfig, error) {
 			first = false
 		}
 
-		t := strings.TrimSpace(line)
+		t := strings.TrimFunc(line, isINISpace)
 		if t == "" || isCommentLine(t) {
 			continue
 		}
+		t = stripInlineComment(t)
 
 		if name, ok := sectionName(t); ok {
 			section = name
@@ -95,6 +100,14 @@ func parseAnsibleConfig(r io.Reader) (ansibleConfig, error) {
 
 		if key, value, ok := splitKeyValue(t); ok {
 			assignAnsibleValue(&cfg, section, key, value)
+		} else if strings.HasPrefix(t, "[") {
+			// A line that opens like a header yet is neither a header nor a key
+			// line - one never closed, or one whose ';' comment cut off its ']'
+			// - is a line configparser refuses. Keeping the section it followed
+			// would file every key below it there, so a url written for one
+			// [galaxy_server.<id>] would land in another and be sent that
+			// server's token. Closing the section leaves those keys under none.
+			section = ""
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -107,6 +120,39 @@ func parseAnsibleConfig(r io.Reader) (ansibleConfig, error) {
 // accepts both '#' and ';' as comment markers.
 func isCommentLine(t string) bool {
 	return strings.HasPrefix(t, "#") || strings.HasPrefix(t, ";")
+}
+
+// stripInlineComment removes an inline comment from t, the way configparser
+// applies inline_comment_prefixes=(';',) to every line, section headers
+// included: the comment is the first ';' that follows whitespace, and it runs
+// to the end of the line, taking the whitespace before it along. A ';' glued
+// to the text before it is not a comment, so "token = abc;def" keeps its whole
+// value, exactly as ansible reads it.
+//
+// t must be a trimmed line isCommentLine does not match, which is what
+// parseAnsibleConfig passes: a ';' opening the line, configparser's other
+// inline case, is then a full-line comment already skipped, and the result is
+// never empty, since t's first rune is not whitespace.
+func stripInlineComment(t string) string {
+	for i, r := range t {
+		if r != ';' || i == 0 {
+			continue
+		}
+		if prev, _ := utf8.DecodeLastRuneInString(t[:i]); isINISpace(prev) {
+			return strings.TrimRightFunc(t[:i], isINISpace)
+		}
+	}
+	return t
+}
+
+// isINISpace reports whether r is whitespace as configparser judges it, where
+// both str.strip and the \s of its comment pattern follow Python's
+// str.isspace. That is unicode.IsSpace plus the four information separators
+// U+001C through U+001F, which Python counts as whitespace and Go does not;
+// using one predicate for trimming and for recognizing a comment keeps the
+// two in step, as they are in configparser.
+func isINISpace(r rune) bool {
+	return unicode.IsSpace(r) || (r >= '\x1c' && r <= '\x1f')
 }
 
 // sectionName reports whether t is a "[section]" header and, if so, returns
@@ -138,8 +184,8 @@ func splitKeyValue(t string) (string, string, bool) {
 		return "", "", false
 	}
 
-	key := strings.ToLower(strings.TrimSpace(t[:idx]))
-	value := strings.TrimSpace(t[idx+1:])
+	key := strings.ToLower(strings.TrimFunc(t[:idx], isINISpace))
+	value := strings.TrimFunc(t[idx+1:], isINISpace)
 	return key, value, key != ""
 }
 
