@@ -29,6 +29,16 @@ lockfile change misses by construction, because the key just changed.
 `go-galaxy hash` prints a deterministic `sha256:…` of the lockfile (or `requirements.yml`
 when no lockfile is present) - perfect as a CI cache key.
 
+**Upgrade note (after v1.2.3):** the lockfile is now written with a two-space
+indent instead of yaml's default four. The hash is computed over the file as
+`lock` writes it, so upgrading past v1.2.3 changes `go-galaxy hash` (and the
+metrics report's `lockfile_hash`) for every lockfile once, and the first CI run
+after it misses the cache. An existing four-space file still loads and still
+passes `--frozen` unchanged; the next plain `lock` rewrites it with the new
+indent, which shows as a whitespace-only diff. Both binaries read either
+layout, but they print different hashes for the same file, so jobs sharing a
+cache key must run the same release.
+
 ## Roles
 
 A `roles:` list in the same `requirements.yml` is installed by the same `install`,
@@ -55,8 +65,8 @@ holds a url source (a collection's or a role's) as `schema_version: 4`; a
 go-galaxy binary predating those features refuses such a file (exit `6`)
 rather than installing what it understands and silently skipping the rest;
 pin the binary version across the jobs that share the lockfile. A file
-without roles or url sources is byte-identical to what earlier versions
-wrote, so adding this version to such a pipeline changes no cache key.
+without roles or url sources keeps the schema its collections warrant, which
+every release reads.
 
 ## GitHub Actions
 

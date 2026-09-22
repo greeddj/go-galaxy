@@ -559,23 +559,23 @@ func TestLoadAcceptsBareServerListIDAsSource(t *testing.T) {
 // underneath them is upgraded or replaced.
 const canonicalLockfileGolden = `server: https://galaxy.ansible.com
 collections:
-    - name: ansible.netcommon
-      version: 7.2.1
-      source: https://galaxy.ansible.com
-      deps:
-        - a.first
-        - m.middle
-        - z.last
-    - name: ansible.posix
-      version: 2.0.0
-      source: ""
-    - name: community.general
-      version: 11.1.0
-      source: https://galaxy.ansible.com
-      sha256: 3b1f2c4d5e6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e
-      deps:
-        - ansible.netcommon
-        - ansible.posix
+  - name: ansible.netcommon
+    version: 7.2.1
+    source: https://galaxy.ansible.com
+    deps:
+      - a.first
+      - m.middle
+      - z.last
+  - name: ansible.posix
+    version: 2.0.0
+    source: ""
+  - name: community.general
+    version: 11.1.0
+    source: https://galaxy.ansible.com
+    sha256: 3b1f2c4d5e6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e
+    deps:
+      - ansible.netcommon
+      - ansible.posix
 schema_version: 1
 `
 
@@ -648,8 +648,8 @@ func TestSaveEmitsCanonicalBytes(t *testing.T) {
 	// canonicalization produces) confirmed to fail this test with:
 	//
 	//	Save wrote non-canonical bytes; first difference at line 3:
-	//	 got: "    - name: ansible.netcommon"
-	//	want: "    - name: ansible.posix"
+	//	 got: "  - name: ansible.netcommon"
+	//	want: "  - name: ansible.posix"
 	//	--- FAIL: TestSaveEmitsCanonicalBytes (0.01s)
 	if got := string(data); got != canonicalLockfileGolden {
 		line, gotLine, wantLine := firstLineDifference(got, canonicalLockfileGolden)

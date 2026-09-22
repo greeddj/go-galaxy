@@ -714,8 +714,11 @@ collections:
 schema_version: 1
 ```
 
-Written canonically - collections sorted by name, each dependency list sorted -
-and atomically, so its hash is stable and `go-galaxy hash` is deterministic.
+Written canonically - two-space indent, collections sorted by name, each
+dependency list sorted - and atomically, so its hash is stable and
+`go-galaxy hash` is deterministic. The hash is the SHA256 of exactly those
+bytes, so the layout is part of the contract: a change to it changes every
+lockfile's hash.
 
 `server` is provenance rather than a source of truth: a source-less entry takes
 its source from the consuming run's own configuration, not from this field. It
@@ -750,12 +753,12 @@ It carries no `sha256` because the artifact is rebuilt from the commit and the
 gzip bytes of a rebuild depend on the toolchain; a digest over them would fail
 a frozen install for nothing. A file holding at least one git entry is written
 as `schema_version: 2` and a file holding none stays at `1`, decided from the
-entries alone, so a project without git sources keeps producing a byte-identical
-lockfile and an older binary meeting a git entry refuses the file loudly instead
-of reading its repository URL as a Galaxy server. Under `--frozen` a git root
-is checked against the entries locked from its repository under its subdir
-(the root's own directory or an immediate child): zero such entries, or a
-different ref, is a mismatch.
+entries alone, so a project without git sources keeps producing a lockfile
+every release reads, and an older binary meeting a git entry refuses the file
+loudly instead of reading its repository URL as a Galaxy server. Under
+`--frozen` a git root is checked against the entries locked from its
+repository under its subdir (the root's own directory or an immediate child):
+zero such entries, or a different ref, is a mismatch.
 
 A url entry is the opposite case and its `sha256` is required:
 
@@ -814,12 +817,12 @@ git entry has none. Roles are sorted by name and each `deps` list sorted, like
 the collections. A file holding at least one role is `schema_version: 3`, one
 holding a git entry and no role stays `2`, one with neither stays `1`, decided
 from the entries alone, so a project without roles keeps producing a
-byte-identical lockfile and an older binary meeting a role refuses the file
-rather than installing the collections and silently skipping the roles. Every
-role field is re-parsed on load rather than trusted - the repository through
-the git URL grammar, the ref through the ref grammar, the commit as forty hex
-digits, the names through the role alphabets - since a lockfile is repository
-content. A url role's entry is `type: url` with the tarball URL as its
+lockfile every release reads, and an older binary meeting a role refuses the
+file rather than installing the collections and silently skipping the roles.
+Every role field is re-parsed on load rather than trusted - the repository
+through the git URL grammar, the ref through the ref grammar, the commit as
+forty hex digits, the names through the role alphabets - since a lockfile is
+repository content. A url role's entry is `type: url` with the tarball URL as its
 source, the origin bytes' `sha256` as its pin (required, where a git or
 Galaxy role's is refused), no ref, commit, galaxy or repository, and the
 version as the label asked for or the sha's first twelve hex digits; a file

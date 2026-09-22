@@ -11,15 +11,16 @@
 // exactly when a file carries at least one role; schema 4 admits the url
 // entry shape - a collection or role pinned to a tarball URL by its sha256 -
 // and is written exactly when a file carries one. canonicalize decides among
-// them from the entries alone, so a project with no git source and no role
-// keeps producing a schema-1 file that is byte-identical to what it produced
-// before, and a project that drops its last git source, role or url source
-// goes back on its next lock. An older binary reading a newer file refuses
-// it loudly instead of installing a git or url entry's source as if it were
-// a Galaxy server, or ignoring a roles list it does not know.
+// them from the entries alone, so a project with no git source, role or url
+// source keeps producing a schema-1 file that every release reads, and a
+// project that drops its last git source, role or url source goes back on
+// its next lock. An older binary reading a newer file refuses it loudly
+// instead of installing a git or url entry's source as if it were a Galaxy
+// server, or ignoring a roles list it does not know.
 package lockfile
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -132,8 +133,7 @@ type File struct {
 	Server      string  `yaml:"server,omitempty"`
 	Collections []Entry `yaml:"collections"`
 	// Roles is every role the run installs, pinned to its commit; absent
-	// from a file without roles, so such a file is byte-identical to one
-	// written before roles existed.
+	// from a file without roles, so such a file carries no roles key at all.
 	Roles         []RoleEntry `yaml:"roles,omitempty"`
 	SchemaVersion int         `yaml:"schema_version"`
 }
@@ -203,7 +203,7 @@ func Save(path string, f *File) error {
 	if f == nil {
 		return errNilFile
 	}
-	data, err := yaml.Marshal(f.canonicalClone())
+	data, err := marshal(f.canonicalClone())
 	if err != nil {
 		return err
 	}
@@ -213,12 +213,33 @@ func Save(path string, f *File) error {
 // Hash returns a stable SHA256 hex of the canonical lockfile bytes.
 func (f *File) Hash() (string, error) {
 	clone := f.canonicalClone()
-	data, err := yaml.Marshal(clone)
+	data, err := marshal(clone)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// lockfileIndent is the indent width Save writes and Hash digests; yaml's own
+// default is four.
+const lockfileIndent = 2
+
+// marshal renders f as the one byte sequence both Save and Hash use. Sharing
+// it is what keeps Hash the SHA256 of the file Save wrote, so the indent is
+// part of the contract `go-galaxy hash` prints: changing it changes every
+// CI cache key built on a lockfile.
+func marshal(f *File) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(lockfileIndent)
+	if err := enc.Encode(f); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // canonicalClone returns a canonicalized deep copy of f. Only the slices that

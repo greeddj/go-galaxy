@@ -36,9 +36,8 @@ func gitRoleEntry() RoleEntry {
 }
 
 // TestRolesSchemaFollowsTheEntries pins that a file with a role is written as
-// schema 3 and round-trips, that removing its last role takes it back to the
-// schema its collections warrant, and that a file without roles stays
-// byte-identical to one written before roles existed.
+// schema 3 and round-trips in canonical order, with no sha256 on a role entry;
+// TestRolesSchemaDropsBackWithoutRoles covers removing the last role.
 func TestRolesSchemaFollowsTheEntries(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), DefaultName)

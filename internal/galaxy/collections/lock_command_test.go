@@ -316,9 +316,9 @@ func TestLockFrozenPassesOnAnUpToDateLockfile(t *testing.T) {
 //	lock_command_test.go:371: frozen Lock rewrote the lockfile on drift:
 //	server: http://127.0.0.1:PORT
 //	collections:
-//	    - name: acme.extra
-//	      version: 1.0.0
-//	      ...
+//	  - name: acme.extra
+//	    version: 1.0.0
+//	    ...
 //	--- FAIL: TestLockFrozenFailsOnDrift (0.05s)
 //
 // which is what proves the byte-identity assertion is load-bearing on its
@@ -852,10 +852,10 @@ func TestLockDryRunWritesNoLockfileAndReportsAdds(t *testing.T) {
 //	lock_command_test.go:897: dry run rewrote the lockfile:
 //	server: http://127.0.0.1:PORT
 //	collections:
-//	    - name: acme.widgets
-//	      version: 1.0.0
-//	      source: http://127.0.0.1:PORT
-//	      sha256: c101ba4cb889e4daaf158fdf58276ac2aa15d109e2508d602207d63c3317ae15
+//	  - name: acme.widgets
+//	    version: 1.0.0
+//	    source: http://127.0.0.1:PORT
+//	    sha256: c101ba4cb889e4daaf158fdf58276ac2aa15d109e2508d602207d63c3317ae15
 //	schema_version: 1
 func TestLockDryRunReportsUpdateAndRemoval(t *testing.T) {
 	t.Parallel()
