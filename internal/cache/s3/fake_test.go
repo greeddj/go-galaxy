@@ -69,13 +69,24 @@ type fakeS3 struct {
 	// headTokenSwaps is keyed by object key, armed via raceTokenOnNextHead:
 	// the next HEAD for that key rewrites the stored token first, as if another
 	// writer's PUT landed between this call's write and its follow-up HEAD.
-	headTokenSwaps    map[string]string
-	failDeleteObjects *deleteObjectsFailure
-	lastDeleteHeaders http.Header
-	bucket            string
-	lastDeleteReq     deleteRequest
-	deleteDelay       time.Duration
-	mu                sync.Mutex
+	headTokenSwaps map[string]string
+	// listResume maps each continuation token listPage issued to the last key
+	// of the page it ended, which the next page starts after.
+	listResume map[string]string
+	// listTokensIssued and listTokensReceived record, in order, the tokens
+	// listPage issued and the token of each request it answered ("" for none);
+	// a request a failNext rule or writeOversizedList answers is not recorded.
+	listTokensIssued   []string
+	listTokensReceived []string
+	failDeleteObjects  *deleteObjectsFailure
+	lastDeleteHeaders  http.Header
+	bucket             string
+	lastDeleteReq      deleteRequest
+	deleteDelay        time.Duration
+	// listPageSize caps the keys handleList returns per page, set through
+	// setListPageSize; zero answers every listing in a single page.
+	listPageSize int
+	mu           sync.Mutex
 	// etagSeq numbers stored versions so no two writes share an entity tag.
 	etagSeq           uint64
 	ignoreIfNoneMatch bool
@@ -89,7 +100,10 @@ type fakeS3 struct {
 	// suppressETag simulates a backend that names no version on a read,
 	// leaving nothing to swap against; unlike ignoreIfMatch it refuses the
 	// swap honestly rather than accepting it without arbitration.
-	suppressETag          bool
+	suppressETag bool
+	// listOmitNextToken makes a truncated page carry no NextContinuationToken,
+	// the shape of a server that says more remain yet names no way to them.
+	listOmitNextToken     bool
 	oversizedList         bool
 	oversizedDeleteResult bool
 }
@@ -219,9 +233,9 @@ func (f *fakeS3) handleBucket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleList renders one ListObjectsV2 page for keys under the requested prefix
-// (IsTruncated is always false: pagination is not simulated) unless a failNext
-// rule on bucketListKey fires first, or defers to writeOversizedList if armed.
+// handleList renders one ListObjectsV2 page of the keys under the requested
+// prefix unless a failNext rule on bucketListKey fires first, or defers to
+// writeOversizedList if armed; listPage decides the page and its token.
 func (f *fakeS3) handleList(w http.ResponseWriter, r *http.Request) {
 	f.countRequest(bucketListKey, http.MethodGet)
 	if status, body, fail := f.shouldFail(bucketListKey, http.MethodGet); fail {
@@ -234,23 +248,19 @@ func (f *fakeS3) handleList(w http.ResponseWriter, r *http.Request) {
 
 	f.mu.Lock()
 	oversized := f.oversizedList
+	omitNext := f.listOmitNextToken
 	f.mu.Unlock()
 	if oversized {
 		f.writeOversizedList(w)
 		return
 	}
 
-	prefix := r.URL.Query().Get("prefix")
-
-	f.mu.Lock()
-	keys := make([]string, 0, len(f.objects))
-	for key := range f.objects {
-		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
-		}
+	query := r.URL.Query()
+	keys, next, ok := f.listPage(query.Get("prefix"), query.Get("continuation-token"))
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		return
 	}
-	f.mu.Unlock()
-	slices.Sort(keys)
 
 	var body strings.Builder
 	body.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
@@ -260,12 +270,74 @@ func (f *fakeS3) handleList(w http.ResponseWriter, r *http.Request) {
 		body.WriteString(key)
 		body.WriteString("</Key></Contents>")
 	}
-	body.WriteString("<IsTruncated>false</IsTruncated>")
+	if next != "" {
+		body.WriteString("<IsTruncated>true</IsTruncated>")
+		if !omitNext {
+			body.WriteString("<NextContinuationToken>" + next + "</NextContinuationToken>")
+		}
+	} else {
+		body.WriteString("<IsTruncated>false</IsTruncated>")
+	}
 	body.WriteString("</ListBucketResult>")
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, body.String())
+}
+
+// listPage returns the sorted keys under prefix after token's resume point, at
+// most listPageSize of them, and a fresh opaque token when more remain; it
+// refuses a token it never issued, so a client cannot resume by guessing one.
+func (f *fakeS3) listPage(prefix, token string) ([]string, string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listTokensReceived = append(f.listTokensReceived, token)
+	after, issued := f.listResume[token]
+	if token != "" && !issued {
+		return nil, "", false
+	}
+	keys := make([]string, 0, len(f.objects))
+	for key := range f.objects {
+		if strings.HasPrefix(key, prefix) && key > after {
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	if f.listPageSize == 0 || len(keys) <= f.listPageSize {
+		return keys, "", true
+	}
+	keys = keys[:f.listPageSize]
+	next := fmt.Sprintf("opaque-token-%d", len(f.listTokensIssued)+1)
+	if f.listResume == nil {
+		f.listResume = make(map[string]string)
+	}
+	f.listResume[next] = keys[len(keys)-1]
+	f.listTokensIssued = append(f.listTokensIssued, next)
+	return keys, next, true
+}
+
+// setListPageSize makes every later listing answer at most size keys per page,
+// under mu, since the server is already running when a test arms it.
+func (f *fakeS3) setListPageSize(size int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listPageSize = size
+}
+
+// setListOmitNextToken makes every later truncated page leave out its
+// NextContinuationToken while still reporting IsTruncated true.
+func (f *fakeS3) setListOmitNextToken(omit bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listOmitNextToken = omit
+}
+
+// listContinuationTokens returns the tokens listPage issued and the token of
+// each request it answered, both in request order.
+func (f *fakeS3) listContinuationTokens() ([]string, []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.listTokensIssued), slices.Clone(f.listTokensReceived)
 }
 
 // writeOversizedList streams a body past helpers.S3ListMaxSize from one

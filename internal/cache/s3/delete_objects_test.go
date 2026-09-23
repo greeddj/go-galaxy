@@ -102,6 +102,40 @@ func TestDeleteObjectsChunksAtLimit(t *testing.T) {
 	}
 }
 
+// TestDeleteAllUnderPrefixFollowsContinuationToken pins that
+// deleteAllUnderPrefix deletes every page of a truncated listing, one batch
+// per page, and leaves an object outside the prefix in place.
+func TestDeleteAllUnderPrefixFollowsContinuationToken(t *testing.T) {
+	t.Parallel()
+	b, fake := newTestBackendAndFake(t)
+	ctx, cancel := context.WithTimeout(t.Context(), paginationTestTimeout)
+	defer cancel()
+
+	if err := b.Open(ctx); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	keys := seedPaginationKeys(ctx, t, b)
+	outside := b.key(statePrefix, "keep.json")
+	seedDeleteTestObjects(ctx, t, b, []string{outside})
+	fake.setListPageSize(2)
+
+	if err := b.client.deleteAllUnderPrefix(ctx, b.key(artifactsPrefix)); err != nil {
+		t.Fatalf("deleteAllUnderPrefix: %v", err)
+	}
+
+	if got := fake.requestCount(bucketListKey, http.MethodGet); got != 3 {
+		t.Fatalf("expected 3 list requests for 5 keys at 2 per page, got %d", got)
+	}
+	if got := fake.requestCount(bucketDeleteObjectsKey, http.MethodPost); got != 3 {
+		t.Fatalf("expected 1 DeleteObjects batch per listing page, 3 in all, got %d", got)
+	}
+	assertContinuationTokensEchoed(t, fake, 2)
+	for _, key := range keys {
+		assertObjectAbsent(ctx, t, b, key)
+	}
+	assertObjectPresent(ctx, t, b, outside)
+}
+
 // TestClearFilesSurfacesPerKeyError pins that a per-key <Error> inside a 200
 // DeleteResult fails ClearFiles with an error naming the key and code.
 func TestClearFilesSurfacesPerKeyError(t *testing.T) {

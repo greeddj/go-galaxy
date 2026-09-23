@@ -550,7 +550,13 @@ transport that strips cancellation (`answeredDespiteCancelTransport`) belongs
 only on a fixture that answers every request: on one that hangs a request on
 purpose, the caller's cancellation is the only thing that ends it. `fakeS3`
 never verifies SigV4, so signing correctness rests on
-`TestRequestURLSignedPathMatchesSentPath` and `TestAwsURIEncodeMatchesS3`.
+`TestRequestURLSignedPathMatchesSentPath` and `TestAwsURIEncodeMatchesS3`. It
+answers a listing in one page unless a test sets a page size with
+`setListPageSize`; each truncated page then carries a fresh opaque continuation
+token, and a token the fake never issued is answered `400`, so a client that
+resumes any other way than by sending the token back fails.
+`setListOmitNextToken` leaves the token out of a truncated page, a reply both
+listing loops must stop at rather than list again from the first page.
 
 There is exactly one `testdata` directory, under `internal/galaxy/signature`,
 holding keyrings and a family of detached signatures covering the valid,
