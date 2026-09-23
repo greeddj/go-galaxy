@@ -14,7 +14,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Install returns the CLI command that installs collections from requirements.
+// Install returns the CLI command that installs the collections and roles of
+// the requirements file.
 func Install() *cli.Command {
 	flags := cliflags.CollectionFlags()
 	flags = append(flags, cliflags.SignatureFlags()...)
@@ -23,7 +24,7 @@ func Install() *cli.Command {
 	return &cli.Command{
 		Name:    "install",
 		Aliases: []string{"i"},
-		Usage:   "Install collections from requirements file",
+		Usage:   "Install collections and roles from requirements file",
 		Flags:   flags,
 		Action: func(ctx context.Context, c *cli.Command) error {
 			return runCollectionCommand(ctx, c, collections.Start)
