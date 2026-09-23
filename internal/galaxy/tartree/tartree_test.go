@@ -25,10 +25,21 @@ type fixtureEntry struct {
 	dir  bool
 }
 
-func file(name, body string) fixtureEntry       { return fixtureEntry{name: name, body: body, mode: 0o644} }
-func executable(name, body string) fixtureEntry { return fixtureEntry{name: name, body: body, mode: 0o755} }
-func dir(name string) fixtureEntry              { return fixtureEntry{name: name, dir: true, mode: 0o755} }
-func symlink(name, target string) fixtureEntry  { return fixtureEntry{name: name, link: target, mode: 0o777} }
+func file(name, body string) fixtureEntry {
+	return fixtureEntry{name: name, body: body, mode: 0o644}
+}
+
+func executable(name, body string) fixtureEntry {
+	return fixtureEntry{name: name, body: body, mode: 0o755}
+}
+
+func dir(name string) fixtureEntry {
+	return fixtureEntry{name: name, dir: true, mode: 0o755}
+}
+
+func symlink(name, target string) fixtureEntry {
+	return fixtureEntry{name: name, link: target, mode: 0o777}
+}
 
 func tarHeader(e fixtureEntry) *tar.Header {
 	hdr := &tar.Header{Name: e.name, Mode: e.mode, ModTime: time.Unix(1700000000, 0)}

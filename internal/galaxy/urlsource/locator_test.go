@@ -65,18 +65,18 @@ func TestLocatorRoundTrip(t *testing.T) {
 func TestParseLocatorRefusals(t *testing.T) {
 	t.Parallel()
 	refused := []string{
-		"https://h/x.tar.gz",                                  // no prefix
-		"url+https://h/x.tar.gz",                              // no "#"
-		"url+HTTPS://h/x.tar.gz#",                             // url not canonical
-		"url+https://h:443/x.tar.gz#",                         // url not canonical (default port)
-		"url+https://h/x.tar.gz#" + testSHA,                   // pin missing its sha256: tag
-		"url+https://h/x.tar.gz#sha256:abc",                   // short digest
+		"https://h/x.tar.gz",                                        // no prefix
+		"url+https://h/x.tar.gz",                                    // no "#"
+		"url+HTTPS://h/x.tar.gz#",                                   // url not canonical
+		"url+https://h:443/x.tar.gz#",                               // url not canonical (default port)
+		"url+https://h/x.tar.gz#" + testSHA,                         // pin missing its sha256: tag
+		"url+https://h/x.tar.gz#sha256:abc",                         // short digest
 		"url+https://h/x.tar.gz#sha256:" + strings.ToUpper(testSHA), // uppercase digest
-		"url+https://h/x.tar.gz#md5:" + testSHA,               // wrong tag
-		"url+https://u:p@h/x.tar.gz#sha256:" + testSHA,        // credential in url
-		"url+https://h#sha256:" + testSHA,                     // origin-only url
-		"url+https://h/a#b#sha256:" + testSHA,                 // "#" inside the url part
-		"url+ftp://h/x.tar.gz#",                               // refused scheme
+		"url+https://h/x.tar.gz#md5:" + testSHA,                     // wrong tag
+		"url+https://u:p@h/x.tar.gz#sha256:" + testSHA,              // credential in url
+		"url+https://h#sha256:" + testSHA,                           // origin-only url
+		"url+https://h/a#b#sha256:" + testSHA,                       // "#" inside the url part
+		"url+ftp://h/x.tar.gz#",                                     // refused scheme
 	}
 	for _, raw := range refused {
 		if _, err := ParseLocator(raw); !errors.Is(err, helpers.ErrInvalidURLLocator) {
