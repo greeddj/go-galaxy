@@ -274,8 +274,8 @@ two-flag set of their own, listed under
 - `--offline` (`$GO_GALAXY_OFFLINE`) - fail on any network access (cached state only). A git source
   replays its recorded pin and its cached artifact, or fails. A role does the same: a git role needs
   its recorded pin, a Galaxy role its recorded v1 answer and the git pin beneath it, a url role its
-  recorded pin, and each needs the cached artifact, else the run fails with the network code (`4`)
-  before anything installs.
+  recorded pin under the `version:` label it asks for, and each needs the cached artifact, else the
+  run fails with the network code (`4`) before anything installs.
   Under `--frozen` the pins come from the lockfile instead, and a role whose artifact is not cached
   fails on its own (see `--frozen` below). The S3 cache is reached over the network, so `--offline`
   together with `--s3-bucket` (either one from its variable included) is refused as a usage error

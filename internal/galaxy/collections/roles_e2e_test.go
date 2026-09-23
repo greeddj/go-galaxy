@@ -157,6 +157,26 @@ func TestRoleRefShapes(t *testing.T) {
 	}
 }
 
+// TestRoleRefRespelledOntoSameCommit pins a ref respelled onto the commit
+// already installed: the tree is kept, .galaxy_install_info names the new
+// version, and the re-tallied marker lets the next run skip without drift.
+func TestRoleRefRespelledOntoSameCommit(t *testing.T) {
+	t.Parallel()
+	f := newRoleFixture(t)
+	f.writeRequirements(t, "roles:\n  - src: git+"+roleBaseURL+"\n    version: main\n    name: base\n")
+	f.mustInstall(t)
+	f.writeRequirements(t, "roles:\n  - src: git+"+roleBaseURL+"\n    version: v1.0.0\n    name: base\n")
+	f.mustInstall(t)
+	assertFileContains(t, filepath.Join(f.rolePath("base"), "meta", ".galaxy_install_info"), "version: v1.0.0")
+	if got := loadInstalledRole(t, f, "base").Version; got != "v1.0.0" {
+		t.Fatalf("recorded version = %q, want v1.0.0", got)
+	}
+	f.mustInstall(t)
+	if f.printer.hasWarnContaining("no longer matches its extract marker") {
+		t.Fatalf("the rewritten install info read as drift: %q", f.printer.warns)
+	}
+}
+
 // TestRoleNoDepsStopsTheWalk proves --no-deps installs the requirement and
 // nothing its meta asks for.
 func TestRoleNoDepsStopsTheWalk(t *testing.T) {

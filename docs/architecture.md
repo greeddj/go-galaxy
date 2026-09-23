@@ -834,7 +834,9 @@ top-level directory carrying `meta/main.yml` - anything else is refused),
 `rolebuild` repacks it into the canonical artifact, and the pin is the
 origin bytes' sha256, keyed `url\n<url>` in the same pin bucket, with the
 locator `url+<url>#sha256:<hex>` and a version label defaulting to the
-sha's first twelve hex digits.
+sha's first twelve hex digits. The label is not in the key, so a `version:`
+naming another label misses the pin, as a changed ref misses a git pin: the
+tarball is downloaded again and the pin rewritten under the new label.
 
 **Install.** Roles install after the collections, and only when every
 collection level went through, on the `--workers` pool and flat - each role is
@@ -849,13 +851,17 @@ left by discovery, else a cache hit, else a fetch by the pinned commit that
 refuses a remote serving another), then extraction through the extracted
 store into `<roles_path>/<name>/` with `meta/.galaxy_install_info` written
 through the root ahead of the marker so the marker's tally counts it, then the
-`installed_roles` record. `meta/.galaxy_install_info` and the marker are each
-removed before they are written, never truncated in place: once the tree is
-materialized, any file in a role directory can be a read-only hard link into
-the shared extracted store, and writing through it would rewrite the store's
-bytes under their digest for every install sharing them. The record's
-`InstallPath` is absolute, whatever spelling `--roles-path` had, because
-cleanup finds a record by the path it scans.
+`installed_roles` record. A tree whose marker still holds for the artifact is
+not unpacked again, but its `meta/.galaxy_install_info` is still rewritten and
+the marker re-tallied, so a new version over the same bytes (a ref respelled
+onto the same commit, a url role's changed label) reaches the file ansible
+reads. `meta/.galaxy_install_info` and the marker are each removed before they
+are written, never truncated in place: once the tree is materialized, any file
+in a role directory can be a read-only hard link into the shared extracted
+store, and writing through it would rewrite the store's bytes under their
+digest for every install sharing them. The record's `InstallPath` is absolute,
+whatever spelling `--roles-path` had, because cleanup finds a record by the
+path it scans.
 
 **Lock and frozen.** `lock` resolves roles in the same run and renders each as
 a `RoleEntry` pinned by commit, or a url role by its origin bytes' sha256;

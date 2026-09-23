@@ -744,8 +744,8 @@ flowchart TD
     F12 -->|"no"| F14
     F5 -->|"url"| F20{"url pin recorded and readable?<br/>always under --offline, else<br/>not under --no-cache or --refresh"}
     F20 -->|"yes"| F26["replay the pin: sha256,<br/>version label, artifact cached"]
-    F26 -->|"pin fails validation, or<br/>version: differs from its label"| FX2
-    F26 -->|"artifact not cached"| F21
+    F26 -->|"pin fails validation"| FX2
+    F26 -->|"version: differs from its label,<br/>or artifact not cached"| F21
     F20 -->|"no"| F21{"--offline?"}
     F21 -->|"yes"| FX4
     F21 -->|"no"| F22["download the tarball, repack it as one role"]
@@ -803,7 +803,9 @@ flowchart TD
     I11c --> I12
     I12 -->|"recorded sha256 malformed"| IF
     I12 -->|"settled"| I13{"extract marker valid for this sha256?"}
-    I13 -->|"yes"| I15["record the role install in the snapshot,<br/>print an Installed line"]
+    I13 -->|"yes"| I17["keep the tree, rewrite<br/>.galaxy_install_info,<br/>re-tally the marker"]
+    I17 -->|"failed"| IF
+    I17 -->|"rewritten"| I15["record the role install in the snapshot,<br/>print an Installed line"]
     I13 -->|"no"| I14["reset the directory, unpack<br/>through the extracted store<br/>unless --no-cache, write<br/>.galaxy_install_info<br/>and the marker"]
     I14 -->|"failed"| IF
     I14 -->|"extracted"| I15

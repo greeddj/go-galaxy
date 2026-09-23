@@ -45,7 +45,7 @@ func newURLRoleRequest(req requirements.RoleRequirement) (urlRoleRequest, error)
 }
 
 // resolveURLRole resolves a url role as expandURLRoot does a url collection:
-// replay the pin while its artifact is cached, unless --refresh without
+// replay the pin while its label and artifact match, unless --refresh without
 // --offline forces a download; refuse a miss under --offline.
 func resolveURLRole(ctx context.Context, deps collectionDeps, req requirements.RoleRequirement) (rolePin, error) {
 	ureq, err := newURLRoleRequest(req)
@@ -67,8 +67,8 @@ func resolveURLRole(ctx context.Context, deps collectionDeps, req requirements.R
 }
 
 // replayURLRolePin is replayRolePin for a url pin: re-validated, and
-// replayed only while its repacked artifact is stored; the zero rolePin
-// reports "not replayable".
+// replayed only under the label asked for while its repacked artifact is
+// stored; the zero rolePin reports "not replayable".
 func replayURLRolePin(ctx context.Context, deps collectionDeps, ureq urlRoleRequest, pin store.RolePinEntry) (rolePin, error) {
 	if !helpers.IsSHA256Hex(pin.SHA256) {
 		return rolePin{}, fmt.Errorf("%w: recorded role pin for %s names sha256 %q",
@@ -82,9 +82,8 @@ func replayURLRolePin(ctx context.Context, deps collectionDeps, ureq urlRoleRequ
 		return rolePin{}, fmt.Errorf("%w: recorded role pin for %s names url %s",
 			helpers.ErrInvalidURLLocator, ureq.display, helpers.URLForMessage(pin.URL))
 	}
-	if version := urlRoleVersion(ureq.requested, pin.SHA256); version != pin.Version {
-		return rolePin{}, fmt.Errorf("%w: role %s locked as version %q, requirements ask for %q",
-			helpers.ErrInvalidRoleVersion, ureq.name, pin.Version, version)
+	if urlRoleVersion(ureq.requested, pin.SHA256) != pin.Version {
+		return rolePin{}, nil
 	}
 	locator := urlsource.Locator{URL: ureq.rawURL, SHA256: pin.SHA256}.String()
 	if !roleArtifactCached(ctx, deps, locator, ureq.name, pin.Version) {

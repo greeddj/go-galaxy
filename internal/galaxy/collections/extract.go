@@ -29,9 +29,9 @@ func extractCollection(
 	return extractTree(ctx, col.Namespace+"/"+col.Name, tarPath, target, runtime, extractStore, artifactSHA, artifactSHAComputed, nil)
 }
 
-// extractTree resets, unpacks and marks a collection or role tree.
-// postExtract runs before the marker is written, so what it adds (a role's
-// meta/.galaxy_install_info) is in the tally rather than read as drift.
+// extractTree resets, unpacks and marks a collection or role tree. postExtract
+// runs before the marker is written, also over a tree the marker still holds,
+// so what it adds (a role's .galaxy_install_info) is tallied, not read as drift.
 func extractTree(
 	ctx context.Context,
 	display string,
@@ -59,7 +59,10 @@ func extractTree(
 	}
 	if verifyExtractMarker(runtime.Output, target, artifactSHA) {
 		runtime.Output.Printf("Skipping extraction, already done: %s", display)
-		return nil
+		if postExtract == nil {
+			return nil
+		}
+		return markExtraction(target, artifactSHA, postExtract)
 	}
 
 	if err := resetExtractionTarget(target); err != nil {
@@ -69,12 +72,17 @@ func extractTree(
 	if err := unpack(ctx, tarPath, target.path, extractStore, artifactSHA, artifactSHAComputed); err != nil {
 		return err
 	}
+	return markExtraction(target, artifactSHA, postExtract)
+}
+
+// markExtraction runs postExtract, when there is one, then records the marker
+// over the tree it leaves.
+func markExtraction(target installTarget, artifactSHA string, postExtract func(installTarget) error) error {
 	if postExtract != nil {
 		if err := postExtract(target); err != nil {
 			return err
 		}
 	}
-
 	return writeExtractMarker(target, artifactSHA)
 }
 

@@ -130,11 +130,12 @@ the old artifact. The snapshot records a url pin per URL - the sha256 the
 URL served and the collection identity and dependencies its MANIFEST.json
 declared - which is what a rerun replays without contacting the origin (a
 url role's pin lives in `role_pins`, keyed `url\n<url>`, and additionally
-records the version label). `--refresh` re-downloads the URL, since there is
-no cheaper probe than the download itself: unchanged bytes keep the pin and
-the artifact key, changed bytes become a new pin. Everything else - the
-`--offline` replay, the `--no-cache` handoff, the warmed entry - behaves as
-it does for a git source.
+records the version label; a `version:` naming another label misses the pin,
+so the URL is downloaded again and the pin rewritten under the new label).
+`--refresh` re-downloads the URL, since there is no cheaper probe than the
+download itself: unchanged bytes keep the pin and the artifact key, changed
+bytes become a new pin. Everything else - the `--offline` replay, the
+`--no-cache` handoff, the warmed entry - behaves as it does for a git source.
 
 A role lives in the same caches by the same rules, with a role-shaped key. Its
 artifact - the deterministic `tar.gz` built from the repository tree - is
@@ -160,10 +161,11 @@ keys: a git pin `<url>\n<ref>\n` and a Galaxy pin
 `url\n<url>` exactly one, since a canonical URL carries none. A new kind of
 pin, or a change to any of these shapes, must keep them apart, or two kinds
 of pin can overwrite each other. A pin is invalidated by editing its own line
-(a new key), by `--refresh` - which re-asks the v1 API and re-advertises the
-ref, keeping the pin when the commit is unchanged and the artifact still
-cached - and by `--clear-cache`, which drops every role pin but leaves the
-installed-roles records alone; never by age. `--offline` needs a recorded pin
+(a new key, or for a url pin a new `version:` label), by `--refresh` - which
+re-asks the v1 API and re-advertises the ref, keeping the pin when the commit
+is unchanged and the artifact still cached - and by `--clear-cache`, which
+drops every role pin but leaves the installed-roles records alone; never by
+age. `--offline` needs a recorded pin
 and the cached artifact, else exits `4` before anything installs; under
 `--frozen` the pins come from the lockfile instead, so an artifact missing
 under `--offline` fails that role alone and the run exits `5`. `--no-cache`
