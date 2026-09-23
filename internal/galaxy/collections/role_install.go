@@ -79,8 +79,8 @@ func absoluteOrAsIs(p string) string {
 }
 
 // installRoles installs every resolved role on the Workers-bounded pool,
-// flat, since each role is its own directory; failures is the recorder the
-// collection levels fed, so one summary covers the run.
+// flat, since each role is its own directory, recording each failure as a
+// role's so the run's headline counts it apart from the collections'.
 func installRoles(ctx context.Context, deps installDeps, res roleResolution, failures *failureRecorder) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(deps.cfg.Workers, 1))
@@ -96,7 +96,7 @@ func installRoles(ctx context.Context, deps installDeps, res roleResolution, fai
 			if err := installRole(ctx, deps, role); err != nil {
 				deps.runtime.Output.ErrorVersionf(role.Version, fmt.Sprintf("error: %s", err),
 					"Failed: role %s", role.Name)
-				failures.record(err)
+				failures.recordRole(err)
 			} else {
 				deps.runtime.Output.OkVersionf(role.Version, "Installed: role %s", role.Name)
 			}

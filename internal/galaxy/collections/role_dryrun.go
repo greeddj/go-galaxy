@@ -69,7 +69,7 @@ func classifyRolesDryRun(
 	wg.Wait()
 
 	var failures failureRecorder
-	wouldAct, settled := reportDryRunResults(runtime, verbs, keys, results, cfg, &failures)
+	wouldAct, settled := reportDryRunResults(runtime, verbs, keys, results, cfg, failures.recordRole)
 	summary := failures.summary()
 	runtime.Output.PersistentPrintf(
 		"Dry run: %d %s, %d %s, %d would fail",

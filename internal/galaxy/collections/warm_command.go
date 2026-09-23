@@ -104,7 +104,7 @@ func warmRoles(ctx context.Context, cfg *config.Config, runtime *infra.Infra, st
 			if err := warmRole(ctx, depsCtx, role); err != nil {
 				runtime.Output.ErrorVersionf(role.Version, fmt.Sprintf("error: %s", err),
 					"Failed: role %s", role.Name)
-				failures.record(err)
+				failures.recordRole(err)
 			} else {
 				runtime.Output.OkVersionf(role.Version, "Cached: role %s", role.Name)
 			}

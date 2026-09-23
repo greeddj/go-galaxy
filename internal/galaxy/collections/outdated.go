@@ -32,6 +32,9 @@ type outdatedEntry struct {
 	Locked string
 	Latest string
 	Newer  bool
+	// Role marks an entry of the roles list, whose failure the headline
+	// counts apart from the collections'.
+	Role bool
 }
 
 // Outdated compares what the project runs (the lockfile, else the installed
@@ -67,7 +70,11 @@ func Outdated(ctx context.Context, cfg *config.Config, runtime *infra.Infra) err
 
 	var failures failureRecorder
 	for _, r := range results {
-		if r.Err != nil {
+		switch {
+		case r.Err == nil:
+		case r.Role:
+			failures.recordRole(r.Err)
+		default:
 			failures.record(r.Err)
 		}
 	}

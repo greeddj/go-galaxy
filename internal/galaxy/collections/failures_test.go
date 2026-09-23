@@ -6,6 +6,7 @@ package collections
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -25,6 +26,9 @@ var (
 
 	errTestOutdatedCause0 = errors.New("outdated cause 0")
 	errTestOutdatedCause1 = errors.New("outdated cause 1")
+
+	errTestRoleCause0 = errors.New("role cause 0")
+	errTestRoleCause1 = errors.New("role cause 1")
 
 	errTestSaveFailure     = errors.New("simulated save failure")
 	errTestCollectionCause = errors.New("collection cause")
@@ -93,19 +97,20 @@ func TestFailureRecorderIsConcurrencySafe(t *testing.T) {
 }
 
 // summaryHeadlineCase is one table entry for TestSummaryHeadlineCases: the
-// causes a failureRecorder observes, the failureSummary method under test,
-// and the exact message and sentinel that method must produce.
+// collection and role causes two recorders observe, the failureSummary method
+// under test, and the exact message and sentinel that method must produce.
 type summaryHeadlineCase struct {
 	name         string
 	build        func(s failureSummary) error
 	wantMsg      string
 	wantSentinel error
 	causes       []error
+	roleCauses   []error
 }
 
-// summaryHeadlineCases enumerates one row per failureSummary headline method,
-// each recording its own causes so a row's count is visible in the message it
-// demands.
+// summaryHeadlineCases enumerates each failureSummary headline method over
+// collection failures, role failures and both, each row recording its own
+// causes so its counts are visible in the message it demands.
 func summaryHeadlineCases() []summaryHeadlineCase {
 	return []summaryHeadlineCase{
 		{
@@ -134,34 +139,91 @@ func summaryHeadlineCases() []summaryHeadlineCase {
 			wantSentinel: helpers.ErrLatestVersionLookupFailed,
 			causes:       []error{errTestOutdatedCause0, errTestOutdatedCause1},
 		},
+		{
+			// Role failures alone are named as roles, the collections left out.
+			name:         "install roles only",
+			build:        func(s failureSummary) error { return s.installError() },
+			wantMsg:      "installation failed for 2 roles",
+			wantSentinel: helpers.ErrInstallationFailed,
+			roleCauses:   []error{errTestRoleCause0, errTestRoleCause1},
+		},
+		{
+			name:         "warm one role",
+			build:        func(s failureSummary) error { return s.warmError() },
+			wantMsg:      "installation failed: warm failed for 1 role",
+			wantSentinel: helpers.ErrInstallationFailed,
+			roleCauses:   []error{errTestRoleCause0},
+		},
+		{
+			name:         "outdated roles only",
+			build:        func(s failureSummary) error { return s.outdatedError() },
+			wantMsg:      "latest version lookup failed for 2 roles",
+			wantSentinel: helpers.ErrLatestVersionLookupFailed,
+			roleCauses:   []error{errTestRoleCause0, errTestRoleCause1},
+		},
+		{
+			// Both kinds are named, each with its own count and number.
+			name:         "install one collection and roles",
+			build:        func(s failureSummary) error { return s.installError() },
+			wantMsg:      "installation failed for 1 collection and 2 roles",
+			wantSentinel: helpers.ErrInstallationFailed,
+			causes:       []error{errTestCause0},
+			roleCauses:   []error{errTestRoleCause0, errTestRoleCause1},
+		},
 	}
 }
 
 // TestSummaryHeadlineCases pins that each headline method renders only its
-// headline while errors.Is reaches its sentinel and every recorded cause.
+// headline, over a collection summary joined with a role summary, while
+// errors.Is reaches its sentinel and every recorded cause.
 func TestSummaryHeadlineCases(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range summaryHeadlineCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var r failureRecorder
+			var cols, roles failureRecorder
 			for _, c := range tc.causes {
-				r.record(c)
+				cols.record(c)
 			}
-			err := tc.build(r.summary())
+			for _, c := range tc.roleCauses {
+				roles.recordRole(c)
+			}
+			err := tc.build(cols.summary().join(roles.summary()))
 			if got := err.Error(); got != tc.wantMsg {
 				t.Fatalf("Error() = %q, want %q", got, tc.wantMsg)
 			}
 			if !errors.Is(err, tc.wantSentinel) {
 				t.Fatalf("expected errors.Is %v, got %v", tc.wantSentinel, err)
 			}
-			for i, c := range tc.causes {
+			for i, c := range slices.Concat(tc.causes, tc.roleCauses) {
 				if !errors.Is(err, c) {
 					t.Fatalf("expected errors.Is causes[%d] = %v, got %v", i, c, err)
 				}
 			}
 		})
+	}
+}
+
+// TestFailureRecorderCountsRolesApart pins that one recorder fed both kinds,
+// as outdated feeds it, keeps the role count apart from the total.
+func TestFailureRecorderCountsRolesApart(t *testing.T) {
+	t.Parallel()
+	var r failureRecorder
+	r.recordRole(errTestRoleCause0)
+	r.record(errTestCause0)
+	r.recordRole(errTestRoleCause1)
+
+	if got := r.count(); got != 3 {
+		t.Fatalf("count() = %d, want 3", got)
+	}
+	summary := r.summary()
+	if summary.count != 3 || summary.roles != 2 {
+		t.Fatalf("summary counts = %d total, %d roles; want 3 and 2", summary.count, summary.roles)
+	}
+	const want = "latest version lookup failed for 1 collection and 2 roles"
+	if got := summary.outdatedError().Error(); got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
 	}
 }
 

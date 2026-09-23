@@ -2021,7 +2021,7 @@ flowchart TD
     DryWarn --> AnyFail{"any lookup failed?"}
     Write --> AnyFail
     AnyFail -->|"no"| Ok(["exit 0"])
-    AnyFail -->|"yes"| Failed(["latest version lookup failed for N collections, roles included:<br/>exit 4 (network); exit 5 (install) when a cause is a<br/>server-supplied URL carrying userinfo"])
+    AnyFail -->|"yes"| Failed(["latest version lookup failed for N collections and M roles,<br/>naming only a kind that failed:<br/>exit 4 (network); exit 5 (install) when a cause is a<br/>server-supplied URL carrying userinfo"])
 ```
 
 A caught SIGHUP, SIGINT or SIGTERM at any point exits 129, 130 or 143 instead,

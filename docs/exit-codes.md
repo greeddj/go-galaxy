@@ -90,9 +90,11 @@ A run in which individual collections or roles fail prints each failure live
 as a `Failed:` line and ends with one headline error -
 `installation failed for N collections`, or `installation failed: warm failed
 for N collections` for `warm` - with every recorded cause kept behind it. The
-exit code is the first class, in the order
-[Exit code classes](commands.md#exit-code-classes) draws, that matches the
-headline or any cause. The headline is an install failure, so only a cause
+headline counts collections and roles apart and names only a kind that failed,
+in the singular for one: `installation failed for 2 roles`, `installation
+failed for 1 collection and 2 roles`. The exit code is the first class, in the
+order [Exit code classes](commands.md#exit-code-classes) draws, that matches
+the headline or any cause. The headline is an install failure, so only a cause
 ranked above that class changes the code: an interrupt exits `130`, an
 integrity failure `7`, a signature verdict `10` and a lockfile error `6`,
 which is why a `--frozen`
@@ -101,7 +103,8 @@ other cause leaves the run at `5`, even one that alone would exit elsewhere: a
 network failure, or a collection not cached under `--offline`, exits `4` only
 where it ends the run by itself, outside the per-collection path. `outdated`
 follows the same rule behind its own headline, `latest version lookup failed
-for N collections`, whose class is `4`.
+for N collections`, which counts and names roles the same way, and whose class
+is `4`.
 
 The snapshot save at the end of `install`, `warm` and `lock` never replaces the
 run's own failure. When collections or roles also failed, or `lock --frozen`

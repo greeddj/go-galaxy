@@ -117,7 +117,7 @@ func classifyDryRun(
 	warnIfFrozenOffline(runtime, cfg)
 
 	var failures failureRecorder
-	wouldAct, settled := reportDryRunResults(runtime, verbs, keys, results, cfg, &failures)
+	wouldAct, settled := reportDryRunResults(runtime, verbs, keys, results, cfg, failures.record)
 	summary := failures.summary()
 	runtime.Output.PersistentPrintf(
 		"Dry run: %d %s, %d %s, %d would fail",
@@ -126,16 +126,16 @@ func classifyDryRun(
 	return summary
 }
 
-// reportDryRunResults prints each verdict in sorted key order, recording each
-// would-fail cause. Case order mirrors a real run: settled skips first, then
-// the offline guard fires, and only then can a pin or tree failure surface.
+// reportDryRunResults prints each verdict in sorted key order, passing each
+// would-fail cause to record. Case order mirrors a real run: settled skips
+// first, then the offline guard, and only then a pin or tree failure.
 func reportDryRunResults(
 	runtime *infra.Infra,
 	verbs dryRunVerbs,
 	keys []string,
 	results []dryRunClassification,
 	cfg *config.Config,
-	failures *failureRecorder,
+	record func(error),
 ) (int, int) {
 	var wouldAct, settled int
 	for i, key := range keys {
@@ -145,10 +145,10 @@ func reportDryRunResults(
 			settled++
 			runtime.Output.PersistentPrintf("%s: %s", verbs.settled, key)
 		case !res.cached && cfg.Offline:
-			failures.record(fmt.Errorf("%s: %w: artifact not in cache", key, helpers.ErrOfflineMode))
+			record(fmt.Errorf("%s: %w: artifact not in cache", key, helpers.ErrOfflineMode))
 			runtime.Output.Errorf("Would fail: %s (not cached and --offline forbids downloading)", key)
 		case res.fail != nil:
-			failures.record(fmt.Errorf("%s: %w", key, res.fail))
+			record(fmt.Errorf("%s: %w", key, res.fail))
 			runtime.Output.Errorf("Would fail: %s (%v)", key, res.fail)
 		case res.cached:
 			wouldAct++

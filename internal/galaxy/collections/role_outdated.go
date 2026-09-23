@@ -10,13 +10,14 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 )
 
-// queryLatestRoleVersions is queryLatestVersions for the roles list, on the
-// same worker count and with the same nil store: no backend is opened, so
-// every answer is live.
+// queryLatestRoleVersions is queryLatestVersions for the roles list, each
+// entry marked Role, on the same worker count and with the same nil store:
+// no backend is opened, so every answer is live.
 func queryLatestRoleVersions(ctx context.Context, deps collectionDeps, roles []lockfile.RoleEntry) []outdatedEntry {
 	out := make([]outdatedEntry, len(roles))
 	forEachIndex(len(roles), max(deps.cfg.Workers, 1), func(i int) {
 		out[i] = lookupRoleOutdated(ctx, deps, roles[i])
+		out[i].Role = true
 	})
 	return out
 }
