@@ -864,15 +864,18 @@ directory carrying the extract marker, joined with the `installed_roles`
 record for its path when one exists; only a regular file named by the marker
 prefix and a sha256-shaped suffix counts as the marker. Reachability is the
 project's `roles:` roots plus, transitively, the recorded dependencies of every
-installed copy; an unreachable role is removed through a fresh root at its
-roles path, its artifact and record with it, and the extracted keep set takes
-the digests of every installed role that stays. A marked directory with no
-record (a cleared cache, another cache directory, a schema bump that dropped
-the bucket) still takes part in reachability: its dependencies are read from
-its own `meta/main.yml` and `meta/requirements.yml` under the install's
-dependency grammar, so a role it depends on is not deleted because the
-snapshot forgot the edge, and an unreadable meta contributes none rather than
-failing the run. Its artifact is left alone, since the key needs the record.
+installed copy; a project whose `roles:` list is refused takes every role
+installed under its roles path as its roots instead, and their dependencies are
+followed the same way, wherever another project installed them. An unreachable
+role is removed through a fresh root at its roles path, its artifact and
+record with it, and the extracted keep set takes the digests of every
+installed role that stays. A marked directory with no record (a cleared cache,
+another cache directory, a schema bump that dropped the bucket) still takes
+part in reachability: its dependencies are read from its own `meta/main.yml`
+and `meta/requirements.yml` under the install's dependency grammar, so a role
+it depends on is not deleted because the snapshot forgot the edge, and an
+unreadable meta contributes none rather than failing the run. Its artifact is
+left alone, since the key needs the record.
 
 ### Plan construction
 

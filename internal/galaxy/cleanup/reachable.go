@@ -58,7 +58,7 @@ func buildReachable(
 			return nil, nil, roleReachability{}, err
 		}
 		if rolesUnread {
-			keepProjectRoles(registry.Projects[projectPath], roles)
+			markReachableRoles(keepProjectRoles(registry.Projects[projectPath], roles.byName), roles.byName, roles.reachable)
 		}
 		markReachableRoles(roleRootNames(file), roles.byName, roles.reachable)
 		markCollectionRoots(st, file.Collections, reachable, installedByKey, installedIndex, depsByKey, constraints)
@@ -243,19 +243,20 @@ func projectRequirementRoots(
 	return requirements.File{}, false, fmt.Errorf("%w: %s: %w", helpers.ErrProjectRequirementsUnreadable, project.RequirementsFile, err)
 }
 
-// keepProjectRoles marks every role installed under the project's roles
-// path reachable, for a project whose role roots could not be read.
-func keepProjectRoles(project store.ProjectRecord, roles roleReachability) {
+// keepProjectRoles lists every role installed under the project's roles path,
+// sorted, for a project whose role roots could not be read; the caller walks
+// them as roots, so their dependencies stay reachable too.
+func keepProjectRoles(project store.ProjectRecord, byName rolesByName) []string {
 	if project.RolesPath == "" {
-		return
+		return nil
 	}
-	for name, copies := range roles.byName {
-		for _, inst := range copies {
-			if inst.RolesDir == project.RolesPath {
-				roles.reachable[name] = true
-			}
+	var kept []string
+	for _, name := range slices.Sorted(maps.Keys(byName)) {
+		if slices.ContainsFunc(byName[name], func(inst installedRole) bool { return inst.RolesDir == project.RolesPath }) {
+			kept = append(kept, name)
 		}
 	}
+	return kept
 }
 
 // selectInstalled filters installed collections by constraint, memoized in

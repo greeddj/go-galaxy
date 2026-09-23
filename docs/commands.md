@@ -1713,7 +1713,7 @@ flowchart TD
     R1["for each recorded project, sorted by path,<br/>against the complete index of every project"] --> Req{"recorded requirements file loads?"}
     Req -->|"no longer exists"| RMiss["warn: contributes no roots this run"]
     Req -->|"not a regular file, unreadable or unparseable"| X2(["exit 2 (usage)"])
-    Req -->|"collections: read, roles: list refused"| RKeep["warn: every indexed role under this<br/>project's roles_path is kept"]
+    Req -->|"collections: read, roles: list refused"| RKeep["warn: its roles are kept<br/>mark every indexed role under this project's roles_path reachable,<br/>then the deps of every indexed copy, transitively"]
     Req -->|"yes"| RRoots["mark each name in roles: reachable,<br/>then the deps of every indexed copy, transitively"]
     RMiss --> NextR
     RKeep --> CRoot
