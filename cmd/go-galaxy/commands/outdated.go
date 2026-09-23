@@ -8,8 +8,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Outdated returns the CLI command that lists collections in the lockfile
-// whose latest available Galaxy version differs from the locked version.
+// Outdated returns the CLI command that compares what the project runs - the
+// lockfile, else the installed collections tree - with the latest upstream:
+// a Galaxy version, a git ref's current commit, or a Galaxy role's highest tag.
 func Outdated() *cli.Command {
 	flags := cliflags.CollectionFlags()
 	flags = append(flags, cliflags.S3Flags()...)
@@ -17,7 +18,7 @@ func Outdated() *cli.Command {
 	return &cli.Command{
 		Name:    "outdated",
 		Aliases: []string{"o"},
-		Usage:   "Compare lockfile entries against the latest versions on Galaxy",
+		Usage:   "Compare locked collections and roles (else installed collections) with the latest upstream",
 		Flags:   flags,
 		Action: func(ctx context.Context, c *cli.Command) error {
 			return runCollectionCommand(ctx, c, collections.Outdated)
