@@ -43,6 +43,14 @@ it still exits `6` when that tree is missing too, naming both paths, so a
 repository that neither locks nor installs is told the same thing it always
 was.
 
+`explain` given a name its lockfile holds as neither a collection nor a role
+exits `1`, the generic code, with `collection or role not found in lockfile`.
+The lockfile was read and is valid, so this is not a lockfile error (`6`), and
+`explain` looks the name up without judging its shape, so it is not a usage
+error (`2`) either. A pipeline can therefore tell a lookup that found nothing
+(`1`) from a missing or invalid lockfile (`6`) and from no name or more than
+one (`2`).
+
 Exit `7` covers content that failed to authenticate against the sha256 that
 named it - a lockfile pin, a Galaxy server's declared digest, a cache sidecar,
 or the extracted store's content-address key - or a digest that was

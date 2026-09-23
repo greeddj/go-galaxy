@@ -24,6 +24,9 @@ var (
 	// does not take already exits with.
 	errExplainNoTarget = fmt.Errorf("%w: explain takes one, a collection name (namespace.name) or a role name",
 		helpers.ErrMissingArgument)
+	// errExplainNotFound wraps no sentinel, so it exits 1 (generic): the lockfile
+	// loaded and is valid, so not 6, and explain looks a name up without judging
+	// its shape, so not 2.
 	errExplainNotFound = errors.New("collection or role not found in lockfile")
 )
 

@@ -3,12 +3,14 @@ package commands
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/exitcode"
+	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 )
 
@@ -178,6 +180,31 @@ func TestPrintExplainNotFound(t *testing.T) {
 	err := printExplain(&buf, lf, "ns.missing", map[string]bool{}, nil)
 	if err == nil {
 		t.Fatal("printExplain() error = nil, want non-nil")
+	}
+}
+
+// TestExplainNotFoundExitsGeneric pins that a name a valid lockfile holds as
+// neither a collection nor a role exits 1: errExplainNotFound is claimed by
+// no class, neither the lockfile class nor the usage class.
+func TestExplainNotFoundExitsGeneric(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	reqPath := filepath.Join(dir, "requirements.yml")
+	if err := os.WriteFile(reqPath, []byte("collections:\n  - acme.app\n"), helpers.FileMod); err != nil {
+		t.Fatalf("write requirements: %v", err)
+	}
+	lockPath := filepath.Join(dir, lockfile.DefaultName)
+	if err := lockfile.Save(lockPath, roleLockfile()); err != nil {
+		t.Fatalf("save lockfile: %v", err)
+	}
+	for _, target := range []string{"acme.missing", "missingrole"} {
+		err := Explain().Run(context.Background(), []string{"explain", "-r", reqPath, "--lock-file", lockPath, target})
+		if !errors.Is(err, errExplainNotFound) {
+			t.Errorf("explain %s: error = %v, want errors.Is match with %v", target, err, errExplainNotFound)
+		}
+		if got := exitcode.FromError(err); got != exitcode.ExitError {
+			t.Errorf("explain %s: exit code = %d, want %d", target, got, exitcode.ExitError)
+		}
 	}
 }
 
