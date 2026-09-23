@@ -244,7 +244,18 @@ two-flag set of their own, listed under
   per-client request limit: set `--download-workers` (or `$GO_GALAXY_DOWNLOAD_WORKERS`) explicitly
   to keep the old, CPU-derived figure, or lower, if the new default triggers throttling (`outdated`
   follows `--workers` instead).
-- `--no-cache` (`$GO_GALAXY_NO_CACHE`)
+- `--no-cache` (`$GO_GALAXY_NO_CACHE`) - bypass the artifact cache and the extracted store: no
+  artifact is served from the artifact cache or committed to it, no prefetcher starts, and a git or
+  url build made during discovery is handed straight to the install phase. Without `--offline` the
+  metadata cache and the git, url and role pins are neither read nor written (except that
+  `--refresh` still reads a recorded git branch or tag pin to compare its commit), and the previous
+  resolution is not replayed either: the collections are resolved again against the configured
+  Galaxy servers, as under `--refresh`, so a version published since the last run is picked up.
+  That resolution is still recorded and the snapshot saved, since the snapshot also holds the
+  records of the installed collections and roles that `cleanup` relies on; a later run without
+  `--no-cache` replays it. `--offline` outranks the flag for everything a resolve reads: the
+  metadata cache, the pins and the previous resolution are read as under `--offline` alone. `lock`
+  re-resolves under it too; `warm` refuses it (see the `warm` entry above).
 - `--refresh` (`$GO_GALAXY_REFRESH`) - re-resolve against the configured Galaxy servers instead of reusing
   cached metadata or the previous resolution. It bypasses exactly the cached answers that name a collection
   without naming a version - which versions exist, which is highest, and which versions the last run picked

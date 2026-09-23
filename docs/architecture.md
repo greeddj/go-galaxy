@@ -1474,10 +1474,12 @@ dependencies.
 Git and url roots are expanded before the signature is computed, so it covers
 their pinned locators; over the unexpanded roots, a `--clear-cache` run, which
 drops the pins and keeps the resolution, would replay the old graph.
-`--refresh` vetoes both reuse paths except under `--offline`
-(`refreshBypassesSnapshot`), the offline-before-refresh precedence the cache
-policy applies too. The exception is necessary: the resolution, the graph and
-the requirements spec are persisted with no age filter while the API,
+`--refresh` and `--no-cache` veto both reuse paths except under `--offline`
+(`snapshotReuseVetoed`), the precedence the cache policy applies to a
+version-free answer too: the snapshot is one, so it is reused only when such
+an answer may be read from the cache. A vetoed run still records its fresh
+resolution. The `--offline` exception is necessary: the resolution, the graph
+and the requirements spec are persisted with no age filter while the API,
 dependency and version-list entries they were solved from age out after 30
 days, so an older cache routinely holds a resolution with no metadata behind
 it, and a fresh solve on the offline transport could only fail.

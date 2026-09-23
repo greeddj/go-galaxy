@@ -2,7 +2,7 @@ package collections
 
 // Store.snapshotData ages out APICache, DepsCache and Versions but never the
 // resolve snapshot, so an old cache routinely holds a resolution with no
-// metadata behind it: the state refreshBypassesSnapshot's !cfg.Offline guards.
+// metadata behind it: the state snapshotReuseVetoed's !cfg.Offline guards.
 
 import (
 	"context"

@@ -476,6 +476,56 @@ func TestRefreshReSolvesInsteadOfReplayingTheSnapshot(t *testing.T) {
 	}
 }
 
+// TestNoCacheReSolvesInsteadOfReplayingTheSnapshot pins that --no-cache
+// re-resolves and installs the newly published 2.0.0, and that it still
+// records that resolution: a plain rerun replays 2.0.0 with no root metadata.
+func TestNoCacheReSolvesInsteadOfReplayingTheSnapshot(t *testing.T) {
+	t.Parallel()
+	f := installOnceAndPublishNewerVersion(t)
+	f.cfg.NoCache = true
+
+	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("second Start (no-cache): %v", err)
+	}
+	if got := readManifestVersion(t, f.downloadPath, "app"); got != e2eVersion200 {
+		t.Errorf("installed acme.app collection_info.version = %q, want 2.0.0 (--no-cache must not replay the snapshot)", got)
+	}
+
+	if err := os.RemoveAll(f.downloadPath); err != nil {
+		t.Fatalf("remove downloadPath before the plain rerun: %v", err)
+	}
+	f.server.ResetCounts()
+	f.cfg.NoCache = false
+	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("third Start (plain rerun): %v", err)
+	}
+	if got := readManifestVersion(t, f.downloadPath, "app"); got != e2eVersion200 {
+		t.Errorf("plain rerun installed acme.app %q, want 2.0.0 (the --no-cache resolution must be recorded)", got)
+	}
+	if got := f.server.Count(fakegalaxy.EndpointRootMetadata); got != 0 {
+		t.Errorf("plain rerun EndpointRootMetadata count = %d, want 0 (the recorded resolution must be replayed)", got)
+	}
+}
+
+// TestNoCacheLockReSolvesInsteadOfReplayingTheSnapshot pins that lock under
+// --no-cache writes the newly published 2.0.0, not the snapshot's 1.0.0.
+func TestNoCacheLockReSolvesInsteadOfReplayingTheSnapshot(t *testing.T) {
+	t.Parallel()
+	f := installOnceAndPublishNewerVersion(t)
+	f.cfg.NoCache = true
+
+	if err := collections.Lock(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("Lock (no-cache): %v", err)
+	}
+	lf, err := lockfile.Load(lockfile.ResolveDefaultPath(f.cfg.RequirementsFile, f.cfg.LockFile))
+	if err != nil {
+		t.Fatalf("load lockfile: %v", err)
+	}
+	if entry := findLockEntry(t, lf, "acme.app"); entry.Version != e2eVersion200 {
+		t.Errorf("lockfile acme.app version = %q, want 2.0.0 (--no-cache must not replay the snapshot)", entry.Version)
+	}
+}
+
 // TestRefreshDoesNotRedownloadCachedArtifacts pins that --refresh re-fetches
 // root metadata but never re-downloads an artifact already cached for the
 // version it resolves to: isCacheHit must not consult cfg.Refresh.

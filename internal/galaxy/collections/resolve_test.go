@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
@@ -202,9 +203,10 @@ func TestRequirementsSignatureModePartition(t *testing.T) {
 	}
 }
 
-// TestRefreshBypassesSnapshot pins refreshBypassesSnapshot's veto table,
-// including a nil cfg and --offline outranking --refresh.
-func TestRefreshBypassesSnapshot(t *testing.T) {
+// TestSnapshotReuseVetoed pins snapshotReuseVetoed's veto table, including a
+// nil cfg and --offline outranking both flags, and that every row agrees with
+// whether cache.PolicyForConstraint reads a version-free answer.
+func TestSnapshotReuseVetoed(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		cfg  *config.Config
@@ -216,12 +218,20 @@ func TestRefreshBypassesSnapshot(t *testing.T) {
 		{name: "refresh on, online", cfg: &config.Config{Refresh: true, Offline: false}, want: true},
 		{name: "refresh on, offline: offline outranks refresh", cfg: &config.Config{Refresh: true, Offline: true}, want: false},
 		{name: "refresh off, offline: still no veto", cfg: &config.Config{Refresh: false, Offline: true}, want: false},
+		{name: "no-cache on, online", cfg: &config.Config{NoCache: true, Offline: false}, want: true},
+		{name: "no-cache on, offline: offline outranks no-cache", cfg: &config.Config{NoCache: true, Offline: true}, want: false},
+		{name: "no-cache and refresh on, online", cfg: &config.Config{NoCache: true, Refresh: true}, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := refreshBypassesSnapshot(tc.cfg); got != tc.want {
-				t.Errorf("refreshBypassesSnapshot(%+v) = %v, want %v", tc.cfg, got, tc.want)
+			got := snapshotReuseVetoed(tc.cfg)
+			if got != tc.want {
+				t.Errorf("snapshotReuseVetoed(%+v) = %v, want %v", tc.cfg, got, tc.want)
+			}
+			if policyRead := cacheManager.PolicyForConstraint(tc.cfg, false).Read; got == policyRead {
+				t.Errorf("snapshotReuseVetoed(%+v) = %v while a version-free policy read is %v, want them opposite",
+					tc.cfg, got, policyRead)
 			}
 		})
 	}

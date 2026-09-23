@@ -280,8 +280,9 @@ without them.
   there is no "prefer what is there". A rerun is not by itself a new resolve,
   though - with `requirements.yml`, the effective server list and `--no-deps`
   all unchanged, the recorded resolution is replayed and the same versions
-  come back; `--refresh` (see [install options](cli.md#install-options)), or a
-  change to any of those three inputs, makes it resolve again, and only then
+  come back; `--refresh` or `--no-cache` (see
+  [install options](cli.md#install-options)), or a change to any of those
+  three inputs, makes it resolve again, and only then
   can an open constraint land somewhere new. `--no-deps` counts as an input
   because it is folded into the same signature the other two are: toggling it
   between two otherwise identical runs re-resolves. To hold versions still across runs, lock them - see

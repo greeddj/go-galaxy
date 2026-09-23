@@ -28,7 +28,7 @@ type resolveMode int
 
 const (
 	// resolveTopLevel is a whole-requirements resolve: it may reuse the
-	// persisted resolve snapshot (still subject to refreshBypassesSnapshot's
+	// persisted resolve snapshot (still subject to snapshotReuseVetoed's
 	// run-wide veto) and records its result back into the store.
 	resolveTopLevel resolveMode = iota
 	// resolveNestedPartial is tryIncrementalResolveWithSnapshot's changed-roots
@@ -38,8 +38,8 @@ const (
 )
 
 // resolveCollectionsInternal resolves versions and dependencies for roots.
-// Under --refresh only version-free answers are bypassed (this snapshot, and
-// non-exact metadata via cache.PolicyForConstraint); exact-version ones stay.
+// --refresh bypasses only version-free answers (this snapshot, and non-exact
+// metadata via cache.PolicyForConstraint); --no-cache bypasses exact ones too.
 func resolveCollectionsInternal(
 	ctx context.Context,
 	deps collectionDeps,
@@ -61,9 +61,9 @@ func resolveCollectionsInternal(
 	reqSpec := buildRequirementsSpec(roots)
 	reqHash := requirementsSignatureFromSpec(reqSpec, cfg.NoDeps, serversSignature(cfg))
 
-	// refreshBypassesSnapshot is a run-wide veto enforced here rather than by
+	// snapshotReuseVetoed is a run-wide veto enforced here rather than by
 	// each caller, so no caller can forget it.
-	snapshotAllowed := allowSnapshot && st != nil && !refreshBypassesSnapshot(cfg)
+	snapshotAllowed := allowSnapshot && st != nil && !snapshotReuseVetoed(cfg)
 	if snapshotAllowed {
 		resolvedSnap, graphSnap, ok, err := resolveFromSnapshots(ctx, deps, roots, reqSpec, reqHash)
 		if shouldReturnSnapshot(ok, err) {
@@ -86,11 +86,11 @@ func shouldReturnSnapshot(ok bool, err error) bool {
 	return ok || err != nil
 }
 
-// refreshBypassesSnapshot reports whether --refresh vetoes resolve-snapshot
-// reuse. --offline outranks --refresh, matching cache.PolicyForConstraint so
-// both halves of the flag agree; a nil cfg never vetoes.
-func refreshBypassesSnapshot(cfg *config.Config) bool {
-	return cfg != nil && cfg.Refresh && !cfg.Offline
+// snapshotReuseVetoed reports whether --refresh or --no-cache vetoes reuse of
+// the resolve snapshot. --offline outranks both, as cache.PolicyForConstraint
+// does for a version-free answer, so each flag's halves agree; nil never vetoes.
+func snapshotReuseVetoed(cfg *config.Config) bool {
+	return cfg != nil && (cfg.Refresh || cfg.NoCache) && !cfg.Offline
 }
 
 func recordResolutionIfNeeded(

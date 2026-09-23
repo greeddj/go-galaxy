@@ -574,7 +574,7 @@ flowchart TD
     R3 -->|"yes"| RX2(["exit 2 (usage)"])
     R1 -->|"no"| R4["hash the requirements:<br/>roots, --no-deps, server list"]
     R3 -->|"no"| R4
-    R4 --> R5{"--refresh without --offline?"}
+    R4 --> R5{"--refresh or --no-cache,<br/>without --offline?"}
     R5 -->|"no"| R6{"snapshot hash matches<br/>and every root still satisfied?"}
     R6 -->|"yes"| R7["replay the recorded resolution,<br/>no metadata request"]
     R6 -->|"no"| R8{"snapshot from this<br/>--no-deps mode, some roots<br/>unchanged and some changed?"}
@@ -869,10 +869,11 @@ flowchart TD
 - `--offline`: the Galaxy and url clients refuse every request, and with
   `--s3-bucket` the configuration is refused (exit `2`); the metadata cache and
   the git, url and role pins are read even under `--no-cache`, and never
-  written; an unrecorded pin, or a git or url role whose artifact is not cached,
-  exits `4` during resolution; an artifact missing from the cache fails that
-  collection or role at install; a corrupt cache hit is not evicted; `--refresh`
-  is dropped with a warning; a solver conflict carries an offline note.
+  written, and the resolve snapshot is replayed even under `--no-cache`; an
+  unrecorded pin, or a git or url role whose artifact is not cached, exits `4`
+  during resolution; an artifact missing from the cache fails that collection
+  or role at install; a corrupt cache hit is not evicted; `--refresh` is
+  dropped with a warning; a solver conflict carries an offline note.
 - `--refresh`: vetoes the resolve snapshot, refetches version-free metadata,
   re-advertises git branch and tag pins (collections and roles), re-asks the v1
   API for Galaxy roles and re-downloads url sources. Ignored under `--offline`
@@ -881,7 +882,8 @@ flowchart TD
   prefetcher; discovery hands its builds straight to the install phase. Without
   `--offline` the metadata cache and the git, url and role pins are neither read
   nor written, except that `--refresh` still reads a branch or tag pin to
-  compare its commit. The resolve snapshot is still loaded, replayed and saved.
+  compare its commit, and the resolve snapshot is vetoed as under `--refresh`.
+  The fresh resolution is still recorded and the snapshot saved.
 - `--clear-cache`: drops the metadata caches and every git, url and role pin and
   deletes the cached artifacts before planning.
 - `--no-deps`: part of the requirements hash; the solver sees no dependencies;
@@ -983,7 +985,7 @@ flowchart TD
     PRR -->|"ok"| EX["expand each unpinned git root, then each unpinned url root,<br/>bounded by --download-workers,<br/>see 4. Source discovery"]
     EX -->|"error, or two roots expand<br/>to one collection"| XEX(["exit by cause:<br/>2 (usage), 3, 4, 5 or 7"])
     EX -->|"ok"| SIG["requirements signature over the expanded roots,<br/>--no-deps and the server list"]
-    SIG --> RF{"--refresh set and --offline not set?"}
+    SIG --> RF{"--refresh or --no-cache set<br/>and --offline not set?"}
     RF -->|"yes"| PW
     RF -->|"no"| SM{"snapshot signature equal and every root<br/>satisfied by the recorded resolve?"}
     SM -->|"yes"| RP["replay resolved set and graph from the snapshot,<br/>no metadata request"]
@@ -1192,16 +1194,16 @@ check still applies once the lock was taken.
   pins. `--offline` outranks it: one warning is printed and it has no effect.
 - `--offline` (`GO_GALAXY_OFFLINE`): the Galaxy and url HTTP clients refuse
   every request. Sources replay only their recorded pins, and a miss exits 4.
-  Pins and cached metadata are read even when `--refresh` or `--no-cache` is
-  set, and nothing new is recorded. The S3 backend would share the Galaxy HTTP
-  client, so `--s3-bucket` under `--offline` is refused while the config is
-  built, exit 2.
-- `--no-cache` (`GO_GALAXY_NO_CACHE`): no metadata cache or pin is read or
-  recorded, and each build is kept as a temporary file for the run instead of
-  being committed to the artifact cache. Two exceptions: under `--refresh` a
-  recorded git pin on a ref that is not a commit is still re-advertised and kept
-  when the commit is unchanged and its artifacts are cached, and the recorded
-  resolve in the snapshot is still replayed and recorded.
+  Pins, cached metadata and the recorded resolve are read even when `--refresh`
+  or `--no-cache` is set, and no pin or metadata is recorded. The S3 backend
+  would share the Galaxy HTTP client, so `--s3-bucket` under `--offline` is
+  refused while the config is built, exit 2.
+- `--no-cache` (`GO_GALAXY_NO_CACHE`): no metadata cache, pin or recorded
+  resolve is read, no metadata or pin is recorded, and each build is kept as a
+  temporary file for the run instead of being committed to the artifact cache.
+  One exception: under `--refresh` a recorded git pin on a ref that is not a
+  commit is still re-advertised and kept when the commit is unchanged and its
+  artifacts are cached. The fresh resolve is still recorded in the snapshot.
 - `--no-deps` (`GO_GALAXY_NO_DEPS`): the solver answers the roots only, the role
   walk stops at the `roles:` entries, and the flag is part of the requirements
   signature, so a snapshot resolved in the other mode is not replayed.
