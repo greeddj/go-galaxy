@@ -282,7 +282,7 @@ func loadAnsibleConfigFromCLI(c *cli.Command) (ansibleConfig, string, []string, 
 			if errors.Is(err, os.ErrNotExist) {
 				return ansibleConfig{}, "", nil, fmt.Errorf("%w: %s", helpers.ErrAnsibleConfigNotFound, path)
 			}
-			return ansibleConfig{}, "", nil, fmt.Errorf("failed to load ansible config: %w", err)
+			return ansibleConfig{}, "", nil, err
 		}
 		return cfg, loadedPath, nil, nil
 	}
@@ -299,7 +299,7 @@ func loadAnsibleConfigFromCLI(c *cli.Command) (ansibleConfig, string, []string, 
 			// this exactly like "no config found" rather than erroring.
 			return ansibleConfig{}, "", warnings, nil
 		}
-		return ansibleConfig{}, "", warnings, fmt.Errorf("failed to load ansible config: %w", err)
+		return ansibleConfig{}, "", warnings, err
 	}
 	return cfg, loadedPath, warnings, nil
 }
@@ -465,19 +465,24 @@ func pickConfigValue(c *cli.Command, flag, ansibleValue string) (string, bool) {
 // The ansible.cfg keys read here, their ANSIBLE_* environment spellings and
 // the discovery order are tabulated in docs/configuration.md.
 
-// loadAnsibleConfig loads and parses ansible.cfg if it exists.
+// loadAnsibleConfig loads and parses ansible.cfg. Absence stays a bare
+// fs.ErrNotExist for the caller to judge; any other open, read or scan
+// failure wraps helpers.ErrAnsibleConfigUnreadable.
 func loadAnsibleConfig(configPath string) (ansibleConfig, string, error) {
 	config := ansibleConfig{}
 
 	f, err := os.Open(configPath) // #nosec G304 -- user-provided path
 	if err != nil {
-		return config, "", err
+		if errors.Is(err, os.ErrNotExist) {
+			return config, "", err
+		}
+		return config, "", fmt.Errorf("%w: %w", helpers.ErrAnsibleConfigUnreadable, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	config, err = parseAnsibleConfig(f)
 	if err != nil {
-		return config, "", fmt.Errorf("failed to parse ansible.cfg: %w", err)
+		return config, "", fmt.Errorf("%w: %s: %w", helpers.ErrAnsibleConfigUnreadable, configPath, err)
 	}
 	return config, configPath, nil
 }

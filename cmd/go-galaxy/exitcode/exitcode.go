@@ -350,7 +350,8 @@ func isNoCandidateError(err error) bool {
 }
 
 // isUsageError reports whether err is a configuration or CLI-input sentinel
-// (invalid flags, malformed requirements, or a missing path).
+// (invalid flags, an unreadable or malformed requirements file or ansible.cfg,
+// or a missing path).
 func isUsageError(err error) bool {
 	return isCommandLineUsageError(err) ||
 		isConfigUsageError(err) ||
@@ -469,12 +470,22 @@ func isEnvironmentUsageError(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) ||
 		errors.Is(err, helpers.ErrConfigIsNil) ||
 		errors.Is(err, helpers.ErrS3EmptyCreds) ||
-		errors.Is(err, helpers.ErrUnsupportedRequirementsFormat) ||
 		errors.Is(err, helpers.ErrCacheDirEmpty) ||
 		errors.Is(err, helpers.ErrInvalidTimeout) ||
-		errors.Is(err, helpers.ErrAnsibleConfigNotFound) ||
 		errors.Is(err, helpers.ErrWarmCacheDisabled) ||
-		errors.Is(err, helpers.ErrCacheBackendUnusable)
+		errors.Is(err, helpers.ErrCacheBackendUnusable) ||
+		isInputFileUsageError(err)
+}
+
+// isInputFileUsageError reports whether the requirements file or ansible.cfg
+// cannot be used: an explicit ansible.cfg that is missing, either file
+// unreadable, or requirements that are not YAML or not a supported shape.
+func isInputFileUsageError(err error) bool {
+	return errors.Is(err, helpers.ErrUnsupportedRequirementsFormat) ||
+		errors.Is(err, helpers.ErrRequirementsUnreadable) ||
+		errors.Is(err, helpers.ErrInvalidRequirementsYAML) ||
+		errors.Is(err, helpers.ErrAnsibleConfigNotFound) ||
+		errors.Is(err, helpers.ErrAnsibleConfigUnreadable)
 }
 
 // isRecordedStateUsageError reports whether something this program recorded

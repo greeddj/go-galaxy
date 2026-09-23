@@ -4,7 +4,9 @@
 package requirements
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"strings"
@@ -59,19 +61,29 @@ type File struct {
 
 // Load reads and parses a requirements file.
 func Load(path, defaultSource string) (File, error) {
-	//nolint:gosec // path is user-provided requirements file.
-	data, err := os.ReadFile(path)
+	data, err := Read(path)
 	if err != nil {
 		return File{}, err
 	}
 	return Parse(data, defaultSource)
 }
 
+// Read returns a requirements file's bytes unparsed. Absence stays a bare
+// fs.ErrNotExist; any other failure wraps helpers.ErrRequirementsUnreadable.
+func Read(path string) ([]byte, error) {
+	//nolint:gosec // path is user-provided requirements file.
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %w", helpers.ErrRequirementsUnreadable, err)
+	}
+	return data, err
+}
+
 // Parse parses requirements data.
 func Parse(data []byte, defaultSource string) (File, error) {
 	var raw any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return File{}, err
+		return File{}, fmt.Errorf("%w: %w", helpers.ErrInvalidRequirementsYAML, err)
 	}
 	return parseRaw(raw, defaultSource)
 }

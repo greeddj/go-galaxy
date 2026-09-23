@@ -1,6 +1,7 @@
 package exitcode
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -160,6 +161,26 @@ var fromErrorCases = []exitCase{
 	{
 		name:     "ansible config not found",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrAnsibleConfigNotFound),
+		wantCode: ExitUsage,
+	},
+	{
+		// The production shape: a line past the scanner's limit, the one way
+		// an ansible.cfg that opened can still fail to load.
+		name:     "ansible config unreadable",
+		err:      fmt.Errorf("%w: ansible.cfg: %w", helpers.ErrAnsibleConfigUnreadable, bufio.ErrTooLong),
+		wantCode: ExitUsage,
+	},
+	{
+		// A requirements file that exists but cannot be read; the os-level
+		// cause alone classifies nowhere and would exit 1.
+		name: "requirements unreadable",
+		err: fmt.Errorf("failed to load requirements file: %w: %w", helpers.ErrRequirementsUnreadable,
+			&fs.PathError{Op: "open", Path: "requirements.yml", Err: fs.ErrPermission}),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "requirements not valid YAML",
+		err:      fmt.Errorf("load requirements requirements.yml: %w: %w", helpers.ErrInvalidRequirementsYAML, errTestUnreadableCause),
 		wantCode: ExitUsage,
 	},
 	{

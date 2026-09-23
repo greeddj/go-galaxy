@@ -154,6 +154,51 @@ func checkAnyError(t *testing.T, got string, err error) {
 	}
 }
 
+// notYAMLContent is a requirements file whose bytes are not YAML, which the
+// fallback hashes as it is.
+const notYAMLContent = "collections:\n  - name: [unclosed\n"
+
+// setupRequirementsNotYAML writes only a requirements file that is not YAML.
+func setupRequirementsNotYAML(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	reqPath := filepath.Join(dir, "requirements.yml")
+	writeTestFile(t, reqPath, []byte(notYAMLContent))
+	return reqPath, filepath.Join(dir, lockfile.DefaultName)
+}
+
+// checkRequirementsNotYAMLHashed asserts the fallback key is the SHA256 of
+// the raw bytes: hash never parses the file it keys on.
+func checkRequirementsNotYAMLHashed(t *testing.T, got string, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("computeHash() error = %v, want nil", err)
+	}
+	sum := sha256.Sum256([]byte(notYAMLContent))
+	if want := "sha256:" + hex.EncodeToString(sum[:]); got != want {
+		t.Errorf("computeHash() = %q, want %q", got, want)
+	}
+}
+
+// setupRequirementsDirectory puts a directory where the requirements file
+// should be, with no lockfile, so the fallback read fails.
+func setupRequirementsDirectory(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	reqPath := filepath.Join(dir, "requirements.yml")
+	if err := os.Mkdir(reqPath, 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", reqPath, err)
+	}
+	return reqPath, filepath.Join(dir, lockfile.DefaultName)
+}
+
+// checkErrRequirementsUnreadable asserts the fallback read's failure carries
+// the usage sentinel the requirements loader uses for the same file.
+func checkErrRequirementsUnreadable(t *testing.T, got string, err error) {
+	t.Helper()
+	if !errors.Is(err, helpers.ErrRequirementsUnreadable) {
+		t.Fatalf("computeHash() = %q, error = %v, want errors.Is helpers.ErrRequirementsUnreadable", got, err)
+	}
+}
+
 // TestComputeHash covers computeHash's cases: a valid lockfile is preferred, a
 // missing one falls back to the requirements file, a corrupt or unsupported one
 // surfaces its error, and neither file present is an error.
@@ -162,6 +207,12 @@ func TestComputeHash(t *testing.T) {
 	tests := []hashTestCase{
 		{name: "valid lockfile present", setup: setupValidLockfile, check: checkValidLockfile},
 		{name: "lockfile absent, requirements present falls back", setup: setupLockfileAbsent, check: checkLockfileAbsentFallback},
+		{name: "lockfile absent, requirements not YAML still hashed", setup: setupRequirementsNotYAML, check: checkRequirementsNotYAMLHashed},
+		{
+			name:  "lockfile absent, requirements unreadable surfaces ErrRequirementsUnreadable",
+			setup: setupRequirementsDirectory,
+			check: checkErrRequirementsUnreadable,
+		},
 		{name: "corrupt lockfile surfaces ErrLockfileInvalid", setup: setupCorruptLockfile, check: checkErrLockfileInvalid},
 		{
 			name:  "unsupported schema_version surfaces ErrLockfileInvalid",

@@ -172,10 +172,14 @@ unwrapped, so the exit code still classifies a cancellation or a deadline.
 
 `internal/galaxy/requirements` is where requirements.yml, which is repository
 content, enters the program, and every value in it is judged there rather than
-downstream. The collection name alphabet is applied once an entry's string and
-mapping shapes converge, not inside `helpers.SplitFQDN`, which a mapping's
-explicit `namespace:`/`name:` pair never passes through. A `signatures:` source
-is judged by the grammar the fetch itself uses (see
+downstream. The file itself is judged there first: one that exists and cannot
+be read is `ErrRequirementsUnreadable`, bytes that are not YAML
+`ErrInvalidRequirementsYAML`, and `hash`, which keys on the raw bytes, reads
+them through the same `Read`, so an unreadable file fails it the same way. The
+collection name alphabet is applied once an entry's string and mapping shapes
+converge, not inside `helpers.SplitFQDN`, which a mapping's explicit
+`namespace:`/`name:` pair never passes through. A `signatures:` source is
+judged by the grammar the fetch itself uses (see
 [Verify, extract, record](#verify-extract-record)), git and url entries by the
 `gitsource` and `urlsource` grammars, which refuse a credential before any
 message renders the URL, and a role entry - like every dependency a fetched

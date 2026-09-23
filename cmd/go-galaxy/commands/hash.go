@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
 
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/cliflags"
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
+	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
 	"github.com/urfave/cli/v3"
 )
 
@@ -52,8 +52,9 @@ func computeHash(requirementsFile, lockPath string) (string, error) {
 		return "", err
 	}
 
-	//nolint:gosec // requirementsFile is user-provided.
-	data, err := os.ReadFile(requirementsFile)
+	// Read, not Load: the key covers the bytes as they are, so a file that is
+	// not YAML still hashes, and only a missing or unreadable one fails.
+	data, err := requirements.Read(requirementsFile)
 	if err != nil {
 		return "", err
 	}

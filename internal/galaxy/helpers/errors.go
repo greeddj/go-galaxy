@@ -102,6 +102,14 @@ var (
 	ErrMetadataUnavailable = errors.New("metadata unavailable")
 	// ErrUnsupportedRequirementsFormat indicates the requirements file format is unsupported.
 	ErrUnsupportedRequirementsFormat = errors.New("unsupported requirements file format")
+	// ErrRequirementsUnreadable indicates a requirements file that exists but
+	// cannot be read: permission denied, a directory. Absence stays a bare
+	// fs.ErrNotExist, which cleanup tells apart from this.
+	ErrRequirementsUnreadable = errors.New("requirements file is unreadable")
+	// ErrInvalidRequirementsYAML indicates a requirements file whose bytes do not
+	// parse as YAML; a document that parses into the wrong shape is
+	// ErrUnsupportedRequirementsFormat or an entry sentinel instead.
+	ErrInvalidRequirementsYAML = errors.New("requirements file is not valid YAML")
 
 	// ErrCacheDirEmpty indicates the cache directory is empty.
 	ErrCacheDirEmpty = errors.New("cache directory is empty")
@@ -260,6 +268,10 @@ var (
 	// ErrAnsibleConfigNotFound indicates an explicitly requested ansible.cfg
 	// path does not exist.
 	ErrAnsibleConfigNotFound = errors.New("ansible config file not found")
+	// ErrAnsibleConfigUnreadable indicates an ansible.cfg, named or discovered,
+	// that exists but cannot be read to the end: permission denied, a
+	// directory, or a line longer than the parser's 64 KiB limit.
+	ErrAnsibleConfigUnreadable = errors.New("ansible config file is unreadable")
 
 	// ErrUnsafeCollectionIdentifier indicates a manifest field (namespace,
 	// name, or version) cannot be safely used as a single filesystem path

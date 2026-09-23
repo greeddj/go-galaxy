@@ -32,8 +32,9 @@ nor a key line is skipped, and such a line that opens with `[` also ends the
 current section, so the keys below it are not read into the section above; a
 leading UTF-8 byte order mark is stripped, where ansible refuses such a file
 with `File contains no section headers`. The only parse failure is a read
-error, a line longer than 64 KiB included, which exits `1` like an unreadable
-file.
+error, a line longer than 64 KiB included, which exits `2` like an unreadable
+file, whether the file was named or discovered; a discovered candidate that
+vanished before it could be opened counts as no file at all.
 
 Discovery keeps one of ansible's exceptions too: `./ansible.cfg` is not
 considered at all when the current directory is world-writable, since any

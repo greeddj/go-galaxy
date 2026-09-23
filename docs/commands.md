@@ -130,7 +130,7 @@ flowchart TD
 flowchart TD
   C1["runCollectionCommand"] --> C2["config.BuildCollectionConfig<br/>see Configuration resolution"]
   C2 --> C3{"config built?"}
-  C3 -->|"no"| XC(["exit 2 (usage), or 1 (generic)<br/>for an ansible.cfg that cannot be read"])
+  C3 -->|"no"| XC(["exit 2 (usage)"])
   C3 -->|"yes"| C4{"--verbose or --quiet in effect,<br/>or stdout not a terminal?"}
   C4 -->|"yes"| C5["progress printer, plain lines"]
   C4 -->|"no"| C6["progress printer with a spinner"]
@@ -177,7 +177,7 @@ flowchart TD
   K6 --> K7{"--ansible-config set?<br/>never on cleanup, which lacks it"}
   K7 -->|"yes"| K8{"that file loads?"}
   K8 -->|"does not exist"| XK2(["exit 2 (usage),<br/>ErrAnsibleConfigNotFound"])
-  K8 -->|"other open or read failure"| XK3(["exit 1 (generic)"])
+  K8 -->|"exists, cannot be read to the end:<br/>permission, a directory,<br/>a line past 64 KiB"| XK3(["exit 2 (usage),<br/>ErrAnsibleConfigUnreadable"])
   K8 -->|"yes"| K15
   K7 -->|"no"| K9{"current directory<br/>world-writable?"}
   K9 -->|"yes"| K10["drop ./ansible.cfg from discovery,<br/>queue a warning"]
@@ -186,7 +186,7 @@ flowchart TD
   K11 -->|"none"| K14["no ansible.cfg values"]
   K11 -->|"found"| K12{"that file loads?"}
   K12 -->|"vanished since discovery"| K14
-  K12 -->|"other open or read failure"| XK4(["exit 1 (generic)"])
+  K12 -->|"exists, cannot be read to the end"| XK4(["exit 2 (usage),<br/>ErrAnsibleConfigUnreadable"])
   K12 -->|"yes"| K15
   K14 --> K15["--download-path, --roles-path,<br/>--cache-dir, --server:<br/>the flag or its environment wins,<br/>then ansible.cfg, then the flag default<br/>ANSIBLE_GALAXY_SERVER stands in<br/>for the ansible.cfg server"]
   K15 --> K16["collections_path and roles_path keep their first entry,<br/>a warning names the rest"]
@@ -313,7 +313,7 @@ flowchart TD
   E9 -->|"yes"| X9(["exit 9 (cache corrupt)"])
   E9 -->|"no"| E10{"resolution: conflict, no candidate,<br/>cycle, bad dependency key?"}
   E10 -->|"yes"| X3(["exit 3 (resolution)"])
-  E10 -->|"no"| E11{"usage: arguments, config, requirements,<br/>sources, backend unusable, newer snapshot schema,<br/>a path that does not exist?"}
+  E10 -->|"no"| E11{"usage: arguments, config, requirements,<br/>sources, backend unusable, newer snapshot schema,<br/>a path that does not exist, a requirements file<br/>or ansible.cfg that cannot be read?"}
   E11 -->|"yes"| X2(["exit 2 (usage)"])
   E11 -->|"no"| X1(["exit 1 (generic)"])
 ```
@@ -365,7 +365,7 @@ environment variable is ignored too.
   becomes the derived default.
 - `--ansible-config` (`GO_GALAXY_ANSIBLE_CONFIG`, not on cleanup): replaces
   discovery with a strict load. A missing file exits 2. An ansible.cfg that
-  exists but cannot be read, named or discovered, exits 1.
+  exists but cannot be read, named or discovered, exits 2 too.
 - `--download-path` (`-p`), `--roles-path`, `--cache-dir`: when set from the
   flag or its environment, they outrank ansible.cfg. cleanup mounts only
   `--cache-dir`.
@@ -469,8 +469,7 @@ flowchart TD
     S1 --> S2{"flag parse error,<br/>or a positional argument?"}
     S2 -->|"yes"| SX2(["exit 2 (usage)"])
     S2 -->|"no"| S3{"BuildCollectionConfig<br/>accepts every setting?<br/>--timeout, ansible.cfg,<br/>--server, --token,<br/>GO_GALAXY_GIT_* and<br/>GO_GALAXY_URL_* bindings,<br/>--s3-*, signature flags"}
-    S3 -->|"no"| SX2
-    S3 -->|"ansible.cfg unreadable<br/>or not a file"| SX1(["exit 1 (generic)"])
+    S3 -->|"no, an ansible.cfg that<br/>cannot be read included"| SX2
     S3 -->|"yes"| S4{"--offline?"}
     S4 -->|"yes"| S5["Galaxy and url clients refuse every request;<br/>the git client is built as usual"]
     S4 -->|"no"| S6["Galaxy client with per-origin tokens;<br/>git and url clients carry<br/>no Galaxy token"]
@@ -488,7 +487,7 @@ flowchart TD
     S13 --> S15["construct and open the backend"]
     S14 --> S15
     S15 -->|"unusable as configured"| SX2
-    S15 -->|"S3 endpoint does not parse"| SX1
+    S15 -->|"S3 endpoint does not parse"| SX1(["exit 1 (generic)"])
     S15 -->|"unreachable, or refused under --offline"| SX4(["exit 4 (network)"])
     S15 -->|"open"| S16["take the exclusive cache lock"]
     S16 -->|"held by another run"| SX8(["exit 8 (cache busy)"])
@@ -516,8 +515,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     P1["read the requirements file<br/>--requirements-file"]
-    P1 -->|"missing, or an invalid shape"| PX2(["exit 2 (usage)"])
-    P1 -->|"unreadable, or YAML<br/>that does not parse"| PX1(["exit 1 (generic)"])
+    P1 -->|"missing, unreadable, not YAML,<br/>or an invalid shape"| PX2(["exit 2 (usage)"])
     P1 -->|"read"| P2{"roles: list non-empty?"}
     P2 -->|"yes"| P3["print queued roles_path warnings"]
     P2 -->|"no"| P4["prepare collection roots:<br/>type matches source, names, duplicates"]
@@ -892,7 +890,7 @@ flowchart TD
 - `--timeout`, `--server`, `--token`, `--ansible-config`,
   `--required-valid-signature-count`, `--ignore-signature-status-code`,
   `--s3-access-key`, `--s3-secret-key`: branch only when refused at startup,
-  exiting `2`, or `1` for an `ansible.cfg` that cannot be read.
+  exiting `2`.
 
 Accepted without changing the flow: `--verbose`, `--quiet`, `--cache-dir`,
 `--download-path`, `--roles-path`, `--requirements-file`, `--lock-file`
@@ -969,7 +967,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     IN(["cache locked, snapshot loaded"]) --> LR["loadRoots: parse the file --requirements-file names,<br/>print its warnings"]
-    LR -->|"error"| X2L(["exit 2 (usage) when missing or malformed,<br/>1 (generic) for a YAML syntax or read error"])
+    LR -->|"error"| X2L(["exit 2 (usage): missing, unreadable,<br/>not YAML or malformed"])
     LR -->|"ok"| RW{"roles: list non-empty?"}
     RW -->|"yes"| RWW["print queued roles_path warnings"]
     RW -->|"no"| PRR
@@ -1247,7 +1245,7 @@ flowchart TD
     Args -->|"yes"| X2a
     Args -->|"no"| Cfg["build config from flags, environment and ansible.cfg:<br/>timeout, workers, paths, servers, git and url credentials,<br/>S3 settings, signature policy"]
     Cfg --> CfgOK{"config accepted?"}
-    CfgOK -->|"no"| X2b(["exit 2 (usage)<br/>exit 1 for an ansible.cfg that cannot be read or scanned"])
+    CfgOK -->|"no, an ansible.cfg that<br/>cannot be read included"| X2b(["exit 2 (usage)"])
     CfgOK -->|"yes"| Wire["wire the printer, HTTP, git and url clients<br/>print config warnings"]
     Wire --> NoCache{"--no-cache set?"}
     NoCache -->|"yes, with or without --dry-run"| X2c(["exit 2 (usage)<br/>no backend opened, no lock taken"])
@@ -1296,8 +1294,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     Req["load the requirements file, --requirements-file"] --> ReqOK{"file readable and valid?"}
-    ReqOK -->|"missing, or not a requirements shape"| X2a(["exit 2 (usage)"])
-    ReqOK -->|"unreadable, or not YAML"| X1(["exit 1 (generic)"])
+    ReqOK -->|"missing, unreadable, not YAML,<br/>or not a requirements shape"| X2a(["exit 2 (usage)"])
     ReqOK -->|"yes"| Warn["print requirement warnings<br/>with roles: entries, print the queued roles_path warnings"]
     Warn --> Roots["prepare the collection roots"]
     Roots -->|"invalid entry"| X2a
@@ -1621,8 +1618,7 @@ flowchart TD
     Args -->|"yes"| X2a
     Args -->|"no"| Cfg["build config from flags, environment and ansible.cfg<br/>cache dir: --cache-dir, else ansible.cfg galaxy cache_dir, else the default"]
     Cfg --> CfgOK{"config accepted?"}
-    CfgOK -->|"no, for example --s3-bucket without<br/>--s3-access-key or --s3-secret-key"| X2b(["exit 2 (usage)"])
-    CfgOK -->|"a discovered ansible.cfg that<br/>cannot be read or parsed"| X1a(["exit 1 (generic)"])
+    CfgOK -->|"no, for example --s3-bucket without<br/>--s3-access-key or --s3-secret-key,<br/>or a discovered ansible.cfg that cannot be read"| X2b(["exit 2 (usage)"])
     CfgOK -->|"yes"| S3{"--s3-bucket set?"}
     S3 -->|"yes"| S3B["S3 backend"]
     S3 -->|"no"| LB["local backend at the cache dir"]
@@ -1630,7 +1626,7 @@ flowchart TD
     LB --> Open
     Open --> OpenOK{"opened?"}
     OpenOK -->|"unusable: empty cache dir, permission denied,<br/>S3 endpoint with no host, no conditional writes"| X2c(["exit 2 (usage)"])
-    OpenOK -->|"S3 endpoint that does not parse as a URL"| X1a
+    OpenOK -->|"S3 endpoint that does not parse as a URL"| X1a(["exit 1 (generic)"])
     OpenOK -->|"unavailable: other I/O error, S3 unreachable"| X4a(["exit 4 (network)"])
     OpenOK -->|"yes"| Lock["take the exclusive cache lock<br/>local: non-blocking flock<br/>S3: lock object, retried with backoff up to the wait ceiling"]
     Lock --> LockOK{"lock granted?"}
@@ -1856,8 +1852,7 @@ flowchart TD
     Args -->|"no"| E2a(["exit 2 (usage)"])
     Args -->|"yes"| Cfg["BuildCollectionConfig: --timeout, --workers, ansible.cfg from --ansible-config or discovery,<br/>servers from --server, --token and server_list, GO_GALAXY_GIT_* and GO_GALAXY_URL_* bindings,<br/>S3 settings, ANSIBLE_GALAXY_DISABLE_GPG_VERIFY, [galaxy] server_timeout"]
     Cfg --> CfgOK{"configuration usable?"}
-    CfgOK -->|"no: a configuration sentinel"| E2b(["exit 2 (usage)<br/>for example a bad --timeout or server_timeout, missing --ansible-config file,<br/>a malformed credential binding, --s3-bucket without both S3 keys"])
-    CfgOK -->|"no: ansible.cfg cannot be opened or scanned"| E1a(["exit 1 (generic)"])
+    CfgOK -->|"no: a configuration sentinel"| E2b(["exit 2 (usage)<br/>for example a bad --timeout or server_timeout, missing --ansible-config file,<br/>an ansible.cfg that cannot be read, a malformed credential binding,<br/>--s3-bucket without both S3 keys"])
     CfgOK -->|"yes"| Wire["runCollectionCommand: printer for --verbose and --quiet,<br/>Galaxy HTTP client, git client, url client, print config warnings"]
     Wire --> Off{"--offline set?"}
     Off -->|"yes"| E4a(["exit 4 (network)<br/>outdated requires network access"])
@@ -2107,7 +2102,7 @@ flowchart TD
     N -->|"no"| O["SHA256 of the canonical bytes"]
     Q --> S{"read result?"}
     S -->|"file does not exist"| X2c(["open req: no such file<br/>exit 2 (usage)"])
-    S -->|"other read error:<br/>permission, is a directory"| X1b(["exit 1 (generic)"])
+    S -->|"other read error:<br/>permission, is a directory"| X2d(["requirements file is unreadable<br/>exit 2 (usage)"])
     S -->|"bytes read"| T["SHA256 of the raw bytes,<br/>neither parsed nor validated"]
     O --> PR["print sha256:hex on stdout"]
     T --> PR
@@ -2126,7 +2121,7 @@ flowchart TD
     A["app.Run returns to main"] --> B{"SIGINT, SIGTERM or SIGHUP<br/>caught during the run?"}
     B -->|"yes"| XS(["exit 128 + signal number:<br/>130 SIGINT, 143 SIGTERM, 129 SIGHUP (interrupt)"])
     B -->|"no"| C{"error delivered to ExitErrHandler?<br/>argument, lockfile or read error"}
-    C -->|"yes"| D["exitcode.FromError, first match wins:<br/>ErrLockfileInvalid gives 6,<br/>ErrUnexpectedArguments or fs.ErrNotExist gives 2,<br/>anything else gives 1"]
+    C -->|"yes"| D["exitcode.FromError, first match wins:<br/>ErrLockfileInvalid gives 6,<br/>ErrUnexpectedArguments, fs.ErrNotExist<br/>or ErrRequirementsUnreadable gives 2,<br/>anything else gives 1"]
     D --> XE(["error printed on stderr,<br/>exit with that code"])
     C -->|"no"| E{"Run returned an error?<br/>flag parse failure or a global<br/>flag's variable that is not a boolean"}
     E -->|"yes"| XU(["exit 2 (usage), printed on stderr<br/>unless urfave already printed it"])
@@ -2190,9 +2185,9 @@ flowchart TD
     RR{"requirements file<br/>read succeeds?"}
     RNF{"not found?"}
     RNFX(["exit 2 (usage)<br/>requirements file not found"])
-    RDX(["exit 1 (generic)<br/>for example permission denied"])
+    RDX(["exit 2 (usage)<br/>requirements file is unreadable:<br/>permission denied, a directory"])
     RY{"valid YAML?"}
-    RYX(["exit 1 (generic)<br/>YAML syntax error"])
+    RYX(["exit 2 (usage)<br/>requirements file is not valid YAML"])
     RS{"top level is a list of collections,<br/>or a mapping with collections: or roles:,<br/>and every entry validates?"}
     RSX(["exit 2 (usage)<br/>unsupported format or invalid entry"])
     ROOTS["collect collection roots and role roots<br/>see Root selection"]
