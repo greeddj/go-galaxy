@@ -113,7 +113,7 @@ against `.goreleaser.yml`.
 
 Every gate is an ordinary test, run by `go test ./...` like anything else. Three
 test-only packages - `internal/proseaudit`, `internal/lockaudit`,
-`internal/ciaudit` - hold nothing but gates, and nothing imports them; three
+`internal/ciaudit` - hold nothing but gates, and nothing imports them; four
 more gates are audit files sitting inside the package they gate.
 Either way they need no Justfile target and no CI step, and the only cost they
 carry is three depguard entries for `go/ast`, `go/parser` and `go/token`.
@@ -314,6 +314,21 @@ It is an allow-list of writer members rather than a blocklist of reader
 constructors, because a blocklist was measured missing two evasions: a
 constructor held as a function value, and a zero value turned into a reader by
 `Reset`. Open gzip readers through `internal/gzipstream` instead.
+
+### `internal/cache/s3` - a class row for every sentinel
+
+Every package-level variable in the S3 backend's non-test files named like a
+sentinel - `err` or `Err`, then an upper-case letter - needs a row in
+`sentinelClassCases`, which pins it to the unavailable, unusable or busy class,
+or to none, and checks it matches that class and neither other one: a
+sentinel carrying two classes would exit by the order `exitcode.FromError`
+checks them in, and a reclassified one moves an exit code. The gate reads the
+declarations from source, so a sentinel added without a row fails rather than
+going unchecked, wherever in the package it is declared. It reads the table
+from source as well, since only the source says which variable a row passes,
+and fails a row whose name is not that variable's, a variable listed twice and
+a row for anything the package does not declare - and it fails when it finds
+no sentinel at all, rather than passing an empty enumeration.
 
 ## Lint
 
@@ -516,7 +531,7 @@ symlinks and submodule entries with a fixed commit time, plus a declared-size
 override for the budget tests. `internal/galaxy/treearchive`,
 `internal/galaxy/collectionbuild`, `internal/galaxy/rolebuild` and
 `internal/galaxy/galaxyv1` each carry their own tests beside the code; none of
-the six source audits changed for roles.
+the source audits changed for roles.
 
 **The S3 lock tests wait on events, never on elapsed time.** `testLockTiming`
 shrinks the lock's own intervals, but the client's retry policy cannot be
