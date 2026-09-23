@@ -1,5 +1,8 @@
 # CLI reference
 
+This page lists what each command and option does; [Command flows](commands.md)
+draws how each command runs, with a branch for every flag that changes its path.
+
 ## Usage
 
 ```bash

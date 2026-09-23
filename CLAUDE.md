@@ -15,7 +15,8 @@ options), `docs/configuration.md` (ansible.cfg and the environment surface),
 `docs/ansible-galaxy-compat.md` (every deliberate divergence),
 `docs/caching.md`, `docs/ci.md`, `docs/exit-codes.md`, `docs/metrics.md`,
 `docs/security.md`, `docs/benchmarks.md`, `docs/architecture.md` (how it
-works), `docs/development.md` (tests, gates, lint). One document sits at the
+works), `docs/commands.md` (each command's control flow as Mermaid diagrams,
+branch by branch over its flags), `docs/development.md` (tests, gates, lint). One document sits at the
 root instead, because GitHub reads it from there: `CONTRIBUTING.md` (the
 commit subjects the release notes are grouped from, and cutting a release) -
 which is why it is named in `archives.files` beside `README.md`, or the

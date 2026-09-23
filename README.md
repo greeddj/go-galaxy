@@ -198,6 +198,7 @@ pipeline can branch on the failure type without parsing log output. See
 | Document | What it covers |
 | :-- | :-- |
 | [CLI reference](docs/cli.md) | Every command and option, `--dry-run`, output and color |
+| [Command flows](docs/commands.md) | Each command's control flow as a diagram, branch by branch over its flags |
 | [Configuration](docs/configuration.md) | `ansible.cfg` discovery and keys, the environment surface, `requirements.yml` |
 | [Galaxy servers and authentication](docs/servers-and-auth.md) | `server_list`, tokens, precedence, TLS, refused configurations |
 | [Signature verification](docs/signatures.md) | Keyrings, required counts, tolerated statuses, the manifest chain |
