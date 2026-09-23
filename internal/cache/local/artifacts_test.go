@@ -64,7 +64,8 @@ func TestArtifactsCommitWritesSHASidecar(t *testing.T) {
 }
 
 // TestArtifactsCommitSwallowsSidecarWriteFailure pins that Commit succeeds
-// with the tarball in place when a directory blocks the sidecar's path.
+// with the tarball in place when a directory blocks the sidecar's path, and
+// leaves no sidecar temp behind in the cache directory.
 func TestArtifactsCommitSwallowsSidecarWriteFailure(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -94,6 +95,15 @@ func TestArtifactsCommitSwallowsSidecarWriteFailure(t *testing.T) {
 	}
 	if _, statErr := os.Stat(result.Path); statErr != nil {
 		t.Fatalf("expected the tarball to be committed, stat error: %v", statErr)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read cache directory: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), helpers.ArtifactDownloadTempPrefix) {
+			t.Errorf("expected the failed sidecar write to remove its temp, found %q", entry.Name())
+		}
 	}
 }
 
@@ -318,42 +328,39 @@ func TestArtifactsMetaPresentWithNonHexSidecarReportsFoundNilMeta(t *testing.T) 
 }
 
 // TestArtifactsNeverActThroughASymlinkedCacheEntry pins why the flat layout
-// needs no os.Root: a key is one path element, and Commit's os.Rename and
-// Delete's os.Remove replace or unlink a planted symlink, never its target.
+// needs no os.Root: a key is one path element, Commit renames onto the entry
+// and its sidecar, and Delete unlinks, so a planted symlink's target survives.
 func TestArtifactsNeverActThroughASymlinkedCacheEntry(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Commit replaces the symlink", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		victim := seedSymlinkedCacheEntry(t, dir)
+		victim := seedSymlinkedCacheEntry(t, dir, testArtifactKey)
 
 		a := NewArtifacts(dir)
 		commitTempArtifact(t, a, []byte("committed bytes"), map[string]string{"sha256": testSHA})
 
 		assertVictimIntact(t, victim)
-		entry := filepath.Join(dir, testArtifactKey)
-		info, err := os.Lstat(entry)
-		if err != nil {
-			t.Fatalf("lstat committed entry: %v", err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			t.Error("expected Commit to replace the symlink with a real file, it is still a symlink")
-		}
-		//nolint:gosec // entry is under this test's own t.TempDir fixture.
-		body, err := os.ReadFile(entry)
-		if err != nil {
-			t.Fatalf("read committed entry: %v", err)
-		}
-		if string(body) != "committed bytes" {
-			t.Errorf("committed entry = %q, want the freshly committed bytes", body)
-		}
+		assertCommittedRegularFile(t, filepath.Join(dir, testArtifactKey), "committed bytes")
+	})
+
+	t.Run("Commit replaces a symlinked sidecar", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		victim := seedSymlinkedCacheEntry(t, dir, testArtifactKey+helpers.ArtifactSHASidecarSuffix)
+
+		a := NewArtifacts(dir)
+		commitTempArtifact(t, a, []byte("committed bytes"), map[string]string{"sha256": testSHA})
+
+		assertVictimIntact(t, victim)
+		assertCommittedRegularFile(t, filepath.Join(dir, testArtifactKey)+helpers.ArtifactSHASidecarSuffix, testSHA)
 	})
 
 	t.Run("Delete unlinks the symlink", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
-		victim := seedSymlinkedCacheEntry(t, dir)
+		victim := seedSymlinkedCacheEntry(t, dir, testArtifactKey)
 
 		a := NewArtifacts(dir)
 		if err := a.Delete(context.Background(), testArtifactKey); err != nil {
@@ -367,20 +374,41 @@ func TestArtifactsNeverActThroughASymlinkedCacheEntry(t *testing.T) {
 	})
 }
 
-// seedSymlinkedCacheEntry plants a symlink at the cache entry testArtifactKey
-// resolves to, pointing at a file outside the cache directory, and returns
-// that file's path.
-func seedSymlinkedCacheEntry(t *testing.T, cacheDir string) string {
+// seedSymlinkedCacheEntry plants a symlink named name in cacheDir, pointing
+// at a file outside the cache directory, and returns that file's path.
+func seedSymlinkedCacheEntry(t *testing.T, cacheDir, name string) string {
 	t.Helper()
 
 	victim := filepath.Join(t.TempDir(), "victim")
 	if err := os.WriteFile(victim, []byte(victimContent), helpers.FileMod); err != nil {
 		t.Fatalf("write victim: %v", err)
 	}
-	if err := os.Symlink(victim, filepath.Join(cacheDir, testArtifactKey)); err != nil {
+	if err := os.Symlink(victim, filepath.Join(cacheDir, name)); err != nil {
 		t.Fatalf("symlink cache entry: %v", err)
 	}
 	return victim
+}
+
+// assertCommittedRegularFile fails the test unless Commit left a regular file
+// at path, not the symlink planted there, holding exactly want.
+func assertCommittedRegularFile(t *testing.T, path, want string) {
+	t.Helper()
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat committed %s: %v", filepath.Base(path), err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Errorf("expected Commit to replace the symlink at %s with a regular file, mode = %v", filepath.Base(path), info.Mode())
+	}
+	//nolint:gosec // path is under this test's own t.TempDir fixture.
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read committed %s: %v", filepath.Base(path), err)
+	}
+	if string(body) != want {
+		t.Errorf("committed %s = %q, want %q", filepath.Base(path), body, want)
+	}
 }
 
 // victimContent is the body seedSymlinkedCacheEntry writes and

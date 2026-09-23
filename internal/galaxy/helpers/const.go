@@ -158,9 +158,9 @@ const (
 	// does and always hashes the bytes.
 	ArtifactSHASidecarSuffix = ".sha256"
 
-	// ArtifactDownloadTempPrefix prefixes the local store's in-flight download
-	// temp files; one outliving its download is a dead-run orphan, and this is
-	// the exact string both the dead-run and --clear-cache sweeps match.
+	// ArtifactDownloadTempPrefix prefixes the local store's in-flight temp files,
+	// a download or a sha256 sidecar; one outliving its run is a dead-run orphan,
+	// and this is the exact string both the dead-run and --clear-cache sweeps match.
 	ArtifactDownloadTempPrefix = ".download-"
 
 	// FetchDefaultTimeout is --timeout's default: a no-progress budget on the

@@ -96,7 +96,7 @@ func (s *Artifacts) Commit(_ context.Context, key, tmpPath string, meta map[stri
 	}
 	result := cacheManager.ArtifactFile{Path: path}
 	if sha := strings.TrimSpace(meta["sha256"]); helpers.IsSHA256Hex(sha) {
-		_ = os.WriteFile(path+helpers.ArtifactSHASidecarSuffix, []byte(sha), helpers.FileMod)
+		writeSidecar(path, sha)
 		result.Meta = map[string]string{"sha256": sha}
 	}
 	return result, nil
@@ -117,6 +117,21 @@ func (s *Artifacts) Delete(_ context.Context, key string) error {
 		return classifyCacheFailure(err)
 	}
 	return nil
+}
+
+// writeSidecar records sha beside path through a temp file renamed into place,
+// so a symlink planted at the sidecar name is replaced, never written through.
+// Any failure removes the temp and is swallowed, as Commit documents.
+func writeSidecar(path, sha string) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), helpers.ArtifactDownloadTempPrefix+"*")
+	if err != nil {
+		return
+	}
+	_, writeErr := tmp.WriteString(sha)
+	closeErr := tmp.Close()
+	if writeErr != nil || closeErr != nil || os.Rename(tmp.Name(), path+helpers.ArtifactSHASidecarSuffix) != nil {
+		_ = os.Remove(tmp.Name())
+	}
 }
 
 // sidecarMeta returns path's sidecar digest as a Meta map when it passes

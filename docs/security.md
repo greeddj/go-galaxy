@@ -827,17 +827,18 @@ by `helpers.ArtifactKey` - a server fingerprint, a dot, and the filename through
 filename `cleanup` sweeps, so every artifact path is the cache directory joined
 with exactly one element. The store trusts its callers for this and checks only
 that a key is not empty, so a key that could carry a separator or a dot segment
-would void the guarantee. With one element, the entry itself is the only thing
-a writer to the cache directory can replace with a symlink, and a commit (a
-rename) or a delete (an unlink) acts on the link, never on its target. The
-`.sha256` sidecar beside the entry is not covered: it is written with
-`os.WriteFile`, which follows a symlink planted at that name. The two sweeps of
-that flat directory, `--clear-cache` and the removal of download temps a killed
-run left behind, keep to the rule: each removes one top-level name with a plain
-`os.Remove` and skips directories, so a symlink planted at a sweepable name is
-unlinked and its target survives. A change that nests these paths, or opens,
-truncates or follows an entry before deleting it, loses that property and
-needs a containment root.
+would void the guarantee. With one element, the entry and its `.sha256`
+sidecar are the only names a writer to the cache directory can replace with a
+symlink, and a commit or a delete acts on the link, never on its target: a
+commit renames the entry into place and writes the sidecar to a temp file
+renamed onto its name, and a delete unlinks both. The two sweeps of that flat
+directory, `--clear-cache` and the removal of download temps a killed run left
+behind (a sidecar's temp carries the same prefix), keep to the rule: each
+removes one top-level name with a plain `os.Remove` and skips directories, so a
+symlink planted at a sweepable name is unlinked and its target survives. A
+change that nests these paths, writes an entry or a sidecar in place, or opens,
+truncates or follows one before deleting it, loses that property and needs a
+containment root.
 
 A sha256 digest has one accepted shape, 64 lowercase hex characters
 (`helpers.IsSHA256Hex`), and an uppercase one never reaches the cache. A
