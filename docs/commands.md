@@ -481,7 +481,7 @@ flowchart TD
     S5 --> S7["print queued config warnings,<br/>Starting installation process"]
     S6 --> S7
     S7 --> S8{"--dry-run?"}
-    S8 -->|"yes"| S9["stderr banner: nothing is downloaded,<br/>installed or cached"]
+    S8 -->|"yes"| S9["stderr banner: no Galaxy artifact downloaded,<br/>no artifact installed or cached; a role,<br/>git or url source with no usable pin<br/>is still fetched, then discarded"]
     S8 -->|"no"| S10{"--refresh and --offline?"}
     S9 --> S10
     S10 -->|"yes"| S11["warn: --refresh skipped"]

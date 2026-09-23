@@ -346,6 +346,34 @@ func TestURLDryRunAndNoCache(t *testing.T) {
 	}
 }
 
+// TestURLDryRunBannerNamesTheDownload pins that the banner of a dry run which
+// downloads an unpinned url tarball says so, rather than promising no download.
+func TestURLDryRunBannerNamesTheDownload(t *testing.T) {
+	t.Parallel()
+	f := newURLFixture(t)
+	f.writeRequirements(t, "collections:\n  - "+f.tarballURL+"\n")
+	f.cfg.DryRun = true
+	f.mustInstall(t)
+	if got := f.galaxy.Count(fakegalaxy.EndpointTarball); got != 1 {
+		t.Fatalf("dry run downloads = %d, want 1", got)
+	}
+	var banner string
+	for _, line := range f.printer.warns {
+		if strings.HasPrefix(line, "--dry-run is active:") {
+			banner = line
+		}
+	}
+	for _, want := range []string{
+		"no Galaxy artifact will be downloaded",
+		"url source with no usable recorded pin is still fetched",
+		"then discarded",
+	} {
+		if !strings.Contains(banner, want) {
+			t.Errorf("dry-run banner %q does not say %q", banner, want)
+		}
+	}
+}
+
 // TestURLRedirectFollowed proves the release-asset shape end to end: the
 // requirements entry names a URL that answers 302, and the artifact installs
 // from the redirect target.

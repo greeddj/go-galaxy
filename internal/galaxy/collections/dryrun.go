@@ -22,10 +22,12 @@ import (
 
 // dryRunBanner announces --dry-run once per run through Warnf (stderr, survives
 // --quiet), since an ambient GO_GALAXY_DRY_RUN must never silently no-op a job.
-// It names the metadata-cache save saveDryRunSnapshotIfPersisted still makes.
+// It names what still happens: discovery's fetches and saveDryRunSnapshotIfPersisted.
 func dryRunBanner(runtime *infra.Infra) {
 	runtime.Output.Warnf(
-		"--dry-run is active: no artifact will be downloaded, installed, or cached; the resolved metadata caches are still saved",
+		"--dry-run is active: no Galaxy artifact will be downloaded and no artifact installed or cached; " +
+			"a role, git source or url source with no usable recorded pin is still fetched to learn its identity, then discarded; " +
+			"the resolved metadata caches are still saved",
 	)
 }
 
