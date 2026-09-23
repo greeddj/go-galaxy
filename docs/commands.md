@@ -2514,7 +2514,7 @@ flowchart TD
     C10["print depends on:<br/>and - dep for each, sorted"]
     RF{"role matched?"}
     R1["print role name version"]
-    R2["print type, source, ref, commit always,<br/>galaxy and repository only when non-empty,<br/>sha256 never"]
+    R2["print type and source always;<br/>galaxy, repository, ref, commit<br/>and sha256 only when non-empty"]
     R4{"matched role's install name<br/>is a role root?"}
     R5["print - requirements.yml (root)"]
     R6["print - role name version for each<br/>parent, sorted by name"]
@@ -2562,10 +2562,13 @@ A name that is both a collection and a role prints both sections, the collection
 first. What the collection header shows follows from the entry type: a Galaxy
 entry its source and sha256, a git entry type, source, ref, commit and, when it
 is not the repository root, subdir, a url entry type, source and sha256. The
-`requirements.yml (root)` line prints that literal file name whatever
-`--requirements-file` names. A role's parents are matched against the matched
-role's install name, which is what a role's deps hold, so a role explained by its
-Galaxy name (`owner.role`) lists the same parents as by its install name.
+role header follows the role type the same way: a Galaxy role its type, galaxy,
+source, repository, ref and commit, a git role type, source, ref and commit, a
+url role type, source and sha256. The `requirements.yml (root)` line prints that
+literal file name whatever `--requirements-file` names. A role's parents are
+matched against the matched role's install name, which is what a role's deps
+hold, so a role explained by its Galaxy name (`owner.role`) lists the same
+parents as by its install name.
 
 ### Flags that change the flow
 

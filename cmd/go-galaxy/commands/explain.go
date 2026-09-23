@@ -131,8 +131,15 @@ func printRoleHeader(w io.Writer, entry lockfile.RoleEntry) {
 	if entry.Repository != "" {
 		_, _ = fmt.Fprintf(w, "  repository : %s\n", entry.Repository)
 	}
-	_, _ = fmt.Fprintf(w, "  ref        : %s\n", entry.Ref)
-	_, _ = fmt.Fprintf(w, "  commit     : %s\n", entry.Commit)
+	if entry.Ref != "" {
+		_, _ = fmt.Fprintf(w, "  ref        : %s\n", entry.Ref)
+	}
+	if entry.Commit != "" {
+		_, _ = fmt.Fprintf(w, "  commit     : %s\n", entry.Commit)
+	}
+	if entry.SHA256 != "" {
+		_, _ = fmt.Fprintf(w, "  sha256     : %s\n", entry.SHA256)
+	}
 }
 
 func printRoleRequiredBy(w io.Writer, entry lockfile.RoleEntry, rdeps []lockfile.RoleEntry, roots map[string]bool) {
