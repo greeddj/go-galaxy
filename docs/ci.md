@@ -10,12 +10,15 @@ go-galaxy lock             # writes galaxy.lock
 go-galaxy install --frozen # install exactly the locked versions
 ```
 
-A frozen install fails loudly if a cached or downloaded artifact does not match the
-lockfile's recorded SHA256, so a poisoned cache or a mutated upstream artifact cannot
-install silently; lockfiles with no recorded SHA (older lockfiles) are not pin-checked.
-A role is pinned by commit rather than by digest: a frozen install serves it from the
-cache, and on a miss fetches exactly the pinned commit and refuses a repository that
-serves another one (exit `7`).
+A frozen install never installs an artifact that does not match the lockfile's recorded
+SHA256, so a poisoned cache or a mutated upstream artifact cannot be installed: a cached
+artifact that does not match is evicted and downloaded again once (never under
+`--offline`), and a mismatch that is still there fails the run (exit `7`). Lockfiles with
+no recorded SHA (older lockfiles) are not pin-checked. A git or Galaxy role is pinned by
+commit rather than by digest: a frozen install serves it from the cache, and on a miss
+fetches exactly the pinned commit and refuses a repository that serves another one (exit
+`7`); a url role is pinned by its origin bytes' SHA256 and refused the same way when the
+URL serves other bytes.
 
 `--frozen` decides *what* gets installed and needs no cache to do it. `--offline`
 is a separate, stronger promise: no network call at all, so an artifact that is
@@ -134,7 +137,7 @@ job-level `env`, and `env` on the step that calls the action all reach it.
           GO_GALAXY_GIT_HUB_PASSWORD: ${{ secrets.GH_PAT }}
         with:
           frozen: true
-          args: --no-deps --required-valid-signature-count 1
+          args: --required-valid-signature-count 1
 ```
 
 **Put no secret in `args`.** That input becomes argv, and argv is readable by

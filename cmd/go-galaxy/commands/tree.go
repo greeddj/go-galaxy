@@ -222,9 +222,9 @@ func walkRoleTree(w io.Writer, by map[string]lockfile.RoleEntry, name, prefix st
 	}
 }
 
-// roleOrigin renders a role entry's provenance for the tree: the repository
-// and commit for a git role, the Galaxy name and the repository it was
-// imported from for a Galaxy role.
+// roleOrigin renders a role entry's provenance for the tree: the tarball URL
+// and its sha256 prefix for a url role, the repository and commit for a git
+// role, the Galaxy name and the repository it was imported from for a Galaxy role.
 func roleOrigin(entry lockfile.RoleEntry) string {
 	if entry.IsURL() {
 		return fmt.Sprintf(" (url %s sha256:%s)", helpers.WithoutCredentials(entry.Source), entry.SHA256[:helpers.ArtifactKeyFingerprintLen])

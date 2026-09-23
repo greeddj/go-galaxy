@@ -14,8 +14,8 @@ import (
 // never imports config. The command layer builds it just before
 // NewURLDownload, the one place a url token is revealed.
 type URLBinding struct {
-	// Origin is rendered exactly as helpers.Origin renders a request URL, IPv6
-	// brackets included (urlsource.Prefix.Origin), so matching is byte equality.
+	// Origin is rendered exactly as helpers.Origin renders a request URL, an IPv6
+	// literal unbracketed (urlsource.Prefix.Origin), so matching is byte equality.
 	Origin string
 	// PathPrefix is the binding's escaped path prefix with no trailing
 	// slash, "" when the binding covers the whole origin.

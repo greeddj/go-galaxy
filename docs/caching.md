@@ -163,9 +163,12 @@ of pin can overwrite each other. A pin is invalidated by editing its own line
 (a new key), by `--refresh` - which re-asks the v1 API and re-advertises the
 ref, keeping the pin when the commit is unchanged and the artifact still
 cached - and by `--clear-cache`, which drops every role pin but leaves the
-installed-roles records alone; never by age. `--offline` needs a recorded pin and the cached
-artifact, else exits `4`; `--no-cache` fetches and builds once at discovery
-and hands the build straight to the install phase. `warm` caches a role's
+installed-roles records alone; never by age. `--offline` needs a recorded pin
+and the cached artifact, else exits `4` before anything installs; under
+`--frozen` the pins come from the lockfile instead, so an artifact missing
+under `--offline` fails that role alone and the run exits `5`. `--no-cache`
+fetches and builds once at discovery and hands the build straight to the
+install phase. `warm` caches a role's
 artifact and its extracted tree and records the warmed key as
 `role:<name>@<version>`, kept apart from the collection keys so a role and a
 collection sharing a `name@version` cannot overwrite each other's entry; the
@@ -176,13 +179,16 @@ resolve-side snapshot reuse that replays a collection resolution while
 involved in roles at all: a `roles:` list is replayed through its pins, entry
 by entry, so editing a role line re-resolves that role and nothing else.
 
-Adding the two role buckets bumped the snapshot schema to version 8. The
-policy is drop-and-rebuild, so the first run of this version against an
-existing cache rebuilds its metadata caches cold (the artifact and extracted
-stores are untouched), and an older binary sharing the same cache refuses the
-snapshot with `unsupported snapshot schema version` (exit `2`) rather than
-dropping the role buckets on its next save and leaving a later `cleanup` with
-no record of any installed role.
+Adding the two role buckets bumped the snapshot schema to version 8; the url
+source pins (the `url_pins` bucket, and the url-source fields a `role_pins`
+entry gained) bumped it to version 9, the current one. The policy is
+drop-and-rebuild, so the first run of a new schema version against an existing
+cache rebuilds its metadata caches cold (the artifact and extracted stores are
+untouched), and an older binary sharing the same cache refuses the snapshot
+with `unsupported snapshot schema version` (exit `2`) rather than dropping the
+buckets it does not know on its next save - for a binary from before version 8
+the role buckets, which would leave a later `cleanup` with no record of any
+installed role.
 
 ## Freshness and retention
 

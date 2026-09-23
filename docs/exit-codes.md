@@ -14,8 +14,8 @@ collide:
 |    1 | Generic failure (does not match any class below)                                                                                                                                                                                                                                                                                                                                                                                                                  |
 |    2 | Usage or configuration error (invalid flags, a positional argument missing where a command requires one (`explain` with no name) or given where it takes none - a word that names no command included, since it reaches `install` as one - requirements, `ansible.cfg`, an unsupported collection source (`file`, `dir`), a git source this tool refuses as written - a malformed or credential-bearing URL, an abbreviated or invalid ref, an unsafe subdir, a credential binding that does not parse, an ssh repository with neither a bound key nor an agent, a repository or subdir holding no collection or naming one the requirement did not ask for, a `galaxy.yml` that cannot be built from or whose version is not exact - a url source this tool refuses as written - a malformed, credential-bearing or fragment-bearing URL, a non-exact `version:` assertion, a `source:`, `namespace:` or `signatures:` key on a url entry, a url credential binding that does not parse, a role tarball that does not hold exactly one role - an explicit namespace conflicting with a dotted collection name, a `roles:` entry this tool refuses as written - not a list, a shape ansible would not take either, a collection key (`source:`, `signatures:`, `type:`) on a role entry, a name, install name or version outside the role alphabets, a local-path, non-http or non-`.tar.gz` `src:`, an `scm` other than `git`, an `include:`, or two entries installing into one directory - no configured Galaxy server serving the v1 role API, a v1 role record this tool cannot compose a repository URL from, a repository that is not a role (no `meta/main.yml` at its root) or whose meta this tool cannot read, an unsupported cache-snapshot schema version, an unreadable or unparseable project requirements file, or a cache backend that cannot be used as configured). The Go runtime also exits a fatal error - a stack overflow, an out-of-memory kill - with this same status, without running any cleanup; a run that ended that way prints a line beginning `fatal error:` to stderr, so it is the output rather than the status that tells the two apart |
 |    3 | Dependency resolution failure (conflicts, missing candidates, cycle, a git ref or commit the remote does not have, a Galaxy role no v1-serving server knows, a role version the server does not list, or a role whose version names cannot be ordered so no highest one can be chosen)                                                                                                                                                                                                                                                                                                                                                                                              |
-|    4 | Network or Galaxy API failure (timeouts, stalled transfers, metadata and cache-state deadlines, a git transport failure or a git credential or host key the remote refused, a git pack that exceeded its on-disk ceiling, a Galaxy metadata URL no HTTP request can be built from, a versions listing that exceeded its page ceiling (a collection's, or a role's v1 version list past 20 pages), a response body that exceeded its size ceiling (an artifact, a metadata document, or a bucket listing), a v1 role API request that failed in transport or with a 5xx, offline-mode violations (a role with no recorded pin or no cached artifact under `--offline` included), an unreachable cache backend, or an `outdated` run in which at least one latest-version lookup failed for a reason not classified below - a lookup that failed on a userinfo refusal reports `5`)                                                                        |
-|    5 | Install-time failure (unsafe archive/symlink content, empty file, missing artifact cache, a git tree this tool will not materialize - an unsafe entry name, case-folded duplicates, a symlink that resolves nowhere - or a git artifact that failed its own build self-check, a role directory that already exists and was installed neither by this tool nor by `ansible-galaxy` so it is not replaced, a role artifact that failed to extract, or a URL a Galaxy server supplied that this tool refuses to fetch from because it embeds a credential in its userinfo - an artifact download URL or a metadata URL alike, so a `lock` or `outdated` run can report `5` without ever installing anything)                                                                                                                |
+|    4 | Network or Galaxy API failure (timeouts, stalled transfers, metadata and cache-state deadlines, a git transport failure or a git credential or host key the remote refused, a git pack that exceeded its on-disk ceiling, a Galaxy metadata URL no HTTP request can be built from, a versions listing that exceeded its page ceiling (a collection's, or a role's v1 version list past 20 pages), a response body that exceeded its size ceiling (an artifact, a metadata document, or a bucket listing), a v1 role API request that failed in transport or with a 5xx, offline-mode violations that end the run by themselves (a role with no recorded pin, or no cached artifact behind its pin, under `--offline` without `--frozen` included), an unreachable cache backend, or an `outdated` run in which at least one latest-version lookup failed for a reason not classified below - a lookup that failed on a userinfo refusal reports `5`)                                                                        |
+|    5 | Install-time failure (unsafe archive/symlink content, empty file, missing artifact cache, a git tree this tool will not materialize - an unsafe entry name, case-folded duplicates, a symlink that resolves nowhere - or a git artifact that failed its own build self-check, a role directory that already exists and was installed neither by this tool nor by `ansible-galaxy` so it is not replaced, a role artifact that failed to extract, an artifact a resolved collection or role needs that is not in the cache under `--offline` (a `--frozen --offline` miss included), or a URL a Galaxy server supplied that this tool refuses to fetch from because it embeds a credential in its userinfo - an artifact download URL or a metadata URL alike, so a `lock` or `outdated` run can report `5` without ever installing anything)                                                                                                                |
 |    6 | Lockfile error (missing, invalid, mismatched with requirements, or out of date under `lock --frozen`; for a role, a `roles:` entry the lockfile lacks or locks from a different Galaxy version, repository or ref, a role entry whose fields are not canonical, or a role entry in a file whose `schema_version` is below 3)                                                                                                                                                                                                                                                                                                                                                             |
 |    7 | Artifact-integrity failure (content does not authenticate against its naming sha256, or the digest is malformed; for a git source, a remote that advertised one commit and shipped another, or a pinned commit that no longer builds the collection it was pinned as; for a role, a repository that serves a different commit than the lockfile pins when the artifact has to be rebuilt)                                                                                                                                                                                                                                                                                                                                                  |
 |    8 | Cache contention (the cache lock is held elsewhere, the S3 lock's wait ceiling elapsed after this run observed another holder, or a lock this run did hold was taken away by another holder mid-run)                                                                                                                                                                                                                                                              |
@@ -33,11 +33,15 @@ its own: every role failure classifies into the classes above by what failed,
 so a pipeline branching on these numbers needs no new branch.
 
 Two commands read somewhere else instead of requiring the file, and neither
-adds an exit class for doing so. `hash` exits `0` and falls back to hashing
-`requirements.yml`. `outdated` falls back to the installed collections tree
-and reports from it; it still exits `6` when that tree is missing too, naming
-both paths, so a repository that neither locks nor installs is told the same
-thing it always was.
+adds an exit class for doing so. `hash` falls back to hashing
+`requirements.yml` and exits `0`; if that file is missing too it exits `2`,
+and if it cannot be read, `1`. The fallback applies only to an absent
+lockfile: one that is present but unreadable or invalid still exits `6`, since
+a key hashed from the requirements file would hide the broken lockfile.
+`outdated` falls back to the installed collections tree and reports from it;
+it still exits `6` when that tree is missing too, naming both paths, so a
+repository that neither locks nor installs is told the same thing it always
+was.
 
 Exit `7` covers content that failed to authenticate against the sha256 that
 named it - a lockfile pin, a Galaxy server's declared digest, a cache sidecar,
@@ -95,29 +99,32 @@ A stalled or byte-dripped transfer is never reported as an interrupt, even
 though the underlying mechanism that unblocks it is a context cancellation:
 the tool distinguishes its own no-progress cancellation from a genuine caught
 signal or caller cancellation, and only the latter exits `130` (SIGINT or a
-canceled caller context), `143` (SIGTERM) or `129` (SIGHUP). SIGTERM is the one
-worth planning for: a canceled GitLab job, an evicted Kubernetes pod and a
+canceled caller context), `143` (SIGTERM) or `129` (SIGHUP). SIGTERM is the
+one worth planning for: a canceled GitLab job, an evicted Kubernetes pod and a
 canceled GitHub Actions job all send it rather than SIGINT, so `143` is the
 code a cancellation usually shows up as. SIGQUIT is deliberately left
 unhandled, which keeps Go's default goroutine dump available for diagnosing a
-hung run. The same holds for
-the metadata, cache-state and signature-fetch ceilings above: grep the run's
-output for `galaxy metadata fetch deadline exceeded`, `cache state object
-deadline exceeded`, or `collection signature fetch deadline exceeded` to tell
-one of these deadlines apart from a genuine interrupt or from any other
-network failure sharing exit code `4`.
+hung run. The same holds for the metadata, cache-state and signature-fetch
+ceilings above: grep the run's output for `galaxy metadata fetch deadline
+exceeded`, `cache state object deadline exceeded`, or `collection signature
+fetch deadline exceeded` to tell one of these deadlines apart from a genuine
+interrupt or from any other network failure. Each exits `4` where it ends the
+run by itself and `5` once joined behind the install headline, which is the
+only place the signature-fetch deadline surfaces, since signatures are
+gathered per collection.
 
 One signature-related failure is a deliberate exception to that rule rather
 than a fourth deadline: a signature source that could not be fetched or read
 (reported as `collection signature source unavailable`, distinct from the
 deadline message above) keeps a genuine Ctrl-C reachable, so an operator
 interrupting a run mid-fetch of a signature source still exits
-`130`/`143`/`129` as an interrupt, not `4` as a network failure. That is the
-one place in this whole family where the underlying transport error is
-allowed to carry the caller's own cancellation through unchanged, because
-unlike the four deadlines above, this failure already reports every other
-network cause faithfully - a stall here is the deadline sentinel's own job,
-not this one's - so there is nothing for a real Ctrl-C to be confused with.
+`130`/`143`/`129` as an interrupt, not `5` as the per-collection failure it
+would otherwise join. That is the one place in this whole family where the
+underlying transport error is allowed to carry the caller's own cancellation
+through unchanged, because unlike the four deadlines above, this failure
+already reports every other network cause faithfully - a stall here is the
+deadline sentinel's own job, not this one's - so there is nothing for a real
+Ctrl-C to be confused with.
 
 `artifact download deadline exceeded` is the stall verdict for every
 acquisition that spends the artifact budget described under
@@ -207,7 +214,10 @@ or one embedding a credential in its userinfo
 composed, and the remedy is editing the entry in `requirements.yml`. A source
 this tool would have fetched and could not obtain - a network failure, an
 unreadable `file://` path, an offline-mode refusal - or a signature phase that
-overran its deadline, exits `4` instead; an artifact carrying no
+overran its deadline, is a network-class cause (`4`) rather than a verdict;
+because signatures are only gathered per collection, during `install` and
+`warm`, it is always joined behind the `installation failed` headline and the
+run exits `5`, as the aggregation rule above describes; an artifact carrying no
 `MANIFEST.json` exits `5` with the other artifact-shape failures; and a
 manifest chain that does not match its own digests exits `7`, since what failed
 there is bytes against a digest.

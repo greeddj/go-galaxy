@@ -972,7 +972,7 @@ func TestTryAcquireOnceReportsObservationPerBranch(t *testing.T) {
 		{
 			// Both PUTs, the create and the If-Match swap on the expired seeded
 			// object, answer 412, so the swap loses to another writer.
-			name: "another creator winning the race for the just-deleted object is observed",
+			name: "another writer winning the If-Match swap on the expired object is observed",
 			setup: func(t *testing.T, b *Backend, fake *fakeS3, key string) {
 				t.Helper()
 				seedLockObject(context.Background(), t, b, time.Now().UTC().Add(-time.Hour))

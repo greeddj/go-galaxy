@@ -701,8 +701,11 @@ observes the context on every read, on both sides of the decompressor (see
 [Archive extraction](security.md#archive-extraction)), so it stops mid-entry; a
 partial tree is never taken for a finished one, since the extract marker is
 written only after the unpack succeeds and the extracted store removes the temp
-tree of a failed extraction before anything is promoted. The store's rename,
-once begun, completes, but every write to the shared cache ends with the
+tree of a failed extraction before anything is promoted. The steps after the
+untar take no context - writing the store's ready marker and renaming its tree
+into place, hardlinking a finished store tree into the install path
+(`extracted.Materialize`), writing the extract marker - so a worker that has
+reached them finishes them, but every write to the shared cache ends with the
 context.
 
 Both lifecycles, `initInstall` and cleanup's `initCleanup`, return the holder
@@ -846,7 +849,8 @@ bytes under their digest for every install sharing them. The record's
 cleanup finds a record by the path it scans.
 
 **Lock and frozen.** `lock` resolves roles in the same run and renders each as
-a `RoleEntry` pinned by commit; under `--frozen` an `install` or `warm` takes
+a `RoleEntry` pinned by commit, or a url role by its origin bytes' sha256;
+under `--frozen` an `install` or `warm` takes
 its roles from the lockfile with no network, checking each `roles:` entry as
 written against its locked line (same source - the Galaxy name or the
 repository - and same ref, and for a Galaxy role with a version asked for, that
@@ -903,9 +907,11 @@ Order is load-bearing:
 
 ### Two pools, two resources
 
-`--workers` bounds extraction, which is CPU-bound: an install or warm worker
-unpacks a tree in the same goroutine that acquired it, and an install worker
-that ends up acquiring an artifact itself does so inside that same bound.
+`--workers` bounds extraction, which is local work bound mostly by the
+filesystem creating entries and only partly by CPU (see the measurement
+below): an install or warm worker unpacks a tree in the same goroutine that
+acquired it, and an install worker that ends up acquiring an artifact itself
+does so inside that same bound.
 `--download-workers` bounds the prefetcher instead: its background artifact
 downloads and its cache-presence probe scan, both network-bound - a HEAD probe
 or a streamed GET into a temp file, never an extraction. That is why
@@ -1362,15 +1368,18 @@ silence would hide a containment refusal or a lost cache lock.
 One value holds the cached API responses, version lists, dependency maps,
 install records, the dependency graph, the requirements spec, the last
 resolution, the warmed set, the git pins - per `(url, ref, subdir)`, the
-commit a git requirement resolved to and the collections it held - and the
-two role buckets: `installed_roles`, by install name, the record of each
-role on disk (install path, locator, artifact digest, version, Galaxy name,
-dependencies), and `role_pins`, by requirement line (`url\nref\n`, the git pin key with an empty subdir, for a git
-role, `galaxy\nname\nrequested-version` for a Galaxy role), what that line
-resolved to (repository, commit, version, the commit the v1 API recorded, the
-dependencies the meta declared). The local backend bucket-maps it into a
-single BoltDB file - one atomic transaction rather than twelve file writes -
-and the S3 backend marshals it as one gzipped JSON object.
+commit a git requirement resolved to and the collections it held - the url
+pins (`url_pins`) - by URL, the sha256 a url collection requirement's tarball
+resolved to and its MANIFEST.json identity and dependencies - and the two role
+buckets: `installed_roles`, by install name, the record of each role on disk
+(install path, locator, artifact digest, version, Galaxy name, dependencies),
+and `role_pins`, by requirement line (`url\nref\n`, the git pin key with an
+empty subdir, for a git role, `galaxy\nname\nrequested-version` for a Galaxy
+role, `url\n<url>` for a url role), what that line resolved to (repository,
+commit, version, the commit the v1 API recorded, the dependencies the meta
+declared, and for a url role its URL and sha256). The local backend
+bucket-maps it into a single BoltDB file - one atomic transaction rather than
+twelve file writes - and the S3 backend marshals it as one gzipped JSON object.
 
 Retention and redaction are applied at persist time, in the single copy path, so
 both backends inherit one set of rules rather than each implementing its own.

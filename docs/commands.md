@@ -95,7 +95,10 @@ flowchart TD
   D2 -->|"no, but --help parsed<br/>before the bad flag"| XH1(["print root help, exit 0"])
   D2 -->|"no"| XU1(["Incorrect Usage and help,<br/>exit 2 (usage)"])
   D2 -->|"yes"| D3{"--help or -h?"}
-  D3 -->|"yes"| XH2(["print root help, exit 0"])
+  D3 -->|"yes"| DH{"a positional word left<br/>after the root flags?"}
+  DH -->|"none"| XH2(["print root help, exit 0"])
+  DH -->|"a command name or alias,<br/>for example -h hash"| XH4(["print that command's help, exit 0"])
+  DH -->|"any other word,<br/>an unknown flag included"| XU4(["No help topic for the word,<br/>exit 2 (usage)"])
   D3 -->|"no"| D4{"--version or -v?"}
   D4 -->|"yes"| XV(["print the version, exit 0"])
   D4 -->|"no"| D5{"GO_GALAXY_VERBOSE, GO_GALAXY_QUIET,<br/>GO_GALAXY_DRY_RUN parse?"}
@@ -322,8 +325,9 @@ A flag a command does not mount is an undefined flag after its command word
 environment variable is ignored too.
 
 - Every command inherits the root's `--verbose`, `--quiet` (`-q`), `--dry-run`
-  and `--cache-dir`, and has its own `--help` (`-h`). `--version` (`-v`) exists
-  only before a command word.
+  and `--cache-dir`, and has its own `--help` (`-h`). `--version` (`-v`) acts
+  only before a command word; after one, `--version` is undefined (exit 2) and
+  `-v` is accepted and does nothing.
 - install and warm: the collection flags, the signature flags and the S3 flags.
 - lock and outdated: the collection flags and the S3 flags.
 - cleanup: the S3 flags only, so it has no `--offline`, `--timeout`,
@@ -338,7 +342,9 @@ environment variable is ignored too.
 - `--help`, `-h`: prints that command's help and exits 0 before anything runs,
   even when a flag after it or an environment value would fail.
 - `--version`, `-v`: only before any command word; prints the version and
-  exits 0. After a command word it is an undefined flag, exit 2.
+  exits 0. After a command word `--version` is an undefined flag, exit 2; `-v`
+  there is accepted and does nothing (urfave's short-option handling finds the
+  root's flag), so the command runs normally.
 - `--verbose` (`GO_GALAXY_VERBOSE`): no spinner, the stdlib log goes through the
   printer, and the `DebugAnsibleConfig` lines print. It also switches `--quiet`
   off.

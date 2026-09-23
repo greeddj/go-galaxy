@@ -165,9 +165,8 @@ its layout.
 
 The consequence that catches contributors out: adding an import or a helper to a
 test file shifts its line numbers and breaks citations elsewhere in the same
-package. That is why `internal/galaxy/archive` keeps its probe tests in separate
-files - so an edit to one does not invalidate the other's citations. Either
-re-run and update the number, or replace the citation with an identifier.
+package. Either re-run and update the number, or replace the citation with an
+identifier.
 
 Note the interaction with `fieldalignment`: a `just fix` rewrite can reorder
 struct fields in a test file and shift the very lines other comments cite.

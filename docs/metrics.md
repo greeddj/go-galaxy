@@ -86,10 +86,15 @@ the dependencies discovered through them, for `install`/`warm`, the roles the
 written lockfile holds for `lock`, and the role entries checked for
 `outdated` - and is `0`, never absent, for a run without roles. `failures`
 counts both kinds together: a failed role and a failed collection each add
-one. A role's artifact counts in the three artifact counters exactly as a git
-collection's does - the commit at discovery is a miss, its pack bytes are
-`bytes_downloaded`, and each install from the cache is a hit - so
-`cache_hits + cache_misses` counts collection and role acquisitions alike.
+one. A role's artifact counts in the three artifact counters as a git
+collection's does. The commit at discovery is a miss, the bytes fetched for it
+(the pack of a git or Galaxy role, the tarball of a url role) are
+`bytes_downloaded`, and the `install` or `warm` phase of the same run serves it
+from the cache and counts a hit, so a cold run counts both; a later run that
+installs it from the cache counts one more hit. Under `--no-cache` the build
+goes straight to the install phase and neither cache counter moves for the
+role, only `bytes_downloaded`. So `cache_hits + cache_misses` counts collection
+and role acquisitions alike.
 
 `cache_hits`, `cache_misses`, and `bytes_downloaded` are artifact-level counters,
 not collection-level: a hit is one artifact served from the artifact cache and a
@@ -103,11 +108,13 @@ at all. A hit is counted only once the cache has served the artifact, so that
 recovery path counts differently per backend. The local cache does not verify
 a tarball on read: a corrupt one is served (a hit), fails its digest or
 extraction check, and is refetched (a miss). The S3 cache checks an object's
-bytes against its recorded sha256 as part of the read, so a corrupt object
-fails before it is served and its recovery adds only the miss. A cache hit
-always contributes zero bytes to `bytes_downloaded`, including an S3 cache
-hit: that object transfer is a real network round trip to the cache backend,
-but it is not artifact-download traffic, so it is deliberately excluded. The
+bytes against its recorded sha256 as part of the read, so an object whose
+bytes disagree with it fails before it is served and its recovery adds only
+the miss; one that passes that check and fails a later one counts a hit and a
+miss, as on the local cache. A cache hit always contributes zero bytes to
+`bytes_downloaded`, including an S3 cache hit: that object transfer is a real
+network round trip to the cache backend, but it is not artifact-download
+traffic, so it is deliberately excluded. The
 `lock` command never downloads a Galaxy artifact, so for a file of Galaxy
 collections its report has `cache_hits`, `cache_misses`, and
 `bytes_downloaded` at `0`; a git collection or a role it locks is fetched and
