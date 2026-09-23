@@ -12,12 +12,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// s3RetryableCase is one row of TestS3Retryable's table. canceled selects
-// between a live and an already-canceled context inside the test loop,
-// rather than a func(error) bool row storing a context.Context directly -
-// which containedctx flags on a struct field, and which every row here would
-// otherwise share the same live background context anyway except the one
-// pair that deliberately does not.
+// s3RetryableCase is one row of TestS3Retryable's table. canceled selects a
+// canceled context in the loop, since containedctx refuses a context.Context
+// struct field.
 type s3RetryableCase struct {
 	err      error
 	name     string
@@ -25,29 +22,20 @@ type s3RetryableCase struct {
 	want     bool
 }
 
-// newS3RetryableCases builds TestS3Retryable's table, split out from the test
-// function itself purely to stay under the funlen budget - mirrors
-// cache_backend_classification_test.go's own
-// assertLiveTimeoutClassifiesAsCacheBackendUnavailable split for the
-// identical reason.
+// newS3RetryableCases builds TestS3Retryable's table, split out to stay under
+// the funlen budget.
 func newS3RetryableCases() []s3RetryableCase {
-	// stalledProduction mirrors the real shape watchdogBody.Read builds: the
-	// cause rendered with %v, not wrapped with %w, so it does not carry
-	// context.Canceled through errors.Is (see helpers.ErrReadStalled's doc
-	// comment). This is the shape s3Retryable actually receives today.
+	// stalledProduction mirrors watchdogBody.Read: the cause is rendered with
+	// %v, not wrapped, so it does not carry context.Canceled through errors.Is.
 	//nolint:errorlint // pinning the real, deliberately non-wrapping shape watchdogBody.Read builds.
 	stalledProduction := fmt.Errorf("%w: no data for %s: %v", helpers.ErrReadStalled, time.Second, context.Canceled)
-	// stalledSynthetic is deliberately NOT the production shape: it
-	// double-wraps context.Canceled with %w, a signature the current producer
-	// never builds. It is kept to pin s3Retryable's ordering guard
-	// (ErrReadStalled classified before the errS3TransportFailed arm)
-	// independently of how the producer happens to render its cause.
+	// stalledSynthetic also wraps context.Canceled, a shape no producer builds,
+	// to pin that ErrReadStalled is classified before the transport arm
+	// whatever the producer's rendering.
 	stalledSynthetic := fmt.Errorf("%w: no data for %s: %w", helpers.ErrReadStalled, time.Second, context.Canceled)
-	// transportFailure mirrors the exact shape Client.do produces: a dial or
-	// response-header timeout, wrapped in errS3TransportFailed, still
-	// carrying context.DeadlineExceeded through errors.Is - the shape the
-	// classifier must retry when the caller's own context is live, and refuse
-	// when it is not.
+	// transportFailure mirrors Client.do's shape: a timeout wrapped in
+	// errS3TransportFailed that still matches context.DeadlineExceeded,
+	// retried only while the caller's context is live.
 	transportFailure := fmt.Errorf("%w: %w", errS3TransportFailed,
 		&url.Error{Op: "Get", URL: "https://example.invalid", Err: context.DeadlineExceeded})
 
@@ -70,10 +58,8 @@ func newS3RetryableCases() []s3RetryableCase {
 		{name: "not found is not retryable", err: errS3NotFound, want: false},
 		{name: "precondition failed is not retryable", err: errS3PreconditionFailed, want: false},
 		{name: "an oversized listing or batch-delete response is never retried", err: helpers.ErrResponseTooLarge, want: false},
-		// Positive control and refusal on one fixture: the identical
-		// errS3TransportFailed-wrapped error is retryable under a live ctx and
-		// refused under a canceled one, proving the gate discriminates on ctx
-		// rather than on the error's own shape.
+		// One fixture, retried under a live ctx and refused under a canceled
+		// one: the gate discriminates on ctx, not on the error's shape.
 		{name: "transport failure is retryable while the caller's ctx is live", err: transportFailure, want: true},
 		{
 			name:     "the identical transport failure is not retried once the caller's ctx is canceled",
@@ -94,13 +80,9 @@ func newS3RetryableCases() []s3RetryableCase {
 	}
 }
 
-// TestS3Retryable pins the retry classification, in particular that a
-// stalled read is retryable in both its real production rendering and a
-// deliberately synthetic one that still carries context.Canceled, while a
-// genuine caller cancellation - which arrives as a raw context.Canceled,
-// never wrapped in ErrReadStalled - is not, and that errS3TransportFailed's
-// retryability depends on the caller's own ctx rather than on the error's
-// shape.
+// TestS3Retryable pins the retry classification: a stalled read is retried in
+// either rendering, a raw caller cancellation is not, and errS3TransportFailed
+// is retried only while the caller's ctx is live.
 func TestS3Retryable(t *testing.T) {
 	t.Parallel()
 	for _, tc := range newS3RetryableCases() {
@@ -120,17 +102,8 @@ func TestS3Retryable(t *testing.T) {
 }
 
 // TestWrapRetryableStatusFollowsTheSharedSet pins that this package retries
-// exactly the statuses helpers.IsRetryableHTTPStatus names, with no set of
-// its own. It sweeps both classes, so it fails in either direction: a status
-// this package wrapped but the shared predicate rejects, or one the shared
-// predicate accepts but this package left unwrapped. A private copy that
-// drifted by even a single status - the failure mode that made consolidating
-// on one definition worth doing - shows up here rather than as two
-// subsystems quietly disagreeing about whether a run retries.
-//
-// Verified against a real drift: making wrapRetryableStatus skip 429 while
-// the shared predicate still accepts it fails this test with
-// "s3Retryable(wrapRetryableStatus(429, err)) = false, want true".
+// exactly the statuses helpers.IsRetryableHTTPStatus names, sweeping both
+// classes so a drift in either direction fails.
 func TestWrapRetryableStatusFollowsTheSharedSet(t *testing.T) {
 	t.Parallel()
 

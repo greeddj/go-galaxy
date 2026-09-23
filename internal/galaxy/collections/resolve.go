@@ -21,13 +21,9 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
-// resolveMode selects how much of the persisted resolve state a
-// resolveCollectionsInternal call may touch. Snapshot reuse and result
-// recording always move together, which is why this is one two-valued mode
-// rather than two independent booleans: a call that may replay the persisted
-// whole-requirements snapshot is exactly the call whose result is that
-// snapshot's next value, and a call resolving only a subset of the run's
-// requirements must do neither.
+// resolveMode selects whether a resolveCollectionsInternal call may replay the
+// persisted resolve snapshot and record its result. The two move together:
+// only a whole-requirements resolve's result is the snapshot's next value.
 type resolveMode int
 
 const (
@@ -35,46 +31,15 @@ const (
 	// persisted resolve snapshot (still subject to refreshBypassesSnapshot's
 	// run-wide veto) and records its result back into the store.
 	resolveTopLevel resolveMode = iota
-	// resolveNestedPartial is the changed-roots-only re-solve inside
-	// tryIncrementalResolveWithSnapshot: its roots are a subset of the run's
-	// requirements, so the whole-requirements snapshot must not answer for
-	// them, and its partial result must not be recorded as if it were the
-	// whole resolution - the caller records the merged graph itself.
+	// resolveNestedPartial is tryIncrementalResolveWithSnapshot's changed-roots
+	// re-solve: a subset of the requirements, so it neither replays the snapshot
+	// nor records its partial result; the caller records the merged graph.
 	resolveNestedPartial
 )
 
 // resolveCollectionsInternal resolves versions and dependencies for roots.
-//
-// --refresh bypasses exactly those cached answers that name a collection
-// WITHOUT naming a version - "which versions exist", "which is highest", and
-// "given these requirements, which versions did the last run pick". It does
-// not bypass an answer that already names an exact version: that version's
-// metadata document, its declared dependency map, its artifact bytes, or its
-// extracted tree - all of those are still served from cache under --refresh,
-// exactly as without it. A version-scoped answer is treated as fixed, and
-// for a PINNED collection a server that changes one anyway is caught by the
-// pin/hash path (verifyPinnedSHA, resolveArtifactSHA re-hashes the actual
-// bytes whenever a pin is present), not by cache freshness. For an unpinned
-// collection that guarantee does not hold: resolveArtifactSHA trusts the
-// cached metadata sha (or the store's recorded sidecar sha) instead of
-// re-hashing, so a republished version's changed bytes are never even
-// requested, and canSkipInstall/installEntryMatches accepts the cached
-// install outright once a matching hash is on record - --refresh changes
-// none of that, since the mechanism it bypasses lives entirely upstream of
-// this exact-version fetch. Reusing a cached artifact and its cached
-// exact-version metadata this way is the safe direction (an unpinned run
-// keeps its first-seen bytes rather than adopting new ones sight unseen),
-// but it is a real remediation gap, not merely a cache-freshness one: after
-// a "we republished this version with a fix" advisory, --refresh alone does
-// not force a re-fetch of it. --no-cache (or --clear-cache) is what forces
-// that. This function's own snapshotAllowed guard (see
-// refreshBypassesSnapshot) is the version-free half of the cache split for
-// the resolve snapshot specifically - "given these requirements, which
-// versions did the last run pick" is exactly what
-// loadResolvedFromSnapshot/tryIncrementalResolve answer from st, below;
-// cache.PolicyForConstraint's own exact/non-exact split (policy.go) is the
-// identical predicate applied to every HTTP-layer metadata fetch this
-// function's fallback solve makes.
+// Under --refresh only version-free answers are bypassed (this snapshot, and
+// non-exact metadata via cache.PolicyForConstraint); exact-version ones stay.
 func resolveCollectionsInternal(
 	ctx context.Context,
 	deps collectionDeps,
@@ -85,15 +50,9 @@ func resolveCollectionsInternal(
 	st := deps.st
 	allowSnapshot := mode == resolveTopLevel
 
-	// Git and url roots are expanded before anything else looks at the
-	// roots: such a requirement has no identity until its repository or
-	// tarball has been read, and the requirements signature below must
-	// cover what it resolved to (its pinned locator) rather than the ref or
-	// bare URL it was written with. That ordering is what keeps
-	// --clear-cache honest: ClearCaches drops the pins but keeps the
-	// resolved snapshot, and a signature computed over the unexpanded roots
-	// would replay the old graph while the pin buckets, re-discovered,
-	// named a newer one.
+	// Git and url roots are expanded first so the requirements signature covers
+	// their pinned locators: over the unexpanded roots, a --clear-cache run
+	// (pins dropped, resolved snapshot kept) would replay the old graph.
 	roots, err := expandSourceRoots(ctx, deps, roots)
 	if err != nil {
 		return nil, nil, err
@@ -102,25 +61,8 @@ func resolveCollectionsInternal(
 	reqSpec := buildRequirementsSpec(roots)
 	reqHash := requirementsSignatureFromSpec(reqSpec, cfg.NoDeps, serversSignature(cfg))
 
-	// The veto is layered over allowSnapshot, not merged into a single
-	// expression callers compute themselves: allowSnapshot keeps its
-	// existing meaning ("this caller permits reuse"), while
-	// refreshBypassesSnapshot is a run-wide policy this function itself
-	// enforces regardless of caller, so a future fourth caller of this
-	// function cannot forget it - the same structural argument
-	// cacheManager.WithStateDeadline's own doc comment makes for wrapping a
-	// Backend once instead of guarding nine call sites.
-	//
-	// Documented-uncovered: warm has no --refresh e2e test of its own, and
-	// none is needed to trust this veto for warm specifically. warmWithState
-	// reaches this exact call through resolveOrLoadLockfile, the single
-	// un-branched entry point install's prepareInstallPlan goes through too;
-	// neither caller wraps or special-cases refreshBypassesSnapshot, and the
-	// check itself is made once, here, not per caller. A warm-specific test
-	// would therefore exercise the identical code path
-	// TestRefreshReSolvesInsteadOfReplayingTheSnapshot (e2e_test.go) already
-	// does for install, proving nothing a shared call site does not already
-	// establish structurally.
+	// refreshBypassesSnapshot is a run-wide veto enforced here rather than by
+	// each caller, so no caller can forget it.
 	snapshotAllowed := allowSnapshot && st != nil && !refreshBypassesSnapshot(cfg)
 	if snapshotAllowed {
 		resolvedSnap, graphSnap, ok, err := resolveFromSnapshots(ctx, deps, roots, reqSpec, reqHash)
@@ -129,13 +71,8 @@ func resolveCollectionsInternal(
 		}
 	}
 
-	// Best-effort, cfg.Workers-bounded warm of the root-metadata documents the
-	// sequential solve below is about to request one at a time - see
-	// prewarmRootMetadata's own doc comment for the full argument. Its
-	// position is load-bearing in one direction: it must stay below the
-	// snapshot-replay return above, since a run that replays the snapshot has
-	// to keep issuing zero metadata requests, and a prewarm hoisted over that
-	// return would issue one per root before the snapshot was ever consulted.
+	// The prewarm must stay below the snapshot-replay return: a run that replays
+	// the snapshot has to issue zero metadata requests.
 	prewarmRootMetadata(ctx, deps, roots)
 	resolved, graph, err := solveCollections(ctx, deps, roots)
 	if err != nil {
@@ -149,22 +86,9 @@ func shouldReturnSnapshot(ok bool, err error) bool {
 	return ok || err != nil
 }
 
-// refreshBypassesSnapshot reports whether cfg's --refresh should veto
-// resolveCollectionsInternal's resolve-snapshot reuse path: the persisted
-// "given these requirements, which versions did the last run pick" answer -
-// see that function's own doc comment for the full version-free/
-// version-scoped predicate this implements one half of. A nil cfg never
-// vetoes: resolveCollectionsInternal's own callers always hand it a real
-// *config.Config, but this predicate is cheap to make total anyway, rather
-// than adding a nil check at its one call site.
-//
-// --offline outranks --refresh here, not merely by incidental short-circuit
-// order: cache.PolicyForConstraint (policy.go) checks IsOffline() before
-// IsRefresh() for the identical reason - offline, cached state is the only
-// source of truth there is, so refresh has nothing left to re-resolve
-// against - and this veto has to agree with that precedence, or the two
-// halves of one flag (this snapshot veto and the HTTP-layer policy refresh
-// already governs) would disagree about what --refresh --offline means.
+// refreshBypassesSnapshot reports whether --refresh vetoes resolve-snapshot
+// reuse. --offline outranks --refresh, matching cache.PolicyForConstraint so
+// both halves of the flag agree; a nil cfg never vetoes.
 func refreshBypassesSnapshot(cfg *config.Config) bool {
 	return cfg != nil && cfg.Refresh && !cfg.Offline
 }
@@ -275,39 +199,19 @@ func cachedDeps(st *store.Store, policy cacheManager.Policy, cacheKey string) (m
 	return deps, ok
 }
 
-// resolvedRoot bundles loadRootMetadataCached's result with the fallback
-// versions URL resolveRootMetadata derives from it. It is a struct rather
-// than a fourth return value: three of resolveRootMetadata's four callers
-// only need two or three of these fields, and a five-value return signature
-// fights this repo's lll/revive budget.
+// resolvedRoot is resolveRootMetadata's result: the root metadata, the
+// versions URL to page through, and the server that answered.
 type resolvedRoot struct {
 	meta        *types.GalaxyCollection
 	versionsURL string
-	// base is the server that actually answered col's root-metadata fetch -
-	// loadRootMetadataCached's own winningBase - never col.Source, which may
-	// be empty (an unpinned collection) or stale (a snapshot/legacy-lockfile
-	// Source that disagrees with whichever server actually served it).
+	// base is the server that answered the root-metadata fetch, never col.Source,
+	// which may be empty (unpinned) or stale (an old snapshot or lockfile).
 	base string
 }
 
-// resolveRootMetadata loads col's root metadata and derives the versions
-// URL callers use to page through its published versions. It fetches first,
-// then falls back to collectionVersionsURL built from the winning base
-// (never col.Source), and finally overrides that fallback with the root
-// metadata's own versions_url, normalized against the same winning base,
-// when the metadata provides one - the fallback only matters for a root
-// metadata document that omits versions_url.
-//
-// It fails, rather than resolving, when that normalization refuses the
-// server's own versions_url: normalizeVersionsURL guards what it returns,
-// so a value carrying userinfo never becomes a request URL here. The
-// fallback this function builds itself is not subject to that, since it is
-// this program's own construction rather than the server's.
-//
-// Surviving that guard is not what makes the debug line below safe to print,
-// and the line does not rely on it: checkMetadataURLUserinfo passes through
-// every value url.Parse refuses, so the render is cut through
-// helpers.WithoutCredentials, which needs no successful parse to cut.
+// resolveRootMetadata loads col's root metadata and its versions URL: the
+// server's versions_url resolved against the winning base (failing if it
+// carries userinfo), or else one this program builds from that base.
 func resolveRootMetadata(
 	ctx context.Context,
 	deps collectionDeps,
@@ -341,11 +245,8 @@ func extractDependencies(info *types.GalaxyCollectionVersionInfo) map[string]str
 func parseDependencies(deps map[string]string) (map[string]string, error) {
 	parsedDeps := make(map[string]string, len(deps))
 	for dep, constraint := range deps {
-		// A dependency key is a collection name a Galaxy server chose, and
-		// this is the boundary it enters through. Checked for alphabet, not
-		// just shape: a key like "evil.pkg\n[CRITICAL] ..." satisfies the
-		// shape check, and the solver prints it - on an ordinary run, with no
-		// flags - long before anything else would look at it.
+		// A server-chosen key is judged by alphabet, not just shape: the solver
+		// prints it, so a key like "evil.pkg\n[CRITICAL] ..." would forge a log line.
 		if !helpers.IsCollectionName(dep) {
 			return nil, fmt.Errorf("%w: %q", helpers.ErrInvalidDependencyKey, dep)
 		}
@@ -354,120 +255,9 @@ func parseDependencies(deps map[string]string) (map[string]string, error) {
 	return parsedDeps, nil
 }
 
-// loadVersionsListCached loads the available versions list with caching,
-// paging through the upstream API in bounded offset increments of
-// versionLimit entries per request. Each page still flows through
-// fetchJSONWithCachePolicy, so per-page ETag/cache behavior is unchanged.
-//
-// Pagination is bounded by maxVersionPages: a server that keeps reporting a
-// growing total forever (or lies about it) makes the walk fail hard via
-// helpers.ErrVersionsPagingExceeded instead of paging unboundedly or
-// silently truncating the list a caller then resolves constraints against.
-//
-// Page 0 is fetched first, alone. When it reports a positive total, that
-// total schedules the remaining, now-bounded page offsets, which are
-// fetched concurrently (bounded by cfg.DownloadWorkers, the same
-// network-bound sizing the artifact prefetcher's pool uses) and consumed
-// strictly in offset order, so the list this function returns - and
-// cacheVersionsList persists - is the one an offset-ordered walk of the
-// same responses produces, regardless of arrival order. The declared total
-// bounds only that SCHEDULING, never trust: the walk re-judges termination
-// page by page from what each page actually returned (a short or empty page
-// ends the list there, discarding every later offset's result, content and
-// error alike; a page's own reported total ends it once the next offset
-// would pass that total), so a server whose total lied - promising pages it
-// then serves short, empty, or not at all - yields exactly the list a
-// strictly sequential walk would have collected, and a page past the
-// schedule that the walk still wants is fetched sequentially, on demand,
-// under the same ceiling. A page-0 total implying more than maxVersionPages
-// pages fails hard up front, before any further request - the same
-// never-truncate verdict the walk itself reaches at the ceiling - and a
-// total of 0 (unreported) schedules nothing: every page after the first is
-// then fetched sequentially, terminating on the identical conditions.
-//
-// The whole operation - every page, not one budget per page - runs under
-// one shared deps.runtime.MetadataDeadline() budget, established once here
-// around page 0 and every page after it. This is the one metadata call
-// site outside a single fetchJSONBody call where a per-request budget alone
-// is not enough, and the reason is not that the request count elsewhere is
-// operator- or program-chosen - it usually is not. MetadataProvider's own
-// Universe/Dependencies/resolveRoot (internal/galaxy/collections/provider.go)
-// issue one root-metadata fetch plus one version-detail fetch per
-// (package, version) the solver explores. That multiplier spans two axes -
-// which packages get explored, and how many versions each explored package
-// has - and both are effectively uncapped. The package axis: the packages
-// the solver explores are seeded by the operator's own roots, parsed out of
-// requirements.yml by buildSolverRequirements, and then extended
-// transitively, without limit, by extractDependencies(info) -
-// server-declared metadata naming further packages to fetch. The version
-// axis: parseVersionsPayload returns every entry a page's data/results array
-// carries, with no truncation to the versionLimit requested, so a server
-// that answers a limit=100 request with far more than 100 entries has all
-// of them collected regardless. maxVersionPages caps something narrower
-// than "how many versions a package can have": it is the number of
-// REQUESTS loadVersionsListCached will issue enumerating one package's
-// versions (100, after which the loop fails hard via
-// helpers.ErrVersionsPagingExceeded rather than truncating), not the
-// version count those requests carry. The solver does have a step bound,
-// fuelLimit, but at 1,000,000 iterations it is far too large to bound
-// network work in any practical sense - it exists to catch an algorithm
-// defect, not to cap an input. The request count MetadataProvider issues is
-// still server-chosen and effectively unbounded on both axes. What actually
-// distinguishes this loop is that it is the one place a SINGLE LOGICAL
-// metadata operation (fetch the whole versions list) is split into a
-// server-chosen NUMBER of requests against ONE URL - a shared budget is
-// coherent there, because it is still bounding one operation. The
-// resolver's request count is also server-chosen, but it is a sequence of
-// DISTINCT operations (a different package or version each time), for which
-// a shared budget is not defensible and is deliberately not applied - each
-// of those requests pays its own separate helpers.MetadataFetchDeadline
-// instead, and the walk aborts on the very first one that expires.
-//
-// This leaves a residual: a run at the front of that server-chosen request
-// sequence can hold the backend's whole-run exclusive lock (see "Cache
-// backend abstraction" in CLAUDE.md) for as long as the sequence takes, and
-// that residual is known and deliberately accepted rather than capped. A
-// request-count cap bounds the wrong quantity: the server chooses each
-// request's own duration within helpers.MetadataFetchDeadline regardless of
-// how many requests are allowed, so any count generous enough not to break a
-// legitimate large dependency graph still concedes hours of lock hold to a
-// server that stalls every request right up to that per-request ceiling.
-// Capping the resolve would not even bound the hold on its own: installLevels
-// runs under the same lock afterward, paying up to
-// helpers.ArtifactDownloadDeadline per artifact for a collection count
-// written directly into requirements.yml - an independent contributor to the
-// hold, just as uncapped as the resolve. On the shared-cache (S3) backend,
-// reaching the lock at all already requires bucket write access -
-// Backend.Open's conditional-PUT probe and Lock's own acquireLock both write
-// objects, the same trust boundary Backend.LoadStore/LoadProjectRegistry
-// establishes in "Cache backend abstraction" - so a principal holding it can
-// poison the snapshot outright, which is worse than a denial of service. The
-// local backend has no equivalent waiter to starve in the first place: its
-// Lock is a non-blocking flock, and a second run fails immediately with
-// helpers.ErrAnotherInstanceIsRunning rather than waiting for the first to
-// finish. A cap added here would break resolves that work today without
-// bounding the hold time it is meant to fix.
-//
-// Here, the multiplier is bounded at least: maxVersionPages (100) requests
-// at up to helpers.MetadataFetchDeadline (2 minutes) each would be 200
-// minutes of drip tolerated for a single collection's version list if each
-// page paid for its own budget. One shared budget collapses that to 1x at no
-// realistic cost: a legitimate server completing all maxVersionPages pages
-// inside this one budget needs each page to average well under a second,
-// and this test suite's own margin (versions_paging_test.go) demonstrates
-// over 3x headroom at a fraction of this budget.
-//
-// Nesting is safe: fetchJSONBody (via fetchVersionsPage) establishes its own
-// per-request context.WithTimeout derived from the dlCtx built here, so its
-// effective deadline becomes min(helpers.MetadataFetchDeadline, whatever is
-// left of this operation's budget) - the per-request ceiling still holds,
-// and is only ever tightened, never loosened, by the outer budget. If this
-// operation's budget expires while a page is in flight, that inner
-// fetchJSONBody's own deadlineError sees a parent (this operation's dlCtx)
-// whose Err() is already non-nil and passes its error through unchanged
-// (idempotence rule 2); versionsPager.fetchPage's single
-// cacheManager.MetadataDeadlineError call then normalizes it into exactly
-// one sentinel, never two.
+// loadVersionsListCached returns a versions list, paging versionsURL by
+// versionLimit under one MetadataDeadline budget shared by every page, and
+// failing past maxVersionPages requests rather than truncating the list.
 func loadVersionsListCached(
 	ctx context.Context,
 	deps collectionDeps,
@@ -498,11 +288,9 @@ func loadVersionsListCached(
 	return all, nil
 }
 
-// versionsPager carries one loadVersionsListCached call's shared state: the
-// caller's own context (parent, consulted only to classify a failing page's
-// error), the budget-bounded context every page request runs under (dlCtx),
-// and the request parameters every page shares. See loadVersionsListCached's
-// doc comment for the paging strategy these methods implement together.
+// versionsPager is one loadVersionsListCached call's shared state: the
+// caller's context (only to classify errors), the budget-bounded dlCtx every
+// page request runs under, and the request parameters.
 type versionsPager struct {
 	//nolint:containedctx // the caller's original context, consulted only
 	// to classify a failing page's error as caller-canceled versus
@@ -528,36 +316,23 @@ type pageResult struct {
 	total    int
 }
 
-// fetchPage fetches the page at offset under the shared budget. It is the
-// single funnel every page request and its error classification go through:
-// a failure is normalized here, via cacheManager.MetadataDeadlineError, into
-// at most one helpers.ErrMetadataFetchDeadline sentinel, whether the page
-// was fetched by walkPages directly or by a prefetchScheduled worker.
+// fetchPage fetches the page at offset under the shared budget. It is the one
+// funnel that normalizes a failure, via cacheManager.MetadataDeadlineError,
+// into at most one helpers.ErrMetadataFetchDeadline sentinel.
 func (p *versionsPager) fetchPage(offset int) pageResult {
 	versions, total, err := fetchVersionsPage(p.dlCtx, p.deps, p.policy, p.versionsURL, versionLimit, offset)
 	return pageResult{versions: versions, total: total, err: cacheManager.MetadataDeadlineError(p.parent, p.dlCtx, p.budget, err)}
 }
 
-// pagingExceeded builds the hard-failure verdict for a versions list that
-// needs more than maxVersionPages requests. Cut like every other render of
-// this value: versionsURL is the server's own versions_url when the root
-// metadata declared one, and this verdict means the server kept declaring
-// more pages, which is not the behavior to hand an uncut URL to a log for.
+// pagingExceeded is the verdict for a list needing more than maxVersionPages
+// requests. versionsURL may be the server's own, so it is printed cut.
 func (p *versionsPager) pagingExceeded() error {
 	return fmt.Errorf("%w: %s", helpers.ErrVersionsPagingExceeded, helpers.WithoutCredentials(p.versionsURL))
 }
 
-// collectAll fetches page 0 and decides how the rest of the list is
-// collected: a short page 0 is already the whole list; a positive total
-// implying more pages than maxVersionPages fails hard before any further
-// request; a positive total page 0 already covers needs nothing more; and
-// otherwise the scheduled offsets are prefetched concurrently and consumed
-// by the walk, with an empty schedule when the total is 0 or unreported.
-//
-// The pre-size below is the one thing the declared total is taken at its
-// word for, and only after the pages-exceeded verdict has bounded it: a
-// hostile or broken meta.count large enough to matter to an allocation has
-// already failed the call above, never reaching make.
+// collectAll fetches page 0 and decides the rest: a total past maxVersionPages
+// fails before any further request or allocation sized by it; otherwise the
+// scheduled offsets are prefetched and consumed by walkPages.
 func (p *versionsPager) collectAll() ([]string, error) {
 	first := p.fetchPage(0)
 	if first.err != nil {
@@ -578,14 +353,9 @@ func (p *versionsPager) collectAll() ([]string, error) {
 	return p.walkPages(first.versions, scheduled, capacity)
 }
 
-// prefetchScheduled fetches, concurrently, every page offset the declared
-// total schedules beyond page 0, bounded by cfg.DownloadWorkers - the same
-// network-bound sizing the artifact prefetcher's own pool uses (see
-// startPrefetchWorkers), and safe over the shared store for the same reason
-// that pool already is: each page's fetchJSONWithCachePolicy writes a
-// distinct APICache key behind the store's own mutex. Workers write disjoint
-// slice elements, so no result mutex is needed; walkPages afterwards is what
-// decides which of these results the list actually keeps, in offset order.
+// prefetchScheduled concurrently fetches every offset the declared total
+// schedules past page 0, bounded by cfg.DownloadWorkers. Workers write
+// disjoint elements and distinct APICache keys, so no result mutex is needed.
 func (p *versionsPager) prefetchScheduled(total int) []pageResult {
 	results := make([]pageResult, (total-1)/versionLimit)
 	var wg sync.WaitGroup
@@ -601,15 +371,9 @@ func (p *versionsPager) prefetchScheduled(total int) []pageResult {
 	return results
 }
 
-// walkPages assembles the final list. It is the paging walk itself, with the
-// pages the schedule prefetched consumed in place of a fresh request:
-// termination is judged page by page against what each page actually
-// returned (its length and its own declared total), never against the
-// schedule, so a scheduled page past the point the walk ends is discarded
-// unread - content and error alike, exactly as an unfetched page would have
-// been - and a page the schedule never covered is fetched on demand. The
-// maxVersionPages ceiling binds the walk regardless of how a page was
-// obtained.
+// walkPages assembles the list in offset order, ending on each page's own
+// length and total, never the schedule: later prefetched results are discarded
+// unread, and pages past the schedule are fetched on demand.
 func (p *versionsPager) walkPages(first []string, scheduled []pageResult, capacity int) ([]string, error) {
 	all := make([]string, 0, capacity)
 	all = append(all, first...)
@@ -654,9 +418,7 @@ func cachedVersionsList(st *store.Store, policy cacheManager.Policy, versionsURL
 }
 
 // fetchVersionsPage fetches one limit/offset page of the versions list and
-// returns its version strings alongside the server's declared total (from
-// meta.count or count, depending on payload shape), so the caller can decide
-// whether more pages remain.
+// returns its versions with the server's declared total (meta.count or count).
 func fetchVersionsPage(
 	ctx context.Context,
 	deps collectionDeps,
@@ -685,107 +447,9 @@ func collectionVersionsURL(col collection) string {
 	return fmt.Sprintf("%s/api/v3/collections/%s/%s/versions/", base, col.Namespace, col.Name)
 }
 
-// normalizeSignatures trims, sorts, and filters signatures.
-//
-// The query of each source is also cut, via helpers.WithoutQuery - the same
-// cut and the same reason it makes for GALAXY.yml: a signature source is
-// repository content that may name a presigned download URL, whose query
-// string is a time-limited capability, and the requirement spec this feeds is
-// persisted both to the requirements Bolt bucket and to the S3 backend's
-// snapshot object, shared across runners.
-//
-// The cut is free because of what this function's callers are, stated as a
-// predicate rather than a list: every consumer of a normalized spec is a spec
-// comparison or a spec hash, never a fetch - a run's own live sources are
-// read from requirementSources(roots) instead, upstream of this function
-// entirely and untouched by it. What it gives up: two sources differing only
-// in their query now compare equal, so a query-only edit to a source no
-// longer counts as a root change, and the prior resolve snapshot is replayed
-// rather than re-resolved. That costs nothing, because a signature source
-// plays no part in version resolution, and verification still reads the
-// live, unstripped source.
-//
-// This cut has to run here, at the producer, even though a second one
-// catches everything on the way out: store.snapshotData's own persist-side
-// backstop (copyRequirementsCutQuery, internal/galaxy/store/snapshot.go)
-// strips the identical query from every Requirements entry on every save.
-// Dropping this cut and trusting that backstop alone would leave the live
-// reqSpec this function feeds - and therefore reqHash, the hash
-// requirementsSignatureFromSpec computes over it - carrying the query, while
-// the persisted spec the backstop wrote is stripped. tryIncrementalResolve's
-// own self-consistency check recomputes its hash from that persisted,
-// stripped spec (via RequirementsSnapshot, never the live reqSpec) and
-// compares it against the persisted hash, itself computed unstripped: the
-// two would never agree again, for any requirement set naming a
-// query-bearing signature source, on any run, for as long as the drop
-// stood. Nothing fails outright - the whole-snapshot replay
-// (loadResolvedFromSnapshot) is unaffected, since it compares the live hash
-// against the persisted one directly rather than through the persisted
-// spec, and a full resolve still succeeds whenever the incremental path
-// declines - so the only casualty would be the incremental path itself,
-// dying silently with no error to notice it by.
-//
-// No schema bump follows from this: the field's shape is unchanged. The
-// stored hash and the stored spec are not always written together, though,
-// which is what makes "one binary writes both" unsafe to assume:
-// recordResolution is the only call that writes them in lockstep
-// (SetMetaRequirements immediately followed by SetRequirements), while the
-// persist-side backstop above rewrites the persisted spec on every dirty
-// save regardless of whether recordResolution ran this particular run.
-// install --frozen is the shape that reaches this today:
-// resolveOrLoadLockfile's lockfile branch never calls recordResolution at
-// all, yet a frozen install still dirties the store (SetInstalled) and
-// still saves - so a spec an older, pre-cut binary once persisted
-// unstripped is rewritten stripped by the backstop, while
-// Meta.RequirementsHash, computed by that older binary over the unstripped
-// value, survives the save completely untouched. Two binaries end up
-// having written the two fields, not one, and the run that later reads
-// them back hits the identical mismatch the upgrade direction below
-// describes - not a third direction, just another way to arrive at the
-// same one - and pays the identical one-time cost: a single full resolve,
-// never a failure, after which recordResolutionIfNeeded rewrites both
-// fields back into agreement. What a mixed-version cache does next -
-// upgrade or downgrade - is where the two directions genuinely split, and
-// they are not symmetric; stating them as one property, as an earlier
-// version of this comment did, is exactly the mistake a reader must not
-// repeat.
-//
-// Upgrade - an older binary with no cut persisted a spec with an unstripped
-// query, and this binary reads it back. The stored hash was computed over
-// the unstripped value; this binary's own normalizeSignatures strips it
-// before recomputing, so the two disagree - over the whole requirement set
-// rather than one root at a time, since a single sha256 sum covers every
-// root's line - and both snapshotMatchesRequirements (loadResolvedFromSnapshot)
-// and tryIncrementalResolve's own identical self-consistency check fail on
-// that disagreement. A full resolve follows, once, and recordResolutionIfNeeded
-// then rewrites both the spec and the hash in this binary's stripped form.
-// Independently of whether that resolve even runs, the persist-side
-// backstop strips the value on the way out regardless - the backstop for a
-// spec this function's own cut never touched because nothing in this run
-// rebuilt it; snapshotData's own doc comment
-// (internal/galaxy/store/snapshot.go) states the one residual that
-// survives it.
-//
-// Downgrade - a store this binary persisted stripped, later read by an older
-// binary - is not the mirror of the above. The asymmetry is a property of
-// the old binary rather than of any state: it applies no cut at all, so
-// trimming and sorting an already-stripped value is a no-op, its recomputed
-// hash equals the persisted one, and the self-check that catches the upgrade
-// direction passes here instead. The root then reads as changed by
-// splitRootsByChange - a hash match plays no part in what that function
-// compares - and provided at least one other root in the run is still
-// unchanged (tryIncrementalResolve's own precondition; with none, it falls
-// back to a full resolve exactly like the upgrade direction), the old binary
-// takes the targeted incremental path instead: it resolves only the changed
-// root fresh over the network, and recordResolution's SetRequirements still
-// rewrites the WHOLE persisted spec - every root, not only the changed one -
-// in this old binary's own uncut form, restoring the query wherever
-// requirements.yml still declares one. A mixed fleet whose requirements
-// declare a query-bearing signature source therefore pays a resolve on
-// every run that follows a run by the other binary, upgrade or downgrade
-// alike, since each one's own write invalidates the hash the other
-// computes. Nothing on this side of the cut can close the downgrade
-// direction: the fix belongs to the binary that still lacks it.
+// normalizeSignatures trims, sorts, and filters signatures, cutting each query
+// so no presigned capability is persisted. Keep the cut here, not only in the
+// store's backstop, or tryIncrementalResolve's hash self-check never matches.
 func normalizeSignatures(signatures []string) []string {
 	if len(signatures) == 0 {
 		return nil
@@ -822,15 +486,9 @@ func requirementSpecEqual(a, b store.RequirementSpec) bool {
 	return slices.Equal(normalizeSignatures(a.Signatures), normalizeSignatures(b.Signatures))
 }
 
-// exactVersionFromConstraints returns a single exact version if specified.
-//
-// Classification is delegated to the semver library rather than a
-// hand-maintained character guard: a constraint is exact only if it parses
-// as a bare semver.Version once a single leading "=" is stripped. Anything
-// that fails as a version but succeeds as semver.NewConstraint is a genuine
-// range or wildcard (including ansible's "1.x" / "1.2.x" x-ranges, which a
-// char guard cannot recognize) and contributes no exact pin. A string that
-// is neither a valid version nor a valid constraint is malformed.
+// exactVersionFromConstraints returns a single exact version if specified: a
+// constraint is exact only if it parses as a semver.Version after one leading
+// "="; ranges and x-ranges ("1.x") pin nothing, anything else is malformed.
 func exactVersionFromConstraints(constraints []string) (string, bool, error) {
 	exact := ""
 	for _, raw := range constraints {
@@ -929,13 +587,9 @@ func tryIncrementalResolve(
 		return nil, nil, false, nil
 	}
 
-	// The stored spec alone does not carry the --no-deps mode it was resolved
-	// under (RequirementsSnapshot is just the per-root spec map), so recompute
-	// its signature in the CURRENT run's mode and require it to match the
-	// persisted hash. A --no-deps snapshot (roots only, nil graph edges) then
-	// never matches a deps-following recompute, and vice versa: the mismatch
-	// falls through to a fresh resolve instead of silently preserving a graph
-	// shape from the other mode.
+	// The stored spec does not record --no-deps, so its signature is recomputed in
+	// this run's mode and must equal the persisted hash; a snapshot resolved in
+	// the other mode falls through to a fresh resolve.
 	if requirementsSignatureFromSpec(prevSpec, deps.cfg.NoDeps, serversSignature(deps.cfg)) != deps.st.MetaSnapshot().RequirementsHash {
 		return nil, nil, false, nil
 	}
@@ -1178,12 +832,9 @@ func validateMergedGraph(mergedResolved map[string]collection, mergedGraph map[s
 	return true
 }
 
-// buildRequirementsSpec builds a normalized requirement spec map. An
-// unpinned root's Source stays "" here rather than defaulting to cfg.Server:
-// unpinned is now a distinct, stable spec value (the root walks the
-// configured server list instead of being nailed to one), and folding it
-// into cfg.Server would make two roots that mean different things ("no
-// preference" vs "pinned to the default server") hash identically.
+// buildRequirementsSpec builds a normalized requirement spec map. An unpinned
+// root's Source stays "" rather than cfg.Server, so "no preference" and
+// "pinned to the default server" hash differently.
 func buildRequirementsSpec(roots []collection) map[string]store.RequirementSpec {
 	spec := make(map[string]store.RequirementSpec, len(roots))
 	for _, root := range roots {
@@ -1203,23 +854,9 @@ func buildRequirementsSpec(roots []collection) map[string]store.RequirementSpec 
 	return spec
 }
 
-// requirementsSignatureFromSpec returns a stable signature of requirements.
-//
-// Two fixed-position header lines precede the sorted per-root lines. noDeps
-// folds the --no-deps resolution mode in, so a snapshot resolved without
-// following dependencies (roots only, nil graph edges) can never match - and
-// therefore never be reused by - a later run that resolves the full graph,
-// and vice versa. serversSig folds in the effective server list, because
-// under first-match ownership a root with no source: of its own resolves
-// against whichever configured server answers first: the same requirements
-// against a different list, or the same list in a different order, are a
-// different resolution problem and must not reuse each other's answer.
-//
-// Both headers have zero "|" separators, unlike every per-root line (which
-// has exactly four), so neither can collide with one; their distinct literal
-// prefixes keep them from colliding with each other. They are prepended
-// rather than sorted into parts, so the per-root ordering stays
-// deterministic.
+// requirementsSignatureFromSpec returns a stable signature of requirements:
+// --no-deps and serversSignature header lines, then the sorted per-root lines.
+// The headers contain no "|", so no per-root line can collide with them.
 func requirementsSignatureFromSpec(spec map[string]store.RequirementSpec, noDeps bool, serversSig string) string {
 	parts := make([]string, 0, len(spec))
 	for fqdn, entry := range spec {
@@ -1236,29 +873,9 @@ func requirementsSignatureFromSpec(spec map[string]store.RequirementSpec, noDeps
 	return hex.EncodeToString(sum[:])
 }
 
-// serversSignature hashes cfg's effective server list for the "servers="
-// header of requirementsSignatureFromSpec.
-//
-// Order is preserved, never sorted: under first-match ownership the list
-// order decides which server owns a collection, so a reorder is a genuine
-// change of meaning. Fields are NUL-separated, a byte no URL or id can
-// contain, so no value can forge a field boundary; the result is hex, which
-// is what guarantees the header line it feeds can never contain a "|" and
-// therefore can never be mistaken for a per-root line.
-//
-// Only whether a server carries a credential is hashed, never the token and
-// never any value derived from it - the signature is persisted in the
-// snapshot, and no token-derived value may ever land there. A token rotated
-// to a different value therefore leaves the signature untouched, which is
-// correct: the same server still serves the same collections. Going from no
-// token to a token does flip the bit, and that is the case that matters,
-// since an authenticated read can reveal collections an anonymous one could
-// not see.
-//
-// A configured-but-unused server also changes the signature. That is
-// deliberately conservative: whether a server is "unused" is not knowable
-// without resolving, so the cost is one cold resolve and the benefit is that
-// nobody has to reason about which additions could matter.
+// serversSignature hashes cfg's effective server list in order, since order
+// decides first-match ownership. Only whether a server has a token is hashed,
+// never the token: the signature is persisted in the snapshot.
 func serversSignature(cfg *config.Config) string {
 	if cfg == nil {
 		return ""
@@ -1326,13 +943,9 @@ func buildResolvedSnapshot(cfg *config.Config, resolvedSnapshot map[string]store
 	return resolved, true
 }
 
-// collectionFromResolvedEntry rebuilds the collection value a snapshot entry
-// recorded. It is the one place the three snapshot readers (whole replay,
-// preserved roots, merged graph) agree on what an entry means: a Galaxy entry
-// with no source defaults to the run's own server, while a git entry - one
-// whose source is a locator - keeps its locator untouched and gets its type
-// and ref back, since the locator is the identity everything downstream keys
-// on and the ref is what the lockfile records.
+// collectionFromResolvedEntry rebuilds a snapshot entry for every snapshot
+// reader: a Galaxy entry without a source takes the run's server, and a git or
+// url entry keeps its pinned locator, which everything downstream keys on.
 func collectionFromResolvedEntry(cfg *config.Config, fqdn string, entry store.ResolvedEntry) (collection, bool) {
 	if entry.Version == "" {
 		return collection{}, false
@@ -1378,10 +991,8 @@ func rootsMatchSnapshot(roots []collection, resolved map[string]collection, grap
 		if !ok {
 			return false
 		}
-		// A git or url root is pinned to a locator, which carries the commit
-		// or the content digest: a snapshot whose entry names another one
-		// for the same collection is another resolution, however its
-		// version compares.
+		// A git or url root's locator carries its commit or digest: a snapshot entry
+		// naming another one is another resolution, whatever its version.
 		if !rootLocatorMatches(root, col) {
 			return false
 		}
@@ -1472,22 +1083,9 @@ func buildDependencyIndex(graph map[string][]string) (map[string]int, map[string
 	return indegree, reverse
 }
 
-// topologicalLevels groups indegree's nodes into install levels: the first
-// level is every node already at indegree 0, and each following level is
-// whatever nodes reverse[node] reduces to indegree 0 once every node in the
-// level before it is applied. remaining tracks how many nodes have not yet
-// been placed in a level; if it is still positive once no node reaches
-// indegree 0, those unplaced nodes form a cycle.
-//
-// Each level is sorted by key before it is appended, which makes
-// runInstallLevel's dispatch order match the prefetch queue order
-// sortTasksByLevel builds from the same (level, key) pair. That match is a
-// latency optimization only, exactly as sortTasksByLevel's own doc comment
-// states of its side: a worker still blocks on prefetch.Wait(key) for its own
-// artifact regardless of fetch order.
-//
-// The loop reaches every reverse[node] edge exactly once - one decrement per
-// edge, no rescanning of nodes already placed in an earlier level.
+// topologicalLevels groups nodes into install levels by indegree and fails
+// with ErrDependencyGraphHasACycle if any stay unplaced. Levels are sorted so
+// dispatch order matches sortTasksByLevel's prefetch queue (latency only).
 func topologicalLevels(indegree map[string]int, reverse map[string][]string) ([][]string, error) {
 	current := make([]string, 0, len(indegree))
 	for node, deg := range indegree {

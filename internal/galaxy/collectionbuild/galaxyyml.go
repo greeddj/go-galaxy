@@ -62,13 +62,9 @@ func mandatoryKeys() []string {
 	return []string{keyNamespace, keyName, keyReadme, keyAuthors}
 }
 
-// ParseGalaxyYML parses the bytes of a galaxy.yml into build metadata. The
-// warnings name what was accepted but not understood (unknown keys); the
-// error names the first rule the document breaks. A string key may be null
-// (read as ""), a list key may be a single string (read as a one-element
-// list), and every other shape mismatch is a refusal rather than a coercion:
-// ansible would stringify a YAML float under version, turning 1.10 into
-// "1.1", and a refusal naming the fix is worth more than that surprise.
+// ParseGalaxyYML parses galaxy.yml bytes into metadata, warning on unknown
+// keys. A null string key reads as "" and a lone string as a one-item list;
+// any other mismatch is refused, since ansible would turn version 1.10 to 1.1.
 func ParseGalaxyYML(data []byte) (GalaxyYML, []string, error) {
 	if len(data) > metadataMaxBytes {
 		return GalaxyYML{}, nil, fmt.Errorf("%w: %s is %d bytes, the limit is %d",
@@ -327,15 +323,9 @@ type manifestEnvelope struct {
 	CollectionInfo *manifestInfo `json:"collection_info"`
 }
 
-// ParseManifestInfo reads a collection's identity and dependencies out of
-// the bytes of its MANIFEST.json, for the url-source discovery, where the
-// downloaded artifact's manifest is the only identity document there is.
-// The version and the dependency map are judged by the same rules a git
-// discovery judges a repository's manifest with; the namespace and name are
-// held to the relaxed url alphabet (helpers.IsURLCollectionNamePart) rather
-// than the Galaxy one, because the artifact was authored outside any Galaxy
-// server, real release artifacts carry mixed-case namespaces, and ansible
-// installs them.
+// ParseManifestInfo reads a url artifact's identity and dependencies from its
+// MANIFEST.json. Namespace and name use the wider IsURLCollectionNamePart,
+// since real release artifacts carry mixed-case namespaces ansible installs.
 func ParseManifestInfo(data []byte) (GalaxyYML, error) {
 	meta, err := decodeManifestInfo(data)
 	if err != nil {
@@ -359,10 +349,9 @@ func ParseManifestInfo(data []byte) (GalaxyYML, error) {
 	return meta, nil
 }
 
-// parseManifestInfo reads the identity of a built tree out of its
-// MANIFEST.json under the full validateMeta rules. The tree is rebuilt from
-// scratch afterwards, exactly as ansible's install_src does, so nothing but
-// collection_info is read and BuildIgnore stays empty.
+// parseManifestInfo reads a built tree's identity from its MANIFEST.json under
+// validateMeta. Only collection_info is read: the tree is rebuilt from scratch,
+// as ansible's install_src does.
 func parseManifestInfo(data []byte) (GalaxyYML, error) {
 	meta, err := decodeManifestInfo(data)
 	if err != nil {
@@ -374,10 +363,8 @@ func parseManifestInfo(data []byte) (GalaxyYML, error) {
 	return meta, nil
 }
 
-// decodeManifestInfo is the shared decode half of the two readers above:
-// the size cap, the JSON shape, the collection_info presence, the version
-// presence, and the nil-to-empty normalization - everything except the
-// identity alphabet the two callers disagree on.
+// decodeManifestInfo is the decode half shared by both manifest readers:
+// everything except the identity alphabet the two callers disagree on.
 func decodeManifestInfo(data []byte) (GalaxyYML, error) {
 	if len(data) > metadataMaxBytes {
 		return GalaxyYML{}, fmt.Errorf("%w: %s is %d bytes, the limit is %d",

@@ -16,12 +16,9 @@ import (
 // annotateOfflineConflict leaves a non-conflict error alone.
 var errTestUnrelatedFailure = errors.New("some unrelated failure")
 
-// TestAnnotateOfflineConflictAddsNoteButStaysClassifiable pins the fence
-// this feature depends on: wrapping a *solver.ConflictError under --offline
-// must never break errors.Is/errors.As/exitcode.FromError classification,
-// even though the rendered message gains an extra line. If the note were
-// ever appended by flattening the error into a new string (%v/%s) instead
-// of wrapping it via Unwrap, every one of these three checks would fail.
+// TestAnnotateOfflineConflictAddsNoteButStaysClassifiable pins that the
+// offline note is added while errors.Is, errors.As and exitcode.FromError
+// still classify the conflict, which flattening it with %v would break.
 func TestAnnotateOfflineConflictAddsNoteButStaysClassifiable(t *testing.T) {
 	t.Parallel()
 	base := &solver.ConflictError{}
@@ -44,20 +41,15 @@ func TestAnnotateOfflineConflictAddsNoteButStaysClassifiable(t *testing.T) {
 	}
 }
 
-// TestAnnotateOfflineConflictPassesThroughUnaffectedErrors asserts that
-// annotateOfflineConflict only ever touches an error when BOTH conditions
-// hold: --offline is set AND the error is a *solver.ConflictError. A
-// conflict resolved online, and any non-conflict error even when offline,
-// pass through as the exact same error value, unchanged.
+// TestAnnotateOfflineConflictPassesThroughUnaffectedErrors pins that an online
+// conflict, a non-conflict error under --offline, and nil come back as the
+// exact same value.
 func TestAnnotateOfflineConflictPassesThroughUnaffectedErrors(t *testing.T) {
 	t.Parallel()
 	conflictErr := fmt.Errorf("resolve: %w", &solver.ConflictError{})
 
-	// A direct != comparison is intentional here, not a stand-in for
-	// errors.Is: the assertion is that annotateOfflineConflict returns the
-	// exact same error value byte-for-byte, never a new wrapper - errors.Is
-	// would still pass even if it wrapped the value again, which is exactly
-	// the regression this test exists to catch.
+	// Identity comparison, not errors.Is: errors.Is would still pass if the
+	// value were wrapped again, which is the regression this test catches.
 	//nolint:err113,errorlint // intentional identity comparison, not error-equality checking; see comment above
 	if got := annotateOfflineConflict(&config.Config{Offline: false}, conflictErr); got != conflictErr {
 		t.Fatalf("annotateOfflineConflict changed an online conflict error: got %v, want it unchanged", got)

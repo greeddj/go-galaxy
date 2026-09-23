@@ -24,10 +24,9 @@ const (
 // receive: outdated only ever advertises, so a fetch here is a defect.
 var errStubGitAcquire = errors.New("stub git client: Acquire must not be called by outdated")
 
-// stubGitClient is the smallest gitsource.Client lookupGitOutdated can be
-// driven with from inside the package: every advertisement answers tip and
-// is counted, so a row can pin that a commit-pinned entry costs no round
-// trip.
+// stubGitClient is the smallest gitsource.Client lookupGitOutdated can run
+// with: every advertisement answers tip and is counted, so a row can pin that
+// a commit-pinned entry costs no round trip.
 type stubGitClient struct {
 	tip        string
 	advertises int
@@ -56,11 +55,9 @@ type lookupGitOutdatedCase struct {
 	wantNewer      bool
 }
 
-// lookupGitOutdatedCases pins lookupGitOutdated's three shapes: a branch
-// whose remote moved is reported as commit drift in full hashes, a commit ref
-// is up to date by definition with no advertisement at all, and a run wired
-// without a git client is a configuration defect rather than a remote
-// failure.
+// lookupGitOutdatedCases covers lookupGitOutdated's shapes: a moved branch is
+// commit drift in full hashes, a commit ref is current with no advertisement,
+// and a run with no git client is a configuration defect, not a remote failure.
 func lookupGitOutdatedCases() []lookupGitOutdatedCase {
 	return []lookupGitOutdatedCase{
 		{

@@ -18,14 +18,9 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
-// Strings of the ssh exchange: the channel type and request types a git
-// client uses, the exact exec command go-git issues for a repository path
-// (endpointToCommand in go-git's ssh transport: the service name, a space
-// and the path in single quotes), the permissions extension the accepted
-// key's fingerprint travels in from the auth callback to the exec handler,
-// and the stderr line for an unknown repository - worded the way GitHub words
-// it, since that is one of the phrases go-git's ssh client maps to its
-// repository-not-found error.
+// Strings of the ssh exchange: the exec command go-git issues, the extension
+// carrying the key fingerprint to the exec handler, and a not-found line
+// worded as GitHub words it, which go-git maps to its not-found error.
 const (
 	sessionChannelType = "session"
 	execRequestType    = "exec"
@@ -45,10 +40,8 @@ const (
 	knownHostsMode os.FileMode = 0o600
 )
 
-// Errors the ssh half answers a client with. They are package-level values
-// rather than inline ones so each refusal has one identity; none is part of
-// the package's contract with a test, which observes the client-side error
-// instead.
+// Errors the ssh half answers a client with. None is part of the contract
+// with a test, which observes the client-side error instead.
 var (
 	errKeyNotAuthorized = errors.New("fakegit: public key not authorized")
 	errAgentReadOnly    = errors.New("fakegit: agent is read-only")
@@ -65,13 +58,9 @@ type exitStatusPayload struct {
 	Status uint32
 }
 
-// SSHServer is the ssh half of a Server: a listener on 127.0.0.1 with a
-// generated ed25519 host key that accepts publickey authentication for the
-// keys AuthorizeKey registered, a session channel per connection and the
-// exec "git-upload-pack '/<name>.git'" on it, answered with the same
-// upload-pack exchange the HTTP half speaks - minus the smart-HTTP service
-// prefix, which ssh does not carry. It is started lazily by Server.SSH and
-// closed with the Server.
+// SSHServer is the ssh half of a Server: a 127.0.0.1 listener accepting only
+// keys AuthorizeKey registered and answering the upload-pack exec with the
+// HTTP half's exchange. Server.SSH starts it lazily; it closes with the Server.
 type SSHServer struct {
 	parent     *Server
 	listener   net.Listener
@@ -156,18 +145,16 @@ func (s *SSHServer) HostKey() ssh.PublicKey {
 }
 
 // KnownHostsFile writes a known_hosts file admitting this listener's host key
-// for its normalized "[127.0.0.1]:PORT" address into a directory tb owns and
-// returns the path, for t.Setenv("SSH_KNOWN_HOSTS", path). A test wanting a
-// mismatching file writes one from another SSHServer's HostKey.
+// into a directory tb owns and returns the path, for
+// t.Setenv("SSH_KNOWN_HOSTS", path).
 func (s *SSHServer) KnownHostsFile(tb testing.TB) string {
 	tb.Helper()
 	return WriteKnownHosts(tb, s.Addr(), s.HostKey())
 }
 
 // WriteKnownHosts writes a known_hosts file admitting key for addr
-// ("host:port") into a directory tb owns and returns its path. It is what
-// KnownHostsFile uses, exposed so a test can pin a different key to this
-// listener's address and prove the mismatch is refused.
+// ("host:port") into a directory tb owns and returns its path, so a test can
+// pin a mismatching key to a listener's address.
 func WriteKnownHosts(tb testing.TB, addr string, key ssh.PublicKey) string {
 	tb.Helper()
 	line := knownhosts.Line([]string{knownhosts.Normalize(addr)}, key) + "\n"
@@ -209,9 +196,7 @@ func (s *SSHServer) acceptLoop() {
 }
 
 // serverConfig builds the per-connection ssh.ServerConfig: publickey only,
-// against the keys authorized at the time of the connection, stamping the
-// accepted key's fingerprint into the permissions so the exec handler can
-// report it through SeenAuth.
+// stamping the accepted key's fingerprint into the permissions for SeenAuth.
 func (s *SSHServer) serverConfig() *ssh.ServerConfig {
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
@@ -272,10 +257,9 @@ func (s *SSHServer) handleConn(conn net.Conn) {
 	}
 }
 
-// handleSession serves one session channel: the first exec request is
-// answered with the upload-pack exchange, an exit-status and a close; any
-// other request that wants a reply is refused. A client that never sends an
-// exec sees its channel stay open until it closes it.
+// handleSession serves one session channel: the first exec gets the
+// upload-pack exchange, an exit-status and a close; any other request that
+// wants a reply is refused.
 func (s *SSHServer) handleSession(ctx context.Context, channel ssh.Channel, requests <-chan *ssh.Request, fingerprint string) {
 	defer s.wg.Done()
 	defer func() { _ = channel.Close() }()
@@ -303,10 +287,9 @@ func (s *SSHServer) handleSession(ctx context.Context, channel ssh.Channel, requ
 	}
 }
 
-// runExec is the ssh transport's counterpart of the two HTTP handlers: it
-// counts the exec, records the key fingerprint, applies the armed fault, and
-// runs advertisement, request and reply over channel. It returns the exit
-// status to report.
+// runExec is the ssh counterpart of the two HTTP handlers: count, record the
+// fingerprint, apply the fault, then advertise, read and reply over channel.
+// It returns the exit status to report.
 func (s *SSHServer) runExec(ctx context.Context, channel ssh.Channel, name, fingerprint string) uint32 {
 	p := s.parent
 	p.incr(EndpointSSHExec)
@@ -347,9 +330,8 @@ func (s *SSHServer) runExec(ctx context.Context, channel ssh.Channel, name, fing
 }
 
 // parseExecCommand extracts the repository name from the exact command
-// go-git sends, "git-upload-pack '/<name>.git'". Anything else - another
-// service, a path outside the top level, a different quoting - is refused,
-// so the fake also pins the command shape the production client emits.
+// go-git sends, "git-upload-pack '/<name>.git'", and refuses anything else, so
+// the fake also pins the command shape the production client emits.
 func parseExecCommand(cmd string) (string, bool) {
 	if !strings.HasPrefix(cmd, execCommandPrefix) || !strings.HasSuffix(cmd, execCommandSuffix) {
 		return "", false
@@ -358,13 +340,9 @@ func parseExecCommand(cmd string) (string, bool) {
 	return repoName(p)
 }
 
-// StartAgent serves an ssh agent holding signers on a unix socket and returns
-// the socket path, for t.Setenv("SSH_AUTH_SOCK", path). The agent is
-// read-only: a client can list and sign with the keys, not add or remove
-// any. The socket's directory is created under the system temp root rather
-// than under tb.TempDir because a unix socket path is capped at 104 bytes on
-// darwin, which tb.TempDir's nesting under a long test name exceeds; it is
-// removed on cleanup.
+// StartAgent serves a read-only ssh agent holding signers on a unix socket and
+// returns its path, for t.Setenv("SSH_AUTH_SOCK", path). Its directory avoids
+// tb.TempDir because darwin caps a unix socket path at 104 bytes.
 func StartAgent(tb testing.TB, signers ...ssh.Signer) string {
 	tb.Helper()
 	dir, err := os.MkdirTemp("", agentDirPattern) //nolint:usetesting // see above: the socket path must stay under darwin's 104-byte cap.
@@ -461,9 +439,8 @@ func (a *signerAgent) Signers() ([]ssh.Signer, error) {
 }
 
 // GenerateKey creates an ed25519 key pair and returns its private half as
-// OpenSSH PEM - encrypted with passphrase when one is given, the shape
-// go-git's NewPublicKeys reads - together with a signer over it, for
-// AuthorizeKey and StartAgent.
+// OpenSSH PEM, encrypted with passphrase when one is given, together with a
+// signer over it for AuthorizeKey and StartAgent.
 func GenerateKey(tb testing.TB, passphrase string) ([]byte, ssh.Signer) {
 	tb.Helper()
 	_, priv, err := ed25519.GenerateKey(rand.Reader)

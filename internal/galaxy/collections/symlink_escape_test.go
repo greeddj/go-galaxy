@@ -1,17 +1,8 @@
 package collections
 
-// This file proves the install-side symlink hardening (installroot.go):
-// every write this package makes into cfg.DownloadPath funnels through one
-// os.Root, so a symlinked ansible_collections - or a symlinked namespace/name
-// component beneath it - cannot redirect a write outside DownloadPath.
-// Each test targets one write site directly (extractCollection, writeGalaxyInfo,
-// verifyExtractMarker, canSkipInstall) with a pre-existing "outside" tree
-// standing in for real content a symlink swap would otherwise have destroyed
-// or leaked into - the same shape TestExtractCollectionRefusesNonCanonicalSHABeforeDestroyingTree
-// already uses for the malformed-sha guard. The full-run version (a symlinked
-// ansible_collections reached through Start/installWithState) lives in
-// symlink_run_test.go instead, since only that level can observe "the whole
-// run failed once, not once per collection".
+// Each install write site, driven directly, must refuse a symlinked
+// ansible_collections escaping DownloadPath and leave a pre-existing outside
+// tree intact; every write goes through one os.Root.
 
 import (
 	"context"
@@ -28,37 +19,22 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// symlinkForm selects how symlinkedEscapeFixture points its symlinked
-// "ansible_collections" at the sibling "outside" directory. Both forms
-// resolve to the identical on-disk target, so a test that only ever exercises
-// symlinkAbsolute cannot tell "this code refuses any absolute symlink target
-// outright" (a coarser, weaker property - see
-// TestAnsibleCollectionsSymlinkToSiblingInsideDownloadPathSucceeds, where an
-// absolute target is refused even when it geometrically resolves inside the
-// root) apart from "this code refuses an escaping target" (the property this
-// file actually exists to prove). A committed requirements.yml can only ever
-// drive col's identity, never the symlink itself, but the shape a hostile
-// checkout ships - a relative symlink such as "ansible_collections ->
-// ../outside" that both survives a repository clone and travels with it - is
-// exactly symlinkRelative.
+// symlinkForm selects an absolute or relative escaping symlink target. os.Root
+// refuses every absolute target, so only the relative form, the one a hostile
+// checkout ships, proves the refusal is about escaping.
 type symlinkForm int
 
 const (
 	// symlinkAbsolute points ansible_collections at outside's absolute path.
 	symlinkAbsolute symlinkForm = iota
-	// symlinkRelative points ansible_collections at outside via a relative
-	// ".." target, resolved against downloadPath (the symlink's own
-	// directory), landing on the exact same on-disk location as
-	// symlinkAbsolute.
+	// symlinkRelative points ansible_collections at the same outside
+	// directory through a relative ".." target.
 	symlinkRelative
 )
 
-// symlinkedEscapeFixture builds a downloadPath containing a symlinked
-// "ansible_collections" pointing at a sibling "outside" directory - as an
-// absolute or a relative target, per form - and returns the installTarget for
-// col rooted at downloadPath alongside the real, on-disk location the
-// symlink redirects col's writes to (outside/<namespace>/<name>). Every test
-// in this file drives one production write site against this same shape.
+// symlinkedEscapeFixture builds a downloadPath whose ansible_collections is a
+// symlink (per form) to a sibling outside directory, returning col's
+// installTarget and the outside path the symlink would redirect writes to.
 func symlinkedEscapeFixture(t *testing.T, col collection, form symlinkForm) (installTarget, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -91,16 +67,9 @@ func symlinkedEscapeFixture(t *testing.T, col collection, form symlinkForm) (ins
 	return target, filepath.Join(outside, col.Namespace, col.Name)
 }
 
-// realInstallFixture builds col's installTarget the same shape
-// symlinkedEscapeFixture does - a downloadPath, an "ansible_collections"
-// entry, col's install directory beneath it - except that entry is a real
-// directory, never a symlink. It exists so each escape test can be paired
-// with a positive control: the same seed (InstalledEntry, marker, sidecar)
-// placed where the production code is actually meant to find it, proving the
-// fixture is capable of producing the accepting answer at all before its
-// escape sibling is trusted to prove the refusing one. Without this, a
-// fixture that can only ever say "false" (a stat that fails for any reason,
-// escape or not) would make every assertion of "false" vacuous.
+// realInstallFixture builds col's installTarget like symlinkedEscapeFixture but
+// over a real ansible_collections directory: the positive control that keeps
+// each escape test's "false" from being vacuous.
 func realInstallFixture(t *testing.T, col collection) installTarget {
 	t.Helper()
 	downloadPath := t.TempDir()
@@ -110,29 +79,9 @@ func realInstallFixture(t *testing.T, col collection) installTarget {
 	return target
 }
 
-// TestExtractCollectionSymlinkedPrefixLeavesOutsideTreeIntact is the
-// load-bearing proof that extractCollection's os.RemoveAll(installPath) does
-// not follow a symlinked ansible_collections and destroy whatever real
-// content lives at its target. A real, pre-existing tree is seeded at the
-// symlink's actual on-disk target - the same location an unrooted
-// os.RemoveAll would reach - and must survive byte-identical.
-// t.Errorf, not t.Fatalf, on the sentinel error check: the tree assertion
-// below is what actually discriminates a real fix from one that merely
-// returns the right error class while still destroying data through a stale
-// os.RemoveAll call, so it must run regardless of whether the error check
-// itself passes.
-//
-// Both symlinkForm values are exercised, on this write site specifically -
-// extractCollection's os.RemoveAll is the severest primitive in the whole
-// pipeline (see its own doc comment: "the previous tree may be gone" on
-// failure, not "nothing was written yet"), so it is where an absolute-only
-// suite would be most consequential to leave vacuous. A relative target (the
-// "ansible_collections -> ../outside" shape a hostile repository checkout
-// would actually ship, since it survives a clone byte-for-byte where an
-// absolute host path could not) proves the refusal tracks the escape itself,
-// not merely "any absolute symlink target", which
-// TestAnsibleCollectionsSymlinkToSiblingInsideDownloadPathSucceeds already
-// shows this codebase treats differently from an escaping one.
+// TestExtractCollectionSymlinkedPrefixLeavesOutsideTreeIntact pins that
+// extractCollection's reset never follows an escaping ansible_collections
+// symlink, absolute or relative, to delete the tree at its target.
 func TestExtractCollectionSymlinkedPrefixLeavesOutsideTreeIntact(t *testing.T) {
 	t.Parallel()
 	for _, form := range []symlinkForm{symlinkAbsolute, symlinkRelative} {
@@ -168,12 +117,9 @@ func symlinkFormName(form symlinkForm) string {
 	return "absolute"
 }
 
-// TestWriteGalaxyInfoSymlinkedPrefixWritesNothingOutside proves
-// writeGalaxyInfo's own rooted MkdirAll/WriteFile pair refuses the same
-// symlinked prefix before creating the .info sidecar directory anywhere,
-// inside or outside the collections root: target.info's own MkdirAll is the
-// very first statement writeGalaxyInfo executes, so a refusal there leaves no
-// WriteFile ever attempted.
+// TestWriteGalaxyInfoSymlinkedPrefixWritesNothingOutside pins that
+// writeGalaxyInfo refuses the symlinked prefix before creating the .info
+// sidecar directory anywhere.
 func TestWriteGalaxyInfoSymlinkedPrefixWritesNothingOutside(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}
@@ -193,14 +139,9 @@ func TestWriteGalaxyInfoSymlinkedPrefixWritesNothingOutside(t *testing.T) {
 	assertPathAbsent(t, filepath.Join(outsideInfoDir, galaxyYAMLFileName))
 }
 
-// TestVerifyExtractMarkerSymlinkedPrefixLeavesOutsideMarkerIntact proves
-// verifyExtractMarker's best-effort cleanup never unlinks a marker reachable
-// only through a symlinked prefix. The cleanup resolves the marker path
-// through target.root rather than a plain path join
-// (filepath.Join(installPath, ...) then os.Remove); a plain join would
-// follow the symlink, but target.root refuses to traverse the escaping
-// "ansible_collections" component at all, so the outside marker survives
-// even though verifyExtractMarker still correctly reports it as unverified.
+// TestVerifyExtractMarkerSymlinkedPrefixLeavesOutsideMarkerIntact pins that a
+// marker reachable only through a symlinked prefix is reported unverified and
+// never unlinked by verifyExtractMarker's cleanup.
 func TestVerifyExtractMarkerSymlinkedPrefixLeavesOutsideMarkerIntact(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}
@@ -220,13 +161,9 @@ func TestVerifyExtractMarkerSymlinkedPrefixLeavesOutsideMarkerIntact(t *testing.
 	assertFileContent(t, markerPath, markerContent)
 }
 
-// TestVerifyExtractMarkerRealInstallReturnsTrue is the positive control for
-// TestVerifyExtractMarkerSymlinkedPrefixLeavesOutsideMarkerIntact: the
-// identical marker content, seeded through the real production write path
-// (writeExtractMarker, via seedValidExtractMarker) at a real, non-symlinked
-// install directory, must be accepted. Without this, "false" on the symlinked
-// sibling would be unfalsifiable - a fixture whose stat can only ever fail,
-// escape or not, would make that refusal free rather than earned.
+// TestVerifyExtractMarkerRealInstallReturnsTrue pins that a valid marker at a
+// real install directory is accepted: the positive control for
+// TestVerifyExtractMarkerSymlinkedPrefixLeavesOutsideMarkerIntact.
 func TestVerifyExtractMarkerRealInstallReturnsTrue(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}
@@ -241,17 +178,9 @@ func TestVerifyExtractMarkerRealInstallReturnsTrue(t *testing.T) {
 	}
 }
 
-// TestInstallRecordMatchesSymlinkedPrefixReturnsFalse is
-// installRecordMatches's own single-gate proof, driving it directly rather
-// than through canSkipInstall: the same seeded InstalledEntry, extract
-// marker, and GALAXY.yml sidecar as TestCanSkipInstallSymlinkedPrefixReturnsFalse,
-// reachable only through the symlinked "ansible_collections" prefix. Unlike
-// that test - which stays true even with either one of two rooting gates
-// reverted, since the other alone still suffices - this one is killed by
-// reverting matchingInstalledRecord's own two rooted calls - the marker's
-// target.root.Stat and readGalaxyInfo's sidecar read - to plain, absolute os
-// calls, with no second gate standing behind them. Reverting either one alone
-// is not enough: the other still refuses the symlinked seed by itself.
+// TestInstallRecordMatchesSymlinkedPrefixReturnsFalse pins that
+// installRecordMatches, on its own, rejects a record, marker and sidecar
+// reachable only through a symlinked prefix.
 func TestInstallRecordMatchesSymlinkedPrefixReturnsFalse(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}
@@ -277,11 +206,9 @@ func TestInstallRecordMatchesSymlinkedPrefixReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestInstallRecordMatchesRealInstallReturnsTrue is the positive control for
-// TestInstallRecordMatchesSymlinkedPrefixReturnsFalse: the identical
-// InstalledEntry, marker, and sidecar seed, placed at a real (non-symlinked)
-// install directory, must be accepted - proving the fixture shape can say
-// "true" before its symlinked sibling is trusted to prove "false".
+// TestInstallRecordMatchesRealInstallReturnsTrue pins that the same seed at a
+// real install directory is accepted: the positive control for
+// TestInstallRecordMatchesSymlinkedPrefixReturnsFalse.
 func TestInstallRecordMatchesRealInstallReturnsTrue(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}
@@ -306,31 +233,9 @@ func TestInstallRecordMatchesRealInstallReturnsTrue(t *testing.T) {
 	}
 }
 
-// TestCanSkipInstallSymlinkedPrefixReturnsFalse proves canSkipInstall never
-// mistakes a symlink-only fake install for a real one: an InstalledEntry, an
-// extract marker, and a GALAXY.yml sidecar all exist, but only reachable
-// through the symlinked "ansible_collections" prefix, exactly as they would
-// if an earlier, unpatched binary had installed through the symlink. Every
-// check matchingInstalledRecord performs goes through target.root, which
-// refuses to traverse the escaping component, so this must report false - a
-// silent wrong "true" here would skip a real install and keep serving
-// whatever sits at the symlink's target forever.
-//
-// This test is conjunction-killed by design, not a weak or vacuous check:
-// canSkipInstall layers two independent rooting gates -
-// matchingInstalledRecord's own two rooted calls, and
-// verifyExtractMarker's rooted scanTree/readExtractMarker pass - and
-// reverting only one of them still leaves the other refusing the symlinked
-// seed on its own, so this test stays green either way. That is expected, not
-// a gap: each gate has its own single-gate killer elsewhere -
-// TestInstallRecordMatchesSymlinkedPrefixReturnsFalse pins the
-// matchingInstalledRecord half, TestVerifyExtractMarkerSymlinkedPrefixLeavesOutsideMarkerIntact
-// pins the verifyExtractMarker half - and this test is what proves the two
-// gates actually compose into one fail-closed decision at the canSkipInstall
-// level, the property canSkipInstall's own defense-in-depth is supposed to
-// buy. A reader who reverts one gate, sees this test stay green, and reads
-// that as "this test caught nothing" should look at those two tests instead,
-// not conclude this one is worthless.
+// TestCanSkipInstallSymlinkedPrefixReturnsFalse pins that canSkipInstall never
+// takes a symlink-only fake install as installed. Its two rooted gates each
+// suffice alone, so each has its own single-gate test.
 func TestCanSkipInstallSymlinkedPrefixReturnsFalse(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}
@@ -355,14 +260,9 @@ func TestCanSkipInstallSymlinkedPrefixReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestCanSkipInstallRealInstallReturnsTrue is the positive control for
-// TestCanSkipInstallSymlinkedPrefixReturnsFalse: the identical InstalledEntry,
-// marker, and sidecar seed, placed at a real (non-symlinked) install
-// directory, must be accepted. This is what makes the symlinked test's
-// "false" meaningful rather than a fixture that could only ever say "false" -
-// see TestCanSkipInstallPinGate and TestCanSkipInstallSourceGate in
-// lock_pin_test.go for the same shape of positive proof applied to
-// canSkipInstall's other gates.
+// TestCanSkipInstallRealInstallReturnsTrue pins that the same seed at a real
+// install directory is accepted: the positive control for
+// TestCanSkipInstallSymlinkedPrefixReturnsFalse.
 func TestCanSkipInstallRealInstallReturnsTrue(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}

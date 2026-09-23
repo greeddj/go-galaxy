@@ -22,12 +22,9 @@ import (
 const slowDownErrorBody = `<?xml version="1.0" encoding="UTF-8"?>` +
 	`<Error><Code>SlowDown</Code><Message>Please reduce your request rate.</Message></Error>`
 
-// TestGetObjectSurfacesXMLErrorDetails proves that a non-2xx GET response
-// carrying an S3 XML error body has its Code and Message folded into the
-// returned error, while the error stays matchable against errS3GetFailed via
-// errors.Is. 503 is a retryable status, so the failure is armed
-// indefinitely: getObject now retries it internally, and this asserts the
-// enrichment still holds on the terminal error once retries are exhausted.
+// TestGetObjectSurfacesXMLErrorDetails pins that a failed GET folds the S3
+// <Error> Code and Message into an errS3GetFailed error, and that a persistent
+// 503 still does so after exactly s3RetryMaxAttempts attempts.
 func TestGetObjectSurfacesXMLErrorDetails(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -53,12 +50,9 @@ func TestGetObjectSurfacesXMLErrorDetails(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectSurfacesXMLErrorDetails proves the same enrichment applies
-// to deleteObject, exercising a second call site beyond getObject. The
-// failure is armed indefinitely since deleteObject now retries a 503
-// internally; a bounded count would be consumed by the retries and the
-// final attempt would then observe a plain (never-created) key as already
-// deleted, masking the failure this test means to exercise.
+// TestDeleteObjectSurfacesXMLErrorDetails pins the same enrichment for
+// deleteObject. The failure is armed indefinitely: with a bounded count the
+// last retry would find the never-created key already deleted.
 func TestDeleteObjectSurfacesXMLErrorDetails(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -80,13 +74,9 @@ func TestDeleteObjectSurfacesXMLErrorDetails(t *testing.T) {
 	assertContainsCodeAndMessage(t, err, "SlowDown", "Please reduce your request rate.")
 }
 
-// TestPutObjectSurfacesXMLErrorDetails proves handlePutResponse's default
-// (non-2xx, non-precondition, non-not-found) branch enriches its error the
-// same way, covering an overwrite PUT that the backend rejects with a
-// throttling response. This is an unconditional PUT, which retries a
-// 503 internally, so the failure is armed indefinitely: a bounded count
-// would let a later retry attempt succeed in writing the object instead of
-// exercising the failure this test means to cover.
+// TestPutObjectSurfacesXMLErrorDetails pins the same enrichment for
+// handlePutResponse's default arm on an unconditional PUT, armed indefinitely
+// so that no retry manages to write the object.
 func TestPutObjectSurfacesXMLErrorDetails(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -109,12 +99,9 @@ func TestPutObjectSurfacesXMLErrorDetails(t *testing.T) {
 	assertContainsCodeAndMessage(t, err, "SlowDown", "Please reduce your request rate.")
 }
 
-// TestGetObjectFallsBackToStatusOnlyOnMalformedBody proves that a non-2xx
-// body that is not a valid S3 XML error document yields the original
-// status-only error form, without ever propagating the underlying
-// XML-parse failure, and without disturbing errors.Is matching. 500 is a
-// retryable status, so the failure is armed indefinitely to survive
-// getObject's internal retries.
+// TestGetObjectFallsBackToStatusOnlyOnMalformedBody pins that a non-XML error
+// body yields the status-only form, never the parse failure, and still matches
+// errS3GetFailed.
 func TestGetObjectFallsBackToStatusOnlyOnMalformedBody(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -141,11 +128,8 @@ func TestGetObjectFallsBackToStatusOnlyOnMalformedBody(t *testing.T) {
 	}
 }
 
-// TestGetObjectFallsBackToStatusOnlyOnEmptyBody proves the same fallback for
-// a response with no body at all (the common case for many real S3 error
-// responses returned without a body, e.g. from a misconfigured proxy). 502
-// is a retryable status, so the failure is armed indefinitely to survive
-// getObject's internal retries.
+// TestGetObjectFallsBackToStatusOnlyOnEmptyBody pins the same status-only
+// fallback for an error response with no body, as a misconfigured proxy sends.
 func TestGetObjectFallsBackToStatusOnlyOnEmptyBody(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -169,12 +153,8 @@ func TestGetObjectFallsBackToStatusOnlyOnEmptyBody(t *testing.T) {
 	}
 }
 
-// TestHeadObjectStaysStatusOnly proves headObject never appends a code or
-// message even when a body is armed on the forced failure: HEAD responses
-// carry no entity body (net/http elides it), so headObject's error is the
-// status-only form by construction, not merely by the fake choosing not to
-// send one. The failure is armed indefinitely since headObject now retries
-// a 503 internally.
+// TestHeadObjectStaysStatusOnly pins that headObject never appends a code or
+// message even when the fake arms a body, since net/http elides a HEAD body.
 func TestHeadObjectStaysStatusOnly(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -198,12 +178,9 @@ func TestHeadObjectStaysStatusOnly(t *testing.T) {
 	}
 }
 
-// TestGetObjectRetriesTransientFailureThenSucceeds proves getObject
-// transparently recovers from a bounded run of transient 503s: it seeds a
-// real object, arms exactly two forced failures on it, and confirms the
-// call still succeeds - reading back the object's real body - after
-// exactly three GET attempts (two failures plus the succeeding one), rather
-// than surfacing the second failure to the caller.
+// TestGetObjectRetriesTransientFailureThenSucceeds pins that getObject
+// recovers from two transient 503s and returns the real body after exactly
+// three attempts.
 func TestGetObjectRetriesTransientFailureThenSucceeds(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -289,10 +266,9 @@ func TestDeleteObjectRetriesTransientFailureThenSucceeds(t *testing.T) {
 	}
 }
 
-// TestPutObjectUnconditionalRetriesTransientFailureThenSucceeds proves an
-// unconditional (overwrite) putObject recovers from a bounded run of
-// transient 503s, re-seeking and resending its body on each retry, and
-// confirms the object actually landed once the call succeeds.
+// TestPutObjectUnconditionalRetriesTransientFailureThenSucceeds pins that an
+// overwrite PUT recovers from two transient 503s by resending its reseeked
+// body, and that the object lands.
 func TestPutObjectUnconditionalRetriesTransientFailureThenSucceeds(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -330,14 +306,9 @@ func TestPutObjectUnconditionalRetriesTransientFailureThenSucceeds(t *testing.T)
 	}
 }
 
-// TestPutObjectConditionalDoesNotRetryOnTransientFailure is the core
-// lock-deadlock guard: a conditional create-if-absent PUT (ifNoneMatch)
-// must never be retried, even against a persistently failing transient
-// status. A lost-success retry would observe 412 (the object it just
-// created now exists) and misreport its own success as contention, which
-// the distributed lock's acquireLock loop cannot distinguish from a live
-// holder. This asserts the call is issued exactly once and returns the
-// failure as-is.
+// TestPutObjectConditionalDoesNotRetryOnTransientFailure pins that a
+// create-if-absent PUT is issued once even on a retryable status: a retried
+// lost success would read as 412 contention and stall the lock.
 func TestPutObjectConditionalDoesNotRetryOnTransientFailure(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -361,10 +332,8 @@ func TestPutObjectConditionalDoesNotRetryOnTransientFailure(t *testing.T) {
 	}
 }
 
-// TestGetObjectNotFoundIsNotRetried confirms a plain 404 (no forced failure
-// needed - the key simply was never written) is reported as errS3NotFound
-// after exactly one attempt, never retried: errS3NotFound is a terminal,
-// non-transient outcome.
+// TestGetObjectNotFoundIsNotRetried pins that a never-written key is
+// errS3NotFound after exactly one attempt.
 func TestGetObjectNotFoundIsNotRetried(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -384,10 +353,8 @@ func TestGetObjectNotFoundIsNotRetried(t *testing.T) {
 	}
 }
 
-// TestPutObjectPreconditionFailedIsNotRetried confirms a 412 on a
-// conditional PUT is reported as errS3PreconditionFailed after exactly one
-// attempt: it is both a non-retryable status and, independently, a
-// conditional PUT is never retried regardless of status.
+// TestPutObjectPreconditionFailedIsNotRetried pins that a 412 on a
+// conditional PUT is errS3PreconditionFailed after exactly one attempt.
 func TestPutObjectPreconditionFailedIsNotRetried(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -411,13 +378,9 @@ func TestPutObjectPreconditionFailedIsNotRetried(t *testing.T) {
 	}
 }
 
-// newRedirectRefusalFixture starts two httptest servers - a front server the
-// returned *Client is configured to talk to, and a target server it must
-// never reach - and builds the *Client from a fresh *http.Client dedicated
-// to this fixture. When redirect is true, the front server answers every
-// request with a 302 to the target; when false, it answers 200 directly, so
-// the identical fixture also serves as this behavior's own positive control.
-// The returned counters record how many requests each server received.
+// newRedirectRefusalFixture builds a *Client against a front server that
+// answers 302 to a target server when redirect is true, else 200, and returns
+// both servers' request counters.
 func newRedirectRefusalFixture(t *testing.T, redirect bool) (*Client, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 
@@ -456,16 +419,9 @@ func newRedirectRefusalFixture(t *testing.T, redirect bool) (*Client, *atomic.In
 	return c, &front, &target
 }
 
-// TestClientRefusesEndpointRedirect proves that a redirect answered by the
-// configured S3 endpoint is refused rather than followed: getObject fails
-// with helpers.ErrCacheBackendUnusable and NOT ALSO
-// helpers.ErrCacheBackendUnavailable - the exclusivity variables.go's own
-// partition doc requires of every sentinel that can escape this package,
-// checked here against the actual error tree do() produces for this
-// scenario rather than only against the bare errS3RedirectRefused variable
-// (sentinel_class_test.go's own coverage) - the redirect target never
-// receives a request, and the front endpoint is asked exactly once, proving
-// the refusal is not itself retried as an ordinary transport failure.
+// TestClientRefusesEndpointRedirect pins that an endpoint redirect fails with
+// ErrCacheBackendUnusable and not also ErrCacheBackendUnavailable, reaches no
+// target, and is not retried.
 func TestClientRefusesEndpointRedirect(t *testing.T) {
 	t.Parallel()
 	client, frontRequests, targetRequests := newRedirectRefusalFixture(t, true)
@@ -484,12 +440,8 @@ func TestClientRefusesEndpointRedirect(t *testing.T) {
 		t.Fatalf("expected err to NOT also carry helpers.ErrCacheBackendUnavailable "+
 			"(exclusive with helpers.ErrCacheBackendUnusable per variables.go's partition), got %v", err)
 	}
-	// Documentary, not pinned: this cannot be the first failing line, because
-	// any state that lets a request reach the target also makes getObject
-	// succeed (the target answers 200), which the non-nil check above catches
-	// first. It is kept as a direct statement of the containment property the
-	// refusal exists to provide. Reordering the chain to "fix" that would
-	// only make the non-nil check documentary instead.
+	// Documentary: a request reaching the target would already have made
+	// getObject succeed, which the nil-error check above catches first.
 	if got := targetRequests.Load(); got != 0 {
 		t.Fatalf("expected zero requests reaching the redirect target, got %d", got)
 	}
@@ -501,13 +453,9 @@ func TestClientRefusesEndpointRedirect(t *testing.T) {
 	}
 }
 
-// TestClientRefusesEndpointRedirectPositiveControl is
-// TestClientRefusesEndpointRedirect's positive control on the identical
-// fixture: with the front server answering 200 instead of redirecting,
-// getObject succeeds. This proves the refusal above exercises the redirect
-// path itself, rather than some other property of the fixture (a bad
-// signature, an unreachable endpoint) that would fail getObject regardless
-// of whether a redirect was ever involved.
+// TestClientRefusesEndpointRedirectPositiveControl runs the same fixture
+// without the redirect and expects success, so the refusal above is caused by
+// the redirect rather than by the fixture.
 func TestClientRefusesEndpointRedirectPositiveControl(t *testing.T) {
 	t.Parallel()
 	client, frontRequests, targetRequests := newRedirectRefusalFixture(t, false)
@@ -525,15 +473,9 @@ func TestClientRefusesEndpointRedirectPositiveControl(t *testing.T) {
 	}
 }
 
-// TestS3RedirectPolicyDoesNotAffectTheSharedClient is the load-bearing test
-// for newClient's copy-not-mutate decision: it builds a single *http.Client,
-// passes it to newClient, and then drives a real redirect through that
-// SAME, original *http.Client - never through the *Client newClient
-// returned. The redirect is still followed and reaches the target exactly
-// once, proving newClient's CheckRedirect assignment landed on a private
-// copy rather than on the caller's own client, which internal/galaxy/fetch
-// shares for Galaxy metadata and artifact downloads and whose own tests
-// depend on the default (redirect-following) behavior.
+// TestS3RedirectPolicyDoesNotAffectTheSharedClient pins that newClient sets
+// its redirect refusal on a private copy: the *http.Client it was given, which
+// internal/galaxy/fetch shares, still follows a redirect.
 func TestS3RedirectPolicyDoesNotAffectTheSharedClient(t *testing.T) {
 	t.Parallel()
 
@@ -596,10 +538,8 @@ func assertContainsCodeAndMessage(t *testing.T, err error, code, message string)
 	}
 }
 
-// getObjectError calls getObject and returns the resulting error. getObject
-// already closes the response body and returns a nil *http.Response on every
-// error path, so there is nothing to close here in practice; the nil check
-// simply keeps this helper correct even if that contract ever changes.
+// getObjectError calls getObject and returns its error, closing a response
+// defensively although getObject returns none on failure.
 func getObjectError(ctx context.Context, t *testing.T, b *Backend, key string) error {
 	t.Helper()
 	resp, err := b.client.getObject(ctx, key)
@@ -616,16 +556,9 @@ func getObjectError(ctx context.Context, t *testing.T, b *Backend, key string) e
 // loopback dial itself never races it.
 const getObjectRetryResponseHeaderTimeout = 150 * time.Millisecond
 
-// TestGetObjectRetriesAResponseHeaderTimeout is the headline case this
-// classifier exists for: an S3-compatible endpoint that accepts a connection
-// and then never answers, the exact shape a black-holed or overloaded object
-// store produces. This failure satisfies errors.Is(err, context.DeadlineExceeded)
-// while the caller's own context is still live, so a classifier keying on the
-// error's shape rather than on the caller's context would refuse it and
-// getObject would spend only the first of its s3RetryMaxAttempts attempts -
-// which is exactly what this test counts. It asserts that by counting accepted
-// TCP connections directly, rather than trusting a response, since the server
-// here never produces one.
+// TestGetObjectRetriesAResponseHeaderTimeout pins that an endpoint accepting
+// connections but never answering is tried s3RetryMaxAttempts times, although
+// its timeout matches DeadlineExceeded while the caller's context is live.
 func TestGetObjectRetriesAResponseHeaderTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -664,14 +597,9 @@ func TestGetObjectRetriesAResponseHeaderTimeout(t *testing.T) {
 	}
 }
 
-// TestGetObjectRecoversFromATransientTransportFailure is
-// TestGetObjectRetriesAResponseHeaderTimeout's positive control: it proves
-// the errS3TransportFailed retry arm actually RECOVERS a request rather than
-// merely counting attempts before giving up. The server hijacks the raw
-// connection and closes it without writing a status line for the first two
-// requests - a genuine transport failure (the client observes a closed
-// connection, never a response) distinct from a slow response - and answers
-// normally on the third.
+// TestGetObjectRecoversFromATransientTransportFailure pins that the
+// errS3TransportFailed retry recovers: two connections close without a status
+// line, and the third request is answered normally.
 func TestGetObjectRecoversFromATransientTransportFailure(t *testing.T) {
 	t.Parallel()
 
@@ -681,10 +609,8 @@ func TestGetObjectRecoversFromATransientTransportFailure(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if requests.Add(1) <= 2 {
-			// t.Errorf, not t.Fatal: this runs on the server's own handler
-			// goroutine, where a Fatal would kill that goroutine and leave
-			// the client hanging on a request nobody answers, turning a
-			// named failure into a timeout.
+			// t.Errorf, not t.Fatal: a Fatal on the handler goroutine would
+			// leave the client waiting and turn the failure into a timeout.
 			hijacker, ok := w.(http.Hijacker)
 			if !ok {
 				t.Errorf("ResponseWriter does not support hijacking")
@@ -743,11 +669,9 @@ type sessionTokenHeaderCase struct {
 	want  string
 }
 
-// TestSessionTokenHeader pins the branch that decides whether an S3 request
-// carries X-Amz-Security-Token, and what it carries. The zero-value row is
-// what pins IsSet as the predicate: a Secret that was never configured must
-// leave the header off entirely rather than send an empty one, which is a
-// header a strict endpoint rejects rather than ignores.
+// TestSessionTokenHeader pins when X-Amz-Security-Token is sent: a configured
+// token is, and a never-set Secret sends no header at all, since a strict
+// endpoint rejects an empty one.
 func TestSessionTokenHeader(t *testing.T) {
 	t.Parallel()
 

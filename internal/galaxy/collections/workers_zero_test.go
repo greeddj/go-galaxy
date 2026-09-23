@@ -1,15 +1,8 @@
 package collections
 
-// This file proves cfg.Workers == 0 cannot deadlock either per-collection
-// dispatch loop that bounds its worker pool with a buffered-channel
-// semaphore sized from cfg.Workers: warmCollections and runInstallLevel. Both
-// guard with max(_, 1) (see warm_command.go and install_command.go); without that guard, a zero Workers
-// makes the semaphore channel unbuffered, and the loop's first send blocks
-// forever because no worker has started yet to drain it - nothing reachable
-// from the CLI can set Workers to 0 (config.applyWorkers settles that field on
-// every config load, substituting helpers.DefaultInstallWorkers, whose own
-// floor is 2, for every value outside the range it accepts), but a
-// config.Config built programmatically can.
+// These tests pin that cfg.Workers == 0, reachable only from a Config built
+// in code, cannot deadlock the semaphore of warmCollections or
+// runInstallLevel: both size it with max(cfg.Workers, 1).
 
 import (
 	"context"
@@ -26,11 +19,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// zeroWorkersDeadlockTimeout bounds how long these tests wait for a
-// dispatch loop to return before concluding it has deadlocked. Generous
-// enough that a slow CI runner never trips it on a working implementation,
-// short enough that a real deadlock still fails the test in seconds rather
-// than hanging the whole suite until the package-level test timeout.
+// zeroWorkersDeadlockTimeout is how long a dispatch loop may take before it
+// counts as deadlocked: loose for slow CI, tight enough to fail in seconds.
 const zeroWorkersDeadlockTimeout = 5 * time.Second
 
 // TestWarmCollectionsZeroWorkersDoesNotDeadlock proves warmCollections
@@ -68,17 +58,13 @@ func TestWarmCollectionsZeroWorkersDoesNotDeadlock(t *testing.T) {
 }
 
 // TestRunInstallLevelZeroWorkersDoesNotDeadlock proves runInstallLevel
-// completes when cfg.Workers is 0, mirroring
-// TestWarmCollectionsZeroWorkersDoesNotDeadlock for install's own identical
-// hazard.
+// completes when cfg.Workers is 0, the install side of the same hazard.
 func TestRunInstallLevelZeroWorkersDoesNotDeadlock(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Workers: 0, Offline: true}
 	runtime := infra.New(noopPrinter{}, http.DefaultClient)
-	// root is nil: this test only proves the semaphore does not deadlock, not
-	// that the (uncreated) collections tree is written to - a nil root makes
-	// installCollection fail fast via newInstallTarget's own guard instead,
-	// which is still a prompt return, not a deadlock.
+	// A nil root makes installCollection fail fast, which is still a prompt
+	// return: only the absence of a deadlock is under test.
 	deps := newInstallDeps(cfg, runtime, store.New(), nil, nil, nil, nil, nil)
 	collections := map[string]collection{
 		"acme.widgets@1.0.0": {Namespace: "acme", Name: "widgets", Version: "1.0.0"},

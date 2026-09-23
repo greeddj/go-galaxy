@@ -6,25 +6,9 @@ import (
 	"strings"
 )
 
-// Fnmatch reports whether name matches pattern under the semantics of
-// Python's fnmatch.fnmatch on a POSIX system, which is what ansible applies
-// build_ignore with: "*" matches any run of bytes including "/", "?"
-// matches exactly one byte including "/", "[seq]" matches one byte of the
-// set and "[!seq]" one outside it, a range inside a set compares byte
-// values, a "]" first in a set is a literal, an unterminated "[" is a literal
-// "[", a reversed range matches nothing, there is no escape character, and
-// the match is anchored at both ends. Matching is case-sensitive, since
-// os.path.normcase is the identity on POSIX.
-//
-// The unit is the byte, not the rune: ansible hands fnmatch the pattern and
-// the path as bytes (to_bytes), so one "?" consumes one byte of the UTF-8
-// encoding, a two-byte rune needs "??", and a set or range never matches a
-// multi-byte rune. "*" is unaffected, a run of bytes is a run of runes.
-//
-// The matcher is a memoized backtracking walk over bytes rather than a
-// translation to a regular expression, so its cost is bounded by the product
-// of the two lengths whatever the pattern: a chain of stars cannot go
-// exponential, which matters because the pattern comes from the repository.
+// Fnmatch matches name against pattern byte by byte as Python's POSIX
+// fnmatch does for ansible's build_ignore. It is memoized so a repository's
+// pattern costs at most len(pattern)*len(name) steps, never exponential time.
 func Fnmatch(pattern, name string) bool {
 	m := &matcher{toks: compilePattern(pattern), bytes: name}
 	m.width = len(m.bytes) + 1
@@ -152,11 +136,9 @@ func compilePattern(pattern string) []token {
 	return toks
 }
 
-// compileSet parses the bracket expression opening at p[start]. It returns
-// the index past the closing bracket, or ok false when there is none, in
-// which case the caller treats the bracket as a literal. The closing bracket
-// is searched for from past an optional "!" and past a first "]", both of
-// which fnmatch.translate steps over before it looks.
+// compileSet parses the bracket expression at p[start] and returns the index
+// past its closing bracket, or ok false for a literal "[". The search starts
+// past an optional "!" and a first "]", as fnmatch.translate's does.
 func compileSet(p string, start int) (*charSet, int, bool) {
 	j := start + 1
 	negated := false
@@ -200,10 +182,9 @@ func parseSetBody(body string) *charSet {
 	return set
 }
 
-// Rules is a build's exclusion list: Patterns, each matched with Fnmatch
-// against the "/"-joined path relative to the tree root the build walks from
-// - so a pattern without a slash matches at the root only - and DirNames, the
-// directory basenames pruned at every depth. A zero Rules excludes nothing.
+// Rules is a build's exclusion list: Patterns, matched with Fnmatch against
+// the "/"-joined path from the walked root, and DirNames, directory basenames
+// pruned at every depth. A zero Rules excludes nothing.
 type Rules struct {
 	DirNames map[string]struct{}
 	Patterns []string

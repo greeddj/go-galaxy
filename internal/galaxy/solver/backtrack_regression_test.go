@@ -2,15 +2,9 @@ package solver
 
 import "testing"
 
-// TestFullConstraintInvisibilityBacktrack pins wildcard-dependency
-// visibility: an unconstrained ("*") dependency term constrains nothing by
-// itself, yet must still stay a visible, attributable contributor to its
-// package's requirement (under signed terms, the derived positive "any"
-// assignment is that contributor). gen.p0@1.5.0 requires gen.p1 via a
-// wildcard ("*") and gen.p1 requires gen.p2 via ^0.0.3 (which gen.p2
-// cannot satisfy), so gen.p0@1.5.0 is transitively unsatisfiable. The
-// solver must learn "not gen.p0@1.5.0" and backtrack to gen.p0@1.2.0
-// rather than falsely rejecting the graph.
+// TestFullConstraintInvisibilityBacktrack pins that a "*" dependency stays a
+// visible contributor: gen.p0@1.5.0 reaches an unsatisfiable gen.p2 through
+// one, so the solver must backtrack to gen.p0@1.2.0, not reject the graph.
 func TestFullConstraintInvisibilityBacktrack(t *testing.T) {
 	t.Parallel()
 	p := newFakeProvider().
@@ -29,14 +23,9 @@ func TestFullConstraintInvisibilityBacktrack(t *testing.T) {
 	}
 }
 
-// TestResultExcludesBacktrackedOverInstall pins the reachable-closure fix:
-// extractResult must return only the packages reachable from the root
-// through decided dependency edges, not every package that was ever
-// decided. gen.p0@2.0.0 and gen.p0@1.0.0 both pull in gen.p3 (directly or
-// through gen.p1/gen.p2) but are unsatisfiable, so the solver backtracks to
-// gen.p0@0.2.0, which depends on nothing. The result must contain only the
-// reachable packages - a gen.p3 decision left over from an abandoned branch
-// must not linger as an over-install.
+// TestResultExcludesBacktrackedOverInstall pins that the result is only what
+// root reaches through decided edges: a gen.p3 decision left from an
+// abandoned gen.p0 branch must not linger as an over-install.
 func TestResultExcludesBacktrackedOverInstall(t *testing.T) {
 	t.Parallel()
 	p := newFakeProvider().

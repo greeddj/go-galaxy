@@ -1,14 +1,8 @@
 package collections
 
-// This file proves the symlink hardening in installroot.go is not a blanket
-// refusal of every symlink: os.Root allows a component symlink that resolves
-// inside the root it was opened at, and openCollectionsRoot's own os.MkdirAll
-// on cfg.DownloadPath is a no-op when DownloadPath is itself a symlink to an
-// existing directory. Both are load-bearing for drop-in ansible.cfg
-// compatibility - collections_path is routinely a symlink in real CI setups
-// (a cache mount, a workspace alias) - so a regression here would silently
-// break every one of those deployments while fixing the escape this whole
-// change targets.
+// The symlink hardening is not a blanket refusal: a symlinked DownloadPath and
+// an in-root ansible_collections symlink must install, since collections_path
+// is routinely a symlink in CI (a cache mount, a workspace alias).
 
 import (
 	"context"
@@ -23,10 +17,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestDownloadPathSymlinkInstallSucceeds proves --download-path (or
-// [defaults] collections_path) pointing at a symlink to a real directory - the
-// drop-in-compatibility case openCollectionsRoot's own doc comment names -
-// still installs cleanly, landing the real files under the symlink's target.
+// TestDownloadPathSymlinkInstallSucceeds pins that a DownloadPath that is a
+// symlink to a real directory installs under the symlink's target.
 func TestDownloadPathSymlinkInstallSucceeds(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -61,22 +53,9 @@ func TestDownloadPathSymlinkInstallSucceeds(t *testing.T) {
 	assertExists(t, manifest)
 }
 
-// TestAnsibleCollectionsSymlinkToSiblingInsideDownloadPathSucceeds proves the
-// escape guard is specifically about escaping cfg.DownloadPath, not about
-// symlinks in general: "ansible_collections" itself being a symlink to
-// another directory that still resolves inside DownloadPath must install
-// successfully, since os.Root allows a component symlink whose target stays
-// within the root it was opened at.
-//
-// The symlink target must be relative ("real-ansible-collections", not an
-// absolute path to the same directory): verified empirically against this
-// Go version's os.Root, an absolute symlink target is refused unconditionally
-// - even when it geometrically resolves inside the root - because os.Root
-// never consults the absolute filesystem namespace at all; only a relative
-// target is walked component-by-component against the root and allowed to
-// stay within it. This is the one case in this file where the distinction
-// matters: every escape test elsewhere in this package uses an absolute
-// target on purpose, since escaping is exactly what it must prove.
+// TestAnsibleCollectionsSymlinkToSiblingInsideDownloadPathSucceeds pins that an
+// ansible_collections symlink resolving inside DownloadPath installs. The target
+// must be relative: os.Root refuses every absolute symlink target.
 func TestAnsibleCollectionsSymlinkToSiblingInsideDownloadPathSucceeds(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -112,12 +91,9 @@ func TestAnsibleCollectionsSymlinkToSiblingInsideDownloadPathSucceeds(t *testing
 	assertExists(t, manifest)
 }
 
-// TestNewInstallTargetRejectsUnsafeIdentityAndNilRoot proves newInstallTarget
-// - the single chokepoint every construction of an installTarget goes through
-// - refuses each of col.Namespace, col.Name, and col.Version independently
-// when it fails helpers.IsPathElement, and refuses a nil root outright rather
-// than panicking on first use, matching the doc comment's own "fails closed
-// here rather than by convention" claim for warm's deliberate nil root.
+// TestNewInstallTargetRejectsUnsafeIdentityAndNilRoot pins that newInstallTarget
+// refuses an unsafe namespace, name or version independently, and a nil root
+// rather than panicking on first use.
 func TestNewInstallTargetRejectsUnsafeIdentityAndNilRoot(t *testing.T) {
 	t.Parallel()
 	downloadPath := t.TempDir()
@@ -147,14 +123,9 @@ func TestNewInstallTargetRejectsUnsafeIdentityAndNilRoot(t *testing.T) {
 	}
 }
 
-// TestBuildCollectionsMapRejectsUnsafeNamespace proves buildCollectionsMap's
-// own IsPathElement guard - kept even though newInstallTarget validates the
-// same three components again later per collection, see its own doc comment
-// for why a caller's check does not make a callee's guard redundant - fires
-// before any install work starts. helpers.SplitFQDN itself performs no
-// path-safety validation at all (TestSplitFQDNDoesNotValidatePathSafety), so
-// this is the guard that actually stops "foo/../.." from reaching a real
-// filesystem write through this call path.
+// TestBuildCollectionsMapRejectsUnsafeNamespace pins that buildCollectionsMap
+// refuses "foo/../.." before any install work, since helpers.SplitFQDN does no
+// path-safety validation.
 func TestBuildCollectionsMapRejectsUnsafeNamespace(t *testing.T) {
 	t.Parallel()
 	resolved := map[string]collection{
@@ -166,15 +137,9 @@ func TestBuildCollectionsMapRejectsUnsafeNamespace(t *testing.T) {
 	}
 }
 
-// TestBuildCollectionsMapRejectsInvalidVersion proves buildCollectionsMap's
-// version guard fires under its own sentinel, helpers.ErrInvalidCollectionVersion,
-// distinct from ErrUnsafeCollectionIdentifier above: "*" is a syntactically
-// safe path element (helpers.IsPathElement("*") is true) but not a version
-// anything could install, which is exactly the shape a poisoned snapshot or
-// an unvalidated lockfile entry can carry. TestSolverResultSlotsIntoInstallLevels
-// (solve_test.go) is this test's positive control on the same function: an
-// exact version reaches buildInstallLevels successfully through the
-// identical call.
+// TestBuildCollectionsMapRejectsInvalidVersion pins ErrInvalidCollectionVersion
+// for "*": a safe path element but no installable version, the shape a poisoned
+// snapshot or lockfile entry can carry.
 func TestBuildCollectionsMapRejectsInvalidVersion(t *testing.T) {
 	t.Parallel()
 	resolved := map[string]collection{

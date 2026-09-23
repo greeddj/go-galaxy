@@ -31,11 +31,9 @@ type fakeGitCollection struct {
 	subdir    string
 }
 
-// fakeGitClient implements gitsource.Client without go-git: it answers
-// advertisements from fakeGitRepo and "builds" artifacts through
-// fakegalaxy.BuildArtifact, so the collections pipeline can be driven end to
-// end with no transport at all. It counts calls and captures the credential
-// presented per URL so a test can assert what the pipeline asked for.
+// fakeGitClient implements gitsource.Client without go-git, answering from
+// fakeGitRepo and building through fakegalaxy.BuildArtifact, and counts calls
+// and captures the credential presented per URL for assertions.
 type fakeGitClient struct {
 	failWith     error
 	repos        map[string]*fakeGitRepo
@@ -146,9 +144,8 @@ func (c *fakeGitClient) Acquire(ctx context.Context, req gitsource.Request) (git
 }
 
 // buildIfRequested builds fc when the request's subdir and Only filter select
-// it; matched is false when the request does not ask for fc at all. A
-// collection selected by Only but built at another version is the identity
-// mismatch the pipeline must refuse.
+// it; matched is false otherwise. A collection Only selects at another version
+// is the identity mismatch the pipeline must refuse.
 func buildIfRequested(ctx context.Context, req gitsource.Request, fc fakeGitCollection) (gitsource.Collection, bool, error) {
 	if !subdirMatches(fc.subdir, req.Subdir) {
 		return gitsource.Collection{}, false, nil

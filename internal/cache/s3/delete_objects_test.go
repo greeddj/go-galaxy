@@ -40,10 +40,8 @@ func assertObjectPresent(ctx context.Context, t *testing.T, b *Backend, key stri
 	}
 }
 
-// TestClearFilesBatchesDeletes proves ClearFiles now issues exactly one
-// DeleteObjects (POST ?delete) request for a whole page of keys, rather than
-// one DELETE per object as it did before batching, while still removing
-// every object.
+// TestClearFilesBatchesDeletes pins that ClearFiles removes a page of keys with
+// exactly one DeleteObjects (POST ?delete) request and no per-key DELETE.
 func TestClearFilesBatchesDeletes(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -77,10 +75,8 @@ func TestClearFilesBatchesDeletes(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectsChunksAtLimit proves deleteObjects splits a key set into
-// ceil(len(keys)/maxKeys) DeleteObjects batches when maxKeys is smaller than
-// the key count, using the injectable maxKeys seam rather than the
-// production 1000-key ceiling so the test stays fast and deterministic.
+// TestDeleteObjectsChunksAtLimit pins that deleteObjects splits keys into
+// ceil(len(keys)/maxKeys) batches, driven through the maxKeys seam.
 func TestDeleteObjectsChunksAtLimit(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -106,10 +102,8 @@ func TestDeleteObjectsChunksAtLimit(t *testing.T) {
 	}
 }
 
-// TestClearFilesSurfacesPerKeyError proves a per-key <Error> inside an
-// otherwise-200 DeleteResult is surfaced as a failure - a 200 status is
-// never itself treated as success - and that ClearFiles's error names the
-// failing key and code.
+// TestClearFilesSurfacesPerKeyError pins that a per-key <Error> inside a 200
+// DeleteResult fails ClearFiles with an error naming the key and code.
 func TestClearFilesSurfacesPerKeyError(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -133,14 +127,9 @@ func TestClearFilesSurfacesPerKeyError(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectsBatchRetriesTransientFailureThenSucceeds mirrors
-// TestDeleteObjectRetriesTransientFailureThenSucceeds and
-// TestPutObjectUnconditionalRetriesTransientFailureThenSucceeds for the new
-// DeleteObjects (POST ?delete) batch call: a bounded run of transient 503s
-// at the HTTP level (before the body is even parsed) must be retried and
-// recovered by deleteObjectsBatch's own helpers.Retry loop, exactly like
-// every other idempotent verb, and the keys must actually end up deleted
-// once the call succeeds.
+// TestDeleteObjectsBatchRetriesTransientFailureThenSucceeds pins that
+// deleteObjectsBatch recovers from two transient 503s like the other
+// idempotent verbs, and that the keys end up deleted.
 func TestDeleteObjectsBatchRetriesTransientFailureThenSucceeds(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -169,18 +158,9 @@ func TestDeleteObjectsBatchRetriesTransientFailureThenSucceeds(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectsResponseBounded proves deleteObjectsBatch's read of the
-// DeleteResult body is bounded by helpers.S3ListMaxSize like
-// listObjectsPage's own XML read, so a hostile or misbehaving endpoint
-// cannot force an unbounded buffer, and that the resulting error names this
-// surface - an S3 batch-delete response - rather than surfacing
-// helpers.ErrResponseTooLarge bare.
-//
-// TestDeleteObjectsBatchRetriesTransientFailureThenSucceeds above is this
-// refusal's positive control: it drives the same newTestBackendAndFake
-// fixture through the same deleteObjectsBatch path with a within-ceiling
-// response and reads it back successfully, so a refusal here is the cap
-// firing rather than the path never working.
+// TestDeleteObjectsResponseBounded pins that the DeleteResult read is capped at
+// helpers.S3ListMaxSize, with an error naming the batch-delete surface; its
+// positive control is TestDeleteObjectsBatchRetriesTransientFailureThenSucceeds.
 func TestDeleteObjectsResponseBounded(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -200,12 +180,9 @@ func TestDeleteObjectsResponseBounded(t *testing.T) {
 	}
 }
 
-// TestDeleteObjectsXMLSafeKeys proves the DeleteObjects request body is built
-// with encoding/xml rather than string templating: an object key carrying
-// XML metacharacters must round-trip as a single literal <Object> entry
-// instead of being reinterpreted as extra markup that could delete or affect
-// a different key. It also structurally confirms the request carries the
-// signing/integrity headers deleteObjectsBatch is supposed to set.
+// TestDeleteObjectsXMLSafeKeys pins that a key carrying XML markup stays one
+// literal <Object> entry deleting only itself, and that the request carries
+// Content-MD5, X-Amz-Content-Sha256 and an XML Content-Type.
 func TestDeleteObjectsXMLSafeKeys(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)

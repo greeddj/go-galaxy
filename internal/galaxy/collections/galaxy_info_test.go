@@ -39,9 +39,8 @@ func newVersionInfo(downloadURL, href string) *types.GalaxyCollectionVersionInfo
 }
 
 // TestBuildGalaxyYAMLStripsPresignedQuery asserts the capability-bearing
-// query string of a presigned download URL is dropped while the part that
-// merely says where the artifact came from is kept, and that the same holds
-// for the version URL.
+// query string of a presigned URL is dropped from both download_url and
+// version_url, while the scheme, host and path survive.
 func TestBuildGalaxyYAMLStripsPresignedQuery(t *testing.T) {
 	t.Parallel()
 
@@ -83,13 +82,9 @@ func TestBuildGalaxyYAMLKeepsQuerylessURLs(t *testing.T) {
 	}
 }
 
-// TestBuildGalaxyYAMLNilMetaUnchanged asserts the artifact-cache-hit fast
-// path, which has no version metadata to strip anything from, still writes
-// a minimal document with the metadata-sourced fields left empty. That covers
-// the nil-meta arm of the credential cut as well as the query one: neither URL
-// field is assigned at all on this path, so helpers.WithoutCredentials is never
-// reached and both fields must stay empty rather than pick up a cut form of
-// something.
+// TestBuildGalaxyYAMLNilMetaUnchanged asserts the artifact-cache-hit path,
+// which has no version metadata, still writes identity and server and leaves
+// both URL fields empty rather than a cut form of something.
 func TestBuildGalaxyYAMLNilMetaUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -109,32 +104,14 @@ func TestBuildGalaxyYAMLNilMetaUnchanged(t *testing.T) {
 	}
 }
 
-// urlPassword is the credential the userinfo tests below smuggle into a
-// server-supplied URL. It is deliberately distinctive, for the same reason
-// token_leak_e2e_test.go's leakToken is: a value that cannot collide with any
-// other byte sequence in a rendered document or a written file makes a
-// substring search for it a real answer rather than a coincidence.
+// urlPassword is the credential the userinfo tests smuggle into a
+// server-supplied URL, distinctive enough that a substring search for it in a
+// rendered document or a written file cannot match by coincidence.
 const urlPassword = "pa55w0rd-must-not-be-persisted"
 
 // TestBuildGalaxyYAMLStripsUserinfo asserts a credential a server embedded in
-// either URL is dropped from the document, while everything that merely says
-// where the artifact came from survives.
-//
-// Each field is asserted against its own userinfo-free twin: the identical
-// value with "u:<password>@" deleted and nothing else changed. That makes the
-// expectation the positive control at the same time - the cut has to produce
-// exactly the URL a server with no credential in it would have sent, not
-// merely a string with the password missing.
-//
-// Killing mutation, run: dropping helpers.WithoutUserinfo from
-// helpers.WithoutCredentials fails both assertions, each rendering the credential
-// it was supposed to have cut:
-//
-//	galaxy_info_test.go:152: download_url =
-//	"https://u:pa55w0rd-must-not-be-persisted@objects.example.com/artifacts/acme-widgets-1.0.0.tar.gz",
-//	want "https://objects.example.com/artifacts/acme-widgets-1.0.0.tar.gz"
-//
-// The version_url line below it renders the same shape against the hub host.
+// either URL is dropped, each field compared with its userinfo-free twin so the
+// cut must yield exactly the URL a credential-free server would have sent.
 func TestBuildGalaxyYAMLStripsUserinfo(t *testing.T) {
 	t.Parallel()
 
@@ -157,18 +134,8 @@ func TestBuildGalaxyYAMLStripsUserinfo(t *testing.T) {
 }
 
 // TestBuildGalaxyYAMLStripsUserinfoAndQueryTogether asserts the two cuts
-// compose on one value carrying both: a presigned download URL that also
-// embeds a credential loses the query AND the userinfo, not whichever cut ran
-// last. This is the shape that catches a cut written as a replacement of the
-// other rather than as a composition of both.
-//
-// Killing mutation, run: making helpers.WithoutCredentials return
-// helpers.WithoutUserinfo(raw) alone fails this with
-//
-//	galaxy_info_test.go:182: download_url =
-//	"https://objects.example.com/artifacts/acme-widgets-1.0.0.tar.gz
-//	?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600",
-//	want "https://objects.example.com/artifacts/acme-widgets-1.0.0.tar.gz"
+// compose: a presigned download URL that also embeds a credential loses both
+// the query and the userinfo, not only whichever cut ran last.
 func TestBuildGalaxyYAMLStripsUserinfoAndQueryTogether(t *testing.T) {
 	t.Parallel()
 
@@ -183,18 +150,9 @@ func TestBuildGalaxyYAMLStripsUserinfoAndQueryTogether(t *testing.T) {
 	}
 }
 
-// TestWriteGalaxyInfoPersistsNoUserinfo is the end-to-end half of
-// TestBuildGalaxyYAMLStripsUserinfo, modeled on
-// TestWriteGalaxyInfoPersistsNoSignature below and guarding the same sink for
-// the same reason: the bytes that actually land in the collections tree
-// outlive the run and get uploaded wholesale as a CI artifact, so a credential
-// reaching them is disclosed to everyone who can read the build's output.
-//
-// The markers are checked against the file's whole text, not only against the
-// decoded download_url, because a document that carried the credential in some
-// other field would be just as disclosed. The decoded field is then asserted
-// on its own, so "the password is absent" cannot be satisfied by a document
-// that lost the URL entirely.
+// TestWriteGalaxyInfoPersistsNoUserinfo asserts the GALAXY.yml bytes, which
+// outlive the run as a CI artifact, carry the credential in no field at all
+// while download_url itself survives in its cut form.
 func TestWriteGalaxyInfoPersistsNoUserinfo(t *testing.T) {
 	t.Parallel()
 
@@ -228,10 +186,8 @@ func TestWriteGalaxyInfoPersistsNoUserinfo(t *testing.T) {
 	}
 }
 
-// TestWriteGalaxyInfoPersistsNoSignature is the end-to-end guard: the bytes
-// actually landing in the collections tree must not contain any part of the
-// presigned query, since that file routinely outlives the run and is
-// uploaded wholesale as a CI artifact.
+// TestWriteGalaxyInfoPersistsNoSignature asserts the GALAXY.yml bytes, which
+// outlive the run as a CI artifact, contain no part of a presigned query.
 func TestWriteGalaxyInfoPersistsNoSignature(t *testing.T) {
 	t.Parallel()
 
@@ -265,21 +221,9 @@ func TestWriteGalaxyInfoPersistsNoSignature(t *testing.T) {
 	}
 }
 
-// TestNewInstallTargetRefusesTraversingVersionBeforeWriteGalaxyInfo proves
-// the identity guard lives in newInstallTarget, one call before
-// writeGalaxyInfo ever runs: a version identifier with enough ".." segments
-// to escape DownloadPath must be refused there, before a target (and so
-// before any write) ever exists, not merely produce a directory somewhere
-// unexpected. writeGalaxyInfo itself is deliberately not called here - it
-// trusts target's already-validated identity (see its own doc comment) -
-// the discriminating proof for this guard is newInstallTarget's own
-// ok=false return plus the untouched victim directory.
-//
-// Five ".." segments, not three: path.Join fuses the version's first ".."
-// into the synthetic "acme.widgets-.." element, consuming it for free, so
-// climbing three real directories (DownloadPath's own depth here) takes one
-// extra ".." beyond that. With only three, the (never computed) join would
-// stay inside DownloadPath and this test would pass for the wrong reason.
+// TestNewInstallTargetRefusesTraversingVersionBeforeWriteGalaxyInfo asserts
+// newInstallTarget refuses a version escaping DownloadPath before any write. It
+// takes five "..", since path.Join fuses the first into "acme.widgets-..".
 func TestNewInstallTargetRefusesTraversingVersionBeforeWriteGalaxyInfo(t *testing.T) {
 	t.Parallel()
 
@@ -311,13 +255,9 @@ func TestNewInstallTargetRefusesTraversingVersionBeforeWriteGalaxyInfo(t *testin
 	}
 }
 
-// TestWriteGalaxyInfoIgnoresMetaIdentity proves buildGalaxyYAML's identity
-// block is col-sourced, not meta-sourced: the file lands under a path built
-// from col, and its body's identity fields are col's, even though meta
-// carries a different, individually valid identity of its own. All three of
-// meta's identity fields are deliberately valid path elements so
-// TestWriteGalaxyInfoRefusesTraversingVersion's guard cannot fire here and
-// mask this test's own regression.
+// TestWriteGalaxyInfoIgnoresMetaIdentity asserts the sidecar's path and
+// identity come from col, not from meta, even when meta carries a different
+// identity whose fields are all valid path elements.
 func TestWriteGalaxyInfoIgnoresMetaIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -356,12 +296,9 @@ func TestWriteGalaxyInfoIgnoresMetaIdentity(t *testing.T) {
 	}
 }
 
-// TestInstallRecordMatchesAgreesWithWriteGalaxyInfo is the correctness half:
-// the test that would have caught the original bug, where writeGalaxyInfo
-// built its directory from meta's version while installRecordMatches stats
-// one built from col's version, so a collection could never be skipped. Both
-// real functions are exercised, and no path is built by hand - the point is
-// that the two agree.
+// TestInstallRecordMatchesAgreesWithWriteGalaxyInfo asserts the skip check
+// finds the sidecar writeGalaxyInfo wrote when meta's version differs from
+// col's: both must build the .info path from col's identity.
 func TestInstallRecordMatchesAgreesWithWriteGalaxyInfo(t *testing.T) {
 	t.Parallel()
 
@@ -395,21 +332,13 @@ func TestInstallRecordMatchesAgreesWithWriteGalaxyInfo(t *testing.T) {
 	}
 }
 
-// An unsafe col.Version (e.g. "../../../../victim/pwned") never reaches
-// installRecordMatches at all: newInstallTarget - the single chokepoint both
-// the install path and the .info sidecar path go through - refuses to
-// build a target for such an identity in the first place, so there is no
-// coincidentally-matching decoy for installRecordMatches to be tricked by.
-// See TestNewInstallTargetRejectsUnsafeIdentifiers (installroot_test.go) for
-// that guard's own coverage, independent per component.
+// An unsafe col.Version never reaches installRecordMatches: newInstallTarget,
+// the chokepoint for the install and the .info path, refuses it first (see
+// TestNewInstallTargetRejectsUnsafeIdentifiers).
 
-// TestWriteGalaxyInfoIfPresentWarnsOnCollectionsPathEscape proves the
-// log-tier split for the reachable escape arm: after target was built
-// validly, ansible_collections is swapped for a symlink pointing entirely
-// outside DownloadPath, so writeGalaxyInfo's own rooted MkdirAll refuses it.
-// This is a security-relevant signal and must reach Warnf (which survives
-// --quiet), never the best-effort Printf tier ordinary I/O failures use, and
-// the function still returns normally either way.
+// TestWriteGalaxyInfoIfPresentWarnsOnCollectionsPathEscape asserts an
+// ansible_collections symlinked outside DownloadPath is reported on the Warnf
+// tier, which survives --quiet, and never on the best-effort Printf tier.
 func TestWriteGalaxyInfoIfPresentWarnsOnCollectionsPathEscape(t *testing.T) {
 	t.Parallel()
 
@@ -445,21 +374,9 @@ func TestWriteGalaxyInfoIfPresentWarnsOnCollectionsPathEscape(t *testing.T) {
 	}
 }
 
-// TestWriteGalaxyInfoIfPresentPrintsOnOrdinaryFailure is the mirror of
-// TestWriteGalaxyInfoIfPresentWarnsOnCollectionsPathEscape: an ordinary I/O
-// failure - col's identity is safe and target.root sees no symlink - must
-// land on the best-effort Printf tier, never Warnf. Neither test alone pins
-// the split; a mutation that collapses both arms onto one tier passes one of
-// the two and fails the other.
-//
-// The failure is manufactured by stripping write permission from
-// "ansible_collections" itself, rather than by pre-seeding target.info with a
-// regular file: writeGalaxyInfo resets target.info (RemoveAll then MkdirAll)
-// before writing, and RemoveAll happily unlinks a lone regular file sitting
-// at that name, so a pre-seeded regular file would not produce a failure at
-// all - MkdirAll would simply succeed once the file is removed. A
-// permission-denied MkdirAll survives the reset unaffected: there is nothing
-// at target.info to remove, and creating it is what fails.
+// TestWriteGalaxyInfoIfPresentPrintsOnOrdinaryFailure asserts an ordinary I/O
+// failure lands on Printf, never Warnf. It makes ansible_collections read-only,
+// since writeGalaxyInfo would simply remove a file planted at target.info.
 func TestWriteGalaxyInfoIfPresentPrintsOnOrdinaryFailure(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {
@@ -500,22 +417,9 @@ func TestWriteGalaxyInfoIfPresentPrintsOnOrdinaryFailure(t *testing.T) {
 	}
 }
 
-// TestBuildGalaxyYAMLRecordsTheResolvingServer pins whose server the sidecar
-// names: the one this collection actually resolved from, not the run's
-// default. The two disagree in two ordinary shapes - a requirements entry
-// carrying its own `source:`, and a multi-server run whose solver picked a
-// winner per collection - and in both the document is about one collection,
-// so a field describing the run instead is simply a wrong statement.
-//
-// It is not a cosmetic one. outdated reads this field to decide which server
-// to ask about an installed collection, so a default recorded here sends the
-// lookup to a server that never served the collection and answers 404, with
-// nothing in the file to explain why.
-//
-// The fallback row is the other half of the contract and the reason the
-// field is not simply col.Source: a collection that never got stamped with a
-// winner still has to name something, and the run's own server is the only
-// candidate on hand.
+// TestBuildGalaxyYAMLRecordsTheResolvingServer asserts the sidecar's server is
+// the one the collection resolved from, since outdated asks that server, and
+// falls back to the run's server only when no source was stamped.
 func TestBuildGalaxyYAMLRecordsTheResolvingServer(t *testing.T) {
 	t.Parallel()
 

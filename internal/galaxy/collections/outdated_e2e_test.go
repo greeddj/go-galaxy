@@ -1,15 +1,8 @@
 package collections_test
 
-// This file exercises `outdated` end to end against both a real fake Galaxy
-// server (fakegalaxy) and a raw, hand-rolled HTTP/1.1 responder that answers
-// a request with an attacker-controlled status-line reason phrase - the one
-// shape fakegalaxy cannot produce, since http.ResponseWriter's own status
-// line is never operator-influenced. Together with dry_run_e2e_test.go's
-// TestOutdatedDryRunMutatesNothing, this is the suite proving outdated's
-// report is sanitized on the same boundary as every other operator-facing
-// line, honors --metrics-file (including under --dry-run, where the shared
-// writeRunMetrics guard suppresses it), discloses every flag it cannot
-// honor, and classifies its own failures onto the documented exit codes.
+// This file drives outdated end to end against fakegalaxy and a raw HTTP/1.1
+// responder with a reason phrase fakegalaxy cannot produce: sanitized output,
+// --metrics-file, the unhonored-flags warning and exit-code classification.
 
 import (
 	"bufio"
@@ -34,27 +27,17 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// rawStatusLineServer answers every request on a fresh connection with a
-// fixed, verbatim HTTP/1.1 status line - including a reason phrase this test
-// controls byte for byte - followed by an empty, non-cached JSON-shaped
-// body. It exists because fakegalaxy always renders its status line through
-// net/http's own http.ResponseWriter, which never lets a caller put an
-// arbitrary byte sequence into the reason phrase; only a raw net.Listen
-// responder can produce the exact wire bytes a hostile or badly configured
-// real Galaxy deployment could.
+// rawStatusLineServer answers every request with a verbatim HTTP/1.1 status
+// line, reason phrase included, which net/http's ResponseWriter (and so
+// fakegalaxy) never lets a caller choose byte for byte.
 type rawStatusLineServer struct {
 	listener net.Listener
 	url      string
 }
 
-// newRawStatusLineServer starts the responder and registers its shutdown via
-// t.Cleanup. statusLine is written verbatim as the response's first line
-// (e.g. "HTTP/1.1 404 <reason phrase>"), terminated with the server's own
-// "\r\n" plus a Content-Length: 0 and Connection: close pair, so every
-// accepted connection serves exactly one request before it is closed - a
-// new connection is required for each subsequent one, which
-// http.Transport's own dialer handles transparently for the client under
-// test.
+// newRawStatusLineServer starts the responder and closes it via t.Cleanup.
+// Each connection serves one request: statusLine, an empty body, and
+// Connection: close.
 func newRawStatusLineServer(t *testing.T, statusLine string) *rawStatusLineServer {
 	t.Helper()
 	var lc net.ListenConfig
@@ -80,12 +63,8 @@ func (s *rawStatusLineServer) acceptLoop(statusLine string) {
 	}
 }
 
-// serveOneRawStatusLine reads exactly one HTTP request off conn - discarding
-// it, since every test using this fixture cares only about the response -
-// then writes the fixed status line and closes the connection. A malformed
-// or absent request (e.g. the client gave up before sending headers) is
-// answered with nothing further; the connection close alone is enough to
-// unblock a caller waiting on it.
+// serveOneRawStatusLine discards one request read from conn, writes the fixed
+// status line and closes; an unreadable request gets only the close.
 func serveOneRawStatusLine(conn net.Conn, statusLine string) {
 	defer func() { _ = conn.Close() }()
 	req, err := http.ReadRequest(bufio.NewReader(conn))
@@ -96,10 +75,8 @@ func serveOneRawStatusLine(conn net.Conn, statusLine string) {
 	_, _ = conn.Write([]byte(statusLine + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
 }
 
-// saveOutdatedLockfile writes a minimal lockfile at requirementsFile's
-// default lockfile path, containing exactly the given entries, each sourced
-// from server - the shape every outdated e2e fixture in this file needs
-// before it can call collections.Outdated.
+// saveOutdatedLockfile writes requirementsFile's default lockfile holding
+// exactly entries, each sourced from server unless it names a source.
 func saveOutdatedLockfile(t *testing.T, requirementsFile, server string, entries ...lockfile.Entry) string {
 	t.Helper()
 	lockPath := lockfile.ResolveDefaultPath(requirementsFile, "")
@@ -119,52 +96,9 @@ func saveOutdatedLockfile(t *testing.T, requirementsFile, server string, entries
 	return lockPath
 }
 
-// TestOutdatedSanitizesServerReasonPhrase proves a server's HTTP reason
-// phrase - here carrying a screen-clear sequence, a cursor-home sequence, a
-// color-set sequence, and a bell, exactly the payload a real terminal would
-// act on - cannot reach the operator's terminal as raw control bytes. It
-// lands on stderr specifically (a lookup failure is a diagnostic, kept off
-// stdout), and the printable substring inside the payload still appears once
-// sanitized - the positive control proving the message was printed and
-// cleaned, not merely swallowed.
-//
-// The two sanitization assertions below are exact, not a sample of the
-// injected bytes, and neither can be "every byte this test injects is
-// individually absent": progress.Progress decorates every result-tier line
-// with its own SGR escape codes unconditionally, not only on a terminal, so
-// a blanket "stderr carries zero ESC bytes" assertion cannot hold there -
-// see progress.go's ansiRed/ansiGreen/ansiReset. Instead:
-//   - bytes.Count(stderr, U+FFFD) == 4 counts the replacement character
-//     itself, one per injected C0 byte (the three ESC bytes opening the
-//     screen-clear, cursor-home, and color-set sequences, plus the one BEL).
-//     No prefix this program's printer emits ever contains U+FFFD, so this
-//     single count catches every injected byte at once - including the
-//     color-set sequence's own ESC, which a bytes.Contains check for it
-//     could never assert on its own, since the printer's own ansiGreen
-//     ("\x1b[1m\x1b[32m") contains that exact byte sequence as a legitimate
-//     substring.
-//   - stdout carries zero ESC bytes at all: in this fixture stdout holds
-//     only the markerless PersistentPrintf summary line, which the printer
-//     never colors, so this is both achievable and a real assertion.
-//
-// Deliberately not t.Parallel(): it drives a real progress.Progress through
-// captureStdIO, which swaps the process-wide os.Stdout/os.Stderr for its
-// duration - see captureStdIO's own doc comment in token_leak_e2e_test.go
-// for why every test doing that in this package runs un-parallelized.
-//
-// Mutation: reverting reportOutdated's failure-line Errorf call to a bare
-// fmt.Printf makes the replacement-count assertion fail with `stderr
-// carries 0 U+FFFD replacement characters, want 4: ""` (every byte moved to
-// stdout, so stderr is empty), the ESC-on-stdout assertion fail with
-// `stdout contains a raw ESC byte at index 67: "Lookup failed:
-// \"acme.widgets\"@1.0.0: failed to fetch metadata: 404 \x1b[2J\x1b[1;1H
-// \x1b[32mEVERYTHING IS UP TO DATE\a (http://127.0.0.1:60058/api/collections/
-// acme/widgets)\n.../galaxy.lock: 0 up to date, 0 outdated, 1
-// failed\n"`, and the two stream-separation assertions plus the positive
-// control fail as well ("expected the failure line to stay off stdout",
-// "expected the failure line on stderr, got stderr=\"\"", and "expected the
-// sanitized reason phrase text to still be printed, got stderr=\"\"") - run
-// and confirmed.
+// TestOutdatedSanitizesServerReasonPhrase pins that control bytes in a
+// server's reason phrase reach stderr only as U+FFFD, text kept, and never
+// stdout. Not parallel: captureStdIO swaps the process-wide os.Stdout/Stderr.
 func TestOutdatedSanitizesServerReasonPhrase(t *testing.T) {
 	root := t.TempDir()
 	reqPath := filepath.Join(root, "requirements.yml")
@@ -208,27 +142,9 @@ func TestOutdatedSanitizesServerReasonPhrase(t *testing.T) {
 	}
 }
 
-// TestOutdatedRefusesAHostileLockfileEntryName covers one channel into the
-// report - a lockfile entry's own Name - and pins that it never reaches the
-// report at all. A name outside the alphabet a Galaxy server itself accepts
-// is refused by lockfile.Load, so outdated fails before it builds a URL,
-// before it prints a line, and before it touches the network.
-//
-// The printer boundary itself is untouched and still proven here:
-// TestOutdatedSanitizesServerReasonPhrase covers the channel no name
-// alphabet can reach, a server's own HTTP reason phrase, and it is that
-// test - not this one - which pins that safeout.Clean's replacement
-// actually fires for this report. A name refused at load never reaches the
-// printer at all, so these rows pin the refusal rather than anything about
-// how a value that does reach the report is rendered.
-//
-// The two rows differ in which check refuses them, and both are kept because
-// a single alphabet check replacing two different rejections is exactly the
-// kind of change that could silently narrow to one: the first is a name that
-// splits into two halves and fails the alphabet, the second fails the split
-// itself. The third row is the control: a well-formed name on the identical
-// fixture must load, be looked up, and be reported, so the two refusals
-// cannot be the fixture failing to reach the report path at all.
+// TestOutdatedRefusesAHostileLockfileEntryName pins that lockfile.Load refuses
+// a name failing the alphabet and one failing the two-part split before any
+// request or report line; the third row is the well-formed control.
 func TestOutdatedRefusesAHostileLockfileEntryName(t *testing.T) {
 	// t.Run, not t.Parallel(): every row drives captureStdIO, which swaps the
 	// process-wide os.Stdout/os.Stderr.
@@ -241,10 +157,8 @@ func TestOutdatedRefusesAHostileLockfileEntryName(t *testing.T) {
 	t.Run("well-formed name is reported", testOutdatedReportsAWellFormedName)
 }
 
-// assertOutdatedRefusesName runs outdated against a lockfile holding exactly
-// one entry named hostileName and asserts the run is refused at load: the
-// lockfile exit class, no request to the server, and nothing printed on
-// either stream that carries the name.
+// assertOutdatedRefusesName runs outdated over one entry named hostileName and
+// asserts a refusal at load: ExitLock, no request, no report line.
 func assertOutdatedRefusesName(t *testing.T, hostileName string) {
 	t.Helper()
 
@@ -279,12 +193,9 @@ func assertOutdatedRefusesName(t *testing.T, hostileName string) {
 	}
 }
 
-// testOutdatedReportsAWellFormedName is the control for the two refusals
-// above: the identical fixture with a name inside the alphabet must reach the
-// report. It is registered on the fake server so the lookup succeeds and the
-// run exits cleanly, which is what proves the refusals come from the name and
-// not from the fixture. A newer version is registered beside the locked one
-// so the entry is outdated, the verdict a default run prints a line for.
+// testOutdatedReportsAWellFormedName is the refusals' control: a registered,
+// well-formed name on the same fixture is looked up and reported as outdated,
+// so the refusals come from the name rather than the fixture.
 func testOutdatedReportsAWellFormedName(t *testing.T) {
 	root := t.TempDir()
 	reqPath := filepath.Join(root, "requirements.yml")
@@ -357,14 +268,9 @@ func runOutdatedVerdicts(t *testing.T, verbose, quiet bool) outdatedVerdictsRun 
 	return run
 }
 
-// TestOutdatedQuietStillReportsAndSplitsStreams proves every line a default
-// report prints is result tier: --quiet suppresses none of them, and a
-// failed lookup still lands on stderr while the outdated line and the
-// summary stay on stdout. The up-to-date entry has no line to suppress -
-// only --verbose prints one - and is still counted in the summary.
-//
-// Deliberately not t.Parallel(); see
-// TestOutdatedSanitizesServerReasonPhrase's own doc comment for why.
+// TestOutdatedQuietStillReportsAndSplitsStreams pins that --quiet suppresses
+// no report line, a failed lookup stays on stderr, and the summary still counts
+// the unprinted up-to-date entry. Not parallel: it uses captureStdIO.
 func TestOutdatedQuietStillReportsAndSplitsStreams(t *testing.T) {
 	run := runOutdatedVerdicts(t, false, true)
 	stdout, stderr, lockPath := run.stdout, run.stderr, run.lockPath
@@ -392,13 +298,9 @@ func TestOutdatedQuietStillReportsAndSplitsStreams(t *testing.T) {
 	}
 }
 
-// TestOutdatedVerboseReportsUpToDate proves --verbose adds the up-to-date
-// line on stdout in the shape install prints a settled subject in: the
-// success marker, the name, then the version as "== <version>" rather than
-// joined to the name with an @.
-//
-// Deliberately not t.Parallel(); see
-// TestOutdatedSanitizesServerReasonPhrase's own doc comment for why.
+// TestOutdatedVerboseReportsUpToDate pins that --verbose adds the up-to-date
+// line in install's shape: marker, name, then "== <version>". Not parallel:
+// it uses captureStdIO.
 func TestOutdatedVerboseReportsUpToDate(t *testing.T) {
 	run := runOutdatedVerdicts(t, true, false)
 	stdout, lockPath := run.stdout, run.lockPath
@@ -413,10 +315,9 @@ func TestOutdatedVerboseReportsUpToDate(t *testing.T) {
 	}
 }
 
-// outdatedMetricsFixture builds the three-entry lockfile (one up to date,
-// one outdated, one that 404s) shared by TestOutdatedWritesMetricsReport and
-// its dry-run counterpart, returning the lockfile path and a *config.Config
-// with RequirementsFile and Server already set.
+// outdatedMetricsFixture builds the three-entry lockfile (up to date, outdated,
+// a 404) the metrics tests share, and returns the server, a config and the
+// lockfile path.
 func outdatedMetricsFixture(t *testing.T) (*fakegalaxy.Server, *config.Config, string) {
 	t.Helper()
 	root := t.TempDir()
@@ -441,18 +342,9 @@ func outdatedMetricsFixture(t *testing.T) (*fakegalaxy.Server, *config.Config, s
 	return s, cfg, lockPath
 }
 
-// TestOutdatedWritesMetricsReport proves outdated honors --metrics-file: the
-// report's collections/failures fields describe the run's own work (three
-// lookups, one failure), cache_hits/cache_misses/bytes_downloaded are a
-// truthful 0/0/0 since outdated never touches an ArtifactStore, lockfile and
-// lockfile_hash are populated, and frozen is absent even though cfg.Frozen
-// is set - proving writeRunMetrics is called with a literal false rather
-// than cfg.Frozen.
-//
-// Mutation: passing cfg.Frozen instead of a literal false to writeRunMetrics
-// makes the frozen-absence assertion below fail with `expected "frozen" to
-// be absent from the report despite cfg.Frozen, got true` - run and
-// confirmed.
+// TestOutdatedWritesMetricsReport pins outdated's --metrics-file report: three
+// lookups, one failure, zero cache traffic, the lockfile and its hash, and no
+// frozen field even with cfg.Frozen set.
 func TestOutdatedWritesMetricsReport(t *testing.T) {
 	t.Parallel()
 	s, cfg, lockPath := outdatedMetricsFixture(t)
@@ -471,10 +363,8 @@ func TestOutdatedWritesMetricsReport(t *testing.T) {
 	assertOutdatedMetricsReport(t, report, lockPath)
 }
 
-// readMetricsReport reads and decodes the JSON metrics report at path into a
-// generic map, so a test can assert individual fields (including a field's
-// deliberate absence, which a typed metrics.Report struct would hide behind
-// its own zero value) without depending on the full Report shape.
+// readMetricsReport decodes the metrics report at path into a generic map, so
+// a test can assert a field's absence, which a typed struct would hide.
 func readMetricsReport(t *testing.T, path string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(path) //nolint:gosec // path is this test's own temp dir.
@@ -488,10 +378,8 @@ func readMetricsReport(t *testing.T, path string) map[string]any {
 	return report
 }
 
-// assertOutdatedMetricsReport checks every field TestOutdatedWritesMetricsReport
-// cares about, split out of that test purely to stay under the
-// cyclomatic-complexity budget: the two together still cover the same set of
-// assertions.
+// assertOutdatedMetricsReport checks the fields TestOutdatedWritesMetricsReport
+// pins, split out only for the cyclomatic-complexity budget.
 func assertOutdatedMetricsReport(t *testing.T, report map[string]any, lockPath string) {
 	t.Helper()
 	if got := report["command"]; got != "outdated" {
@@ -523,13 +411,9 @@ func assertOutdatedMetricsReport(t *testing.T, report map[string]any, lockPath s
 	}
 }
 
-// TestOutdatedDryRunSuppressesMetricsReport proves --dry-run's only real
-// effect on outdated: writeRunMetrics' own shared cfg.DryRun guard suppresses
-// the report and warns naming the skipped path, exactly as it does for
-// install/warm/lock - outdated grows no cfg.DryRun branch of its own.
-//
-// Deliberately not t.Parallel(); see
-// TestOutdatedSanitizesServerReasonPhrase's own doc comment for why.
+// TestOutdatedDryRunSuppressesMetricsReport pins that --dry-run suppresses the
+// metrics report and warns naming its path, through writeRunMetrics' shared
+// guard alone. Not parallel: it uses captureStdIO.
 func TestOutdatedDryRunSuppressesMetricsReport(t *testing.T) {
 	s, cfg, _ := outdatedMetricsFixture(t)
 	metricsPath := filepath.Join(t.TempDir(), "metrics.json")
@@ -555,15 +439,9 @@ func TestOutdatedDryRunSuppressesMetricsReport(t *testing.T) {
 	}
 }
 
-// TestOutdatedWarnsAboutUnhonoredFlags proves warnUnhonoredFlags fires
-// exactly once, naming every configured flag outdated cannot honor, and
-// changes nothing about the run itself: the same server sees the identical
-// number of requests whether or not the flags are set. The "none set" run
-// is this test's positive control, proving the warning is conditional
-// rather than unconditionally printed.
-//
-// Deliberately not t.Parallel(); see
-// TestOutdatedSanitizesServerReasonPhrase's own doc comment for why.
+// TestOutdatedWarnsAboutUnhonoredFlags pins exactly one warning line naming
+// the configured inert flags, none for a clean config, and an unchanged
+// request count. Not parallel: it uses captureStdIO.
 func TestOutdatedWarnsAboutUnhonoredFlags(t *testing.T) {
 	root := t.TempDir()
 	reqPath := filepath.Join(root, "requirements.yml")
@@ -622,11 +500,9 @@ func TestOutdatedWarnsAboutUnhonoredFlags(t *testing.T) {
 	}
 }
 
-// TestOutdatedFailedLookupExitCode pins outdated's exit-code classification
-// for its two distinct lookup-failure shapes: a plain 404 (the network
-// class) and a lockfile entry whose name is not a "namespace.name" FQDN
-// (the lockfile class, which must win even though both failures are joined
-// behind the identical helpers.ErrLatestVersionLookupFailed headline).
+// TestOutdatedFailedLookupExitCode pins the exit class of each failure shape:
+// a 404 lookup is ExitNetwork, and a lockfile entry name that is not
+// "namespace.name" is ExitLock.
 func TestOutdatedFailedLookupExitCode(t *testing.T) {
 	t.Parallel()
 

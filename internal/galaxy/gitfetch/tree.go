@@ -21,12 +21,9 @@ import (
 // 8.3 short name, which a checkout on such a filesystem would resolve to it.
 func gitDirNames() [2]string { return [2]string{".git", "git~1"} }
 
-// treeSource is collectionbuild.Source over the object store of one fetched
-// commit. Every tree is decoded through object.GetTree, whose error is
-// propagated rather than swallowed (go-git's TreeWalker turns a missing tree
-// into a silent end of iteration), and every entry name is validated when
-// its tree is decoded, so a hostile name is refused before any path is built
-// from it.
+// treeSource is collectionbuild.Source over one fetched commit. Trees decode
+// through object.GetTree, whose error propagates (go-git's TreeWalker ends
+// silently on a missing tree), and entry names are validated on decode.
 type treeSource struct {
 	storer storer.EncodedObjectStorer
 	root   *object.Tree
@@ -79,11 +76,9 @@ func (s *treeSource) ReadDir(path string) ([]collectionbuild.Entry, error) {
 	return entries, nil
 }
 
-// Open streams the blob of a file or symlink at path, capped at the
-// per-entry archive size. The size check runs against the object's declared
-// size before any byte is read, and the limiter behind it maps its own
-// sentinel onto the archive one so an oversized blob classifies as what it
-// is: an entry the archive would refuse.
+// Open streams the file or symlink blob at path under the per-entry archive
+// cap, checked on the declared size before any byte is read; an oversized blob
+// is reported as helpers.ErrArchiveEntryIsTooLarge, as the archive would.
 func (s *treeSource) Open(path string) (io.ReadCloser, error) {
 	dir, name := splitPath(path)
 	tree, err := s.tree(dir)
@@ -185,12 +180,9 @@ func findEntry(tree *object.Tree, name string) (object.TreeEntry, bool) {
 	return object.TreeEntry{}, false
 }
 
-// validateEntries refuses a tree whose entries this tool will not
-// materialize: a name that is not a safe path element, a backslash (a
-// separator on the one platform helpers.IsPathElement leaves it to), a git
-// metadata name in any case, a malformed mode, or two names equal once case
-// is folded - the install destination may be a case-insensitive filesystem,
-// where the second would land on the first.
+// validateEntries refuses an unsafe path element, a backslash, a git metadata
+// name in any case, a malformed mode, or two names equal once case-folded,
+// since the install destination may be a case-insensitive filesystem.
 func validateEntries(entries []object.TreeEntry) error {
 	seen := make(map[string]string, len(entries))
 	for _, e := range entries {

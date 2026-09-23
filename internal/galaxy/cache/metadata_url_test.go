@@ -13,12 +13,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// metadataFixturePassword is the credential every fixture in this file
-// smuggles into a server-supplied metadata URL. It is deliberately
-// distinctive, for the same reason collections/galaxy_info_test.go's
-// urlPassword is: a value that cannot collide with any other byte sequence in
-// a rendered message makes a substring search for it an answer rather than a
-// coincidence.
+// metadataFixturePassword is the credential every fixture here smuggles into
+// a server-supplied metadata URL, distinctive so a substring search for it in
+// a rendered message is an answer rather than a coincidence.
 const metadataFixturePassword = "pa55w0rd-must-not-be-rendered"
 
 // metadataFixtureHostPath is the part of every fixture URL an operator reading
@@ -38,12 +35,9 @@ const metadataFixtureUserinfoURL = "https://u:" + metadataFixturePassword + "@" 
 // worth naming.
 const metadataFixtureQuery = "?X-Amz-Signature=deadbeefcafe&X-Amz-Expires=900"
 
-// metadataUnbuildableURL carries the same credential in its authority as
-// metadataFixtureUserinfoURL does, alongside a port url.Parse refuses, so it
-// is exactly the population helpers.ErrMetadataRequestBuildFailed exists for:
-// a value carrying a credential that no request can be built from, which is
-// also the one shape collections.checkMetadataURLUserinfo deliberately passes
-// through unjudged.
+// metadataUnbuildableURL carries the fixture credential beside a port
+// url.Parse refuses: the value helpers.ErrMetadataRequestBuildFailed exists
+// for, and one collections.checkMetadataURLUserinfo passes through unjudged.
 const metadataUnbuildableURL = "https://u:" + metadataFixturePassword + "@hub.example:notaport/api/v3/collections/"
 
 // notFoundClient returns a client answering every request with a bare 404, so
@@ -74,38 +68,9 @@ func okJSONClient() *http.Client {
 	})}
 }
 
-// TestHTTPStatusErrorNamesTheURLWithItsCredentialsCut pins the cut applied
-// where fetchJSONBodyOnce builds an *HTTPStatusError, and pins it through the
-// rendered message rather than through the URL field: the field is where the
-// cut happens today, and asserting the text keeps this pin valid if the cut
-// ever moves to Error() instead. It drives that arm through
-// FetchJSONWithCachePolicy with no store, the shortest path a caller has to
-// it.
-//
-// The three negative checks and the one positive check are independent
-// t.Errorf calls rather than a t.Fatalf chain, because a message that carries
-// a capability and a message that names nothing at all are different defects
-// and a chain would only ever report the first.
-//
-// assertStatusErrorNamesTheCleanURL is the positive control, run on this same
-// fixture with its query deleted: it proves the message does name the URL when
-// there is nothing to cut, so "carries no query" here cannot be satisfied by a
-// message that dropped the URL altogether.
-//
-// Killing mutation, run: deleting the cut at that construction site, so the
-// field is assigned the raw url, fails all four checks - the three negative
-// ones on the value it now renders, and the positive one because a URL
-// carrying userinfo no longer contains the clean prefix that check looks for.
-// The first of the four reads:
-//
-//	metadata_url_test.go:121: status error carries the presigned query: failed to fetch metadata:
-//	404 Not Found (https://u:pa55w0rd-must-not-be-rendered@hub.example/api/v3/collections/acme/widgets/versions/
-//	?X-Amz-Signature=deadbeefcafe&X-Amz-Expires=900)
-//
-// The other three label that same rendered value differently.
-// assertStatusErrorNamesTheCleanURL stays green through the mutation, since a
-// URL with nothing to cut renders identically either way - which is what makes
-// it a control rather than a second pin of the same behavior.
+// TestHTTPStatusErrorNamesTheURLWithItsCredentialsCut pins, through the
+// rendered message, that a status error names the URL with userinfo and query
+// cut; independent t.Errorf checks report each defect separately.
 func TestHTTPStatusErrorNamesTheURLWithItsCredentialsCut(t *testing.T) {
 	t.Parallel()
 
@@ -149,34 +114,9 @@ func assertStatusErrorNamesTheCleanURL(t *testing.T) {
 	}
 }
 
-// TestFetchJSONBodyRefusesAURLNoRequestCanBeBuiltFrom pins the other half of
-// this file's rule, on the one arm where naming the value at all is the
-// defect: net/http refuses to build a request from a URL url.Parse rejects,
-// and the *url.Error it returns names the whole raw string with the password
-// in cleartext. fetchJSONBodyOnce drops that error for
-// helpers.ErrMetadataRequestBuildFailed, whose own doc comment holds why this
-// is a replacement rather than a cut.
-//
-// The four negative checks, the classification check and the actionability
-// check are independent t.Errorf calls: a message that leaks and a message
-// that classifies wrong are different defects with different remedies, and a
-// t.Fatalf chain would report only whichever came first.
-//
-// assertBuildableURLReachesTheClient is the positive control, on this same
-// fixture with its port made real: it proves the refusal is this code's doing
-// rather than a fixture that could never have been fetched anyway.
-//
-// Killing mutation, run: restoring the dropped error, so the arm returns what
-// http.NewRequestWithContext handed it, fails all six checks. The first reads:
-//
-//	metadata_url_test.go:191: refusal message carries the password: parse
-//	"https://u:pa55w0rd-must-not-be-rendered@hub.example:notaport/api/v3/collections/":
-//	invalid port ":notaport" after host
-//
-// The other three negative checks label that same rendered value differently,
-// while the classification and actionability checks fail on what the message
-// no longer is. assertBuildableURLReachesTheClient stays green through it: the
-// mutation changes only what a refused build returns.
+// TestFetchJSONBodyRefusesAURLNoRequestCanBeBuiltFrom pins that a URL
+// url.Parse rejects is reported as helpers.ErrMetadataRequestBuildFailed,
+// naming no part of it: net/http's *url.Error would print the password.
 func TestFetchJSONBodyRefusesAURLNoRequestCanBeBuiltFrom(t *testing.T) {
 	t.Parallel()
 
@@ -209,11 +149,9 @@ func TestFetchJSONBodyRefusesAURLNoRequestCanBeBuiltFrom(t *testing.T) {
 	assertBuildableURLReachesTheClient(t)
 }
 
-// assertBuildableURLReachesTheClient is the control described on
-// TestFetchJSONBodyRefusesAURLNoRequestCanBeBuiltFrom. It differs from that
-// fixture in exactly one respect - a port url.Parse accepts - so a run
-// reaching the client, credential and all, is what makes the refusal above the
-// guard's doing rather than the fixture's.
+// assertBuildableURLReachesTheClient is the control for
+// TestFetchJSONBodyRefusesAURLNoRequestCanBeBuiltFrom: the same fixture with a
+// valid port reaches the client, so the refusal is the guard's doing.
 func assertBuildableURLReachesTheClient(t *testing.T) {
 	t.Helper()
 
@@ -228,10 +166,9 @@ func assertBuildableURLReachesTheClient(t *testing.T) {
 	}
 }
 
-// dialFailureClient returns a client whose transport always fails before any
-// response, the shape a refused dial, a DNS failure and a TLS handshake error
-// all take. net/http wraps whatever the transport returns in a *url.Error
-// carrying the request URL, which is the value under test here.
+// dialFailureClient returns a client whose transport fails before any
+// response, as a refused dial, DNS or TLS failure does; net/http wraps that in
+// a *url.Error carrying the request URL, the value under test.
 func dialFailureClient() *http.Client {
 	return &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return nil, errDialRefusedFixture
@@ -239,35 +176,8 @@ func dialFailureClient() *http.Client {
 }
 
 // TestMetadataTransportErrorNamesTheURLWithItsCredentialsCut pins
-// helpers.CutTransportURL as this path reaches it - the one wrapper the
-// artifact path shares. It is the arm reached without any server having
-// answered, so it is the shape a CI meets first when an endpoint is wrong or
-// unreachable - and net/http's own redaction does not cover it: that redaction
-// masks a password and leaves the query, which on a server-chosen value is the
-// capability rather than a detail of one.
-//
-// The four checks are independent t.Errorf calls rather than a t.Fatalf chain,
-// for the reason the status-arm test above states: a message that carries a
-// capability and a message that names nothing are different defects.
-//
-// assertTransportErrorStaysClassifiable is the second half, and it is what
-// makes the wrapper safe rather than merely quiet: every classifier on this
-// path reads through errors.Is and errors.As, so the pin is that the original
-// *url.Error is still reachable underneath.
-//
-// Killing mutation, run: returning client.Do's error unchanged fails two of
-// the four checks, the query one and the userinfo one. The password check
-// stays green under it, and that is the measurement this whole arm rests on
-// rather than an oversight: net/http masks a password to "***" while
-// composing this error and leaves everything else, so the credential half is
-// already covered and the query half is not. The positive check stays green
-// too, since the raw value contains the clean prefix as well - which is what
-// makes it a control on the cut rather than a second pin of it. The first
-// failure reads:
-//
-//	metadata_url_test.go:283: transport error carries the presigned query:
-//	Get "https://u:***@hub.example/api/v3/collections/acme/widgets/versions/
-//	?X-Amz-Signature=deadbeefcafe&X-Amz-Expires=900": connect: connection refused
+// helpers.CutTransportURL on this path: net/http masks a password but keeps
+// the query, which on a server-chosen URL is itself the capability.
 func TestMetadataTransportErrorNamesTheURLWithItsCredentialsCut(t *testing.T) {
 	t.Parallel()
 
@@ -295,27 +205,9 @@ func TestMetadataTransportErrorNamesTheURLWithItsCredentialsCut(t *testing.T) {
 	assertTransportErrorStaysClassifiable(t, err)
 }
 
-// assertTransportErrorStaysClassifiable is the half of
-// TestMetadataTransportErrorNamesTheURLWithItsCredentialsCut that holds the
-// rendering change to being a rendering change: fetchRetryable and
-// deadlineError both read this error's shape, and both do it through errors.As
-// and errors.Is, which traverse Unwrap. A wrapper that dropped the original
-// would silently move every one of those verdicts.
-//
-// The errors.As call is what actually pins that. KILLING MUTATION, run:
-// deleting helpers.TransportURLError's Unwrap makes this t.Fatalf fire, with
-// its rendering left correct - reported against the call site above rather
-// than against the t.Fatalf itself, since this helper calls t.Helper():
-//
-//	metadata_url_test.go:295: errors.As(err, &*url.Error) failed on Get
-//	"https://hub.example/api/v3/collections/acme/widgets/versions/": connect: connection refused, want success
-//
-// The equality below it is a regression guard rather than a second pin, and
-// cannot be one - it is only ever evaluated on a tree that errors.As already
-// walked, and on such a tree both sides are false for any realistic mutation
-// (measured: a transport failure with no status carries none of the sentinels
-// fetchRetryable reads). It is kept for the one shape it would still catch: a
-// future wrapper that unwrapped to something other than the original.
+// assertTransportErrorStaysClassifiable pins that the cut leaves the original
+// *url.Error reachable through errors.As, since fetchRetryable and
+// deadlineError classify through Unwrap.
 func assertTransportErrorStaysClassifiable(t *testing.T, err error) {
 	t.Helper()
 
@@ -331,9 +223,5 @@ func assertTransportErrorStaysClassifiable(t *testing.T, err error) {
 	}
 }
 
-// errDialRefusedFixture is the transport failure dialFailureClient returns. It
-// is declared here, at the end of the file, rather than beside that helper:
-// this file carries mutation citations by line number, and a declaration
-// placed above them would move every one of them for no reason a reader
-// benefits from.
+// errDialRefusedFixture is the transport failure dialFailureClient returns.
 var errDialRefusedFixture = errors.New("connect: connection refused")

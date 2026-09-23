@@ -109,14 +109,9 @@ func TestURLPinsSurviveSnapshotWithoutAWindow(t *testing.T) {
 	}
 }
 
-// TestSchemaIsNineAndASchemaEightSnapshotIsDropped pins the bump that
-// introduced the url pin bucket and the role pin's url fields: the constant
-// is 9, ValidateSchema classes 8 as outdated, and a Bolt snapshot a schema-8
-// binary wrote - real data under every older bucket, none under the new one -
-// is dropped and rebuilt on Load rather than half-trusted. The literal 8 is
-// deliberate: the StoreSnapshotSchemaVersion-1 form the generic tests use
-// would keep passing across any future bump, while this test is about this
-// one.
+// TestSchemaIsNineAndASchemaEightSnapshotIsDropped pins the bump that added
+// url pins: the schema is 9 and a schema-8 Bolt snapshot is dropped on Load.
+// The literal 8 is deliberate, so a later bump cannot keep this passing.
 func TestSchemaIsNineAndASchemaEightSnapshotIsDropped(t *testing.T) {
 	t.Parallel()
 	if helpers.StoreSnapshotSchemaVersion != 9 {

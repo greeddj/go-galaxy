@@ -1,63 +1,8 @@
 package collections
 
-// This file pins two things: artifactDeadlineError's classification table in
-// isolation (TestArtifactDeadlineErrorClassification), and the cache-hit
-// fetchArtifact arm's deadline enforcement end to end through installCollection
-// (TestCachedArtifactFetchHonorsTheDownloadDeadline), reusing the stub pattern
-// s3_cache_recovery_test.go established for standing in for a slow S3 object
-// read without duplicating that package's unexported fakeS3 test double.
-//
-// Each test below was verified against a real revert of the production
-// change it pins, and this comment quotes the actual output observed:
-//
-//   - TestArtifactDeadlineErrorClassification, changing deadline.go's %v to
-//     %w in the sentinel's rendering of its cause, makes the "own deadline
-//     fired while the parent is still live" case fail with:
-//     "artifactDeadlineError = artifact download deadline exceeded after 1s:
-//     client.Do: context deadline exceeded, must not match
-//     context.DeadlineExceeded"
-//   - The same test, dropping the parent.Err() != nil guard from
-//     artifactDeadlineError, makes the "parent's own deadline (not this
-//     acquisition's budget) expired first" case fail with:
-//     "artifactDeadlineError = artifact download deadline exceeded after 1s:
-//     client.Do: context deadline exceeded, want unchanged client.Do:
-//     context deadline exceeded"
-//   - TestCachedArtifactFetchHonorsTheDownloadDeadline, reverting
-//     fetchArtifact's cache-hit arm to call artifacts.Fetch(ctx, ...)
-//     directly (dropping the context.WithTimeout and both
-//     artifactDeadlineError calls), makes the test hang until the harness
-//     kills it:
-//     "panic: test timed out after 30s
-//     running tests:
-//     TestCachedArtifactFetchHonorsTheDownloadDeadline (30s)"
-//     with the stuck goroutine's frame at
-//     "github.com/greeddj/go-galaxy/internal/galaxy/collections.
-//     (*blockingFetchArtifacts).Fetch(...)" directly beneath
-//     "github.com/greeddj/go-galaxy/internal/galaxy/collections.
-//     fetchArtifact(...)" in the same trace.
-//   - The same test, widening prepareWithRecovery's prepareInstall-error arm
-//     from errors.Is(err, helpers.ErrSHA256Mismatch) to an unconditional
-//     canRetryCacheHit(deps, fromCache, forceDownload) check, makes it fail
-//     with:
-//     "Delete calls = 1, want 0 (the deadline is outside the
-//     evict-and-refetch recovery class)"
-//     confirming the eviction gate really is open in this fixture once the
-//     acquisition deadline fires on a cache hit, and that the exact
-//     helpers.ErrSHA256Mismatch check is the only thing holding Delete at
-//     zero. (This fixture has no Galaxy server configured, so the widened
-//     mutation's forced second attempt actually fails at metadata
-//     resolution rather than reproducing the deadline error; the call-count
-//     assertions are checked ahead of the error-shape ones specifically so
-//     this Delete-count failure is the one that surfaces, rather than being
-//     masked by an earlier errors.Is(err, ErrArtifactDownloadDeadline)
-//     mismatch.)
-//   - The same test, deleting artifactDeadlineError's helpers.ErrSHA256Mismatch
-//     exclusion, makes the "own deadline fired while parent is live, cause is
-//     an artifact integrity failure" case normalize instead of passing
-//     through unchanged, failing with:
-//     "artifactDeadlineError = artifact download deadline exceeded after 1s:
-//     sha256 mismatch: aaaa != bbbb, want unchanged sha256 mismatch: aaaa !=
-//     bbbb"
+// Pins artifactDeadlineError's classification in isolation and the cache-hit
+// fetchArtifact arm's deadline end to end through installCollection, with a
+// blocking Fetch stub standing in for a slow S3 object read.
 
 import (
 	"context"
@@ -79,19 +24,13 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// artifactDeadlineBudget is the fixed budget every artifactDeadlineError case
-// in this file passes; its value is irrelevant to the classification, only
-// its presence in the rendered message (checked by
-// assertArtifactDeadlineErrorNormalized's caller) matters.
+// artifactDeadlineBudget is the budget every artifactDeadlineError case passes;
+// only its presence in the rendered message matters.
 const artifactDeadlineBudget = time.Second
 
-// errTestArtifactDeadlineCause wraps context.DeadlineExceeded, mirroring the
-// real shape a stalled http.Client.Do or artifacts.Fetch call produces once
-// dlCtx expires: this is what makes the %v-not-%w assertion in
-// assertArtifactDeadlineErrorNormalized meaningful. If artifactDeadlineError
-// wrapped this with %w instead, errors.Is(got, context.DeadlineExceeded)
-// would turn true and steal the exit-code classification exactly as the
-// sentinel's own doc comment warns against.
+// errTestArtifactDeadlineCause wraps context.DeadlineExceeded as a stalled
+// client.Do does, so a %w rendering of the cause would make errors.Is match it
+// and steal the sentinel's exit-code classification.
 var errTestArtifactDeadlineCause = fmt.Errorf("client.Do: %w", context.DeadlineExceeded)
 
 // artifactDeadlineErrorCase is one artifactDeadlineErrorCases table row.
@@ -104,8 +43,7 @@ type artifactDeadlineErrorCase struct {
 }
 
 // artifactDeadlineErrorCases is TestArtifactDeadlineErrorClassification's
-// table, hoisted to package level so the test function itself stays within
-// the linter's length budget.
+// table, hoisted to keep the test function within the length budget.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state.
 var artifactDeadlineErrorCases = []artifactDeadlineErrorCase{
@@ -122,17 +60,8 @@ var artifactDeadlineErrorCases = []artifactDeadlineErrorCase{
 		err: errTestArtifactDeadlineCause,
 	},
 	{
-		// Without this case, assertArtifactDeadlineErrorNormalized's
-		// errors.Is(got, context.Canceled) check could never fail against any
-		// case in this table: the only other case reaching that assertion
-		// supplies a cause wrapping context.DeadlineExceeded, and got itself
-		// wraps only the sentinel via %w, so context.Canceled was never
-		// actually reachable to prove the check discriminating. This case
-		// closes that gap with the exact shape ErrArtifactDownloadDeadline's
-		// own doc comment names as the other real cause: the read-inactivity
-		// watchdog aborting a stall by canceling its own derived context,
-		// which races (and here, is overtaken by) this acquisition's budget
-		// expiring.
+		// A watchdog cancel overtaken by the budget: the only row proving the
+		// normalized error does not match context.Canceled.
 		name: "this run's own deadline fired while the parent is still live, cause wraps context.Canceled",
 		buildParent: func() (context.Context, context.CancelFunc) {
 			return context.WithCancel(context.Background())
@@ -145,15 +74,9 @@ var artifactDeadlineErrorCases = []artifactDeadlineErrorCase{
 		err: fmt.Errorf("body read: %w", context.Canceled),
 	},
 	{
-		// An artifact-integrity failure must keep its own identity even when
-		// this acquisition's own deadline expired in the same instant:
-		// helpers.ErrSHA256Mismatch is exitcode's ExitIntegrity signal and
-		// prepareWithRecovery's evict-and-refetch trigger, and relabeling it
-		// into the deadline sentinel here would erase both, with the %v
-		// rendering putting it permanently out of errors.Is's reach on top.
-		// Killing mutation: deleting artifactDeadlineError's ErrSHA256Mismatch
-		// exclusion makes this case normalize instead of passing through
-		// unchanged, failing on "want unchanged".
+		// ErrSHA256Mismatch keeps its identity when the budget expired in the
+		// same instant: it is ExitIntegrity and prepareWithRecovery's eviction
+		// trigger.
 		name: "own deadline fired while parent is live, cause is an artifact integrity failure: error passes through unchanged",
 		buildParent: func() (context.Context, context.CancelFunc) {
 			return context.WithCancel(context.Background())
@@ -167,19 +90,9 @@ var artifactDeadlineErrorCases = []artifactDeadlineErrorCase{
 		wantSame: true,
 	},
 	{
-		// A store that cannot serve as a cache backend keeps its own
-		// identity for the same reason. helpers.ErrCacheBackendUnusable is
-		// exitcode's ExitUsage signal - "no retry can help, change the
-		// configuration" - while the deadline sentinel is ExitNetwork, whose
-		// whole meaning is "retry later"; relabeling would tell a CI job to
-		// retry a configuration that can never work, and hands the remote the
-		// choice of which class it gets, since it controls whether a transfer
-		// stalls to the budget before it answers.
-		// Killing mutation: deleting artifactDeadlineError's
-		// ErrCacheBackendUnusable exclusion fails this case with
-		// "artifactDeadlineError = artifact download deadline exceeded after
-		// 1s: cache backend cannot be used as configured: endpoint answered
-		// with a redirect, want unchanged ...".
+		// ErrCacheBackendUnusable keeps its identity too: it is ExitUsage (no
+		// retry helps), and relabeling it ExitNetwork would let a remote that
+		// stalls to the budget choose the class.
 		name: "own deadline fired while parent is live, cause is an unusable backend: error passes through unchanged",
 		buildParent: func() (context.Context, context.CancelFunc) {
 			return context.WithCancel(context.Background())
@@ -206,14 +119,8 @@ var artifactDeadlineErrorCases = []artifactDeadlineErrorCase{
 		wantSame: true,
 	},
 	{
-		// This is the case that actually distinguishes the parent.Err() guard
-		// from checking dlCtx.Err() alone: dlCtx is a child of parent, so
-		// once parent's own deadline expires first, dlCtx inherits
-		// context.DeadlineExceeded from it too - dlCtx.Err() alone cannot
-		// tell "my own budget expired" apart from "I merely inherited my
-		// parent's expiry". Without the parent.Err() != nil check ahead of
-		// it, this would be misclassified as this acquisition's own deadline
-		// firing, when the real cause is the caller's context ending first.
+		// dlCtx inherits DeadlineExceeded from an expired parent, so only the
+		// parent.Err() guard tells the caller's expiry from this acquisition's.
 		name: "parent's own deadline (not this acquisition's budget) expired first: error passes through unchanged",
 		buildParent: func() (context.Context, context.CancelFunc) {
 			parent, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
@@ -277,11 +184,9 @@ func TestArtifactDeadlineErrorClassification(t *testing.T) {
 	}
 }
 
-// TestArtifactDeadlineErrorIsIdempotent asserts a second normalization pass
-// over an already-normalized error returns an identical message rather than
-// doubling the sentinel or its rendered cause into it - the contract a call
-// site relies on when it may normalize once inside a retry attempt and again
-// around the whole helpers.Retry loop.
+// TestArtifactDeadlineErrorIsIdempotent pins that re-normalizing an already
+// normalized error leaves its message unchanged, since call sites normalize
+// inside a retry attempt and again around the whole helpers.Retry loop.
 func TestArtifactDeadlineErrorIsIdempotent(t *testing.T) {
 	t.Parallel()
 	parent, parentCancel := context.WithCancel(t.Context())
@@ -302,11 +207,7 @@ func TestArtifactDeadlineErrorIsIdempotent(t *testing.T) {
 }
 
 // assertArtifactDeadlineErrorUnchanged fails the test unless got is want,
-// left untouched by artifactDeadlineError. A nil want is compared with a
-// plain nil check (never a mismatched-error footgun, since both sides are
-// then the untyped nil the comparison actually needs); a non-nil want is
-// compared through errors.Is, matching artifactDeadlineError's own
-// pass-through contract of returning err verbatim rather than a copy.
+// returned verbatim by artifactDeadlineError (nil stays nil).
 func assertArtifactDeadlineErrorUnchanged(t *testing.T, got, want error) {
 	t.Helper()
 	if want == nil {
@@ -320,10 +221,9 @@ func assertArtifactDeadlineErrorUnchanged(t *testing.T, got, want error) {
 	}
 }
 
-// assertArtifactDeadlineErrorNormalized fails the test unless got is cause
-// normalized into the sentinel: it matches helpers.ErrArtifactDownloadDeadline,
-// it does not also match context.DeadlineExceeded or context.Canceled (the
-// %v-not-%w contract), and its message contains cause's own text.
+// assertArtifactDeadlineErrorNormalized fails the test unless got matches the
+// deadline sentinel, matches neither context error (the %v-not-%w contract),
+// and its message contains cause's text.
 func assertArtifactDeadlineErrorNormalized(t *testing.T, got, cause error) {
 	t.Helper()
 	if !errors.Is(got, helpers.ErrArtifactDownloadDeadline) {
@@ -340,15 +240,9 @@ func assertArtifactDeadlineErrorNormalized(t *testing.T, got, cause error) {
 	}
 }
 
-// blockingFetchArtifacts wraps a real local.Artifacts store, standing in for
-// a slow cache read (the S3 backend's artifact GET streaming a body over
-// HTTP, per Fetch's own doc comment): Has, TempFile, Commit, and (when
-// blocking is disabled) Fetch itself all delegate to the real local store, so
-// a positive-control run against this stub behaves exactly like a real cache
-// hit. When blocking is true, Fetch instead ignores the cached bytes on disk
-// entirely and blocks on <-ctx.Done(), returning ctx.Err() - reproducing a
-// dripped read that never completes on its own. fetchCalls/deleteCalls count
-// every call so a test can assert on them.
+// blockingFetchArtifacts wraps a real local.Artifacts store; with blocking set,
+// Fetch waits for ctx to end like a dripped S3 read that never completes.
+// fetchCalls and deleteCalls count every call.
 type blockingFetchArtifacts struct {
 	*local.Artifacts
 
@@ -374,11 +268,9 @@ func (a *blockingFetchArtifacts) Delete(ctx context.Context, key string) error {
 	return a.Artifacts.Delete(ctx, key)
 }
 
-// newDeadlineTestFixture builds a cache-primed collection, config, and
-// installDeps sharing cacheDir with stub, mirroring
-// s3_cache_recovery_test.go's own priming: only Has() needs to report the
-// key present for prepareInstall to take the cache-hit fast path, so the
-// seeded bytes' actual content is irrelevant when Fetch is stubbed.
+// newDeadlineTestFixture builds a collection and installDeps over stub. Only
+// Has() must report the key for prepareInstall to take the cache-hit path, so
+// the seeded bytes' content is irrelevant while Fetch is stubbed.
 func newDeadlineTestFixture(
 	t *testing.T,
 	cacheDir string,
@@ -401,16 +293,9 @@ func newDeadlineTestFixture(
 	return col, deps
 }
 
-// TestCachedArtifactFetchHonorsTheDownloadDeadline proves fetchArtifact's
-// cache-hit arm bounds a slow Fetch with the same acquisition deadline a
-// fresh download gets, and that this deadline sits entirely outside
-// prepareWithRecovery's evict-and-refetch class: the sentinel never matches
-// helpers.ErrSHA256Mismatch, so it must never trigger an eviction. Delete
-// being asserted at exactly zero here is a genuine killing assertion against
-// a future widening of that recovery arm to something broader than an exact
-// helpers.ErrSHA256Mismatch check, not a tautology: calling installCollection
-// (rather than fetchArtifact directly) is what exercises prepareWithRecovery
-// at all.
+// TestCachedArtifactFetchHonorsTheDownloadDeadline pins that a cache-hit Fetch
+// is bounded by the acquisition deadline and that the deadline never triggers
+// prepareWithRecovery's eviction (Delete stays at zero).
 func TestCachedArtifactFetchHonorsTheDownloadDeadline(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -428,16 +313,8 @@ func TestCachedArtifactFetchHonorsTheDownloadDeadline(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error once the download deadline fired, got nil")
 	}
-	// The call-count assertions are checked ahead of the error-shape ones
-	// deliberately: a mutation that widens prepareWithRecovery's
-	// prepareInstall-error arm past its exact helpers.ErrSHA256Mismatch check
-	// evicts and forces a second attempt, which - in this fixture, with no
-	// Galaxy server configured to resolve metadata against - fails at
-	// metadata resolution rather than reproducing the deadline error. That
-	// changes what err looks like, but Delete was already called once by the
-	// time that second attempt ran, so checking deleteCalls first is what
-	// lets that specific mutation surface here rather than being masked by
-	// the errors.Is(err, ErrArtifactDownloadDeadline) check below.
+	// Call counts come before the error shape: a widened recovery arm evicts
+	// and then fails at metadata resolution, which would mask the Delete count.
 	if got := stub.fetchCalls.Load(); got != 1 {
 		t.Fatalf("Fetch calls = %d, want 1", got)
 	}
@@ -452,10 +329,8 @@ func TestCachedArtifactFetchHonorsTheDownloadDeadline(t *testing.T) {
 	}
 }
 
-// TestCachedArtifactFetchDeadlinePositiveControl is the same fixture with
-// blocking disabled, proving the stub itself is capable of a normal
-// successful cache-hit install and that the 20ms deadline used above is not
-// what would fail this scenario absent the injected block.
+// TestCachedArtifactFetchDeadlinePositiveControl is the same fixture unblocked:
+// the stub serves a normal cache hit and the 20ms deadline alone fails nothing.
 func TestCachedArtifactFetchDeadlinePositiveControl(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -469,10 +344,8 @@ func TestCachedArtifactFetchDeadlinePositiveControl(t *testing.T) {
 	artifactPath := filepath.Join(cacheDir, artifactKey(col))
 	mustWriteFile(t, artifactPath, []byte("stand-in for a real cached artifact, unpacked by installCollection below"))
 
-	// installCollection would go on to extract a real tar.gz from the fetched
-	// path, which the seeded placeholder bytes above are not; this positive
-	// control exercises fetchArtifact itself, the exact call the deadline
-	// wraps, rather than the full extraction pipeline beyond it.
+	// The seeded bytes are no tar.gz, so this calls fetchArtifact, the exact
+	// call the deadline wraps, rather than the extracting installCollection.
 	_, err := fetchArtifact(context.Background(), deps, col, nil, true, true)
 	if err != nil {
 		t.Fatalf("expected the unblocked stub to delegate to the real local store, got %v", err)

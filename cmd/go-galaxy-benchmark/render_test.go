@@ -47,14 +47,9 @@ func contrastRatio(t *testing.T, a, b string) float64 {
 	return (high + 0.05) / (low + 0.05)
 }
 
-// TestChartInkReadsOnBothCanvases is why chartInk is a mid grey and not the
-// near-white a dark-only drawing would use. The chart is embedded in a README
-// that is read on a white page and on GitHub dark's near-black one, and it
-// paints no background of its own to sit against, so one ink has to serve
-// both. Against those two canvases 4.35:1 is the ceiling any single color can
-// reach; the floor here sits just under it, low enough to admit a deliberate
-// change of shade and high enough that a color one theme's readers cannot
-// read fails.
+// TestChartInkReadsOnBothCanvases pins chartInk's contrast on both a white
+// page and GitHub dark's #0d1117 at a floor just under the 4.35:1 ceiling, so
+// only a shade readable in both themes passes.
 func TestChartInkReadsOnBothCanvases(t *testing.T) {
 	const (
 		floor     = 4.3
@@ -70,10 +65,9 @@ func TestChartInkReadsOnBothCanvases(t *testing.T) {
 	}
 }
 
-// TestEmitSVGPaintsEveryGlyphInOneInk pins that the text tiers are separated
-// by size and weight rather than by color. A second, brighter fill would have
-// to spend part of the contrast budget documented on chartInk, and the tier
-// that would lose it is the smallest text, which needs it most.
+// TestEmitSVGPaintsEveryGlyphInOneInk pins that text tiers differ by size and
+// weight, not color: a second fill would spend chartInk's contrast budget at
+// the expense of the smallest text.
 func TestEmitSVGPaintsEveryGlyphInOneInk(t *testing.T) {
 	svg := emitSVG("t", "s", []chartPanel{{
 		title: "Cold cache",
@@ -99,10 +93,9 @@ func TestEmitSVGPaintsEveryGlyphInOneInk(t *testing.T) {
 	}
 }
 
-// TestLogScaleEndsTheLongestBarAtTheColumnEdge pins the rule that sizes the
-// axis: whatever the largest ratio in the chart is, its bar fills the bar
-// column exactly, and a ratio ten times smaller is exactly one decade
-// shorter. Nothing else about the data can change either statement.
+// TestLogScaleEndsTheLongestBarAtTheColumnEdge pins that the largest ratio's
+// bar fills the bar column exactly, whatever it is, and a ratio ten times
+// smaller is exactly one decade shorter.
 func TestLogScaleEndsTheLongestBarAtTheColumnEdge(t *testing.T) {
 	for _, peak := range []float64{3.08, 21.1, 281.2, 5000} {
 		scale := newLogScale([]chartPanel{{rows: []chartRow{{value: peak}}}})
@@ -287,10 +280,9 @@ func TestRenderTableSaysWhenNothingSucceeded(t *testing.T) {
 	}
 }
 
-// TestEmitSVGPlacesRowsOnTheDesignedGrid pins the geometry the chart is
-// designed around: a fixed pixel size beside the viewBox so the drawing keeps
-// its size wherever it is embedded, the first bar where the legend puts it,
-// and each further bar one row pitch below the last.
+// TestEmitSVGPlacesRowsOnTheDesignedGrid pins the designed geometry: a fixed
+// pixel size beside the viewBox, the first bar where the legend puts it, and
+// each further bar one row pitch below the last.
 func TestEmitSVGPlacesRowsOnTheDesignedGrid(t *testing.T) {
 	panel := chartPanel{title: "Cold cache", rows: []chartRow{
 		{label: "10 collections", detail: "152.28s -> 7.71s", value: 19.8},
@@ -313,10 +305,8 @@ func TestEmitSVGPlacesRowsOnTheDesignedGrid(t *testing.T) {
 	}
 }
 
-// TestEmitSVGStatesAPixelSizeRatherThanStretching is the regression guard for
-// the one attribute an embedded chart must not carry: a percentage width
-// makes the drawing as wide as whatever contains it, which on a README is the
-// whole page.
+// TestEmitSVGStatesAPixelSizeRatherThanStretching pins that the chart carries
+// no percentage width, which would stretch it across a whole README page.
 func TestEmitSVGStatesAPixelSizeRatherThanStretching(t *testing.T) {
 	svg := emitSVG("t", "s", []chartPanel{{title: "Cold cache", rows: []chartRow{{value: 2}}}})
 

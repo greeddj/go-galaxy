@@ -11,40 +11,25 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// errTestTransport and errTestLocalIO are static stand-ins used only to
-// exercise downloadRetryable's classification: the former for a raw
-// transport-level failure (e.g. a dial or connection reset), the latter for
-// an unrelated local filesystem failure. Neither is ever returned by
-// production code.
+// errTestTransport and errTestLocalIO stand in for a raw transport failure
+// and an unrelated local filesystem failure in downloadRetryable's table.
 var (
 	errTestTransport = errors.New("dial tcp: connection refused")
 	errTestLocalIO   = errors.New("write /tmp/x: no space left on device")
 )
 
 // TestDownloadRetryable pins the artifact-download retry classification: a
-// stalled read is retryable in both its real production rendering (the cause
-// left unreachable through errors.Is, see helpers.ErrReadStalled's doc
-// comment) and a deliberately synthetic one that still carries
-// context.Canceled, since downloadRetryable classifies ErrReadStalled before
-// the context.Canceled check; a terminal sha256 mismatch after a complete
-// read is never retried; and - unlike the Galaxy API GET predicate
-// (fetchRetryable in package cache) - a bare transport-level failure (no
-// HTTP response at all) is retryable here.
+// stall is retryable in either rendering, content failures are terminal, and
+// unlike the Galaxy API GET predicate a bare transport failure is retried.
 func TestDownloadRetryable(t *testing.T) {
 	t.Parallel()
 
-	// stalledProduction mirrors the real shape watchdogBody.Read builds: the
-	// cause rendered with %v, not wrapped with %w, so it does not carry
-	// context.Canceled through errors.Is (see helpers.ErrReadStalled's doc
-	// comment). This is the shape downloadRetryable actually receives today.
+	// stalledProduction mirrors watchdogBody.Read: the cause rendered with %v,
+	// so errors.Is does not reach context.Canceled.
 	//nolint:errorlint // pinning the real, deliberately non-wrapping shape watchdogBody.Read builds.
 	stalledProduction := fmt.Errorf("%w: no data for %s: %v", helpers.ErrReadStalled, time.Second, context.Canceled)
-	// stalledSynthetic is deliberately NOT the production shape: it
-	// double-wraps context.Canceled with %w, a signature the current producer
-	// never builds. It is kept to pin downloadRetryable's ordering guard
-	// (ErrReadStalled classified before the context.Canceled check)
-	// independently of how the producer happens to render its cause, so that
-	// guard stays tested even if a future call site reintroduces %w somewhere.
+	// stalledSynthetic also wraps context.Canceled with %w, pinning that
+	// downloadRetryable classifies ErrReadStalled before the context check.
 	stalledSynthetic := fmt.Errorf("%w: no data for %s: %w", helpers.ErrReadStalled, time.Second, context.Canceled)
 	shaMismatch := fmt.Errorf("%w: aaaa != bbbb", helpers.ErrSHA256Mismatch)
 	noTarHeader := fmt.Errorf("%w: /tmp/a", helpers.ErrArtifactTarHeaderNotFound)
@@ -67,25 +52,15 @@ func TestDownloadRetryable(t *testing.T) {
 		{name: "sha256 mismatch after a complete read is terminal", err: shaMismatch, want: false},
 		{name: "an oversized artifact download is never retried", err: helpers.ErrResponseTooLarge, want: false},
 		{
-			// Deliberately NOT the shape production builds, for the reason
-			// stalledSynthetic above is not either: it pins the guard rather
-			// than the path. attemptDownloadToCache returns this refusal bare,
-			// which the default-deny fallthrough would answer anyway; carried
-			// on a retryable status it is this arm that answers, since
-			// isRetryableAttemptError below would otherwise retry on it.
+			// Not a production shape: a shape-probe refusal on a retryable
+			// status pins the explicit terminal arm ahead of the status check.
 			name: "a shape-probe refusal carried on a retryable status is still terminal",
 			err:  &downloadAttemptError{err: noTarHeader, status: http.StatusServiceUnavailable},
 			want: false,
 		},
 		{
-			// This case is DELIBERATELY a non-killing regression pin, exactly
-			// like the ErrResponseTooLarge case above: helpers.ErrArtifactDownloadDeadline
-			// never wraps its cause with %w (see its own doc comment), so
-			// this error does not match context.Canceled or
-			// context.DeadlineExceeded either, and the default-deny
-			// fallthrough at the bottom of downloadRetryable already returns
-			// false for it even with the explicit arm deleted. Do not
-			// fabricate a killing mutation for this case; there isn't one.
+			// A regression pin only: the default-deny fallthrough would also
+			// answer false, since the deadline error does not wrap its cause.
 			name: "an expired artifact download deadline is never retried",
 			err:  fmt.Errorf("%w after 1s: boom", helpers.ErrArtifactDownloadDeadline),
 			want: false,

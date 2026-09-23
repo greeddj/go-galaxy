@@ -14,13 +14,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// resolvedRole is one role the run installs: its install name, the locator
-// its artifact is keyed under and its record and lockfile entry carry (the
-// one string every consumer compares, exactly as a git collection's Source),
-// the repository and ref it came from, the concrete version, the Galaxy name
-// and the server that answered for a role that came through the Galaxy API,
-// and the install names of the roles its meta depends on, in declaration
-// order.
+// resolvedRole is one role the run installs. Source is its locator, the one
+// string its artifact key, installed record and lockfile entry compare, as a
+// git collection's Source is; Deps are install names in declaration order.
 type resolvedRole struct {
 	Name       string
 	Source     string
@@ -40,25 +36,17 @@ type resolvedRole struct {
 // key renders the role as "name@version" for messages and the warmed set.
 func (r resolvedRole) key() string { return r.Name + "@" + r.Version }
 
-// roleResolution is what resolveRoles produced: every role by install name,
-// and the order they were discovered in - requirements first, in file order,
-// then each level of dependencies in declaration order - which is the order
-// first-wins was decided in and the order the install reports in.
+// roleResolution is every resolved role by install name, plus the discovery
+// order (requirements in file order, then each dependency level), which is
+// the order first-wins was decided in and the install reports in.
 type roleResolution struct {
 	roles map[string]resolvedRole
 	order []string
 }
 
-// resolveRoles turns the roles: entries into the set of roles to install,
-// walking their dependencies breadth-first. Each level is resolved on the
-// download-worker pool and merged in input order, so which requirement wins
-// a name is decided by the file's and the meta's declaration order, never by
-// which fetch finished first - ansible's first-wins, made deterministic. A
-// later requirement for a name already taken with a different source or
-// version is reported and ignored, where ansible is silent. A dependency
-// ansible would not look up (a local role, a collection's role) is skipped
-// with a line of its own; one it would refuse is a usage error naming the
-// role that declared it. --no-deps stops the walk at the requirements.
+// resolveRoles walks the roles: entries and their dependencies breadth-first.
+// Each level resolves concurrently but merges in input order, so ansible's
+// first-wins is decided by declaration order, never by which fetch finished.
 func resolveRoles(ctx context.Context, deps collectionDeps, roots []requirements.RoleRequirement) (roleResolution, error) {
 	res := roleResolution{roles: make(map[string]resolvedRole, len(roots))}
 	if len(roots) == 0 {
@@ -238,10 +226,9 @@ func roleDepDisplay(dep gitsource.RoleDependency) string {
 	return helpers.TruncateForMessage(dep.Name)
 }
 
-// fillRoleDeps records, on every resolved role, the install names of the
-// dependencies that ended up in the resolution: the names an install worker
-// and the lockfile carry. A dependency that was skipped, or lost a name to
-// an earlier requirement, contributes the name that won.
+// fillRoleDeps records on every resolved role the install names of its
+// dependencies that are in the resolution; a dependency that lost its name
+// to an earlier requirement contributes the name that won.
 func fillRoleDeps(res *roleResolution, deps collectionDeps) {
 	for name, role := range res.roles {
 		pin, ok := deps.roleMemo.get(name)
@@ -294,10 +281,8 @@ func newGitRoleRequest(deps collectionDeps, req requirements.RoleRequirement) (g
 }
 
 // resolveGitRole resolves a git role the way expandGitRoot resolves a git
-// collection: the recorded pin is replayed when the cache policy allows a
-// read and the artifact is still cached; a miss under --offline is refused;
-// --refresh re-advertises a branch or tag and keeps the pin when the commit
-// is unchanged; otherwise the repository is fetched and the role built.
+// collection: replay the pin, refuse a miss under --offline, re-advertise
+// under --refresh, else fetch the repository and build the role.
 func resolveGitRole(ctx context.Context, deps collectionDeps, req requirements.RoleRequirement) (rolePin, error) {
 	greq, err := newGitRoleRequest(deps, req)
 	if err != nil {
@@ -306,10 +291,9 @@ func resolveGitRole(ctx context.Context, deps collectionDeps, req requirements.R
 	return resolveGitRoleRequest(ctx, deps, greq, "")
 }
 
-// resolveGitRoleRequest is the git path proper, shared by an scm role and a
-// Galaxy role once its name has been mapped to a repository and a tag.
-// galaxySHA is the commit the Galaxy API recorded for the tag, "" for an scm
-// role, cross-checked against what the repository advertises.
+// resolveGitRoleRequest is the git path shared by an scm role and a mapped
+// Galaxy role; galaxySHA is the commit the Galaxy API recorded for the tag
+// ("" for an scm role), cross-checked against what the repository serves.
 func resolveGitRoleRequest(ctx context.Context, deps collectionDeps, greq gitRoleRequest, galaxySHA string) (rolePin, error) {
 	policy := cacheManager.PolicyForConstraint(deps.cfg, greq.ref.IsCommit())
 	if policy.Read {
@@ -361,12 +345,9 @@ func refreshRolePin(
 	return refreshed, true, err
 }
 
-// replayRolePin turns a recorded pin into a rolePin, re-validating what it
-// carries - the pin is cache state, judged on the way in exactly as a
-// remote's answer is - and only when the artifact it names is still in the
-// store: a pin whose artifact was swept would send the install phase to the
-// remote anyway, so discovery fetches now, while it holds the ref. The zero
-// rolePin reports "not replayable".
+// replayRolePin re-validates a recorded pin, which is cache state, and
+// replays it only while its artifact is still stored; otherwise it returns
+// the zero rolePin so discovery fetches now, while it holds the ref.
 func replayRolePin(ctx context.Context, deps collectionDeps, greq gitRoleRequest, pin store.RolePinEntry) (rolePin, error) {
 	if !gitsource.IsCommitHash(pin.Commit) {
 		return rolePin{}, fmt.Errorf("%w: recorded role pin for %s names commit %q", helpers.ErrInvalidGitLocator, greq.display, pin.Commit)
@@ -419,11 +400,9 @@ func sourceDepsToPin(deps []gitsource.RoleDependency) []store.RolePinDep {
 	return out
 }
 
-// acquireRole fetches the repository, builds the role, commits or keeps the
-// artifact, records the pin, and returns it. commit, when non-empty, is the
-// tip an advertisement just resolved, so the acquisition fetches exactly
-// that commit. galaxySHA is what the Galaxy API recorded for the tag, kept
-// on the pin beside the commit the repository advertised.
+// acquireRole fetches the repository, builds the role, stores the artifact
+// and records the pin. A non-empty commit is the tip an advertisement just
+// resolved, so exactly that commit is fetched.
 func acquireRole(
 	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, commit, galaxySHA string,
 ) (rolePin, error) {
@@ -478,10 +457,9 @@ func acquireRole(
 	return pin, nil
 }
 
-// roleVersionFor is the concrete version a role installs as: the tag, the
-// branch name, or the commit the requirement spelled, and for HEAD the name
-// of whatever HEAD pointed at - what ansible-galaxy writes into
-// .galaxy_install_info and what ansible-galaxy role list shows.
+// roleVersionFor is the concrete version a role installs as, the one
+// .galaxy_install_info carries: the ref's short name, or for HEAD what HEAD
+// pointed at, falling back to "HEAD" when that is not a legal role version.
 func roleVersionFor(ref gitsource.Ref, refName string) string {
 	name := ref.Name
 	if ref.Kind == gitsource.RefHEAD {
@@ -494,10 +472,9 @@ func roleVersionFor(ref gitsource.Ref, refName string) string {
 	return name
 }
 
-// storeRoleArtifact commits the built artifact to the artifact store under
-// its locator-scoped key, or hands it to the memo under --no-cache, or
-// discards it under --dry-run - storeGitArtifacts' three-way switch for a
-// single artifact.
+// storeRoleArtifact commits the built artifact under its locator-scoped
+// key, hands it to the memo under --no-cache, or discards it under
+// --dry-run, as storeGitArtifacts does for collections.
 func storeRoleArtifact(ctx context.Context, deps collectionDeps, pin *rolePin, name string, result gitsource.RoleResult) error {
 	switch {
 	case deps.cfg != nil && deps.cfg.DryRun:

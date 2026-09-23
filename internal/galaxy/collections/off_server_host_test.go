@@ -34,33 +34,9 @@ type offServerHostGuardCase struct {
 	wantWarn    bool
 }
 
-// offServerHostGuardCases builds the guard-branch table for
-// warnIfOffServerDownloadHost, factored out of the test function itself so
-// the test body stays short, and split in two halves by expected outcome:
-// every origin mismatch that must warn, then every input that must stay
-// silent - a real origin match under varying spelling, and each branch this
-// function deliberately declines to judge (a blank base, an unparseable base
-// or download URL, and a download URL with no host at all) so a false alarm
-// never reaches CI output.
-//
-// Killing mutation, run: comparing lowercased Hostname() instead of
-// helpers.Origin fails the row "scheme downgrade on the same host warns" (and
-// the port row alongside it) with
-//
-//	downloadURL "http://galaxy.example.com/artifact.tar.gz" against base
-//	"https://galaxy.example.com": warned=false, want true (warns=[])
-//
-// A second mutation, also run - dropping the dl.Hostname() == "" guard - fails
-// the row "download URL without a host no warn" with
-//
-//	downloadURL "/local/artifact.tar.gz" against base
-//	"https://galaxy.example.com": warned=true, want false (warns=[Downloading
-//	/local/artifact.tar.gz from origin "://:", which differs from the
-//	configured server origin "https://galaxy.example.com:443"])
-//
-// which is what that guard is for: a hostname-less URL yields a degenerate
-// origin that matches nothing, so without it every relative download URL
-// raises a false alarm.
+// offServerHostGuardCases is every origin mismatch that must warn, then every
+// input that must stay silent: a real origin match, and the blank, unparseable
+// and hostless inputs the guard declines to judge, so no false alarm reaches CI.
 func offServerHostGuardCases() []offServerHostGuardCase {
 	return append(offServerOriginMismatchCases(), offServerOriginSilentCases()...)
 }
@@ -76,19 +52,16 @@ func offServerOriginMismatchCases() []offServerHostGuardCase {
 			wantWarn:    true,
 		},
 		{
-			// The same host reached over a different scheme and port is a
-			// different origin, and origin is what decides whether the request
-			// carries the operator's token and TLS policy at all - so this
-			// warns, where a hostname-only comparison stayed silent.
+			// Another scheme and port on the same host is another origin, and
+			// origin decides whether the operator's token and TLS policy apply.
 			name:        "same host different scheme and port warns",
 			base:        "https://galaxy.example.com:443",
 			downloadURL: "http://galaxy.example.com:8080/artifact.tar.gz",
 			wantWarn:    true,
 		},
 		{
-			// The narrow shape the row above generalizes, and the reason this
-			// item exists: nothing about the host changes, the transport
-			// silently stops being TLS, and no credential follows the request.
+			// The host is unchanged but the transport silently stops being
+			// TLS, and no credential follows the request.
 			name:        "scheme downgrade on the same host warns",
 			base:        "https://galaxy.example.com",
 			downloadURL: "http://galaxy.example.com/artifact.tar.gz",
@@ -110,9 +83,7 @@ func offServerOriginSilentCases() []offServerHostGuardCase {
 		},
 		{
 			// Origin fills in the scheme's default port, so an explicit :443
-			// against an implicit one is the same endpoint. This is also the
-			// table's proof that it can still fall silent under the stricter
-			// comparison, rather than warning about everything.
+			// and an implicit one are the same endpoint.
 			name:        "same origin with implicit default port no warn",
 			base:        "https://galaxy.example.com",
 			downloadURL: "https://galaxy.example.com:443/artifact.tar.gz",
@@ -144,9 +115,8 @@ func offServerOriginSilentCases() []offServerHostGuardCase {
 			wantWarn:    false,
 		},
 		{
-			// A download URL with no host at all (e.g. a bare local path) has
-			// an empty Hostname(), which is guarded against explicitly rather
-			// than treated as a mismatch.
+			// A hostless URL yields a degenerate origin matching nothing, so
+			// it is guarded explicitly rather than treated as a mismatch.
 			name:        "download URL without a host no warn",
 			base:        "https://galaxy.example.com",
 			downloadURL: "/local/artifact.tar.gz",
@@ -178,24 +148,9 @@ func TestWarnIfOffServerDownloadHostGuards(t *testing.T) {
 	}
 }
 
-// TestOffServerDownloadHostWarningCutsPresignedQuery proves the warning names
-// where the artifact is coming from without handing that capability to
-// everyone who can read the build log: a presigned download URL's query string
-// is a bearer token for the artifact, and this line goes to stderr in every
-// mode, quiet included.
-//
-// The path assertion is the positive half and is what keeps the cut honest: a
-// warning that had dropped the URL altogether would satisfy the query check
-// and would no longer say which download was off-server.
-//
-// Killing mutation, run: restoring the bare downloadURL in
-// warnIfOffServerDownloadHost's Warnf fails this with
-//
-//	off_server_host_test.go:213: warning line carries the presigned query:
-//	[Downloading https://cdn.other.example/artifact.tar.gz
-//	?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600
-//	from origin "https://cdn.other.example:443", which differs from the
-//	configured server origin "https://galaxy.example.com:443"]
+// TestOffServerDownloadHostWarningCutsPresignedQuery pins that the warning,
+// printed even under --quiet, names the download URL but not its presigned
+// query, which is a bearer capability for the artifact.
 func TestOffServerDownloadHostWarningCutsPresignedQuery(t *testing.T) {
 	t.Parallel()
 
@@ -217,28 +172,9 @@ func TestOffServerDownloadHostWarningCutsPresignedQuery(t *testing.T) {
 	}
 }
 
-// TestDownloadCollectionPrintsNoCapability drives the two halves of the rule
-// in one fixture, because they are only meaningful together: the request must
-// carry the presigned query whole - it is what the object store authenticates
-// the GET by - while the line announcing that request must not.
-//
-// The recorded query is the positive control, and a strong one: it fails if a
-// future cut is applied to the URL the request is built from rather than to
-// the one that is printed, which is exactly the shape that would silently
-// break every presigned download while leaving this test's other half green.
-//
-// Two killing mutations, both run. Restoring the bare collectionURL in
-// downloadCollection's Printf fails
-//
-//	off_server_host_test.go:272: printed line carries the presigned query:
-//	[🌐 Downloading http://127.0.0.1:57653/artifact.tar.gz
-//	?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600]
-//
-// - the port is the httptest server's own and differs on every run - and
-// cutting the URL handed to http.NewRequestWithContext instead fails
-//
-//	off_server_host_test.go:269: server saw query "", want the whole presigned
-//	query "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600"
+// TestDownloadCollectionPrintsNoCapability pins that the request carries the
+// presigned query whole, since the object store authenticates by it, while the
+// printed download line names the artifact without it.
 func TestDownloadCollectionPrintsNoCapability(t *testing.T) {
 	t.Parallel()
 
@@ -276,27 +212,9 @@ func TestDownloadCollectionPrintsNoCapability(t *testing.T) {
 	}
 }
 
-// TestDownloadCollectionErrorNamesNoCapability covers the third site in this
-// function that renders a server-supplied URL, alongside the announcement
-// TestDownloadCollectionPrintsNoCapability covers: the error a non-200
-// answer produces. It is the render most likely to be pasted somewhere
-// public, since it is the one an operator sees when a download fails.
-//
-// The positive half is asserted on the same fixture rather than trusted: the
-// error must still name the host and path, so "carries no capability" is not
-// satisfied by an error that names nothing. The status is asserted too,
-// since it is the other half of what makes the message actionable.
-//
-// Killing mutation, run: restoring the bare collectionURL in that fmt.Errorf
-// fails at off_server_host_test.go:320 with the query reproduced whole - the
-// assertion pins precisely "carries the presigned query", so the query is the
-// one part of this quote that must not be elided:
-//
-//	error text carries the presigned query: download failed:
-//	http://127.0.0.1:52265/artifact.tar.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600
-//	(403 Forbidden)
-//
-// The port is the httptest server's own and differs on every run.
+// TestDownloadCollectionErrorNamesNoCapability pins that the non-200 error
+// from downloadCollection names the artifact and the status but not the
+// presigned query.
 func TestDownloadCollectionErrorNamesNoCapability(t *testing.T) {
 	t.Parallel()
 
@@ -327,49 +245,13 @@ func TestDownloadCollectionErrorNamesNoCapability(t *testing.T) {
 	}
 }
 
-// unreachableArtifactHost is a loopback address with a port nothing can be
-// listening on: binding port 1 needs privileges no test run has, so the dial
-// is refused immediately and deterministically, with no ephemeral-port race
-// against another process and no packet leaving the host.
+// unreachableArtifactHost is loopback port 1, which no unprivileged test can
+// bind, so the dial is refused at once with no packet leaving the host.
 const unreachableArtifactHost = "https://127.0.0.1:1"
 
-// TestDownloadCollectionTransportErrorNamesNoCapability covers the remaining
-// render in downloadCollection, alongside the announcement and the non-200
-// error the two tests above cover: the error a request that never reached a
-// server produces. A refused dial, a DNS failure and a TLS handshake error all
-// land there, none of them needing a server to answer anything - a wider set
-// of occasions than the non-200 arm just below it in that function has.
-//
-// There is no password assertion, deliberately. net/http composes the
-// *url.Error through its own stripPassword, so the password is already "***"
-// before this code sees it and an assertion on it would pass with the cut
-// removed - documentary, not pinned. What net/http leaves whole is everything
-// else: the username, and the entire presigned query, which on an artifact URL
-// IS the capability. Those two are what the negative checks below pin.
-//
-// The positive checks are what keep the negative ones honest, and each is
-// reachable on its own. The message must still name the host and path, and
-// must still carry the transport cause - compared against the unwrapped
-// *url.Error's own inner error rather than a hardcoded "connection refused",
-// so it asserts the cause survived rather than restating one platform's
-// wording. errors.As must still reach that *url.Error, and downloadRetryable
-// must still answer true, which is the classification this must not move.
-//
-// Two killing mutations, both run. Restoring the bare err in
-// downloadCollection's transport arm fails the two negative checks and leaves
-// every positive one green; the first failure reads:
-//
-//	off_server_host_test.go:398: transport error text carries the presigned query:
-//	Get "https://u:***@127.0.0.1:1/artifact.tar.gz?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=deadbeefcafe&X-Amz-Expires=600":
-//	dial tcp 127.0.0.1:1: connect: connection refused
-//
-// The second labels that same value as carrying the userinfo prefix. Deleting
-// helpers.TransportURLError's Unwrap method fails the reachability check
-// instead, with the rendering left correct:
-//
-//	off_server_host_test.go:392: the transport failure is no longer reachable as
-//	*url.Error, which is what downloadRetryable and exitcode classify through:
-//	Get "https://127.0.0.1:1/artifact.tar.gz": dial tcp 127.0.0.1:1: connect: connection refused
+// TestDownloadCollectionTransportErrorNamesNoCapability pins that a transport
+// error drops the userinfo and presigned query net/http leaves in, yet keeps
+// host, path, the cause, *url.Error reachability and downloadRetryable.
 func TestDownloadCollectionTransportErrorNamesNoCapability(t *testing.T) {
 	t.Parallel()
 
@@ -400,9 +282,8 @@ func TestDownloadCollectionTransportErrorNamesNoCapability(t *testing.T) {
 	if strings.Contains(msg, "u:") {
 		t.Errorf("transport error text carries the userinfo prefix %q: %s", "u:", msg)
 	}
-	// Host and path without the scheme, so this stays green under the mutation
-	// below - a real control rather than a fourth assertion the same mutation
-	// happens to kill. The uncut message names them too, just behind "u:***@".
+	// Host and path without the scheme: the uncut message carries them too,
+	// behind "u:***@", so this positive control holds with or without the cut.
 	if !strings.Contains(msg, "127.0.0.1:1/artifact.tar.gz") {
 		t.Errorf("transport error text does not name the artifact: %s", msg)
 	}
@@ -440,10 +321,8 @@ func runOffHostInstall(t *testing.T, cfgServer string, server *httptest.Server, 
 		t.Fatalf("mkdir cacheDir: %v", err)
 	}
 
-	// Source is set explicitly to cfgServer here, mirroring what
-	// solverResultToResolvedGraph always stamps onto a real resolved
-	// collection: warnIfOffServerDownloadHost now compares against the
-	// collection's own bound server, not a package-wide cfg.Server.
+	// Source mirrors what solverResultToResolvedGraph stamps on a resolved
+	// collection: the warning compares against the collection's own server.
 	col := collection{Namespace: "acme", Name: "offhost", Version: "1.0.0", Source: cfgServer}
 	meta := &types.GalaxyCollectionVersionInfo{DownloadURL: server.URL}
 	meta.Artifact.Sha256 = sha
@@ -453,9 +332,8 @@ func runOffHostInstall(t *testing.T, cfgServer string, server *httptest.Server, 
 		CacheDir:     cacheDir,
 		DownloadPath: downloadPath,
 		Workers:      1,
-		// NoDeps set purely for symmetry with the other fixtures in this
-		// package that reuse buildMinimalTarGz, whose artifact carries no
-		// dependencies.
+		// NoDeps matches the other buildMinimalTarGz fixtures, whose artifact
+		// carries no dependencies.
 		NoDeps: true,
 	}
 
@@ -473,15 +351,9 @@ func runOffHostInstall(t *testing.T, cfgServer string, server *httptest.Server, 
 	return printer, filepath.Join(downloadPath, "ansible_collections", col.Namespace, col.Name)
 }
 
-// TestOffServerDownloadHostWarns proves the warning fires, and the install
-// still succeeds, when an artifact's download URL resolves to a different
-// host than the configured Galaxy server - the shape a poisoned or
-// off-server-redirected cached download_url would take. cfg.Server is never
-// dialed here: meta is passed in directly as an override, exactly like a
-// value served from a cached snapshot, so this proves the warning covers
-// that path and not just a freshly fetched one. The assertion targets the
-// Warnf channel specifically: this is a security/integrity signal that must
-// survive --quiet, unlike the transient Printf tier.
+// TestOffServerDownloadHostWarns pins that a download URL on another origin
+// than the collection's server, passed in as a cached snapshot would be, warns
+// through Warnf (which survives --quiet) and the install still succeeds.
 func TestOffServerDownloadHostWarns(t *testing.T) {
 	t.Parallel()
 	server, sha := newOffHostTestServer(t)

@@ -1,11 +1,8 @@
 package collections
 
-// This file pins how verification composes with the rest of the install
-// pipeline: which failures may evict a cached artifact, what a cache hit costs
-// a verifying run, where warm runs the check, and how a per-collection verdict
-// reaches an exit code. The verification behavior itself - what verifies, what
-// does not, and what is warned about - is verify_test.go's, whose fixtures this
-// file reuses.
+// This file pins how verification composes with the install pipeline: which
+// failures evict a cached artifact, what a cache hit costs, where warm verifies
+// and how a verdict reaches an exit code. It reuses verify_test.go's fixtures.
 
 import (
 	"context"
@@ -38,13 +35,9 @@ type signedCacheFixture struct {
 	manifestJSON []byte
 }
 
-// newSignedCacheFixture seeds an artifact into a real local artifact store,
-// alongside the sha sidecar that makes it a cache hit, and points its metadata
-// at a server serving the same bytes back.
-//
-// The server matters only to the eviction rows: a refetch that failed to reach
-// an origin would end the run with a download error and hide whether an
-// eviction happened at all, which is the one thing those rows measure.
+// newSignedCacheFixture seeds an artifact and its sha sidecar into a real local
+// artifact store and points its metadata at a server serving the same bytes, so
+// a refetch succeeds and a download error cannot hide whether eviction ran.
 func newSignedCacheFixture(t *testing.T, breakChain bool, sources []string) *signedCacheFixture {
 	t.Helper()
 	tarPath, manifestJSON := buildSignedArtifact(t, breakChain)
@@ -102,25 +95,9 @@ func newSignedCacheFixture(t *testing.T, breakChain bool, sources []string) *sig
 	}
 }
 
-// TestSignatureSourceFailureDoesNotEvictTheArtifact is the load-bearing proof
-// for isSignatureSourceFailure: a signature source that cannot be read is not
-// the cached artifact's fault, so the artifact must survive the failure
-// untouched. Without that predicate, prepareWithRecovery's action arm would
-// evict on this cause like on any other - a destructive Delete against shared
-// cache state plus a full re-download, on every affected run, with the refetched
-// bytes failing at the identical unreadable source.
-//
-// The second row is the positive control on the same harness: a manifest chain
-// that does not match IS an artifact-side failure, so the identical fixture -
-// same counting store, same seeded cache hit, same origin server - does evict
-// exactly once. Without it, "zero evictions" would be indistinguishable from a
-// harness whose Delete this path never reaches at all.
-//
-// KILLING MUTATION, run and reverted: the isSignatureSourceFailure conjunct
-// deleted from prepareWithRecovery's action guard. Only the first row fails:
-//
-//	verify_pipeline_test.go:137: Delete calls = 1, want 0: a signature source
-//	that could not be read is not the artifact's fault
+// TestSignatureSourceFailureDoesNotEvictTheArtifact pins isSignatureSourceFailure:
+// an unreadable signature source is not the artifact's fault and evicts nothing,
+// while a chain mismatch on the same harness evicts once (the positive control).
 func TestSignatureSourceFailureDoesNotEvictTheArtifact(t *testing.T) {
 	t.Parallel()
 
@@ -142,11 +119,8 @@ func TestSignatureSourceFailureDoesNotEvictTheArtifact(t *testing.T) {
 	t.Run("a chain mismatch on the same harness evicts once", func(t *testing.T) {
 		t.Parallel()
 		fx := newSignedCacheFixture(t, true, nil)
-		// Written after construction, which verifyContext's own contract
-		// otherwise forbids: the signature has to be made over THIS fixture's
-		// manifest, which does not exist until the artifact is built. It is
-		// safe here and nowhere in production - this is one goroutine, before
-		// any worker exists - and it is not license to write the map elsewhere.
+		// Written after construction, which verifyContext forbids elsewhere: the
+		// signature must cover this fixture's manifest, and no worker exists yet.
 		fx.deps.verify.sources[requirementKey(testSignedCollection)] =
 			[]string{writeTestSignature(t, fx.manifestJSON)}
 
@@ -160,22 +134,9 @@ func TestSignatureSourceFailureDoesNotEvictTheArtifact(t *testing.T) {
 	})
 }
 
-// TestCacheHitForcesMetadataWhenVerifying pins the conjunct prepareInstall's
-// fast path grew: a verifying run does not serve a cache hit without version
-// metadata, because a server's own signatures ride on that document and
-// skipping it would silently reduce the gathered set to whatever the
-// requirements file named.
-//
-// The second row is the positive control on the identical cache hit and the
-// identical fake server: with verification off, the fast path is taken and the
-// server sees no request at all, so the first row's requests are the conjunct's
-// doing rather than something every cache hit pays.
-//
-// KILLING MUTATION, run and reverted: the `&& !deps.verify.enabled()` conjunct
-// deleted from prepareInstall's fast path. Only the first row fails:
-//
-//	verify_pipeline_test.go:190: fake server request count = 0, want at least
-//	one version-metadata request while verifying
+// TestCacheHitForcesMetadataWhenVerifying pins that a verifying run fetches
+// version metadata on a cache hit, since a server's signatures ride on it; with
+// verification off the same hit costs no request (the control).
 func TestCacheHitForcesMetadataWhenVerifying(t *testing.T) {
 	t.Parallel()
 
@@ -204,10 +165,9 @@ func TestCacheHitForcesMetadataWhenVerifying(t *testing.T) {
 	})
 }
 
-// newCacheHitMetadataFixture seeds a cache hit for a collection the fake Galaxy
-// server also publishes, and returns the server alongside deps that either
-// verify or do not. The artifact's bytes are the fake server's own, so the
-// verifying row's metadata fetch describes the artifact it finds cached.
+// newCacheHitMetadataFixture seeds a cache hit of the fake server's own bytes
+// and returns the server with deps that verify or not, so the verifying row's
+// metadata describes the cached artifact.
 func newCacheHitMetadataFixture(t *testing.T, verifying bool) (*fakegalaxy.Server, installDeps, collection) {
 	t.Helper()
 	srv := fakegalaxy.New(t)
@@ -249,17 +209,9 @@ func newCacheHitMetadataFixture(t *testing.T, verifying bool) (*fakegalaxy.Serve
 	}, col
 }
 
-// TestWarmVerifiesSignatures pins warm's own insertion point: signatures: on a
-// requirements entry is checked by warm, not only by install, and it is checked
-// where warmVerifyAndEnsure runs it - after the lockfile pin and before the
-// artifact is materialized in the extracted store every later install
-// hardlinks from.
-//
-// The three rows are one fixture with one thing changed each time: a signature
-// that does not verify is refused, the same artifact with a signature that does
-// verify is accepted (the positive control, without which the refusal could be
-// a fixture nothing accepts), and a wrong pin alongside the bad signature
-// reports the pin - which is what pins the order of the two checks.
+// TestWarmVerifiesSignatures pins that warmVerifyAndEnsure refuses a signature
+// that does not verify, accepts one that does on the same artifact, and checks
+// the lockfile pin before the signature.
 func TestWarmVerifiesSignatures(t *testing.T) {
 	t.Parallel()
 	tarPath, manifestJSON := buildSignedArtifact(t, false)
@@ -299,18 +251,9 @@ func TestWarmVerifiesSignatures(t *testing.T) {
 	})
 }
 
-// TestSignatureVerdictAggregatesToTheSignatureExitClass carries two REAL
-// verdicts - the errors verifyCollectionSignatures itself builds, collection
-// key and all - through the aggregation a per-collection worker performs, and
-// asserts the exit code an operator's CI branches on.
-//
-// cmd/go-galaxy/exitcode's own signatureExitCases already pins the ordering
-// for both shapes, with a bare sentinel and with a synthetically aggregated
-// one (aggregatedBehindInstallFailure(helpers.ErrManifestChainMismatch),
-// which never leaves the production wrap shape); what the two subtests below
-// add is that the shape this package actually produces survives aggregation
-// too, so a future wrap here that hid a sentinel behind something errors.Is
-// cannot walk would fail where a synthetic row could not.
+// TestSignatureVerdictAggregatesToTheSignatureExitClass carries real verdicts
+// from verifyCollectionSignatures through failureRecorder, so a wrap here that
+// hid a sentinel from errors.Is fails where exitcode's synthetic rows cannot.
 func TestSignatureVerdictAggregatesToTheSignatureExitClass(t *testing.T) {
 	t.Parallel()
 
@@ -332,17 +275,9 @@ func TestSignatureVerdictAggregatesToTheSignatureExitClass(t *testing.T) {
 		}
 	})
 
-	// The chain-mismatch verdict is doubly wrapped by the time it reaches
-	// aggregation, and that shape is the point of this subtest: verify.go's
-	// own chain check wraps manifest.VerifyChain's error with its own
-	// "%s: %w" (naming col.key()), and VerifyChain itself already wrapped its
-	// inner helpers.ErrManifestChainMismatch with a "%s: %w" of its own
-	// (naming the artifact path) before that. Measured: exitcode.FromError on
-	// the bare verifyCollectionSignatures error is ExitIntegrity (7), and it
-	// stays 7 once wrapped through failureSummary.installError's own
-	// headline - which is the claim, since isIntegrityError sits ahead of
-	// isSignatureError and isInstallError in exitcode's own ordered table, so
-	// a doubly-wrapped chain mismatch must never be mistaken for either.
+	// A chain mismatch arrives wrapped twice, by verifyCollectionSignatures over
+	// manifest.VerifyChain, and stays ExitIntegrity bare and aggregated, since
+	// isIntegrityError precedes isSignatureError and isInstallError in exitcode.
 	t.Run("a chain-mismatch verdict aggregates to the integrity exit class", func(t *testing.T) {
 		t.Parallel()
 		tarPath, manifestJSON := buildSignedArtifact(t, true)
@@ -365,16 +300,9 @@ func TestSignatureVerdictAggregatesToTheSignatureExitClass(t *testing.T) {
 	})
 }
 
-// TestSignatureFetchDeadlineFiresOnAStalledSource proves the budget is really
-// wired around the gather, not merely declared: a source that accepts the
-// connection and never answers is ended by this collection's own signature
-// budget, and the failure is reported as that budget rather than as a caller's
-// cancellation.
-//
-// The budget is shrunk through Infra's test-only override, which is the only
-// thing that field exists for. The stall is the server refusing to answer until
-// the request's context is done, so nothing here waits on a wall clock beyond
-// the override itself.
+// TestSignatureFetchDeadlineFiresOnAStalledSource pins that a source that never
+// answers is ended by the collection's own signature budget and reported as
+// ErrSignatureFetchDeadline (exit network), never as a caller's cancellation.
 func TestSignatureFetchDeadlineFiresOnAStalledSource(t *testing.T) {
 	t.Parallel()
 	tarPath, _ := buildSignedArtifact(t, false)
@@ -399,20 +327,9 @@ func TestSignatureFetchDeadlineFiresOnAStalledSource(t *testing.T) {
 	}
 }
 
-// TestVerifyContextIsSafeForConcurrentUse exercises what verifyContext,
-// signature.Verify and signature.Keyring all claim in prose: one keyring, one
-// policy and one fetcher, read by every worker of a run without
-// synchronization.
-//
-// It is named from signature.Verify's own doc comment, which until this test
-// existed declined to claim the property had been observed rather than only
-// argued. Under -race, which is how CI runs this package, a write anywhere on
-// that shared state fails here.
-//
-// The collections differ per goroutine while the context is shared, which is
-// the real shape: workers verify different artifacts through one context. Half
-// the goroutines take the requirement-source path and half the server-blob
-// path, so both gathers run concurrently against the same fetcher.
+// TestVerifyContextIsSafeForConcurrentUse shares one verifyContext (keyring,
+// policy, fetcher) across workers verifying through both gather paths; under
+// -race, any write to that shared state fails here.
 func TestVerifyContextIsSafeForConcurrentUse(t *testing.T) {
 	t.Parallel()
 	const workers = 32
@@ -443,26 +360,9 @@ func TestVerifyContextIsSafeForConcurrentUse(t *testing.T) {
 	}
 }
 
-// TestSignatureVerdictDoesNotEvictTheArtifact pins the exclusion of
-// helpers.ErrSignatureVerificationFailed from prepareWithRecovery's
-// evict-and-refetch.
-//
-// A server's own signatures come from the version metadata, and the retry
-// re-reads the same cached metadata, so one junk entry there would otherwise
-// cost a deleteObject against shared cache state plus a full re-download on
-// every run, reaching the identical verdict - a destructive write primitive a
-// hostile or broken server triggers at will.
-//
-// The second row is the positive control on the same harness, and it is the
-// same one the source-failure test uses for the same reason: a chain mismatch
-// IS about the artifact's own content, so it still evicts exactly once. The
-// pair is what makes the first row a statement about which verdicts evict
-// rather than about a harness whose Delete is never reached.
-//
-// KILLING MUTATION, run and reverted: isBlobSetVerdict dropped from
-// unrepairableByRefetch's disjunction. The first row fails:
-//
-//	verify_pipeline_test.go:479: Delete calls = 1, want 0: a verdict over the gathered blobs is not the artifact's fault
+// TestSignatureVerdictDoesNotEvictTheArtifact pins isBlobSetVerdict: a retry
+// re-reads the same cached metadata, so a failed verdict must not buy a hostile
+// server a cache delete per run; a chain mismatch still evicts once (control).
 func TestSignatureVerdictDoesNotEvictTheArtifact(t *testing.T) {
 	t.Parallel()
 
@@ -497,15 +397,9 @@ func TestSignatureVerdictDoesNotEvictTheArtifact(t *testing.T) {
 	})
 }
 
-// TestSkippedCollectionsAreReportedWhenVerifying pins the line an operator gets
-// on the run that starts verifying an existing workspace: every collection is
-// already installed, the gate skips them all, nothing is verified, and the
-// per-collection skip lines sit on the transient tier that --quiet and a
-// non-TTY CI both drop.
-//
-// The second row is the control: with verification off there is nothing to
-// report and the line must not appear, so it is not one more line on every
-// ordinary re-run.
+// TestSkippedCollectionsAreReportedWhenVerifying pins the result-tier line that
+// counts already-installed collections a verifying run skipped unverified; with
+// verification off the line must not appear on every ordinary re-run.
 func TestSkippedCollectionsAreReportedWhenVerifying(t *testing.T) {
 	t.Parallel()
 

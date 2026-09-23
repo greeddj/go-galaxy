@@ -77,10 +77,9 @@ func TestSaveLoadReportRoundTrip(t *testing.T) {
 	}
 }
 
-// TestSaveReportWritesAnEmptyArrayForNoSamples pins the one visible
-// difference encoding/json/v2 makes here. v1 wrote null for a nil slice,
-// which reads as "there is no such field"; [] is the truer statement about a
-// series that ran and produced nothing.
+// TestSaveReportWritesAnEmptyArrayForNoSamples pins that a series with no
+// successful run is written as "samples_ms": [] (encoding/json/v2), not the
+// null v1 wrote for a nil slice.
 func TestSaveReportWritesAnEmptyArrayForNoSamples(t *testing.T) {
 	path := filepath.Join(t.TempDir(), reportName)
 	report := sampleReport()

@@ -9,10 +9,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// TestClearCacheFilesPreservesLiveState proves --clear-cache never touches
-// the live consolidated snapshot database: a store saved before the clear
-// must still load with its data intact afterward, while an unrelated
-// tarball is swept away.
+// TestClearCacheFilesPreservesLiveState pins that --clear-cache sweeps a stray
+// tarball but keeps the lock file and the Bolt snapshot, whose saved data still
+// loads afterward.
 func TestClearCacheFilesPreservesLiveState(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -57,12 +56,9 @@ func TestClearCacheFilesPreservesLiveState(t *testing.T) {
 	}
 }
 
-// TestIsDeleteCacheNameNeverDeletesLiveArtifacts is a focused unit check on
-// the delete predicate: it must never mark the active lock file or the live
-// consolidated database as safe to remove, since deleting either would open
-// the flock inode-reuse hole (a second process re-creating the lock path
-// while the first still holds a flock on the unlinked inode) or destroy the
-// only copy of cached state.
+// TestIsDeleteCacheNameNeverDeletesLiveArtifacts pins that the delete set holds
+// neither the lock file (unlinking a flocked file lets two runs hold the lock)
+// nor the Bolt snapshot, the only copy of cached state.
 func TestIsDeleteCacheNameNeverDeletesLiveArtifacts(t *testing.T) {
 	t.Parallel()
 	if isDeleteCacheName(helpers.StoreDBLock) {
@@ -153,13 +149,9 @@ func assertFileAbsent(t *testing.T, dir, name string) {
 	}
 }
 
-// TestClearCacheFilesUnlinksASymlinkedEntryWithoutFollowingIt pins the second
-// half of why the cache directory's flat layout needs no containment root:
-// the sweeps here delete by os.Remove, which unlinks a symlink rather than
-// following it, so a link planted at a sweepable name cannot redirect the
-// deletion at whatever it points to. The victim's survival is the refusal;
-// the link's disappearance is the positive control that the sweep ran at all
-// and did consider this entry.
+// TestClearCacheFilesUnlinksASymlinkedEntryWithoutFollowingIt pins that a link
+// planted at a sweepable name is unlinked by os.Remove and its target survives,
+// which is why the flat cache directory needs no containment root.
 func TestClearCacheFilesUnlinksASymlinkedEntryWithoutFollowingIt(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

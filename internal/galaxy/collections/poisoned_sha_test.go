@@ -1,17 +1,8 @@
 package collections
 
-// This file is the end-to-end proof that a poisoned artifact sha256 - a
-// traversal string arriving via either of the two reachable sources
-// resolveArtifactSHA and canSkipInstall read - never reaches the filesystem
-// operations marker.go's markerRel guards, and, for the
-// resolveArtifactSHA route, never gets persisted into the snapshot either.
-// Every victim file below sits outside the collection's own install
-// directory but deliberately inside the rooting boundary: openCollectionsRoot
-// establishes its os.Root at cfg.DownloadPath, and each traversal sha is
-// sized to land back under that root rather than escape it. That placement is
-// what puts markerRel under test at all - a victim beyond the root would be
-// refused by target.root first, and every assertion here would hold without
-// markerRel ever being consulted.
+// Tests that a traversal string posing as a sha256, from metadata or the
+// snapshot, never reaches the filesystem calls markerRel guards. Victims sit
+// inside the os.Root at DownloadPath so markerRel, not the root, refuses them.
 
 import (
 	"context"
@@ -32,53 +23,9 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
-// TestInstallRejectsPoisonedMetadataSHAOnCacheHit covers the full
-// meta.Artifact.Sha256 route. The artifact cache is primed so isCacheHit is
-// true, and installCollection is driven with a metaOverride whose
-// Artifact.Sha256 is a traversal string - raw Galaxy API JSON a server
-// controls.
-//
-// A traversal sha can never actually complete an install and reach
-// recordInstall, in every configuration this pipeline can be in - not
-// specifically via writeExtractMarker's hard error: extractCollection also
-// fails via archive.ExtractTarGz on a non-gzip tarball (this fixture's own
-// shape, seeded below), or via extracted.Ensure when an extract store is
-// configured, or via writeExtractMarker's hard error on a valid tarball with
-// no extract store. So "no installed entry" (assertion (c)) is a real
-// invariant this test still asserts, but it holds regardless of whether
-// resolveArtifactSHA's own guard is present, and is kept as a
-// non-discriminating invariant guard rather than as proof of this specific
-// guard - the discrepancy was found by actually removing the guard and
-// observing (c) still pass.
-//
-// A working fakegalaxy origin is wired in (not just a stub) so the
-// discriminating assertions below are meaningful: without
-// resolveArtifactSHA's guard, the cache-hit path's extraction failure
-// (ExtractTarGz on this fixture's non-gzip bytes) triggers
-// prepareWithRecovery's evict-and-refetch recovery, which reaches the origin
-// once and only fails there via a separate, unrelated check
-// (verifyDownloadSHA comparing the freshly refetched bytes against the same
-// poisoned value) - and, on the way, evicts the cached artifact this test
-// seeded. With the guard present, none of that happens: rejection is
-// immediate, before any refetch. Verified by mutation (guard removed vs
-// present):
-//
-//	                      guard present              guard removed
-//	error class           ErrMalformedArtifactSHA256  ErrSHA256Mismatch
-//	cached artifact        survives                    evicted
-//	origin requests        0                           1
-//	installed entry        absent                      also absent
-//
-// The eviction is the real harm assertion (f) below guards: without the
-// guard, evictCorruptCachedArtifact destroys a perfectly good cached
-// tarball on the strength of a poisoned metadata entry, and since the
-// metadata cache is what is poisoned, the eviction repairs nothing - it
-// recurs every run, one destroyed cache entry and one wasted origin round
-// trip per poisoned collection, forever. The error class (assertion (e)) is
-// the other half: ErrSHA256Mismatch tells an operator two valid digests
-// disagree and a refetch may help, when the truth is that the value was
-// never a digest at all, sending them to hunt a corrupt artifact that is
-// fine.
+// TestInstallRejectsPoisonedMetadataSHAOnCacheHit pins that a traversal
+// meta.Artifact.Sha256 on a cache hit fails as ErrMalformedArtifactSHA256 with
+// no refetch and the cached artifact kept, never evicted over bad metadata.
 func TestInstallRejectsPoisonedMetadataSHAOnCacheHit(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -98,11 +45,8 @@ func TestInstallRejectsPoisonedMetadataSHAOnCacheHit(t *testing.T) {
 	artifactPath := filepath.Join(cacheDir, artifactKey(col))
 	mustWriteFile(t, artifactPath, []byte("cached tarball bytes, irrelevant to this test"))
 
-	// The canary this test's assertion (b) protects: a file outside the
-	// collection's own install directory, at the location the traversal sha
-	// below would have reached had marker.go's own guard not rejected the sha
-	// first - see this file's package doc for why it has to stay inside the
-	// rooting boundary.
+	// The canary for assertion (b): where the traversal sha would land, outside
+	// the install directory but inside the root, as the file comment explains.
 	victim := filepath.Join(downloadPath, "home", "ci", ".ssh", "authorized_keys")
 	const victimContent = "ssh-ed25519 AAAA... ci@legit\n"
 	mustMkdirAll(t, filepath.Dir(victim))
@@ -127,10 +71,8 @@ func TestInstallRejectsPoisonedMetadataSHAOnCacheHit(t *testing.T) {
 		root:           root,
 	}
 
-	// A real, working DownloadURL is deliberately wired in (not left empty):
-	// with the guard removed, prepareWithRecovery's evict-and-refetch
-	// recovery actually reaches this origin once, which is exactly the
-	// srv.Count assertion below.
+	// A working DownloadURL, so an unguarded run's evict-and-refetch would
+	// really reach the origin and trip the srv.Count assertion.
 	metaOverride := &types.GalaxyCollectionVersionInfo{}
 	metaOverride.DownloadURL = srv.URL() + "/download/" + fmt.Sprintf("%s-%s-%s.tar.gz", version.Namespace, version.Name, version.Version)
 	metaOverride.Artifact.Sha256 = "../../../../../home/ci/.ssh/authorized_keys"
@@ -149,29 +91,16 @@ func TestInstallRejectsPoisonedMetadataSHAOnCacheHit(t *testing.T) {
 	if !errors.Is(err, helpers.ErrMalformedArtifactSHA256) {
 		t.Errorf("(e) installCollection error = %v, want errors.Is helpers.ErrMalformedArtifactSHA256", err)
 	}
-	// (f): a poisoned metadata entry must never cost a good cached artifact.
-	// Without resolveArtifactSHA's guard, the cache-hit extraction failure
-	// triggers evictCorruptCachedArtifact, which deletes artifactPath (and
-	// its sidecar) on the strength of a value that was never a digest -
-	// destroying a real cache entry to "recover" from a metadata problem
-	// eviction cannot fix.
+	// (f): a poisoned metadata entry must never cost a good cached artifact;
+	// eviction cannot repair a metadata problem, so it would recur every run.
 	if _, statErr := os.Stat(artifactPath); statErr != nil {
 		t.Errorf("(f) expected the cached artifact to survive, stat error: %v", statErr)
 	}
 }
 
-// TestCanSkipInstallRefusesPoisonedSnapshotSHA covers the first reachable
-// route, canSkipInstall reading entry.ArtifactSHA256 straight from a
-// (possibly poisoned) persisted snapshot. A real victim is seeded at the
-// location the traversal sha would reach, and canSkipInstall must both
-// report false (so installCollection reinstalls rather than trusting the
-// poisoned record) and never touch the victim on the way to that answer.
-//
-// The GALAXY.yml sidecar matchingInstalledRecord also checks is seeded here,
-// deliberately: without it, matchingInstalledRecord would already report false
-// for that unrelated reason, letting a regression in its own
-// markerRel guard hide behind the missing sidecar instead of being
-// caught by this test.
+// TestCanSkipInstallRefusesPoisonedSnapshotSHA pins that a traversal
+// ArtifactSHA256 in the snapshot makes canSkipInstall report false without
+// touching the victim; the sidecar is seeded so only markerRel can refuse.
 func TestCanSkipInstallRefusesPoisonedSnapshotSHA(t *testing.T) {
 	t.Parallel()
 	sandbox := t.TempDir()
@@ -186,10 +115,8 @@ func TestCanSkipInstallRefusesPoisonedSnapshotSHA(t *testing.T) {
 	mustMkdirAll(t, infoDir)
 	mustWriteFile(t, filepath.Join(infoDir, "GALAXY.yml"), sidecarFor(col))
 
-	// installPath is DownloadPath/ansible_collections/acme/widgets - three
-	// real path elements under downloadPath - so five ".." segments (no
-	// leading dot) land exactly at downloadPath itself, which keeps this
-	// test's victim inside its own sandbox at this shallower depth.
+	// installPath is three elements under downloadPath, so these ".." segments
+	// land the victim back inside downloadPath, within this test's sandbox.
 	const traversalSHA = "../../../../../home/ci/.ssh/authorized_keys"
 	victim := filepath.Join(downloadPath, "home", "ci", ".ssh", "authorized_keys")
 	const victimContent = "ssh-ed25519 AAAA... ci@legit\n"
@@ -209,14 +136,9 @@ func TestCanSkipInstallRefusesPoisonedSnapshotSHA(t *testing.T) {
 	assertFileContent(t, victim, victimContent)
 }
 
-// TestInstallRecordMatchesRefusesUnsafeMarkerSHA proves
-// matchingInstalledRecord's own markerRel call specifically, independent of
-// canSkipInstall's separate verifyExtractMarker backstop: a file is seeded at
-// exactly the location a naive filepath.Join(<marker dir>,
-// helpers.ExtractMarkerPrefix+entry.ArtifactSHA256) would find present - so
-// a bare os.Stat-based check using that join would coincidentally succeed
-// and falsely report a match - and installRecordMatches must still return
-// false, because it never even reaches that os.Stat call for an unsafe sha.
+// TestInstallRecordMatchesRefusesUnsafeMarkerSHA pins matchingInstalledRecord's
+// own markerRel guard: a file sits where an unguarded marker join would stat,
+// and installRecordMatches must still report false for the unsafe sha.
 func TestInstallRecordMatchesRefusesUnsafeMarkerSHA(t *testing.T) {
 	t.Parallel()
 	sandbox := t.TempDir()
@@ -231,10 +153,8 @@ func TestInstallRecordMatchesRefusesUnsafeMarkerSHA(t *testing.T) {
 	mustMkdirAll(t, infoDir)
 	mustWriteFile(t, filepath.Join(infoDir, "GALAXY.yml"), sidecarFor(col))
 
-	// The coincidental file: exactly where an unguarded join of the marker
-	// directory - the version's .info, two elements under downloadPath - with
-	// helpers.ExtractMarkerPrefix+sha would land for this traversal sha, so a
-	// bare os.Stat would find it and, with no shape guard, "marker present".
+	// Where an unguarded join of the .info marker directory with
+	// helpers.ExtractMarkerPrefix+sha would land, so a bare stat would find it.
 	const traversalSHA = "../../../../home/ci/.ssh/authorized_keys"
 	coincidental := filepath.Join(downloadPath, "home", "ci", ".ssh", "authorized_keys")
 	mustMkdirAll(t, filepath.Dir(coincidental))

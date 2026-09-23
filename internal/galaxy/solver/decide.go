@@ -7,13 +7,9 @@ import (
 	"slices"
 )
 
-// packageIsExactPin reports whether pkg currently has an exact pin: before
-// its universe is fetched, a positive accumulation that still carries a
-// singleton's concrete version (a "=X" or bare-version constraint folded
-// over the identity seed); after the fetch, an accumulation permitting
-// exactly one published candidate. The pre-fetch form matters because it
-// carries the original registry spelling, which the decision and its
-// dependency fetches key on.
+// packageIsExactPin reports pkg's exact pin: before the universe fetch, a
+// positive accumulation that is a singleton (it keeps the registry spelling
+// the decision keys on); after it, one published candidate left.
 func (s *solveState) packageIsExactPin(pkg string) (Version, bool) {
 	p := s.ps.pkgState(pkg)
 	u := s.uniFor(pkg)
@@ -47,21 +43,17 @@ func (s *solveState) versionPassesAccum(pkg string, v Version) bool {
 	return termPermits(s.ps.pkgState(pkg).accum, v)
 }
 
-// probeWorthTrying reports whether the provider.Highest probe can settle
-// pkg without ever fetching its full universe: pkg must carry a positive
-// requirement (a negative-only accumulation never asserts selection) and
-// its universe must not already be fetched (once it is, deciding from the
-// allowed candidates is both exact and free).
+// probeWorthTrying reports whether the provider.Highest probe may settle pkg
+// without fetching its universe: pkg needs a positive requirement, since a
+// negative-only accumulation never asserts selection.
 func (s *solveState) probeWorthTrying(pkg string) bool {
 	p := s.ps.pkgState(pkg)
 	return len(p.indices) > 0 && p.accum.Positive
 }
 
-// candidatePackages returns, sorted ascending by name, every package that
-// has at least one positive derivation and no decision yet - the pool
-// package prioritization (9.1) chooses from. The accumulation's sign is
-// that test: it flips positive on the first positive assignment and never
-// flips back.
+// candidatePackages returns, sorted by name, every undecided package with a
+// positive accumulation, which flips positive on the first positive
+// assignment and never back: the pool pickPackage chooses from.
 func (s *solveState) candidatePackages() []string {
 	names := make([]string, 0, len(s.ps.packages))
 	for pkg, p := range s.ps.packages {
@@ -76,12 +68,9 @@ func (s *solveState) candidatePackages() []string {
 	return names
 }
 
-// pickPackage selects the next package to decide per the frozen
-// prioritization: exact pins first, then packages that have caused a
-// conflict (higher conflict count first), then fetched packages with the
-// fewest allowed candidates, then everything else - ties broken ascending
-// by name throughout, which candidatePackages' own sort already guarantees
-// as the stable base order every class filter preserves.
+// pickPackage chooses the next package by the frozen priority: exact pins,
+// then highest conflict count, then fetched packages with the fewest allowed
+// candidates, then the rest, ties broken by candidatePackages' name order.
 func (s *solveState) pickPackage() (string, bool) {
 	names := s.candidatePackages()
 	if len(names) == 0 {
@@ -156,17 +145,9 @@ type decisionOutcome struct {
 	done bool
 }
 
-// makeDecision implements decision making: pick a package, resolve it to a
-// concrete version as cheaply as possible (the exact-pin and highest-probe
-// fast paths avoid ever fetching a universe when they can), and either
-// decide it or report an empty-candidate/unknown-package incompatibility so
-// the next propagation round can act on it. An empty candidate pool means
-// the solve is complete: under signed terms a package required by any
-// decided parent always carries a positive accumulation (the dependency
-// term is derivable against negative-only facts, never vacuously settled by
-// them), so every requirement either sits in the pool or is already
-// decided; extractResult's completeness guard stands behind that as the
-// fail-closed assertion.
+// makeDecision picks a package and decides it, via the exact-pin and probe
+// fast paths when they apply. An empty pool means the solve is complete: a
+// decided parent's requirement is positive, so it is pooled or decided.
 func (s *solveState) makeDecision(ctx context.Context) (string, bool, error) {
 	pkg, ok := s.pickPackage()
 	if !ok {
@@ -178,11 +159,9 @@ func (s *solveState) makeDecision(ctx context.Context) (string, bool, error) {
 	return s.decideFromAllowed(ctx, pkg)
 }
 
-// tryFastDecide attempts pkg's decision fast paths in priority order (exact
-// pin, then the provider.Highest probe), fetching pkg's universe along the
-// way when a fast path cannot be confirmed cheaply. Returns nil when no
-// fast path applied and the caller should fall through to
-// decideFromAllowed.
+// tryFastDecide tries the exact-pin then the provider.Highest probe fast
+// path, fetching the universe when neither can be confirmed cheaply; nil
+// means fall through to decideFromAllowed.
 func (s *solveState) tryFastDecide(ctx context.Context, pkg string) *decisionOutcome {
 	u := s.uniFor(pkg)
 	if vp, isPin := s.packageIsExactPin(pkg); isPin {
@@ -199,12 +178,9 @@ func (s *solveState) tryFastDecide(ctx context.Context, pkg string) *decisionOut
 	return nil
 }
 
-// tryDecidePin attempts to decide pkg at its already-known exact pin vp
-// without a universe fetch when possible (either pkg's universe is already
-// fetched, or the pin already passes the accumulated assignments), fetching
-// the universe otherwise so decideFromAllowed can re-verify the pin for
-// real. Returns nil when the caller should fall through to
-// decideFromAllowed itself.
+// tryDecidePin decides pkg at its pin vp when the universe is fetched or vp
+// passes the accumulation, else fetches the universe so decideFromAllowed
+// re-verifies it; nil means fall through.
 func (s *solveState) tryDecidePin(ctx context.Context, pkg string, u *packageUniverse, vp Version) *decisionOutcome {
 	if u.fetched || s.versionPassesAccum(pkg, vp) {
 		pkg, done, err := s.decideVersion(ctx, pkg, vp)
@@ -216,11 +192,9 @@ func (s *solveState) tryDecidePin(ctx context.Context, pkg string, u *packageUni
 	return nil
 }
 
-// tryDecideByProbe attempts the provider.Highest probe fast path before ever
-// fetching pkg's full universe, fetching it (but not deciding) if the probe
-// is unavailable or its candidate does not satisfy the accumulated
-// assignments. Returns nil when the caller should fall through to
-// decideFromAllowed itself.
+// tryDecideByProbe decides pkg at the provider.Highest version when it
+// passes the accumulation, else fetches the universe without deciding; nil
+// means fall through to decideFromAllowed.
 func (s *solveState) tryDecideByProbe(ctx context.Context, pkg string) *decisionOutcome {
 	v, ok, err := s.provider.Highest(ctx, pkg)
 	if err != nil {
@@ -236,12 +210,9 @@ func (s *solveState) tryDecideByProbe(ctx context.Context, pkg string) *decision
 	return nil
 }
 
-// decideFromAllowed handles the fetched path: an empty allowed set reports
-// either an unknown-package or a no-versions incompatibility and asks for
-// another propagation round on pkg; otherwise the highest allowed version
-// is decided. The no-versions term is the accumulation's positive form (the
-// exact region every assignment jointly permits), so the leaf states
-// precisely which requirement the published universe cannot meet.
+// decideFromAllowed decides the highest allowed version, or records an
+// unknown-package or no-versions incompatibility whose term is the exact
+// region every assignment jointly permits, so the leaf names what is unmet.
 func (s *solveState) decideFromAllowed(ctx context.Context, pkg string) (string, bool, error) {
 	p := s.ps.pkgState(pkg)
 	u := s.uniFor(pkg)
@@ -274,10 +245,9 @@ func positiveFormSet(accum term) verSet {
 	return accum.Set.complement()
 }
 
-// decideVersion is Pubgrub's DECIDE(v) step: add v's dependency
-// incompatibilities, then - unless doing so would immediately relate one of
-// them as satisfied against the tentative decision (the conservative
-// decision-time conflict check) - record v as pkg's decision.
+// decideVersion is PubGrub's DECIDE(v): add v's dependency incompatibilities,
+// then record the decision unless one of them would already be satisfied
+// against it (the conservative decision-time conflict check).
 func (s *solveState) decideVersion(ctx context.Context, pkg string, v Version) (string, bool, error) {
 	newIdx, err := s.dependencyIncompatibilities(ctx, pkg, v)
 	if err != nil {
@@ -293,9 +263,8 @@ func (s *solveState) decideVersion(ctx context.Context, pkg string, v Version) (
 }
 
 // relateTentative evaluates relate() as if pkg were decided at v, without
-// mutating the partial solution: pkg's own term is judged by exact
-// membership (as it would be once the decision is folded in), every other
-// package's term goes through the ordinary relation().
+// mutating the partial solution: pkg's term by exact membership, every other
+// term through relation().
 func relateTentative(inc *incompatibility, ps *partialSolution, pkg string, v Version) incRelation {
 	hasUnsat := false
 	for _, t := range inc.Terms {
@@ -327,16 +296,9 @@ func relateTentative(inc *incompatibility, ps *partialSolution, pkg string, v Ve
 	return incAlmostSatisfied
 }
 
-// dependencyIncompatibilities adds pkg@v's dependency incompatibilities to
-// the store (deduped by (Parent, ParentVersion): a repeat decide-attempt on
-// the same pair - e.g. after a deferred decision-time conflict - never
-// re-fetches or re-adds them) and returns the indices of whatever it added
-// (empty if this (pkg, v) pair was already processed). A dependency whose
-// constraint denotes the empty set is recorded as the single-term
-// incompatibility {parent@v} with the same dependency cause: "not (dep in
-// {})" is tautological, so the two-term form would be equivalent but carry
-// a term that is true for every selection, which no stored incompatibility
-// may contain (dropTautological's invariant).
+// dependencyIncompatibilities adds pkg@v's dependency incompatibilities once
+// per (pkg, v) and returns their indices. An empty-set constraint becomes the
+// single term {parent@v}, since no stored term may be tautological.
 func (s *solveState) dependencyIncompatibilities(ctx context.Context, pkg string, v Version) ([]int, error) {
 	key := pkg + "\x00" + v.Original()
 	if s.depsAdded[key] {
@@ -373,10 +335,8 @@ func (s *solveState) dependencyIncompatibilities(ctx context.Context, pkg string
 	return added, nil
 }
 
-// dependenciesOf returns pkg@v's dependency map: root's synthetic
-// "dependencies" are the solve's root requirements, injected here rather
-// than through any provider call; every other package goes through the
-// provider.
+// dependenciesOf returns pkg@v's dependencies: root's are the solve's root
+// requirements, injected without a provider call.
 func (s *solveState) dependenciesOf(ctx context.Context, pkg string, v Version) (map[string]Constraint, error) {
 	if pkg == rootPkg {
 		return s.rootDeps, nil

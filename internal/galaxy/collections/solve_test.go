@@ -7,11 +7,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/solver"
 )
 
-// TestSolverResultSlotsIntoInstallLevels pins that a solver.Result maps
-// through solverResultToResolvedGraph into exactly the (resolved, graph)
-// shape buildCollectionsMap and buildInstallLevels already expect from the
-// greedy resolver: ns.name@version keys, and leaf-first topological levels
-// for a three-deep transitive chain (a.b depends on c.d depends on e.f).
+// TestSolverResultSlotsIntoInstallLevels pins that solverResultToResolvedGraph
+// output yields ns.name@version keys from buildCollectionsMap and leaf-first
+// levels from buildInstallLevels over a three-deep transitive chain.
 func TestSolverResultSlotsIntoInstallLevels(t *testing.T) {
 	t.Parallel()
 	result := &solver.Result{

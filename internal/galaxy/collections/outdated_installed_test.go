@@ -18,11 +18,9 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// installedTree builds a collections tree by hand, the shape an install
-// leaves behind: a version-scoped sidecar under ansible_collections and the
-// collection's own MANIFEST.json under ansible_collections/<ns>/<name>. It
-// writes the two halves through separate methods on purpose, so a test can
-// produce the disagreeing pair a stale sidecar is.
+// installedTree builds a collections tree by hand: version-scoped sidecars and
+// each collection's MANIFEST.json, written separately so a test can produce
+// the disagreeing pair a stale sidecar is.
 type installedTree struct {
 	t    *testing.T
 	path string
@@ -89,10 +87,8 @@ func (tr *installedTree) writeUnder(rel string, data []byte) {
 	mustWriteFile(tr.t, full, data)
 }
 
-// fallbackServer is the run's configured Galaxy server in these tests, the
-// one a sidecar that names no server of its own falls back to. Spelled apart
-// from every per-collection server above so the two can never be confused in
-// an assertion.
+// fallbackServer is the run's configured server, the one a sidecar naming no
+// server falls back to, spelled apart from every per-collection server here.
 const fallbackServer = "https://fallback.example"
 
 // scan runs the unit under test against this tree.
@@ -110,12 +106,9 @@ func galaxyDoc(namespace, name, version, server string) GalaxyYAML {
 	return GalaxyYAML{FormatVer: "1.0.0", Namespace: namespace, Name: name, Version: version, Server: server}
 }
 
-// TestScanInstalledTreeBuildsEntriesFromSidecars pins the whole point of the
-// fallback: a tree that was installed without ever being locked yields the
-// same lockfile entries outdated's lookup already consumes, with each
-// collection's own server carried through rather than assumed. The four rows
-// are the four things a sidecar can describe, asserted on one tree so no row
-// can pass by the tree being empty of the others.
+// TestScanInstalledTreeBuildsEntriesFromSidecars pins that one tree holding a
+// Galaxy, a serverless, a url and a git install yields lockfile entries with
+// each collection's own server, and lists the git install as skipped.
 func TestScanInstalledTreeBuildsEntriesFromSidecars(t *testing.T) {
 	t.Parallel()
 	tr := newInstalledTree(t)
@@ -147,16 +140,9 @@ func TestScanInstalledTreeBuildsEntriesFromSidecars(t *testing.T) {
 	}
 }
 
-// TestScanInstalledTreeDropsAStaleSidecar pins the check that makes the scan
-// report what is running rather than what once ran. An upgrade leaves the
-// previous version's sidecar in place - install resets only the sidecar of
-// the version it is installing, and only cleanup removes the older one - so a
-// scan that trusted sidecars alone would report a tree as holding two
-// versions of one collection, one of them gone.
-//
-// The surviving row is the positive control: it proves the drop is the
-// version disagreement and not the scan failing to read this collection at
-// all.
+// TestScanInstalledTreeDropsAStaleSidecar pins that a sidecar naming a version
+// MANIFEST.json does not is dropped; the surviving row proves the drop is the
+// disagreement rather than a collection the scan failed to read.
 func TestScanInstalledTreeDropsAStaleSidecar(t *testing.T) {
 	t.Parallel()
 	tr := newInstalledTree(t)
@@ -189,12 +175,9 @@ func TestScanInstalledTreeDropsASidecarWithNoInstalledTree(t *testing.T) {
 	}
 }
 
-// TestScanInstalledTreeRefusesASidecarFiledUnderAnotherName pins the
-// identity rule: a sidecar is accepted only when re-composing the fields it
-// declares yields the very directory the walk arrived through. Without that
-// check a file planted at one collection's path could name any other
-// collection, and the report would attribute a version to a collection that
-// never had it.
+// TestScanInstalledTreeRefusesASidecarFiledUnderAnotherName pins that a
+// sidecar counts only when its own fields recompose the directory it sits in,
+// so a planted file cannot attribute a version to another collection.
 func TestScanInstalledTreeRefusesASidecarFiledUnderAnotherName(t *testing.T) {
 	t.Parallel()
 	tr := newInstalledTree(t)
@@ -212,10 +195,8 @@ func TestScanInstalledTreeRefusesASidecarFiledUnderAnotherName(t *testing.T) {
 	assertWarnedAbout(t, printer, "not the collection it is filed under")
 }
 
-// TestScanInstalledTreeRefusesAnUnusableIdentity pins the alphabet check on
-// what a sidecar declares about itself. A name or a version this tool would
-// refuse to install under is one it cannot look up either, and a report line
-// built from it would carry that value straight into a request URL.
+// TestScanInstalledTreeRefusesAnUnusableIdentity pins the alphabet check on a
+// sidecar's name and version, values that would otherwise reach a request URL.
 func TestScanInstalledTreeRefusesAnUnusableIdentity(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -243,12 +224,9 @@ func TestScanInstalledTreeRefusesAnUnusableIdentity(t *testing.T) {
 	}
 }
 
-// TestScanInstalledTreeNamesAnUnreadableSidecar pins the disclosure: a
-// sidecar that exists and does not parse is named, since an operator who
-// sees a collection missing from the report has no other way to learn which
-// file the scan gave up on. A directory that merely ends in .info without
-// holding a sidecar is silent by contrast - it is not this command's finding
-// that somebody made one.
+// TestScanInstalledTreeNamesAnUnreadableSidecar pins that a sidecar that does
+// not parse is named in a warning, while a .info directory holding no sidecar
+// is skipped silently.
 func TestScanInstalledTreeNamesAnUnreadableSidecar(t *testing.T) {
 	t.Parallel()
 	tr := newInstalledTree(t)
@@ -269,11 +247,9 @@ func TestScanInstalledTreeNamesAnUnreadableSidecar(t *testing.T) {
 	assertWarnedAbout(t, printer, "acme.widgets-1.0.0"+infoDirSuffix)
 }
 
-// TestOutdatedInputPrefersTheLockfile pins the precedence: with a lockfile
-// present it is the answer even when a tree sits beside it, because it
-// covers what the tree cannot - roles, and the ref a git entry is compared
-// by. The tree deliberately holds a different version, so a run that read it
-// instead would be visible rather than merely unproven.
+// TestOutdatedInputPrefersTheLockfile pins that a present lockfile wins over a
+// tree beside it holding another version, since only the lockfile covers roles
+// and git refs.
 func TestOutdatedInputPrefersTheLockfile(t *testing.T) {
 	t.Parallel()
 	tr := newInstalledTree(t)
@@ -302,10 +278,8 @@ func TestOutdatedInputPrefersTheLockfile(t *testing.T) {
 	})
 }
 
-// TestOutdatedInputPropagatesAMalformedLockfile pins the one lockfile
-// failure the fallback must not swallow. Only an absent lockfile opens the
-// tree path; a file that exists and does not load is a defect to fix, and
-// quietly reporting from somewhere else would hide it behind a clean report.
+// TestOutdatedInputPropagatesAMalformedLockfile pins that a lockfile that
+// exists and fails to load is returned, never hidden by the tree fallback.
 func TestOutdatedInputPropagatesAMalformedLockfile(t *testing.T) {
 	t.Parallel()
 	tr := newInstalledTree(t)
@@ -321,10 +295,9 @@ func TestOutdatedInputPropagatesAMalformedLockfile(t *testing.T) {
 	}
 }
 
-// TestOutdatedInputWithNeitherSourceStaysALockfileError pins that widening
-// where the current side may come from added no new failure class: a run
-// that finds it nowhere still reports the lockfile that is not there, and
-// still names the tree it also looked in.
+// TestOutdatedInputWithNeitherSourceStaysALockfileError pins that a run with
+// neither a lockfile nor a tree fails as helpers.ErrLockfileMissing and names
+// the tree it also looked in.
 func TestOutdatedInputWithNeitherSourceStaysALockfileError(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -342,11 +315,9 @@ func TestOutdatedInputWithNeitherSourceStaysALockfileError(t *testing.T) {
 	}
 }
 
-// TestOutdatedReadsTheInstalledTreeWithoutALockfile is the end-to-end proof:
-// a project that never locked still gets a real verdict, computed from the
-// versions on disk against a live server answer. The server publishes a
-// newer version than the tree holds, so the report has to say so rather than
-// merely being produced.
+// TestOutdatedReadsTheInstalledTreeWithoutALockfile pins the fallback end to
+// end: an unlocked tree behind a server with a newer version reports the drift
+// and a summary line naming the tree.
 func TestOutdatedReadsTheInstalledTreeWithoutALockfile(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -376,11 +347,9 @@ func TestOutdatedReadsTheInstalledTreeWithoutALockfile(t *testing.T) {
 	}
 }
 
-// TestReportInstalledGapsNamesWhatItDidNotCheck pins the disclosure the
-// tree-driven report owes an operator. Both gaps are real absences rather
-// than verdicts: a git install records no ref to compare, and a role's
-// meta/.galaxy_install_info records no source at all, so counting either as
-// current would be a claim this command cannot support.
+// TestReportInstalledGapsNamesWhatItDidNotCheck pins the warnings naming the
+// skipped git installs and the installed role count, neither of which the tree
+// can answer for.
 func TestReportInstalledGapsNamesWhatItDidNotCheck(t *testing.T) {
 	t.Parallel()
 	printer := &capturingPrinter{}
@@ -406,12 +375,9 @@ func TestReportInstalledGapsSaysNothingWhenThereIsNoGap(t *testing.T) {
 	}
 }
 
-// TestInstalledRoleCountCountsOnlyInstalledRoles pins what the disclosure
-// counts: a directory under the roles path is a role only when it carries
-// the meta/.galaxy_install_info an install writes, so a stray directory
-// somebody left there does not inflate the number an operator is asked to
-// act on. An absent roles path counts zero rather than failing, since this
-// is a disclosure and must not be able to end the command it decorates.
+// TestInstalledRoleCountCountsOnlyInstalledRoles pins that only a directory
+// carrying meta/.galaxy_install_info counts as a role, and that an absent roles
+// path counts zero rather than failing.
 func TestInstalledRoleCountCountsOnlyInstalledRoles(t *testing.T) {
 	t.Parallel()
 	rolesPath := t.TempDir()
@@ -456,19 +422,9 @@ func assertWarnedAbout(t *testing.T, printer *capturingPrinter, substr string) {
 	}
 }
 
-// TestScanInstalledTreeAcceptsAMixedCaseURLCollection pins that the scan
-// judges a sidecar by the alphabet its own source is judged by, not by one
-// alphabet for all three. A url collection takes its identity from a
-// MANIFEST.json written outside any Galaxy server, real release artifacts
-// carry mixed-case namespaces, and the install path admits them - so a scan
-// holding one to the Galaxy alphabet would drop from the report a collection
-// that is installed and visible on disk, which is the one failure a report
-// about the installed tree cannot have.
-//
-// The Galaxy row beside it is the control that keeps the widening honest: the
-// same name from a Galaxy install is still refused, since that is the
-// alphabet the servers themselves accept and every other boundary here holds
-// it to.
+// TestScanInstalledTreeAcceptsAMixedCaseURLCollection pins that a url
+// install's mixed-case namespace passes the scan, while the same name from a
+// Galaxy install, the control, is still refused.
 func TestScanInstalledTreeAcceptsAMixedCaseURLCollection(t *testing.T) {
 	t.Parallel()
 
@@ -509,12 +465,9 @@ func TestScanInstalledTreeAcceptsAMixedCaseURLCollection(t *testing.T) {
 	})
 }
 
-// TestScanInstalledTreeAsksTheServerTheSidecarNames pins the other half of
-// the same report being usable: a collection installed from a requirements
-// entry with its own `source:` is asked about at that server, not at the
-// run's default. Asking the default answers 404 for a collection the default
-// never served, which reads as a broken collection rather than as a lookup
-// pointed at the wrong host.
+// TestScanInstalledTreeAsksTheServerTheSidecarNames pins that a collection is
+// looked up at the server its sidecar records, not at the run's default, which
+// would answer 404 for a collection it never served.
 func TestScanInstalledTreeAsksTheServerTheSidecarNames(t *testing.T) {
 	t.Parallel()
 	const entryServer = "https://hub.example/galaxy/internal"

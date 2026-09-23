@@ -15,10 +15,9 @@ type collectionDeps struct {
 	runtime *infra.Infra
 	st      *store.Store
 
-	// apiRoots memoizes, per server base, the API root that already answered
-	// successfully for this phase, so a non-v3-first server is not
-	// re-probed on every collection. Scoped to one collectionDeps: resolve,
-	// install, and prefetch each get their own memo (see newCollectionDeps).
+	// apiRoots memoizes, per server base, the API root that already answered,
+	// so a non-v3-first server is not re-probed per collection. Scoped to one
+	// phase: resolve, install and prefetch each get their own memo.
 	apiRoots *apiRootMemo
 
 	// unmatchedSources memoizes the source: values already warned about this
@@ -26,25 +25,17 @@ type collectionDeps struct {
 	// collection pinned to it. Scoped exactly like apiRoots above.
 	unmatchedSources *unmatchedSourceMemo
 
-	// gitStore is the artifact store a git discovery commits its builds to,
-	// and gitMemo the run-wide table of what discovery found. Unlike the two
-	// memos above they are scoped to the whole run, not to one phase: the
-	// install phase needs the same table the resolve phase filled. Both are
-	// nil for outdated, which never resolves. gitStore is named apart from
-	// installDeps.artifacts and prefetchDeps.artifacts on purpose - those two
-	// embed this struct, and a same-named field would shadow silently.
+	// gitStore is where discovery commits its builds and gitMemo what it found;
+	// both are run-wide and nil for outdated. It is not named artifacts, since
+	// installDeps and prefetchDeps embed this struct and would shadow it.
 	gitStore cacheManager.ArtifactStore
 	gitMemo  *gitDiscoveryMemo
-	// roleMemo is the run-wide table of discovered roles, the role
-	// counterpart of gitMemo: filled by the resolve phase, read by the
-	// install phase for a --no-cache build. Role artifacts share gitStore,
-	// since a role is built from a git tree exactly as a git collection is.
+	// roleMemo is gitMemo's counterpart for roles, filled by resolve and read
+	// by install for a --no-cache build; role artifacts share gitStore.
 	roleMemo *roleDiscoveryMemo
-	// urlMemo is gitMemo's counterpart for url sources: what discovery
-	// learned about each url requirement's collection, filled by the
-	// resolve phase and read by the solver and the install phase. url
-	// artifacts share gitStore, since both source kinds commit their
-	// artifacts during discovery rather than at install time.
+	// urlMemo is gitMemo's counterpart for url sources, read by the solver and
+	// install; url artifacts share gitStore, since both source kinds commit
+	// during discovery rather than at install time.
 	urlMemo *urlDiscoveryMemo
 }
 
@@ -65,55 +56,32 @@ type installDeps struct {
 
 	artifacts    cacheManager.ArtifactStore
 	extractStore *extracted.Store
-	// root is the single os.Root every install-side write in this run
-	// funnels through (see installroot.go), so a symlinked ansible_collections
-	// or namespace/name component under cfg.DownloadPath cannot redirect a
-	// write outside it. It is nil for warm, which never touches the
-	// collections tree at all - newInstallTarget's own nil-root guard then
-	// makes any accidental collections-tree call from that path fail closed
-	// rather than by convention.
+	// root is the single os.Root every install-side write funnels through, so a
+	// symlinked path component cannot redirect a write outside DownloadPath. It
+	// is nil for warm, and newInstallTarget's nil-root guard then fails closed.
 	root *os.Root
-	// rolesRoot is root's counterpart for the roles tree: the single os.Root
-	// every role write goes through, opened at cfg.RolesPath only when the
-	// plan holds a role (see installWithState), nil otherwise and for warm.
-	// newRoleTarget's nil-root guard makes a role install against a missing
-	// root fail closed rather than by convention.
+	// rolesRoot is root's counterpart for the roles tree, opened at RolesPath
+	// only when the plan holds a role; newRoleTarget fails closed on nil.
 	rolesRoot *os.Root
-	// verify is this run's signature verification state, or nil for a run that
-	// verifies nothing - which is what every call site tests through
-	// verifyContext.enabled(), never by reading this field. It is shared by
-	// every install and warm worker: see verifyContext for why one keyring and
-	// one fetcher per run, read concurrently, is the contract rather than an
-	// economy.
+	// verify is this run's signature verification state, nil when nothing is
+	// verified; test it through verifyContext.enabled(). One instance is shared
+	// by every install and warm worker and read concurrently.
 	verify *verifyContext
-	// presence carries the prefetcher's own scan-time cache-presence hints
-	// (see prefetcher.cachedArtifacts), keyed by artifactKey, so isCacheHit
-	// can skip a redundant repeat of a probe the scan already ran. install
-	// and warm each pass their own run's prefetcher's set; it is nil only
-	// for the prefetcher's own downloadDeps, which never calls isCacheHit at
-	// all - and a nil map reads as "no hint" everywhere it is indexed, so
-	// that caller needs no special case.
+	// presence holds the prefetcher's scan-time cache-presence hints, keyed by
+	// artifactKey, so isCacheHit skips a repeat probe; a nil map means no hint.
 	presence map[string]bool
 }
 
-// prefetchDeps deliberately carries no verifyContext. A prefetch worker fills
-// the shared artifact cache and installs nothing, and that cache is policy-free
-// by design: its entries are keyed by artifact, not by which run's keyring
-// would accept them, so a verdict reached here could not be recorded anywhere a
-// later run may read it. Verification belongs to the worker that is about to
-// write a collection into a tree, which is where prepareWithRecovery's action
-// closure runs it.
+// prefetchDeps carries no verifyContext: the artifact cache it fills is
+// policy-free and records no verdict, so verification runs only in the worker
+// about to write a collection, in prepareWithRecovery's action closure.
 type prefetchDeps struct {
 	collectionDeps
 
 	artifacts cacheManager.ArtifactStore
-	// root is threaded through so shouldSchedulePrefetch's cheap
-	// already-installed check (installRecordMatches) can be evaluated through
-	// the same rooted target the real install uses - see installDeps.root's
-	// own doc comment for what this closes. warm passes nil, exactly as its
-	// installDeps does: it installs nothing, so "already installed" is never
-	// its reason to skip a prefetch, and shouldSchedulePrefetch reads a nil
-	// root as "not installed" and decides on the cache probe alone.
+	// root lets shouldSchedulePrefetch check installRecordMatches through the
+	// same rooted target as the install. warm passes nil, read as "not
+	// installed", so it decides on the cache probe alone.
 	root *os.Root
 }
 

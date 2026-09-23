@@ -8,72 +8,17 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// stateDeadlineBackend is a Backend decorator that bounds the four
-// persisted cache-state operations - LoadStore, SaveStore,
-// LoadProjectRegistry, RecordProject - with a shared wall-clock budget,
-// while passing every other method through unmodified. See WithStateDeadline
-// for why a decorator, rather than nine separate context.WithTimeout call
-// sites, is the right shape for this.
+// stateDeadlineBackend is a Backend decorator bounding LoadStore, SaveStore,
+// LoadProjectRegistry and RecordProject with a wall-clock budget and passing
+// every other method through unmodified.
 type stateDeadlineBackend struct {
 	inner  Backend
 	budget time.Duration
 }
 
-// WithStateDeadline wraps b so its four persisted cache-state operations -
-// LoadStore, SaveStore, LoadProjectRegistry, RecordProject - each run under
-// their own context.WithTimeout(parent, budget), with a stalled operation
-// normalized into helpers.ErrStateObjectDeadline instead of hanging (or
-// blocking) for as long as the caller's own context allows. budget <= 0
-// falls back to helpers.StateObjectDeadline. b == nil returns nil rather than
-// wrapping a nil interface into a non-nil one, which would otherwise make
-// every method call on the result panic on a nil pointer dereference instead
-// of behaving like an absent backend.
-//
-// Every other Backend method - Open, Close, Lock, ClearFiles, SweepTemp,
-// Artifacts - passes through to b verbatim; see the doc comments on the
-// pass-through methods below for why each one is deliberately left
-// unbounded by this budget.
-//
-// This is a decorator rather than nine separate context.WithTimeout pairs at
-// each call site because SaveStore alone has five call sites across two
-// packages (finalizeInstall, warmWithState, lockWithState,
-// saveDryRunSnapshotIfPersisted, finalizeCleanup): with the decorator, the
-// entire production diff outside this file is the two call sites that
-// construct it (initInstall, initCleanup), finalizeInstall's
-// annotateSaveFailure handling is untouched, and "every state operation is
-// bounded" becomes a property of the Backend value itself rather than a
-// convention nine call sites must each remember to honor. Nothing in this
-// codebase type-asserts a Backend to a concrete type, which is what makes
-// wrapping it in a decorator safe here.
-//
-// The budget is applied at this seam, the caller's side of Backend, and
-// never inside internal/cache/s3 or internal/cache/local, for the identical
-// reason helpers.ArtifactDownloadDeadline is applied in
-// internal/galaxy/collections rather than inside a cache backend: no
-// constant, sentinel, or policy from internal/galaxy/{cache,helpers} may
-// cross the Backend seam. This is structural, not just stylistic, for the
-// local backend specifically: local.Backend's LoadStore, SaveStore,
-// LoadProjectRegistry, and RecordProject all take a context parameter named
-// "_" and ignore it entirely, so wrapping local.Backend in this decorator
-// makes the budget inert for it BY CONSTRUCTION - exactly as
-// ArtifactDownloadDeadline is inert for local.Artifacts.Fetch, which also
-// ignores the context deadline a caller layers on top of it.
-//
-// Every Backend method is implemented here by hand, over the named inner
-// field rather than an embedded interface, so a method added to the Backend
-// interface later cannot pass through this decorator unnoticed: the build
-// stops on this function's own return statement until that method is
-// written. Adding a Ping(ctx context.Context) error to Backend, for
-// instance, fails with "cannot use &stateDeadlineBackend{…} (value of type
-// *stateDeadlineBackend) as Backend value in return statement:
-// *stateDeadlineBackend does not implement Backend (missing method Ping)".
-// Whoever adds that method therefore has to decide here whether it touches a
-// persisted state object and needs its own bounded override, the way
-// LoadStore, SaveStore, LoadProjectRegistry and RecordProject each have one,
-// or is left unbounded on purpose, the way Open, Close, Lock, ClearFiles,
-// SweepTemp and Artifacts each are for the reason given on their own doc
-// comments. Nothing becomes bounded just by virtue of being added to the
-// interface.
+// WithStateDeadline bounds b's four state operations by budget (<= 0 means
+// helpers.StateObjectDeadline) as ErrStateObjectDeadline; nil b returns nil.
+// Methods are hand-written so a new Backend method fails the build here.
 func WithStateDeadline(b Backend, budget time.Duration) Backend {
 	if b == nil {
 		return nil
@@ -92,11 +37,8 @@ func (b *stateDeadlineBackend) LoadStore(ctx context.Context) (*store.Store, err
 	return st, deadlineError(ctx, dlCtx, b.budget, helpers.ErrStateObjectDeadline, err)
 }
 
-// SaveStore bounds b.SaveStore with this decorator's budget. This is the
-// largest legitimate operation the budget bounds: for the S3 backend, it
-// covers Store.MarshalSnapshot's own copy+encode alongside the gzip and the
-// PUT, all inside the same budget LoadStore spends on the GET and inflate
-// alone.
+// SaveStore bounds b.SaveStore with this decorator's budget, the largest
+// operation it bounds: on S3 the snapshot encode, gzip and PUT share it.
 func (b *stateDeadlineBackend) SaveStore(ctx context.Context, st *store.Store) error {
 	dlCtx, cancel := context.WithTimeout(ctx, b.budget)
 	defer cancel()
@@ -121,13 +63,8 @@ func (b *stateDeadlineBackend) RecordProject(ctx context.Context, requirementsFi
 	return deadlineError(ctx, dlCtx, b.budget, helpers.ErrStateObjectDeadline, err)
 }
 
-// Open passes through unmodified: it is ensureBucket plus
-// probeConditionalPut, both tiny fixed-size bodies with no drip surface
-// worth a dedicated budget. A caller that skips calling Open explicitly
-// still gets it run inside LoadStore/SaveStore/etc.'s own lazy Open, which is
-// then bounded by that operation's budget; both production call sites in
-// this codebase call Open explicitly before any state operation, so that lazy
-// path is a no-op by the time it would matter.
+// Open passes through unmodified: its bucket check and conditional-write probe
+// are tiny fixed-size bodies with no drip surface worth a budget.
 func (b *stateDeadlineBackend) Open(ctx context.Context) error {
 	return b.inner.Open(ctx)
 }
@@ -138,26 +75,16 @@ func (b *stateDeadlineBackend) Close(ctx context.Context) error {
 	return b.inner.Close(ctx)
 }
 
-// Lock passes through unmodified: the distributed lock protocol carries its
-// own timings (lockWaitCeiling, heartbeatOpTimeout, lockReleaseTimeout), and
-// bounding the whole acquisition with a 60-second state-object budget would
-// break legitimate contention outright - a lock wait can and does take
-// longer than that while a live holder finishes its own work. The holder
-// context passes through verbatim for the same reason: it spans the whole
-// run, not one state operation, so layering this budget onto it would cancel
-// every run that holds the lock for longer than the budget - and it is the
-// underlying backend, not this decorator, that knows when ownership was lost.
+// Lock passes through unmodified: the lock protocol has its own timings and a
+// wait may outlast the budget, and the holder context spans the whole run, so
+// bounding either would cancel legitimate runs.
 func (b *stateDeadlineBackend) Lock(ctx context.Context) (context.Context, func() error, error) {
 	return b.inner.Lock(ctx)
 }
 
-// ClearFiles passes through unmodified: --clear-cache's bulk delete is
-// legitimate work proportional to how much the cache holds, which is
-// unbounded, so no fixed budget is defensible here. The residual is
-// disclosed rather than hidden: a drip on one ListObjectsV2 page during
-// --clear-cache still holds the backend lock for as long as that page's
-// drip runs, reachable only when the operator explicitly asked for this
-// destructive bulk operation.
+// ClearFiles passes through unmodified: --clear-cache's bulk delete grows with
+// the cache, so no fixed budget fits, and a dripped listing page holds the lock
+// for as long as the drip lasts.
 func (b *stateDeadlineBackend) ClearFiles(ctx context.Context) error {
 	return b.inner.ClearFiles(ctx)
 }
@@ -169,10 +96,8 @@ func (b *stateDeadlineBackend) SweepTemp(ctx context.Context) error {
 	return b.inner.SweepTemp(ctx)
 }
 
-// Artifacts passes through unmodified, returning the underlying store
-// unwrapped: an artifact read or write gets its own budget
-// (helpers.ArtifactDownloadDeadline) in internal/galaxy/collections, not this
-// one.
+// Artifacts passes through unmodified, returning the store unwrapped: artifact
+// I/O has its own budget, helpers.ArtifactDownloadDeadline.
 func (b *stateDeadlineBackend) Artifacts() ArtifactStore {
 	return b.inner.Artifacts()
 }

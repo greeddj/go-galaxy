@@ -5,18 +5,14 @@ import (
 	"testing"
 )
 
-// requirementsQueryCapabilityMarker is the sensitive part of the query
-// string below, checked for on its own rather than as a substring of the
-// whole query for the identical reason
-// internal/galaxy/collections/signature_query_persistence_test.go's own
-// signatureCapabilityMarker is - see that constant's own doc comment for
-// the argument.
+// requirementsQueryCapabilityMarker is the sensitive part of the query below,
+// searched for alone because json.Marshal escapes '&' as \u0026, so a needle
+// spanning the '&' would never match serialized bytes even when left uncut.
 const requirementsQueryCapabilityMarker = "X-Amz-Signature=deadbeefcapability"
 
-// requirementsQueryCapabilityQuery is a presigned-URL-shaped query string,
-// standing in for the bearer capability the persist-side cut
-// (copyRequirementsCutQuery, snapshot.go) exists to keep out of a shared
-// snapshot object.
+// requirementsQueryCapabilityQuery is a presigned-URL-shaped query, the bearer
+// capability the persist-side cut (copyRequirementsCutQuery) keeps out of a
+// shared snapshot object.
 const requirementsQueryCapabilityQuery = requirementsQueryCapabilityMarker + "&X-Amz-Expires=3600"
 
 // requirementsSourceWithQuery and requirementsSourceStripped are the same
@@ -27,21 +23,9 @@ const (
 	requirementsSourceStripped  = "https://sigs.example.com/acme-app.asc"
 )
 
-// TestMarshalSnapshotCutsRequirementsSignatureQueryWrittenDirectly pins the
-// finding this file exists for: a Requirements entry that reached the store
-// by a path other than Store.SetRequirements must still lose its signature
-// sources' query on the way into a persisted snapshot.
-//
-// The entry below is written straight onto the map rather than through
-// SetRequirements, which is what makes this the frozen-path shape the
-// finding is about: an install --frozen run that takes
-// resolveOrLoadLockfile's lockfile branch never calls
-// buildRequirementsSpec/recordResolution - the only path that used to run a
-// signature source through normalizeSignatures' own query cut - so an entry
-// a pre-fix binary once wrote unstripped, or any other write this program
-// never routed through SetRequirements, is exactly what this test seeds.
-// SetRequirements' own per-entry Signatures clone (see its doc comment) is
-// deliberately not exercised here, since it is not what protects this shape.
+// TestMarshalSnapshotCutsRequirementsSignatureQueryWrittenDirectly pins that an
+// entry that never went through SetRequirements, like one a --frozen run keeps
+// from an older snapshot, still loses its signature query when persisted.
 func TestMarshalSnapshotCutsRequirementsSignatureQueryWrittenDirectly(t *testing.T) {
 	t.Parallel()
 	st := New()

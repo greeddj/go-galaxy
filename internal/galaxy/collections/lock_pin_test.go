@@ -41,12 +41,9 @@ func (noopPrinter) Warnf(string, ...any)                         {}
 func (noopPrinter) Debugf(string, ...any)                        {}
 func (noopPrinter) DebugSincef(time.Time, string, ...any)        {}
 
-// renderVersionLine is what a recording output.Printer double in this package
-// stores for an OkVersionf or ErrorVersionf call: the same message, version
-// tag and cause an operator would read, minus the color internal/progress
-// adds. A double that kept only the format and its args would drop the
-// version and the cause entirely, and a test asserting on what a line does
-// (or must not) contain would then be asserting on half a line.
+// renderVersionLine renders an OkVersionf or ErrorVersionf call the way a
+// recording printer double stores it: message, version tag and cause without
+// color, so an assertion on a line sees all of it.
 func renderVersionLine(version, cause, format string, args ...any) string {
 	line := fmt.Sprintf(format, args...)
 	if version != "" {
@@ -58,12 +55,9 @@ func renderVersionLine(version, cause, format string, args ...any) string {
 	return line
 }
 
-// sidecarFor renders the GALAXY.yml an install of col would leave beside the
-// collection. Tests seed it wherever matchingInstalledRecord will read it
-// back, and it has to name the collection: that check reads the document and
-// requires it to describe col, so the bare `format_version:` line these
-// fixtures used to write is a document about nothing and no longer counts as
-// evidence of an install.
+// sidecarFor renders the GALAXY.yml an install of col leaves beside it. It
+// must name col: matchingInstalledRecord parses the document and does not
+// count one that describes another collection as evidence of an install.
 func sidecarFor(col collection) []byte {
 	return []byte(fmt.Sprintf("format_version: 1.0.0\nnamespace: %s\nname: %s\nversion: %s\n",
 		col.Namespace, col.Name, col.Version))
@@ -109,15 +103,9 @@ func TestVerifyPinnedSHA(t *testing.T) {
 	}
 }
 
-// newTestInstallDeps builds installDeps rooted at t.TempDir subdirectories,
-// wired with a no-op printer and the default HTTP client, and a real
-// collections root opened (and created) for cfg.DownloadPath - installCollection
-// now builds its installTarget from deps.root on every call, so a nil root
-// here would make every install in this file fail closed with
-// helpers.ErrUnsafeCollectionIdentifier before ever reaching the behavior
-// under test. It constructs the struct directly (rather than via
-// newInstallDeps) so this test does not add another always-nil call site for
-// the db parameter, which unparam would otherwise flag.
+// newTestInstallDeps builds installDeps under cfg's temp paths with a real
+// collections root, since installCollection fails closed with
+// helpers.ErrUnsafeCollectionIdentifier on a nil one.
 func newTestInstallDeps(t *testing.T, cfg *config.Config) installDeps {
 	t.Helper()
 	runtime := infra.New(noopPrinter{}, http.DefaultClient)
@@ -182,14 +170,9 @@ func TestInstallCollectionCacheHitPinMismatch(t *testing.T) {
 	}
 }
 
-// TestInstallCollectionCacheHitPinIgnoresSidecarAndHashesRealBytes is the
-// load-bearing proof that a frozen (pinned) cache hit never trusts a
-// recorded sha256 - here, a sidecar whose content happens to equal the pin
-// itself, simulating stale or upstream-claimed metadata - over the actual
-// bytes on disk. The cached tarball's real content differs from both the
-// pin and the sidecar, so a correct install must hash the real file and
-// fail closed; trusting the sidecar instead would incorrectly let the
-// install through.
+// TestInstallCollectionCacheHitPinIgnoresSidecarAndHashesRealBytes pins that
+// a pinned cache hit hashes the bytes on disk and fails closed, even when the
+// artifact's sha256 sidecar agrees with the pin.
 func TestInstallCollectionCacheHitPinIgnoresSidecarAndHashesRealBytes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -209,10 +192,8 @@ func TestInstallCollectionCacheHitPinIgnoresSidecarAndHashesRealBytes(t *testing
 	if realSHA := sha256Hex(content); realSHA == pin {
 		t.Fatalf("test setup bug: pin accidentally matches real hash")
 	}
-	// The sidecar falsely agrees with the pin, simulating stale or
-	// upstream-claimed metadata that does not match the bytes actually on
-	// disk. If the pinned path trusted this sidecar, the mismatch below
-	// would never be caught.
+	// A sidecar that falsely agrees with the pin: trusting it would let the
+	// mismatch below through.
 	sidecarPath := artifactPath + helpers.ArtifactSHASidecarSuffix
 	if err := os.WriteFile(sidecarPath, []byte(pin), helpers.FileMod); err != nil {
 		t.Fatalf("seed sidecar: %v", err)
@@ -243,10 +224,9 @@ func TestInstallCollectionCacheHitPinIgnoresSidecarAndHashesRealBytes(t *testing
 	}
 }
 
-// TestInstallCollectionCacheHitPinIntactBytesSucceeds asserts a pinned cache
-// hit whose real tarball bytes DO match the pin succeeds even though its
-// sidecar disagrees, confirming the frozen path verifies the pin against
-// the actual file rather than ever consulting the sidecar.
+// TestInstallCollectionCacheHitPinIntactBytesSucceeds pins that a pinned
+// cache hit whose bytes match the pin installs even when its sidecar
+// disagrees, since the frozen path never consults the sidecar.
 func TestInstallCollectionCacheHitPinIntactBytesSucceeds(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -290,10 +270,8 @@ func TestInstallCollectionCacheHitPinIntactBytesSucceeds(t *testing.T) {
 	}
 }
 
-// buildTarGzWithEntry builds a valid gzip+tar stream holding exactly one
-// regular file, named name and carrying body. The entry name is a parameter
-// rather than fixed because the two fixtures below differ only in it: one
-// needs an archive that extracts, the other one that extracts nowhere.
+// buildTarGzWithEntry builds a valid gzip+tar stream holding one regular
+// file named name with body, so fixtures can differ only in the entry name.
 func buildTarGzWithEntry(t *testing.T, name string, body []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -322,12 +300,9 @@ func buildMinimalTarGz(t *testing.T) []byte {
 	return buildTarGzWithEntry(t, "README.md", []byte("# widgets\n"))
 }
 
-// buildEscapingTarGz builds a well-formed gzip+tar stream whose single entry
-// names a path outside the destination, so it passes every check made on the
-// way into the artifact cache - it really is a gzip-compressed tar - and then
-// fails during extraction with helpers.ErrArchiveEntryEscapesDestination. It
-// is what a test needs to reach the extraction arm of the corruption-recovery
-// path, since shapeless bytes are refused before they get that far.
+// buildEscapingTarGz builds a well-formed tar.gz whose entry escapes the
+// destination: it passes the cache's shape probe, then fails extraction with
+// helpers.ErrArchiveEntryEscapesDestination, so a test reaches that recovery arm.
 func buildEscapingTarGz(t *testing.T) []byte {
 	t.Helper()
 	return buildTarGzWithEntry(t, "../escape.txt", []byte("outside\n"))
@@ -335,10 +310,8 @@ func buildEscapingTarGz(t *testing.T) []byte {
 
 func TestInstallCollectionFreshDownloadPinMismatch(t *testing.T) {
 	t.Parallel()
-	// A real tar.gz, not arbitrary bytes: the subject here is the lockfile pin
-	// gate, and the download arm this fixture takes (no extracted store) now
-	// probes an artifact's shape before committing it, so shapeless bytes
-	// would be refused before the pin was ever compared.
+	// A real tar.gz: this download arm probes an artifact's shape before
+	// committing it, so shapeless bytes would fail before the pin check.
 	content := buildMinimalTarGz(t)
 	correctSHA := sha256Hex(content)
 
@@ -427,11 +400,9 @@ func TestCanSkipInstallPinGate(t *testing.T) {
 	}
 }
 
-// TestCanSkipInstallSourceGate proves installEntryMatches' server-source
-// check: an install recorded from one server must not be silently kept when
-// the same namespace.name@version now resolves from a different server, even
-// though InstallPath and ArtifactSHA256 both still match and no lockfile pin
-// is in play to catch the mismatch another way.
+// TestCanSkipInstallSourceGate pins that an install recorded from one server
+// is not kept when the same name@version now resolves from another, even with
+// path and sha256 matching and no lockfile pin in play.
 func TestCanSkipInstallSourceGate(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -478,16 +449,9 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// TestCanSkipInstallReadsTheSidecar pins that the skip check judges the
-// sidecar by what it says, not by its existence. Every row is a document
-// that used to pass - the file was there, and that was the whole test - while
-// saying nothing that ties the tree to the collection whose install is being
-// skipped. A truncated write, a leftover from another version, or a document
-// planted by hand all land here.
-//
-// The matching row is the positive control on the same fixture: the store
-// record, the marker and the install path are identical across all of them,
-// so a row that fails to skip fails on the document alone.
+// TestCanSkipInstallReadsTheSidecar pins that the skip check judges GALAXY.yml
+// by what it says, not by its existence; every row shares the same record,
+// marker and path, and the matching row is the positive control.
 func TestCanSkipInstallReadsTheSidecar(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets", Version: testVersion100}
@@ -522,17 +486,9 @@ func TestCanSkipInstallReadsTheSidecar(t *testing.T) {
 	}
 }
 
-// TestCanSkipInstallRepairsADriftedServer pins the repair the skip path
-// makes: a sidecar whose server fell behind the record that just proved the
-// install valid is rewritten in place, and nothing else about the document
-// is lost. Re-installing instead would change no byte of what is installed,
-// and leaving it alone would leave the file wrong for as long as the tree
-// lives, since a skip rewrites nothing on its own.
-//
-// download_url is asserted afterwards because it is the field that cannot be
-// rebuilt on this path - no version metadata is fetched for a collection
-// that is being skipped - so a repair written as a fresh buildGalaxyYAML
-// would silently drop it.
+// TestCanSkipInstallRepairsADriftedServer pins that the skip path rewrites a
+// sidecar whose server fell behind the record and keeps download_url, which
+// no metadata fetched on this path could rebuild.
 func TestCanSkipInstallRepairsADriftedServer(t *testing.T) {
 	t.Parallel()
 	const stale = "https://hub.example/galaxy/ansible"
@@ -569,10 +525,9 @@ func TestCanSkipInstallRepairsADriftedServer(t *testing.T) {
 	}
 }
 
-// TestReconcileGalaxyInfoLeavesAnAgreeingSidecarAlone is the negative control
-// for the repair: an ordinary run over an ordinary tree must not rewrite a
-// document that already agrees, since a skip that touches the tree on every
-// run is no longer a skip.
+// TestReconcileGalaxyInfoLeavesAnAgreeingSidecarAlone pins that a sidecar that
+// already agrees is not rewritten: a skip that touches the tree on every run
+// is no longer a skip.
 func TestReconcileGalaxyInfoLeavesAnAgreeingSidecarAlone(t *testing.T) {
 	t.Parallel()
 	const server = "https://hub.example/galaxy/ansible"
@@ -606,11 +561,9 @@ func mustModTime(t *testing.T, path string) time.Time {
 	return info.ModTime()
 }
 
-// seedInstalledCollection builds the on-disk and in-store shape of a
-// completed install of col - the record, the install path, a valid extract
-// marker and the sidecar bytes given - and returns the target and store the
-// skip check reads them through. sidecar is written verbatim, including
-// empty, so a caller can seed a document the check must refuse.
+// seedInstalledCollection seeds a completed install of col - store record,
+// install path, extract marker and the sidecar bytes verbatim, empty included -
+// and returns the target and store the skip check reads.
 func seedInstalledCollection(t *testing.T, col collection, sidecar []byte) (installTarget, *store.Store) {
 	t.Helper()
 	const artifactSHA = "f16682b62c181adfc22929576413890a9e5b338d975c949948262e41345a5c04"
@@ -635,11 +588,9 @@ func seedInstalledCollection(t *testing.T, col collection, sidecar []byte) (inst
 	return target, st
 }
 
-// BenchmarkMatchingInstalledRecord measures what one already-installed
-// collection costs the skip check, which is what an install of an unchanged
-// tree pays per collection and nothing else does. The check reads and parses
-// the sidecar rather than stat-ing it, and this is the number that says what
-// that costs; the doc comment on matchingInstalledRecord quotes it.
+// BenchmarkMatchingInstalledRecord measures the skip check's per-collection
+// cost on an unchanged tree, where the sidecar is read and parsed rather than
+// merely stat-ed.
 func BenchmarkMatchingInstalledRecord(b *testing.B) {
 	col := collection{Namespace: "acme", Name: "widgets", Version: testVersion100}
 	target, st := seedInstalledCollection(&testing.T{}, col, sidecarFor(col))

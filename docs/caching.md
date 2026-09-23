@@ -26,7 +26,7 @@ Five kinds of entry, and only one of them is a database:
 | entry | what it is |
 |:------|:-----------|
 | `go-galaxy.db` | the snapshot, a single BoltDB file |
-| `<fingerprint>.<name>-<version>.tar.gz` | the artifact store, flat files, each with a `.sha256` beside it |
+| `<fingerprint>.<name>-<version>.tar.gz` | the artifact store, flat files, most with a `.sha256` beside it |
 | `extracted/<sha256>/` | the extracted trees, ordinary directories |
 | `projects.json` | the project registry `cleanup` reads |
 | `.go-galaxy.lock` | the lock one run holds exclusively |
@@ -38,10 +38,47 @@ collection built from a git source is keyed by its source locator instead, as
 described above, and one downloaded from a url source by its own locator,
 `url+<url>#sha256:<hex>`.
 
-`go-galaxy.db` holds thirteen buckets: `meta` for the schema version, and
+The `.sha256` beside a tarball is a shortcut, not part of the entry, so not
+every tarball has one. It is written only after the tarball is in place and
+only for a well-formed digest, and a failure to write it is ignored, since a
+missing one costs no more than a re-hash on the next fetch. A missing,
+truncated or non-hex `.sha256` reads as no recorded digest, and deleting an
+artifact removes its `.sha256` with it.
+
+`go-galaxy.db` holds thirteen buckets: `meta` for the schema version, the
+save stamps described below, the requirements hash and the server, and
 twelve data buckets - `api_cache`, `deps_cache`, `versions_cache`,
 `requirements`, `resolved`, `graph`, `installed`, `warmed`, `git_pins`,
-`installed_roles`, `role_pins` and `url_pins`. Each holds JSON.
+`installed_roles`, `role_pins` and `url_pins`. Each holds JSON, and a value
+that does not decode fails the load with an error naming its bucket and key
+rather than loading as an empty entry nobody could tell from a real one. A
+`meta` bucket with no `schema_version` loads as version 0 and is dropped and
+rebuilt as outdated; a file with no `meta` bucket at all is read as a
+brand-new database at the current version.
+
+Two stamps in `meta` decide what a snapshot is evidence of. `last_snapshot`
+is set by every save on either backend, and it is what says a snapshot was
+persisted - not the existence of `go-galaxy.db`, which the local backend
+creates on open whether or not anything is ever saved. `cleanup` and a
+`--dry-run` run save only over a persisted snapshot, so neither writes an
+empty one into a cache that was never saved. `content_recorded` is set by a
+save that carries installed, warmed or installed-role records and kept by
+every later save, and `cleanup`'s extracted-store sweep keys on it instead:
+`lock` saves a snapshot with no such records, so on a cache whose snapshot a
+schema bump dropped while its extracted trees survived, `last_snapshot` alone
+would read as "nothing is installed or warmed anywhere" and let the sweep
+delete the whole store. The key is written only once it is set, so a
+snapshot from a binary that predates it reads as "nothing recorded", and an
+older binary sharing the cache can only make the sweep do less.
+
+The local backend reports `go-galaxy.db` as corrupt (exit `9`) only on
+bbolt's own corruption errors - `ErrInvalid` (which also covers a file
+truncated below its meta pages), `ErrVersionMismatch` and `ErrChecksum`; a
+permission or mmap failure is never read as corruption. `ErrVersionMismatch`
+concerns bbolt's on-disk format, not the snapshot schema version, so a
+`go.etcd.io/bbolt` upgrade that changed the file format would make every
+existing local snapshot exit `9` rather than be dropped as outdated; check
+for that when bumping it.
 
 Nothing tree-shaped is kept in the database. The dependency graph is a bucket
 of records, but a collection's files are a real directory under `extracted/`,
@@ -51,7 +88,7 @@ of tarballs and 68 MB of extracted trees.
 
 The snapshot used to be nine separate files named `go-galaxy-meta.db`,
 `go-galaxy-graph.db` and so on. It is one database now; those names survive
-only so that `--clear-cache` recognises leftovers from an older binary and
+only so that `--clear-cache` recognizes leftovers from an older binary and
 reclaims them.
 
 `go-galaxy hash` prints a deterministic `sha256:...` of the lockfile, or of
@@ -117,11 +154,16 @@ version and the dependencies the meta declared; for a Galaxy role a second pin
 keyed by the Galaxy name and the version asked for carries the repository and
 tag the v1 API pointed at, the commit it recorded, and sits over a git pin
 for that repository and tag. A rerun replays both without touching the v1 API
-or the remote. A pin is invalidated by editing its own line (a new key), by
-`--refresh` - which re-asks the v1 API and re-advertises the ref, keeping the
-pin when the commit is unchanged and the artifact still cached - and by
-`--clear-cache`, which drops every role pin but leaves the installed-roles
-records alone; never by age. `--offline` needs a recorded pin and the cached
+or the remote. The three kinds of role pin share the bucket under disjoint
+keys: a git pin `<url>\n<ref>\n` and a Galaxy pin
+`galaxy\n<name>\n<requested-version>` each carry two newlines, a url pin
+`url\n<url>` exactly one, since a canonical URL carries none. A new kind of
+pin, or a change to any of these shapes, must keep them apart, or two kinds
+of pin can overwrite each other. A pin is invalidated by editing its own line
+(a new key), by `--refresh` - which re-asks the v1 API and re-advertises the
+ref, keeping the pin when the commit is unchanged and the artifact still
+cached - and by `--clear-cache`, which drops every role pin but leaves the
+installed-roles records alone; never by age. `--offline` needs a recorded pin and the cached
 artifact, else exits `4`; `--no-cache` fetches and builds once at discovery
 and hands the build straight to the install phase. `warm` caches a role's
 artifact and its extracted tree and records the warmed key as
@@ -142,10 +184,107 @@ snapshot with `unsupported snapshot schema version` (exit `2`) rather than
 dropping the role buckets on its next save and leaving a later `cleanup` with
 no record of any installed role.
 
+## Freshness and retention
+
+A cached Galaxy API response is keyed by the SHA256 of its URL and served only
+when the stored URL matches and the body is not empty. A response to a
+question that names no exact version, such as which version of a collection
+is highest, is served with no request for ten minutes; past that it is
+revalidated with a conditional GET carrying the stored `ETag` and
+`Last-Modified`, and a `304` renews the entry and keeps its body. Such a
+response whose fetch time lies in the future counts as expired too, since a
+negative age would otherwise pass the freshness test forever. A response
+about an exact version has no such lifetime and is served until retention
+drops it. A stored body that no longer decodes is refetched without
+validators, since a server still holding them would answer `304` and hand the
+corrupt bytes back forever. The body is stored verbatim, so a presigned
+`download_url` in it keeps its query - cutting it would turn every
+cache-served download into a `403`. Anyone who can read a shared cache can
+therefore use such a URL, but only until its presign expires, however long
+the entry is kept.
+
+`--refresh` does not reach an answer that already names an exact version (see
+[install options](cli.md#install-options)), so bytes a server republishes
+under a version this cache already holds are never requested, and a
+collection with no sha256 pin is judged against the digest recorded when it
+was first fetched. Keeping the first-seen bytes is the safe direction, but it
+means `--refresh` does not act on a "we republished this version with a fix"
+advisory. Only a sha256 pin - a lockfile under `--frozen`, or a url source's
+locator - holds the bytes to a fixed digest on every install, cache hit
+included, and so refuses different bytes served for a pinned version.
+
+Retention is applied when a snapshot is saved, identically for both
+backends, and never to the run's in-memory state. API, dependency and
+version-list entries written more than 30 days ago are left out of the saved
+snapshot, and so are warmed entries more than 30 days past their last warm;
+`cleanup` applies the same warmed window when it decides what to keep. An
+entry's age counts from when it was written: reading it does not renew it,
+so an entry still in use is refetched 30 days after it was fetched, and only
+an API response's `304` revalidation renews its stamp. A stamp in the future
+counts as stale, not as fresh and not as an error, with no allowance for
+clock skew: on a cache shared by machines whose clocks disagree, an entry
+written by one running ahead is dropped and refetched. The installed
+collections and roles, the graph, the requirements, the last resolution and
+the three pin buckets are kept whole. For the installed records that is
+deliberate: an install that finds its collection already in place skips it
+without re-recording it, so an age window would expire a live project's
+records and let `cleanup` sweep its extracted trees. The
+accepted cost is that `cleanup`, which skips a project whose collections
+tree no longer exists, keeps the extracted trees that project's records name
+indefinitely.
+
+## Clearing and cleanup
+
+`--clear-cache` runs once the snapshot is loaded under the exclusive lock. It
+empties the API, dependency and version-list caches and forgets every git,
+url and role pin, then deletes the cached artifacts: on the local backend the
+top-level tarballs, their `.sha256` files, leftover download temps and the
+per-bucket snapshot files an older binary wrote; on S3 every object under
+`artifacts/`. It keeps the installed and warmed records, the last
+resolution, the extracted store, `go-galaxy.db`, `projects.json` and
+`.go-galaxy.lock` - unlinking the lock file this run holds would let the next
+run lock a fresh one, and two runs would hold the lock at once. It is skipped
+with a warning under `--dry-run`, and a failure to delete ends the run with
+the lock released, so a failed clear never blocks later runs on the same
+cache.
+
+Separately, every `install`, `warm` and `lock` run reclaims the download and
+extract temps a killed run left in the cache directory, right after it takes
+the exclusive lock: the lock is what proves no live run still owns them, so
+the sweep must never move ahead of it. It runs under `--dry-run` too, since an
+orphan temp says nothing about what is installed, and a failure only warns.
+
+When `cleanup` removes an unreachable collection, it deletes every project's
+copy of that `namespace.name@version`, then its artifact and its dependency
+entry. Both of those keys are scoped by the server the collection resolved
+from, which only the collection's installed record in the snapshot names;
+with no record, `cleanup` leaves both rather than guess a key, so the
+dependency entry ages out after 30 days and the artifact stays until
+`--clear-cache`. Collections are removed in sorted order, so a run that stops
+at a failure leaves the same partial result every time. `cleanup` also
+deletes, reachable or not, any scanned collection's artifact still cached
+under the flat key older binaries wrote before artifact keys were scoped by
+server - the escaped `<namespace>-<name>-<version>.tar.gz` with no
+fingerprint - since no lookup reaches that key any more. A candidate that happens to have the shape of a
+scoped key is left alone: a namespace directory on disk may contain a dot, so
+one named `<12 hex digits>.acme` would spell a live key.
+
 ## S3 Cache (optional)
 
 When `--s3-bucket` (or `GO_GALAXY_S3_BUCKET`) is set, go-galaxy uses S3 as the cache backend.
 Artifacts and cache metadata are stored in S3; collections are still installed locally.
+
+Under the configured `--s3-prefix` the bucket holds four kinds of object:
+`state/store.json.gz`, the snapshot as one gzipped JSON object; `state/projects.json`,
+the project registry as plain indented JSON, each record built exactly as the local
+`projects.json` builds it; `artifacts/<key>`, one object per tarball under the key the
+local store uses as its filename, with its sha256 in `x-amz-meta-sha256`, which every
+fetch checks against the downloaded bytes; and `locks/cache.lock`, the distributed lock,
+beside the short-lived `locks/.conditional-probe-<random>` objects `Open` writes to test the
+endpoint. Both state objects are read under the size caps
+[Security](security.md#security--trust-model) describes, which matter more here than on the
+local backend: the read runs while the distributed lock is held, so an oversized object
+would hold up every runner sharing the bucket, not only the one reading it.
 
 Both credentials are mandatory: setting the bucket without both an access key and a secret
 key exits `2` with `s3 cache requires access/secret keys when GO_GALAXY_S3_BUCKET is set`.
@@ -179,6 +318,53 @@ different endpoint. The last check matters most for an implementation that refus
 `If-Match` alike: nothing about it looks permissive, and without that check it would pass
 here and instead leave a dead holder's lock unreclaimable, which every waiting run reads
 as ordinary contention.
+
+The lock object carries its token, deadline and owner in `x-amz-meta-*` headers, which are
+all the protocol reads, and mirrors them in a JSON body for a human reading the object.
+The body still matters. For a plain single-part upload, Amazon S3's ETag is the MD5 of the
+body alone and ignores the metadata headers, so two runs reclaiming the same expired lock
+with `If-Match` on the same ETag are told apart only because each writes its own token
+into the body: the first swap changes the ETag and the second is refused with `412`. A
+constant or empty body would let both swaps succeed, and only the ownership check after
+the write and the heartbeat would notice, once both runs had briefly believed they held
+the lock. The in-process S3 double the tests use mints a distinct ETag for every write
+whatever its body, so the tests would not catch that regression.
+
+The lock is granted for ten minutes, and a live holder's heartbeat renews it every three,
+each heartbeat's HEAD and PUT bounded together by 30 seconds. A waiter retries with
+full-jitter backoff between 250 ms and 5 s and gives up after five minutes; a backend that
+refuses the create with `412` while HEAD reports no object gets at most eight immediate
+retries before that backoff applies. Release runs on a fresh context with its own 30
+seconds, so a run that failed or was canceled still gives the lock back. Each cache-state
+operation - loading or saving the snapshot, loading the project registry, recording the
+project (a GET and a PUT under one budget) - runs under the lock with the fixed 60-second
+ceiling the [install options](cli.md#install-options) describe, and a run performs at
+most three of them while it holds the lock. The timings must therefore keep that ceiling
+below the heartbeat interval, the heartbeat interval below the lock's lifetime, and three
+ceilings below the wait limit, or the state budget starves the lock it runs under;
+`TestStateObjectDeadlineFitsInsideTheLockTimings` pins those relations, and a change to
+any of these constants must keep them. A save that runs out of time fails closed and
+leaves nothing half-written, since an S3 PUT replaces an object whole or not at all.
+
+A holder that dies of a Go fatal error - a stack overflow, running out of memory, a
+runtime throw - runs no cleanup, so its lock blocks every runner on the bucket until its
+ten minutes pass, and a runner arriving while more than five of them remain exits `8`
+without reaching its work. The lifetime is not shortened for that case, since a shorter
+one would let a live but slow holder be reclaimed.
+
+Every idempotent S3 request - GET, HEAD, DELETE, a listing, a batch delete and a PUT with
+no precondition - is retried, four attempts at most with full-jitter backoff between
+200 ms and 5 s, and only for a stalled read, a transport failure while the run's own
+context is still live, or a `429`, `500`, `502`, `503` or `504` - the same status set the
+Galaxy requests retry. Anything else is final, an oversized response included. A transport failure is judged by whether the run's context has ended, never by
+the error's shape, since a dial timeout and a response-header timeout also read as a
+deadline, and a shape check would stop retrying the two commonest outages - an endpoint
+that drops every packet and one that accepts a connection and never answers. A conditional
+PUT is sent once, since it may have landed and a retry would read its own success as
+contention, and so is bucket creation. A request made inside a budget (a state operation,
+an artifact download, the lock wait) is cut short by it; one made outside any - the bucket
+check at open, an artifact presence check, `--clear-cache`'s listing and deletes - can
+take four attempts plus the backoff before it fails.
 
 A run against the S3 backend distinguishes four ways the cache can fail to serve it. A
 bucket that cannot be reached, or that answers a request with a failure of its own, exits

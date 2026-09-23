@@ -13,10 +13,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// testIdle is the inactivity window used by every test in this file. It is
-// small enough that a watchdog-fired case resolves quickly, but every
-// assertion still waits on a channel rather than on elapsed wall-clock time,
-// so a slow CI runner cannot make these tests flaky.
+// testIdle is the inactivity window every test here uses; assertions wait on
+// channels, never on elapsed wall-clock time, so a slow runner cannot flake.
 const testIdle = 20 * time.Millisecond
 
 // waitBound is the generous upper bound every test gives itself to observe
@@ -24,10 +22,8 @@ const testIdle = 20 * time.Millisecond
 // instead of hanging the suite.
 const waitBound = 2 * time.Second
 
-// blockingReadCloser is a synthetic io.ReadCloser whose Read blocks until
-// ctx is done, then returns ctx.Err(). It closes started right before
-// blocking, letting a test wait deterministically until the read is
-// actually in flight instead of racing a goroutine against a sleep.
+// blockingReadCloser's Read blocks until ctx is done and returns ctx.Err(); it
+// closes started first, so a test can wait until the read is in flight.
 type blockingReadCloser struct {
 	ctx     context.Context //nolint:containedctx // test double: ctx is what the blocked Read waits on, not a stored request context.
 	started chan struct{}
@@ -53,12 +49,8 @@ func (r *blockingReadCloser) Close() error {
 }
 
 // gatedReadCloser blocks every Read until release is closed, then returns
-// context.Canceled - the error a real body read returns once its request
-// context ends. Unlike blockingReadCloser it watches no context at all, which
-// is what lets a test hold a read still long enough to drive the one
-// interleaving watchdogBody.Read's b.parentCtx.Err() == nil guard exists to
-// resolve: the watchdog timer has already fired AND the caller's parent
-// context has already been canceled, both before the read returns.
+// context.Canceled; it watches no context, so a test can hold a read through
+// both the watchdog firing and a parent cancel before letting it return.
 type gatedReadCloser struct {
 	started chan struct{}
 	release chan struct{}
@@ -106,11 +98,9 @@ type readResult struct {
 	n   int
 }
 
-// TestWatchdogBody_StallReportsErrReadStalled arms a body whose underlying
-// Read never returns on its own; only the watchdog timer firing cancels the
-// context it is blocked on. This is the "the watchdog itself is the reason
-// the read ended" case, which must surface as helpers.ErrReadStalled while
-// the parent context is still live.
+// TestWatchdogBody_StallReportsErrReadStalled pins that a read ended only by
+// the watchdog firing reports helpers.ErrReadStalled and leaves the parent
+// context untouched.
 func TestWatchdogBody_StallReportsErrReadStalled(t *testing.T) {
 	t.Parallel()
 
@@ -148,23 +138,9 @@ func TestWatchdogBody_StallReportsErrReadStalled(t *testing.T) {
 	}
 }
 
-// TestWatchdogBody_StallErrorDoesNotMatchContextCanceled uses the identical
-// construction as TestWatchdogBody_StallReportsErrReadStalled (its positive
-// control on the same fixture: that test proves the acceptance side,
-// errors.Is(err, helpers.ErrReadStalled); this test proves the refusal side,
-// !errors.Is(err, context.Canceled)) but additionally asserts that the
-// watchdog's cancellation cause - context.Canceled, raised by the watchdog
-// canceling its own derived context to unblock the stuck read - is not
-// reachable through errors.Is on the returned error, even though the read's
-// underlying error was genuinely context.Canceled. This is what makes a
-// persistently stalled read classify as a network failure (exitcode.FromError
-// checks context.Canceled ahead of every other class) instead of being
-// mistaken for a caught Ctrl-C. The text assertion answers a different
-// question - "does rendering the cause with %v instead of wrapping it with %w
-// lose diagnostic information?" - and it does not: the identical text still
-// renders into the message, only matchability through errors.Is is removed;
-// that assertion uses t.Errorf, not t.Fatalf, so a failure there is reported
-// without masking the two errors.Is assertions above it.
+// TestWatchdogBody_StallErrorDoesNotMatchContextCanceled pins that a stall
+// error keeps "context canceled" in its text but not in errors.Is, so a stall
+// exits as a network failure rather than as a caught Ctrl-C.
 func TestWatchdogBody_StallErrorDoesNotMatchContextCanceled(t *testing.T) {
 	t.Parallel()
 
@@ -201,20 +177,9 @@ func TestWatchdogBody_StallErrorDoesNotMatchContextCanceled(t *testing.T) {
 	}
 }
 
-// TestWatchdogBody_ParentCancelPropagatesContextCanceled covers the
-// opposite case: the CALLER cancels its own (parent) context while the
-// watchdog's idle window is far too long to have fired. The resulting error
-// must be exactly context.Canceled, never helpers.ErrReadStalled, since
-// callers branch on that distinction (e.g. Ctrl-C exit-code handling).
-//
-// This fixture's own idle window (an hour) is deliberately too long for the
-// watchdog timer to ever fire during the test, so fired stays false and the
-// ErrReadStalled branch in Read is never reached here at all - neither the
-// %v-vs-%w rendering choice nor the parentCtx.Err() == nil guard changes this
-// test's outcome, since both only matter once fired is true. The %v-vs-%w
-// rendering distinction is instead pinned by
-// TestWatchdogBody_StallErrorDoesNotMatchContextCanceled above, which does
-// drive the watchdog to fire.
+// TestWatchdogBody_ParentCancelPropagatesContextCanceled pins that a caller
+// cancel before the watchdog could fire surfaces as context.Canceled, never as
+// helpers.ErrReadStalled, since Ctrl-C exit-code handling branches on it.
 func TestWatchdogBody_ParentCancelPropagatesContextCanceled(t *testing.T) {
 	t.Parallel()
 
@@ -258,50 +223,9 @@ func TestWatchdogBody_ParentCancelPropagatesContextCanceled(t *testing.T) {
 	}
 }
 
-// TestWatchdogBody_FiredWatchdogYieldsToParentCancel pins the one cell of the
-// truth table Read's guard at
-// `err != nil && b.fired.Load() && b.parentCtx.Err() == nil` decides that no
-// other test in this file independently covers: fired=true (the watchdog
-// already fired) crossed with parent already canceled. Read renders this
-// cell's error with %v, not %w, so deleting the parentCtx guard would
-// silently turn a genuine operator Ctrl-C landing in this exact interleaving
-// into helpers.ErrReadStalled - a network failure, not an interrupt - rather
-// than leaving context.Canceled reachable through errors.Is the way %w
-// rendering would. This cell is exactly where the guard is load-bearing,
-// which is why it earns its own pin.
-//
-// gatedReadCloser (not blockingReadCloser) is required here: blockingReadCloser
-// unblocks the instant onStall cancels wctx, before a test could ever also
-// cancel the parent first. gatedReadCloser watches no context at all, so a
-// test can hold the read blocked through both events - the watchdog firing,
-// then (in one subtest) the parent being canceled - and only then let it
-// return, deterministically producing the interleaving this guard exists for.
-//
-// The wait for <-wctx.Done() is the deterministic barrier for "the watchdog
-// has fired": onStall calls b.fired.Store(true) before b.cancel(), and the
-// channel close/receive gives the happens-before edge that guarantees fired
-// is visible as true once wctx.Done() is observed. This is not a sleep-based
-// fixture on purpose - that class of fixture is exactly what would let the
-// cell pinned above go unverified.
-//
-// "parent still live" is the positive control on this exact construction: it
-// proves gatedReadCloser can still produce the ordinary fired-and-stalled
-// label, so "parent canceled"'s refusal to produce that label is not vacuous.
-//
-// Killing mutation, run for real: deleting `&& b.parentCtx.Err() == nil` from
-// Read. Both assertions in the "parent canceled" subtest fail while "parent
-// still live" keeps passing - a discriminating kill, not a fixture-wide
-// breakage (both lines report line 314, the "parent canceled" t.Run
-// closure's own runFiredWatchdogCase call site, since both
-// runFiredWatchdogCase and checkFiredWatchdogResult call t.Helper()):
-//
-//	watchdog_test.go:314: Read error = network read stalled: no data for 20ms: context canceled,
-//	want errors.Is(err, context.Canceled)
-//	watchdog_test.go:314: Read error = network read stalled: no data for 20ms: context canceled,
-//	must not match helpers.ErrReadStalled: the parent was already canceled before the read
-//	returned, so the guard must yield to it even though the watchdog had already fired
-//	--- PASS: TestWatchdogBody_FiredWatchdogYieldsToParentCancel/parent_still_live (0.02s)
-//	--- FAIL: TestWatchdogBody_FiredWatchdogYieldsToParentCancel/parent_canceled_before_the_read_returns (0.02s)
+// TestWatchdogBody_FiredWatchdogYieldsToParentCancel pins Read's parentCtx
+// guard: after the watchdog fired, a parent canceled before the read returns
+// still wins as context.Canceled; "parent still live" is the positive control.
 func TestWatchdogBody_FiredWatchdogYieldsToParentCancel(t *testing.T) {
 	t.Parallel()
 
@@ -315,11 +239,9 @@ func TestWatchdogBody_FiredWatchdogYieldsToParentCancel(t *testing.T) {
 	})
 }
 
-// runFiredWatchdogCase drives the shared sequence
-// TestWatchdogBody_FiredWatchdogYieldsToParentCancel needs for both of its
-// subtests: start a read on a gated body, wait for the watchdog to fire,
-// optionally cancel the parent context while the read is still blocked, then
-// release the read and check what error it returned.
+// runFiredWatchdogCase starts a read on a gated body, waits for the watchdog
+// to fire, optionally cancels the parent while the read is still blocked, then
+// releases the read and checks the error it returned.
 func runFiredWatchdogCase(t *testing.T, cancelParent bool) {
 	t.Helper()
 
@@ -343,10 +265,8 @@ func runFiredWatchdogCase(t *testing.T, cancelParent bool) {
 		t.Fatal("Read never started")
 	}
 
-	// The read is now blocked inside gatedReadCloser.Read, with the watchdog
-	// timer armed. Wait for the watchdog to actually fire - see this test's
-	// doc comment for why this channel wait, not a sleep, is what makes fired
-	// deterministically true by the time this select returns.
+	// onStall stores fired before canceling wctx, so observing wctx.Done()
+	// guarantees fired reads true here, which no sleep could.
 	select {
 	case <-wctx.Done():
 	case <-time.After(waitBound):

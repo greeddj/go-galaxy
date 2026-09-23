@@ -1,17 +1,6 @@
-// Package store is go-galaxy's persisted cache state in memory - cached API
-// responses, versions lists, dependency edges, resolved versions, and what is
-// installed or warmed - together with the local plumbing behind it: the BoltDB
-// snapshot file, the project registry, the instance lock, and the
-// cache-directory sweeps. Store is the value both cache backends move: the
-// local one bucket-maps it into Bolt, the S3 one marshals it as gzipped JSON.
-//
-// Store guards its own maps with an internal RWMutex, so callers go through
-// the methods rather than reading or writing a field across goroutines.
-// Persisting goes through snapshotData, the single copy path where age
-// eviction, a signature source's query cut, and the meta stamps are applied,
-// so both backends inherit one set of retention and redaction rules;
-// helpers.StoreSnapshotSchemaVersion decides what a binary will read back,
-// and ValidateSchema refuses anything newer than it understands.
+// Package store owns the persisted cache state (Store, guarded by its own
+// RWMutex) and its local plumbing: the Bolt snapshot, project registry,
+// instance lock and cache sweeps. Both backends persist through snapshotData.
 package store
 
 import (
@@ -28,13 +17,9 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// SnapshotMeta holds metadata about the cached snapshot.
-//
-// LastSnapshot and ContentRecorded answer two different questions and must
-// not be conflated. LastSnapshot is stamped by every persisted write and says
-// only that a snapshot exists. ContentRecorded is stamped only by a write
-// that carried records of what is on disk, and is what a destructive pass has
-// to consult - see HasRecordedContent.
+// SnapshotMeta holds metadata about the cached snapshot. LastSnapshot says
+// only that a snapshot exists; ContentRecorded says a save carried on-disk
+// content records, and is what a destructive pass consults.
 type SnapshotMeta struct {
 	LastSnapshot     time.Time `json:"last_snapshot"`
 	ContentRecorded  time.Time `json:"content_recorded"`
@@ -76,36 +61,17 @@ type InstalledEntry struct {
 	Deps           []string  `json:"deps"`
 }
 
-// WarmedEntry records that the warm command materialized a collection's
-// artifact into the content-addressable extracted store. Unlike
-// InstalledEntry, it has no install path and no project behind it: a
-// warm-only machine's project is recorded but its workspace never exists, so
-// this entry - and the age it was written - is the only signal cleanup has
-// that the extracted tree it names is still wanted (see
-// Store.WarmedArtifactSHAByKey and helpers.WarmedEntryMaxAge).
-//
-// The key is the plain ns.name@version collection key, deliberately not
-// scoped by server the way the deps cache and the artifact store are
-// (helpers.ScopedDepsCacheKey, helpers.ArtifactKey). Those two are lookup
-// keys, where a collision would serve one server's bytes in place of
-// another's; this map is never looked up by key at all - extractedKeepSet
-// discards the key and unions only the values - so the worst a collision can
-// do is under-protect. Two servers publishing the same ns.name@version with
-// different bytes resolve to different shas, the second warm overwrites the
-// first's entry, and the first tree loses its keep-set protection. That
-// self-heals with no network round trip: the artifact itself is server-scoped
-// and is never reclaimed on a warm-only machine, so the next warm or install
-// for that server re-extracts the tree from the still-cached tarball through
-// extracted.Store.Ensure.
+// WarmedEntry records that warm materialized an artifact into the extracted
+// store, which is cleanup's only sign that a warm-only machine still wants it.
+// Its key is not server-scoped, so a cross-server collision keeps the last sha.
 type WarmedEntry struct {
 	WarmedAt       time.Time `json:"warmed_at"`
 	ArtifactSHA256 string    `json:"artifact_sha256"`
 }
 
-// GitPinCollection is one collection a pinned git commit carried: its
-// identity, the subdir it was built from, and its raw galaxy.yml
-// dependencies, which is everything the solver needs to answer for it
-// without touching the remote again.
+// GitPinCollection is one collection a pinned git commit carried: identity,
+// source subdir and raw galaxy.yml dependencies, enough for the solver to
+// answer for it without touching the remote again.
 type GitPinCollection struct {
 	Dependencies map[string]string `json:"dependencies,omitempty"`
 	Namespace    string            `json:"namespace"`
@@ -114,26 +80,18 @@ type GitPinCollection struct {
 	Subdir       string            `json:"subdir,omitempty"`
 }
 
-// GitPinEntry records what a (url, ref, subdir) git requirement resolved to:
-// the commit, and the collections discovered at it. Keyed by
-// gitsource.PinKey. A pin carries no retention window: it is invalidated by
-// the requirements signature (a changed ref re-resolves) and by --refresh,
-// never by the clock, because a branch that has not moved is the same answer
-// a month later and re-advertising it would cost a round trip for nothing.
+// GitPinEntry records the commit a (url, ref, subdir) git requirement resolved
+// to and the collections at it, keyed by gitsource.PinKey. It has no retention
+// window: an unmoved ref is the same answer later; --refresh re-resolves it.
 type GitPinEntry struct {
 	FetchedAt   time.Time          `json:"fetched_at"`
 	Commit      string             `json:"commit"`
 	Collections []GitPinCollection `json:"collections"`
 }
 
-// InstalledRoleEntry records one installed role: the directory it was
-// materialized into, the locator (git+<url>#@<commit>) its artifact was
-// built from - the one string the artifact key, this record and the lockfile
-// all key on - the artifact's sha256, the version the role was asked for (a
-// tag, a branch name, or the ref HEAD resolved to), the Galaxy name for a
-// role that came through the Galaxy API ("" for a git role), when it was
-// installed, and the install names of the roles its meta depends on. Keyed
-// by the role's install name, the directory name under the roles path.
+// InstalledRoleEntry records one installed role, keyed by install name (its
+// directory under the roles path). Source is the locator its artifact was
+// built from, the one string artifact key, record and lockfile all key on.
 type InstalledRoleEntry struct {
 	InstalledAt    time.Time `json:"installed_at"`
 	InstallPath    string    `json:"install_path"`
@@ -152,14 +110,9 @@ type RolePinDep struct {
 	Name    string `json:"name,omitempty"`
 }
 
-// RolePinEntry records what one role requirement resolved to: the repository
-// URL, the commit, the concrete version (tag or branch), the commit sha the
-// Galaxy v1 API recorded for that tag ("" when it gave none, and for a git
-// role), the galaxy_info.role_name when the meta carried one, and the
-// dependencies its meta declared. Keyed by the requirement line, and - like
-// GitPinEntry - never expired by the clock: a pin is invalidated by the
-// requirements signature and by --refresh, because a ref that has not moved
-// is the same answer a month later.
+// RolePinEntry records what one role requirement line resolved to: a git or
+// Galaxy pin names Repository and Commit, a url pin URL and SHA256. Like
+// GitPinEntry it never expires by the clock.
 type RolePinEntry struct {
 	FetchedAt      time.Time `json:"fetched_at"`
 	Repository     string    `json:"repository"`
@@ -174,23 +127,16 @@ type RolePinEntry struct {
 	// Ref is the qualified ref a Galaxy role's pin chose (refs/tags/<tag> or
 	// refs/heads/<branch>), "" for a git role's pin, whose ref is its key.
 	Ref string `json:"ref,omitempty"`
-	// URL is the tarball URL a url role's pin was fetched from and SHA256 the
-	// sha256 of the bytes it served - the url pin's identity, standing where
-	// Repository and Commit stand for a git or Galaxy pin. Both are "" on
-	// those pins, as Repository and Commit are "" on a url pin.
+	// URL is the tarball a url role's pin was fetched from and SHA256 the digest
+	// of the bytes it served: a url pin's identity, "" on git and Galaxy pins.
 	URL    string       `json:"url,omitempty"`
 	SHA256 string       `json:"sha256,omitempty"`
 	Deps   []RolePinDep `json:"deps,omitempty"`
 }
 
 // URLPinEntry records what a url collection requirement resolved to: the
-// sha256 of the bytes the URL served and the one collection identity the
-// artifact's MANIFEST.json declared, with its raw dependency map - everything
-// the solver needs to answer for it without touching the origin again. Keyed
-// by urlsource.PinKey, the canonical URL. Like GitPinEntry it carries no
-// retention window: a pin is invalidated by an edit to the URL, by --refresh
-// and by --clear-cache, never by the clock, because a URL that still serves
-// the same bytes is the same answer a month later.
+// sha256 of the served bytes and its MANIFEST.json identity and dependencies.
+// Keyed by urlsource.PinKey; like GitPinEntry it never expires by the clock.
 type URLPinEntry struct {
 	FetchedAt    time.Time         `json:"fetched_at"`
 	Dependencies map[string]string `json:"dependencies,omitempty"`
@@ -245,27 +191,9 @@ func New() *Store {
 	}
 }
 
-// UnmarshalJSON decodes a Store, then re-allocates any map field an explicit
-// JSON null nilled. An explicit `null` in the payload differs from both an
-// absent key and `{}`: only `null` nils a pre-initialized map field during
-// decode, while an absent key or `{}` leaves it alone (or empty). Without
-// this guard, the next write into that map panics with "assignment to entry
-// in nil map"; nothing in this program calls recover, and both the install
-// and warm pipelines run their per-collection work inside wg.Go goroutines,
-// so that panic kills the whole process before state.release runs. On the S3
-// backend that means the exclusive lock object is never released and
-// survives to its own 10-minute TTL, stalling every other run against that
-// bucket for the whole window.
-//
-// The guard lives here, on the type, rather than being called explicitly at
-// each decode site (e.g. LoadStore): every present and future decode path -
-// including one nobody has written yet - inherits it automatically, and a
-// thirteenth map added to Store later cannot reopen this hole just by a call
-// site forgetting to guard it.
-//
-// The local Bolt path never needed this: loadJSONBucket only ever populates an
-// already-initialized map key by key and never assigns a whole map field, so
-// there is no decode step there that can replace a map with nil.
+// UnmarshalJSON decodes a Store and re-allocates any map an explicit JSON null
+// nilled: a write into a nil map panics a worker goroutine, killing the run
+// before it releases the S3 lock. Guarding here covers every decode path.
 func (s *Store) UnmarshalJSON(data []byte) error {
 	// storeJSON strips the json.Unmarshaler method set, so the decode below
 	// cannot recurse back into this method. The conversion is on the pointer,
@@ -282,9 +210,8 @@ func (s *Store) UnmarshalJSON(data []byte) error {
 }
 
 // ResolvedEntry stores a resolved collection version and source. Ref is set
-// only for a collection resolved from a git source: the branch, tag or
-// commit the requirements file asked for, kept so a lockfile built from a
-// replayed resolution records the same ref a fresh one would.
+// only for a git source, so a lockfile built from a replayed resolution
+// records the same ref a fresh one would.
 type ResolvedEntry struct {
 	Version string `json:"version"`
 	Source  string `json:"source"`
@@ -338,13 +265,9 @@ func (s *Store) GetInstalled(key string) (InstalledEntry, bool) {
 	return entry, ok
 }
 
-// InstalledArtifactSHAByKey returns a fresh map from installed collection key
-// (ns.name@version) to its ArtifactSHA256, omitting entries with an empty
-// SHA. This is the persisted source of truth for which extracted artifact
-// trees must be kept: unlike an on-disk workspace scan, it also covers
-// projects whose workspace is currently absent (the normal ephemeral-CI
-// state), since their installed entries are never pruned from the snapshot
-// until their workspace is actually seen and scanned again.
+// InstalledArtifactSHAByKey maps each installed collection key to its non-empty
+// ArtifactSHA256: the collections' half of the extracted keep set, which unlike
+// a workspace scan covers projects whose workspace is currently absent.
 func (s *Store) InstalledArtifactSHAByKey() map[string]string {
 	if s == nil {
 		return nil
@@ -361,11 +284,9 @@ func (s *Store) InstalledArtifactSHAByKey() map[string]string {
 	return out
 }
 
-// SetWarmed records that key's artifact (identified by artifactSHA) has been
-// materialized in the extracted store, stamping the current time. It returns
-// early on a nil receiver, an empty key, or an empty sha, so it can never
-// persist an entry that protects nothing. There is nothing to clone here,
-// unlike SetInstalled: WarmedEntry holds no reference-type field.
+// SetWarmed records that key's artifact (artifactSHA) is materialized in the
+// extracted store, stamped now. An empty key or sha is ignored, so it never
+// persists an entry that protects nothing.
 func (s *Store) SetWarmed(key, artifactSHA string) {
 	if s == nil || key == "" || artifactSHA == "" {
 		return
@@ -391,10 +312,8 @@ func (s *Store) GetGitPin(key string) (GitPinEntry, bool) {
 	return cloneGitPin(entry), true
 }
 
-// SetGitPin records entry under key, deep-copying it and stamping
-// FetchedAt with the current time. An empty key or commit is ignored: a pin
-// that names no commit protects nothing and would only ever be replayed into
-// a failure.
+// SetGitPin records a deep copy of entry under key, stamping FetchedAt now. An
+// empty key or commit is ignored: such a pin would only replay into a failure.
 func (s *Store) SetGitPin(key string, entry GitPinEntry) {
 	if s == nil || key == "" || entry.Commit == "" {
 		return
@@ -461,10 +380,9 @@ func (s *Store) DeleteInstalledRole(name string) {
 	s.dirty = true
 }
 
-// InstalledRolesSnapshot returns a fully independent deep copy of the
-// installed roles: each entry's Deps slice is cloned too, so mutating the
-// returned map or any of its slices cannot corrupt the stored snapshot
-// state. Cleanup walks it to decide which role directories are still owned.
+// InstalledRolesSnapshot returns a deep copy of the installed roles, Deps
+// included, so the caller cannot corrupt the store. Cleanup walks it to decide
+// which role directories are still owned.
 func (s *Store) InstalledRolesSnapshot() map[string]InstalledRoleEntry {
 	if s == nil {
 		return nil
@@ -476,12 +394,9 @@ func (s *Store) InstalledRolesSnapshot() map[string]InstalledRoleEntry {
 	return clone
 }
 
-// InstalledRoleArtifactSHAs returns a fresh map from installed role name to
-// its ArtifactSHA256, omitting entries with an empty sha. It is the roles'
-// half of the extracted keep set, for the same reason
-// InstalledArtifactSHAByKey is the collections' half: an entry outlives its
-// workspace, so a project whose roles path is currently absent still keeps
-// its extracted trees.
+// InstalledRoleArtifactSHAs maps each installed role name to its non-empty
+// ArtifactSHA256: the roles' half of the extracted keep set, which like
+// InstalledArtifactSHAByKey outlives an absent roles path.
 func (s *Store) InstalledRoleArtifactSHAs() map[string]string {
 	if s == nil {
 		return nil
@@ -513,12 +428,9 @@ func (s *Store) GetRolePin(key string) (RolePinEntry, bool) {
 	return cloneRolePin(entry), true
 }
 
-// SetRolePin records entry under key, deep-copying it and stamping FetchedAt
-// with the current time when the caller left it zero. An empty key is
-// ignored, and so is an entry naming neither a commit nor a sha256 - a git or
-// Galaxy pin's identity is its commit, a url pin's is its sha256, and a pin
-// that names neither protects nothing and would only ever be replayed into a
-// failure.
+// SetRolePin records a deep copy of entry under key, stamping FetchedAt now if
+// zero. An empty key, or an entry with neither Commit (git, Galaxy) nor SHA256
+// (url), is ignored: such a pin would only replay into a failure.
 func (s *Store) SetRolePin(key string, entry RolePinEntry) {
 	if s == nil || key == "" || (entry.Commit == "" && entry.SHA256 == "") {
 		return
@@ -566,10 +478,8 @@ func (s *Store) GetURLPin(key string) (URLPinEntry, bool) {
 	return cloneURLPin(entry), true
 }
 
-// SetURLPin records entry under key, deep-copying it and stamping FetchedAt
-// with the current time. An empty key or sha256 is ignored, as SetGitPin
-// ignores an empty commit: a pin that names no digest protects nothing and
-// would only ever be replayed into a failure.
+// SetURLPin records a deep copy of entry under key, stamping FetchedAt now. An
+// empty key or sha256 is ignored: such a pin would only replay into a failure.
 func (s *Store) SetURLPin(key string, entry URLPinEntry) {
 	if s == nil || key == "" || entry.SHA256 == "" {
 		return
@@ -592,17 +502,9 @@ func cloneURLPin(entry URLPinEntry) URLPinEntry {
 	return clone
 }
 
-// WarmedArtifactSHAByKey returns a fresh map from warmed collection key to
-// artifact sha, excluding entries with an empty sha and entries outside the
-// WarmedEntryMaxAge retention window. The window is enforced here, not just
-// at persist time: cleanup builds its keep set from this call and then saves
-// the snapshot in the same run, and the save prunes on the same window (see
-// snapshotData/copyFreshWarmed) - filtering here is what keeps the keep set
-// and the snapshot it is about to write in agreement, rather than leaving
-// every expiry lagging one whole cleanup cycle. The shared thing is
-// helpers.WarmedEntryMaxAge, passed to newRetentionWindow at both sites; each
-// site samples its own now, so the two windows share a width but not an
-// instant.
+// WarmedArtifactSHAByKey maps each warmed key to its non-empty artifact sha,
+// omitting entries outside WarmedEntryMaxAge. Filtering here, as snapshotData
+// does on save, keeps cleanup's keep set in step with the snapshot it writes.
 func (s *Store) WarmedArtifactSHAByKey() map[string]string {
 	if s == nil {
 		return nil
@@ -638,15 +540,9 @@ func (s *Store) GetDepsCache(key string) (map[string]string, bool) {
 	return clone, true
 }
 
-// SetDepsCache stores dependency constraints for a key, stamping the current
-// time as the entry's FetchedAt. The stamp marks when the entry was written,
-// not when it was last read: a key that stays referenced but is never
-// rewritten still ages out of the persisted snapshot CacheEntryMaxAge after
-// this write and gets refetched on a later run - an accepted, cheap
-// consequence, and the reason GetDepsCache above stays a pure read instead
-// of taking the write lock to bump FetchedAt on every hit. This differs from
-// APICache, whose FetchedAt is also bumped on a successful 304 revalidation
-// via refreshAPICacheEntry, not only on an initial fetch.
+// SetDepsCache stores dependency constraints for key, stamping FetchedAt with
+// the write time. GetDepsCache never bumps it, so a referenced entry still
+// ages out CacheEntryMaxAge after its write: a cheap refetch, no write lock.
 func (s *Store) SetDepsCache(key string, deps map[string]string) {
 	if s == nil {
 		return
@@ -670,11 +566,8 @@ func (s *Store) DeleteDepsCache(key string) {
 	s.dirty = true
 }
 
-// GetAPICache returns a cached API entry by key. The returned entry shares
-// its Body backing array with the stored snapshot: callers must treat Body
-// as read-only and must not mutate it. Body is deliberately not cloned on
-// read because this is the warm-cache hot path and Body can be a large
-// response payload; the only caller unmarshals it without mutating.
+// GetAPICache returns a cached API entry by key. Body shares its backing array
+// with the store and is not cloned on this hot path: callers must not mutate it.
 func (s *Store) GetAPICache(key string) (APICacheEntry, bool) {
 	if s == nil {
 		return APICacheEntry{}, false
@@ -699,10 +592,9 @@ func (s *Store) SetAPICache(key string, entry APICacheEntry) {
 	s.dirty = true
 }
 
-// ClearCaches clears the API, dependency, versions, git pin, role pin and
-// url pin caches: every bucket that is an answer from a remote rather than a
-// record of content on disk. Installed and InstalledRoles are records of
-// content and survive, as Warmed does.
+// ClearCaches clears every bucket that is an answer from a remote (API, deps,
+// versions, git, role and url pins). Installed, InstalledRoles and Warmed are
+// records of content on disk and survive.
 func (s *Store) ClearCaches() {
 	if s == nil {
 		return
@@ -736,15 +628,9 @@ func (s *Store) GetVersionsCache(key string) ([]string, bool) {
 	return clone, true
 }
 
-// SetVersionsCache stores cached versions for a key, stamping the current
-// time as the entry's FetchedAt. The stamp marks when the entry was written,
-// not when it was last read: a key that stays referenced but is never
-// rewritten still ages out of the persisted snapshot CacheEntryMaxAge after
-// this write and gets refetched on a later run - an accepted, cheap
-// consequence, and the reason GetVersionsCache above stays a pure read
-// instead of taking the write lock to bump FetchedAt on every hit. This
-// differs from APICache, whose FetchedAt is also bumped on a successful 304
-// revalidation via refreshAPICacheEntry, not only on an initial fetch.
+// SetVersionsCache stores versions for key, stamping FetchedAt with the write
+// time. GetVersionsCache never bumps it, so a referenced entry still ages out
+// CacheEntryMaxAge after its write: a cheap refetch, no write lock.
 func (s *Store) SetVersionsCache(key string, versions []string) {
 	if s == nil {
 		return
@@ -840,10 +726,9 @@ func (s *Store) GraphSnapshot() map[string][]string {
 	return clone
 }
 
-// SetRequirements stores a snapshot of requirement specs. maps.Copy alone
-// would only shallow-copy each RequirementSpec, leaving its Signatures
-// slice aliasing the caller's backing array, so each entry's Signatures is
-// cloned individually before storing.
+// SetRequirements replaces the requirement specs with a copy whose Signatures
+// slices are cloned too. It never writes into an existing array in place,
+// which signaturesWithoutQuery's aliasing relies on.
 func (s *Store) SetRequirements(spec map[string]RequirementSpec) {
 	if s == nil {
 		return
@@ -859,10 +744,8 @@ func (s *Store) SetRequirements(spec map[string]RequirementSpec) {
 	s.dirty = true
 }
 
-// RequirementsSnapshot returns a fully independent deep copy of requirement
-// specs: each entry's Signatures slice is cloned too, so mutating the
-// returned map or any of its Signatures slices cannot corrupt the stored
-// snapshot state.
+// RequirementsSnapshot returns a deep copy of the requirement specs, each
+// Signatures slice included, so the caller cannot corrupt the store.
 func (s *Store) RequirementsSnapshot() map[string]RequirementSpec {
 	if s == nil {
 		return nil
@@ -887,27 +770,9 @@ func (s *Store) MetaSnapshot() SnapshotMeta {
 	return s.Meta
 }
 
-// WasPersisted reports whether this store was ever actually loaded from a
-// persisted snapshot, as opposed to being a fresh, never-saved store. It is
-// equivalent to !s.Meta.LastSnapshot.IsZero(): LastSnapshot is zero exactly
-// when no persisted snapshot was loaded - New() leaves it zero, Load returns
-// New() outright for ErrOutdatedSchemaVersion (a dropped, pre-migration
-// snapshot), the S3 backend's LoadStore returns store.New() for both
-// errS3NotFound and a failed outdated-schema probe, and an absent meta
-// bucket leaves LastSnapshot zero on an otherwise normally-loaded store -
-// loadMeta returns early on a missing bucket, so the data buckets still
-// load as usual; that combination only a hand-edited database can produce,
-// and skipping is the conservative answer there anyway - while Save and
-// MarshalSnapshot both stamp it unconditionally on every persisted write.
-// It reads s.Meta.LastSnapshot directly under the read lock rather than
-// through MetaSnapshot, which would copy the whole SnapshotMeta struct just
-// to check one field.
-//
-// Callers need this because a store that was never persisted carries no
-// evidence about what is actually in use anywhere: any pass that deletes
-// content or narrows state on the strength of such a store is acting on
-// ignorance, not on evidence, and must not treat an empty in-memory map as
-// proof that nothing is installed or warmed.
+// WasPersisted reports whether this store was loaded from a persisted snapshot
+// (LastSnapshot is non-zero). A never-persisted store is ignorance, not
+// evidence: its empty maps must not be read as "nothing installed".
 func (s *Store) WasPersisted() bool {
 	if s == nil {
 		return false
@@ -917,29 +782,9 @@ func (s *Store) WasPersisted() bool {
 	return !s.Meta.LastSnapshot.IsZero()
 }
 
-// HasRecordedContent reports whether any run has ever written records of
-// on-disk content into this cache - an installed entry or a warmed one. It is
-// the predicate a pass that deletes on-disk content must consult, and it is
-// deliberately not WasPersisted.
-//
-// The two differ on exactly one shape, and that shape is reachable: `lock` is
-// a real command that writes neither installed nor warmed entries, so on a
-// cache carrying no persisted snapshot it produces one whose two content sets
-// are empty and whose LastSnapshot is stamped. WasPersisted reads that as
-// evidence, and the emptiness then reads as "nothing is installed or warmed
-// anywhere" - which is how a plain `lock` run on a machine whose snapshot was
-// dropped by a schema bump, but whose extracted trees survived on disk, hands
-// the next cleanup the evidence to wipe the whole content-addressable store.
-//
-// The stamp is derived from the data rather than passed in by each command,
-// so no command has to remember to set it and none can set it wrongly: a save
-// stamps ContentRecorded when the store holds at least one installed or
-// warmed entry, and otherwise carries forward whatever was already recorded.
-// Carrying forward is what keeps the predicate true for a cache whose last
-// collection was legitimately cleaned up - the snapshot genuinely knows
-// nothing is installed there, which is evidence, not ignorance - while
-// leaving it false for a cache no content-recording command has ever
-// written.
+// HasRecordedContent reports whether any save ever carried installed, warmed
+// or installed-role records. A destructive pass consults it, not WasPersisted,
+// because `lock` saves a snapshot whose empty content maps prove nothing.
 func (s *Store) HasRecordedContent() bool {
 	if s == nil {
 		return false
@@ -961,30 +806,9 @@ func (s *Store) SetMetaRequirements(hash, server string) {
 	s.dirty = true
 }
 
-// Dirty reports whether this process has written something into the store
-// since it was loaded (or since New built a fresh one). It is what lets a
-// caller decide whether a save has anything to persist at all.
-//
-// The predicate is "this process wrote something into the store since it was
-// loaded", never "the store differs from what the backend holds": nothing
-// here compares against what was last persisted, and nothing here consults
-// the backend to find out - it is a pure read of a flag this process set
-// itself.
-//
-// The flag is set unconditionally by any mutator call, never conditioned on
-// whether the value actually changed and never cleared, because a false
-// positive costs one redundant save - exactly today's behavior - while a
-// false negative silently drops persisted state. The two are not symmetric,
-// so the design errs toward saving.
-//
-// A load never sets it, for the identical reason in both cases: store.Load's
-// loadJSONBucket populates Store's map fields directly, key by key,
-// rather than through a setter, and UnmarshalJSON decodes straight onto the
-// struct the same way - so setting the flag from either path would make
-// every run against a backend that already holds a snapshot dirty on
-// arrival, which defeats the point of this flag entirely. Every read method
-// takes only the read lock and never reaches a mutator, so none of them set
-// it either.
+// Dirty reports whether this process has called a mutator since load or New.
+// Every mutator sets it unconditionally and nothing clears it: a false positive
+// costs one save, a false negative loses state. Loads never set it.
 func (s *Store) Dirty() bool {
 	if s == nil {
 		return false
@@ -994,25 +818,9 @@ func (s *Store) Dirty() bool {
 	return s.dirty
 }
 
-// stampSaveMeta applies the metadata every persisted write stamps, and is the
-// one place either backend's save decides what the snapshot claims about
-// itself: the local Bolt Save and the S3 MarshalSnapshot both go through it,
-// so the two cannot drift on what a snapshot asserts.
-//
-// SchemaVersion and LastSnapshot are unconditional - the snapshot was written,
-// by this binary, now. ContentRecorded is not: it is stamped only when the
-// data being written actually holds records of on-disk content, and otherwise
-// carries forward whatever the loaded snapshot already had. See
-// Store.HasRecordedContent for why that distinction exists and which pass
-// depends on it.
-//
-// hasContent is read from the live store BEFORE snapshotData's age eviction,
-// not from the payload after it, and the difference is load-bearing rather
-// than incidental: a cache whose only content record ages out on this very
-// save would otherwise have that record dropped and the evidence it ever
-// existed erased in the same write, leaving the extracted tree it named
-// unreclaimable forever. Recording it was a fact about the past; the eviction
-// does not unmake it.
+// stampSaveMeta stamps SchemaVersion and LastSnapshot for both backends' saves,
+// and ContentRecorded only when hasContent. hasContent comes from the live store
+// before age eviction, so a record expiring on this save still counts.
 func stampSaveMeta(data *snapshotData, hasContent bool) {
 	data.Meta.SchemaVersion = helpers.StoreSnapshotSchemaVersion
 	data.Meta.LastSnapshot = time.Now().UTC()
@@ -1038,12 +846,9 @@ type snapshotData struct {
 	Meta           SnapshotMeta
 }
 
-// MarshalSnapshot returns a schema-stamped JSON encoding of the store,
-// suitable for writing to a remote snapshot backend. It builds the payload
-// from snapshotData's RLock-protected deep copy rather than marshaling the
-// live store directly, so a concurrent writer goroutine cannot trip the
-// race detector or produce a torn payload. The schema version and
-// last-snapshot timestamp are stamped exactly as Save does.
+// MarshalSnapshot returns the schema-stamped JSON snapshot for a remote
+// backend, built from snapshotData's deep copy so a concurrent writer cannot
+// tear the payload. It stamps meta exactly as Save does.
 func (s *Store) MarshalSnapshot() ([]byte, error) {
 	data := s.snapshotData()
 	stampSaveMeta(&data, s.hasContentEntries())
@@ -1069,11 +874,9 @@ func (s *Store) MarshalSnapshot() ([]byte, error) {
 	return json.Marshal(snapshot)
 }
 
-// hasContentEntries reports whether the live store currently holds any record
-// of on-disk content - an installed collection, a warmed one, or an installed
-// role. It is what a save consults to decide whether to stamp
-// Meta.ContentRecorded; see stampSaveMeta for why it is read here, from the
-// store itself, rather than from the payload that save is about to write.
+// hasContentEntries reports whether the live store holds an installed
+// collection, warmed entry or installed role; see stampSaveMeta for why a save
+// reads it from the store rather than from its evicted payload.
 func (s *Store) hasContentEntries() bool {
 	if s == nil {
 		return false
@@ -1109,11 +912,9 @@ func ensureMap[K comparable, V any](m map[K]V) map[K]V {
 	return m
 }
 
-// retentionWindow is the closed interval of write stamps a persist pass or a
-// keep-set pass accepts: [oldest, newest]. Both bounds come from one wall-clock
-// sample, so every entry judged against a given window is judged against the
-// same instant - two entries in one save can never be classified by two
-// different clocks.
+// retentionWindow is the closed interval [oldest, newest] of write stamps a
+// pass accepts. Both bounds come from one clock sample, so every entry in one
+// save is judged against the same instant.
 type retentionWindow struct {
 	oldest time.Time
 	newest time.Time
@@ -1126,57 +927,16 @@ func newRetentionWindow(now time.Time, maxAge time.Duration) retentionWindow {
 	return retentionWindow{oldest: now.Add(-maxAge), newest: now}
 }
 
-// isStale reports whether stampedAt falls outside the window.
-//
-// Both bounds are inclusive. Strict Before keeps an entry stamped exactly at
-// oldest (see TestSnapshotBoundaryEntryIsKept); strict After keeps an entry
-// stamped exactly at newest, so an entry written in the same instant the
-// window was sampled never expires the moment it is written.
-//
-// A future stamp is dropped, not clamped and not fatal. Clamping to newest
-// would launder an invalid stamp into a valid one and hand it a fresh
-// full-length lease; rejecting the whole snapshot would turn a droppable
-// cache into an outage and would diverge from the local Bolt path. Dropping
-// is the only option that both stops the entry surviving forever - a stamp
-// like "9999-01-01" compared only against the oldest bound is never older
-// than that bound, so it would be rewritten into every later save - and
-// self-heals, since every bucket this guards is rebuildable.
-//
-// No skew tolerance, deliberately. With several machines on one cache, an
-// entry written by a machine whose clock runs ahead looks future to the
-// others and is refetched (or, for a warmed entry, re-extracted from a
-// tarball that is still cached locally) - bounded, network-cheap,
-// self-correcting. A tolerance constant would be an unfalsifiable number and
-// a second definition of "now". Do not add one.
+// isStale reports whether stampedAt falls outside the inclusive window. A
+// future stamp is stale, neither clamped (a fresh lease) nor fatal, and there
+// is deliberately no clock-skew tolerance: a skewed entry is just refetched.
 func (w retentionWindow) isStale(stampedAt time.Time) bool {
 	return stampedAt.Before(w.oldest) || stampedAt.After(w.newest)
 }
 
-// snapshotData builds a snapshot payload from the store, applying two
-// transformations neither persist entrypoint has to know about on its own:
-// both the local Bolt Save and the S3 MarshalSnapshot build their payload
-// through this one method, so both bounds apply to both without either
-// caller repeating them.
-//
-// First, entries in APICache, DepsCache, and Versions that were last written
-// before the CacheEntryMaxAge retention window are dropped from the payload.
-// The live maps themselves are never pruned, only this RLock-protected copy
-// - a still-warm entry stays available for reads until it is naturally
-// overwritten or the store process restarts and reloads the (now-pruned)
-// persisted snapshot.
-//
-// Second, every Requirements entry's Signatures sources have their query cut
-// on the way out, via copyRequirementsCutQuery/signaturesWithoutQuery below.
-// See normalizeSignatures' own doc comment
-// (internal/galaxy/collections/resolve.go) for why a signature source's
-// query must never reach persisted state, and for the mixed-fleet
-// consequences of the two binaries either side of this cut disagreeing about
-// it. The residual here is a predicate, not a gap: a run that persists
-// nothing does not strip, for the identical reason cache.WithCleanSaveSkip's
-// own doc comment (internal/galaxy/cache/dirtyskip.go) gives for the age
-// eviction just above - this method's cut runs only inside a call this
-// decorator lets through, and a call it skips carries no bytes to strip in
-// the first place.
+// snapshotData deep-copies the store for Save and MarshalSnapshot, dropping
+// API, deps and versions entries outside CacheEntryMaxAge and warmed ones
+// outside WarmedEntryMaxAge, and cutting signature queries; live maps are kept.
 func (s *Store) snapshotData() snapshotData {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -1215,33 +975,9 @@ func (s *Store) snapshotData() snapshotData {
 		maps.Copy(clone, entry.Deps)
 		data.DepsCache[key] = DepsCacheEntry{FetchedAt: entry.FetchedAt, Deps: clone}
 	}
-	// Installed is copied whole, with no retention window, and that asymmetry
-	// with Warmed just below is a decision rather than an oversight.
-	//
-	// Its cost is known and bounded: a project whose workspace is gone is
-	// skipped by every cleanup run, so its keys never reach that pass's
-	// would-remove set, so the shas its installed entries name are kept in the
-	// extracted store forever. The consequence is disk growth in a
-	// reconstructible layer - nothing anyone else owns is deleted - and the
-	// existing remedy for an operator who wants that space back is
-	// `--clear-cache`.
-	//
-	// An age window here would cost more than it recovers. An installed entry
-	// is written by an install that actually did work; a collection already
-	// present is skipped before recordInstall is ever reached, so a stable
-	// cache in its steady state - every collection installed, every run a
-	// no-op - stops refreshing its entries entirely. Under a window they would
-	// age out from under a live project and take its extracted trees with
-	// them, so the common case pays a full re-extraction on a timer to reclaim
-	// space from the rare one. Making it safe would mean re-recording on the
-	// skip path too, which turns every no-op run into a snapshot write.
-	//
-	// What would change this: a rule keyed on evidence rather than the clock.
-	// A project whose registry entry names a requirements file that is gone
-	// AND a workspace that is gone is dead by two independent signals, and its
-	// installed entries could be dropped on that basis without a window and
-	// without touching a live project. That is a cleanup-pass design, not a
-	// snapshot-schema one, and it is what a revival of this should build.
+	// Installed is copied whole with no retention window on purpose: an install
+	// that finds its collection present never re-records it, so a window would
+	// age out a live project's entries and its extracted trees with them.
 	maps.Copy(data.Installed, s.Installed)
 	for key, deps := range s.Graph {
 		clone := make([]string, len(deps))
@@ -1270,32 +1006,25 @@ func (s *Store) snapshotData() snapshotData {
 	return data
 }
 
-// copyGitPins copies every entry from src into dst through cloneGitPin. It is
-// factored out of snapshotData for the same complexity-budget reason
-// copyRolePins is; the caller holds the store's read lock for the duration of
-// the call.
+// copyGitPins copies every entry from src into dst through cloneGitPin; the
+// caller holds the store's read lock.
 func copyGitPins(dst, src map[string]GitPinEntry) {
 	for key, entry := range src {
 		dst[key] = cloneGitPin(entry)
 	}
 }
 
-// copyURLPins copies every entry from src into dst through cloneURLPin. It is
-// factored out of snapshotData for the same complexity-budget reason
-// copyRolePins is; the caller holds the store's read lock for the duration of
-// the call.
+// copyURLPins copies every entry from src into dst through cloneURLPin; the
+// caller holds the store's read lock.
 func copyURLPins(dst, src map[string]URLPinEntry) {
 	for key, entry := range src {
 		dst[key] = cloneURLPin(entry)
 	}
 }
 
-// copyInstalledRoles copies every entry from src into dst, cloning each
-// entry's Deps slice. It is factored out of snapshotData, rather than inlined
-// there as a loop like the other buckets above, purely to keep snapshotData
-// under its cyclomatic complexity budget (see copyRequirementsCutQuery for
-// the measurement); InstalledRolesSnapshot shares it so the two copies cannot
-// drift. The caller holds the store's read lock for the duration of the call.
+// copyInstalledRoles copies every entry from src into dst, cloning each Deps
+// slice; InstalledRolesSnapshot shares it so the two copies cannot drift. The
+// caller holds the store's read lock.
 func copyInstalledRoles(dst, src map[string]InstalledRoleEntry) {
 	for name, entry := range src {
 		entry.Deps = slices.Clone(entry.Deps)
@@ -1303,44 +1032,17 @@ func copyInstalledRoles(dst, src map[string]InstalledRoleEntry) {
 	}
 }
 
-// copyRolePins copies every entry from src into dst through cloneRolePin. It
-// is factored out of snapshotData for the same complexity-budget reason
-// copyInstalledRoles is; the caller holds the store's read lock for the
-// duration of the call.
+// copyRolePins copies every entry from src into dst through cloneRolePin; the
+// caller holds the store's read lock.
 func copyRolePins(dst, src map[string]RolePinEntry) {
 	for key, entry := range src {
 		dst[key] = cloneRolePin(entry)
 	}
 }
 
-// copyRequirementsCutQuery copies every entry from src into dst, cutting each
-// entry's Signatures sources down to their query-free form via
-// signaturesWithoutQuery. It exists so the persisted spec can never carry a
-// query a run's own producer-side cut (normalizeSignatures,
-// internal/galaxy/collections/resolve.go) failed to strip before an entry
-// reached the store. The shape that reaches this in production is a
-// snapshot predating this cut, loaded by a run that never rebuilds the
-// spec: install --frozen takes resolveOrLoadLockfile's lockfile branch,
-// which never calls buildRequirementsSpec/recordResolution - the only path
-// that ever runs a signature source through normalizeSignatures' own query
-// cut - so an entry an older binary, from before this cut existed, once
-// wrote unstripped, or any entry set directly
-// onto the map bypassing SetRequirements (the shape a test seeds when it
-// cannot depend on an older binary having run first), survives untouched
-// until this backstop runs; see normalizeSignatures' own doc comment for
-// why the persist-side cut has to exist at all rather than trusting every
-// write path to have already applied it.
-//
-// It is factored out of snapshotData, rather than inlined there as a loop
-// like the other buckets above, to keep snapshotData under its cyclomatic
-// complexity budget: inlining this helper's own loop there alone raises
-// snapshotData's complexity from 8 to 9, inlining copyFreshWarmed's below
-// alone raises it to 10, and inlining both at once raises it to 11 - the
-// only one of those three shapes that breaches cyclop's default limit of
-// 10 (measured with the pinned golangci-lint release; .golangci.yml sets no
-// cyclop override, and loadMeta/saveMeta already sit at exactly 10 and
-// pass). The caller holds the store's read lock for the duration of the
-// call.
+// copyRequirementsCutQuery copies src into dst with every Signatures query cut.
+// It backstops normalizeSignatures: install --frozen never rebuilds the spec, so
+// an uncut entry an older binary persisted would otherwise survive every save.
 func copyRequirementsCutQuery(dst, src map[string]RequirementSpec) {
 	for key, entry := range src {
 		entry.Signatures = signaturesWithoutQuery(entry.Signatures)
@@ -1348,23 +1050,9 @@ func copyRequirementsCutQuery(dst, src map[string]RequirementSpec) {
 	}
 }
 
-// signaturesWithoutQuery returns sources with every entry's query cut via
-// helpers.WithoutQuery, or sources itself unchanged when no entry's cut form
-// differs from its own - the common case, since a run's own producer-side
-// cut normally already stripped every source before it ever reached the
-// store. Only a genuine hit allocates: the scan finds the first element
-// WithoutQuery would change, and only then is one slice built, copying the
-// untouched prefix verbatim and cutting the remainder.
-//
-// Returning sources itself on the no-hit path preserves the exact aliasing
-// the maps.Copy this function replaced already had for this field, rather
-// than introducing new aliasing: the caller holds only the store's read
-// lock, so the returned slice must never be written through, and nothing
-// here does. The one path that could, Store.SetRequirements, never mutates
-// an existing backing array in place - it always replaces the whole map with
-// freshly cloned per-entry Signatures slices (see its own doc comment) - so
-// an alias handed out from here can never be observed changing under a
-// concurrent reader.
+// signaturesWithoutQuery returns sources with every query cut, allocating only
+// when some entry changes. The no-change path returns sources itself, safe
+// because SetRequirements never writes a Signatures array in place.
 func signaturesWithoutQuery(sources []string) []string {
 	cut := -1
 	for i, source := range sources {
@@ -1386,10 +1074,7 @@ func signaturesWithoutQuery(sources []string) []string {
 }
 
 // copyFreshWarmed copies every entry from src into dst that falls inside
-// window. It is factored out of snapshotData, rather than inlined there as a
-// loop like the other buckets above, purely to keep snapshotData under its
-// cyclomatic complexity budget; the caller holds the store's read
-// lock for the duration of the call.
+// window; the caller holds the store's read lock.
 func copyFreshWarmed(dst, src map[string]WarmedEntry, window retentionWindow) {
 	for key, entry := range src {
 		if window.isStale(entry.WarmedAt) {
@@ -1399,11 +1084,9 @@ func copyFreshWarmed(dst, src map[string]WarmedEntry, window retentionWindow) {
 	}
 }
 
-// Load reads cached state from the consolidated Bolt database. A schema
-// version older than the current one causes the snapshot to be dropped and
-// rebuilt (nil error, a fresh empty Store) rather than partially trusted; a
-// newer version is reported as an error since this binary cannot safely
-// interpret it.
+// Load reads cached state from the consolidated Bolt database. An older schema
+// version yields a fresh empty Store (drop and rebuild); a newer one is an
+// error, since this binary cannot safely interpret it.
 func Load(dbs *DBs) (*Store, error) {
 	store := New()
 	if dbs == nil || dbs.db == nil {
@@ -1431,11 +1114,9 @@ func Load(dbs *DBs) (*Store, error) {
 	return store, nil
 }
 
-// Save writes cached state to the consolidated Bolt database. The meta
-// bucket and all twelve data buckets are written inside a single Bolt
-// transaction so a mid-save failure (e.g. a key or value exceeding Bolt's
-// limits) leaves the previously committed snapshot fully intact instead of
-// a partially overwritten mix of old and new data.
+// Save writes cached state to the consolidated Bolt database: meta and every
+// data bucket in one Bolt transaction, so a mid-save failure leaves the last
+// committed snapshot intact.
 func Save(dbs *DBs, store *Store) error {
 	if dbs == nil || dbs.db == nil {
 		return helpers.ErrDbNil
@@ -1455,11 +1136,9 @@ func Save(dbs *DBs, store *Store) error {
 	})
 }
 
-// ValidateSchema reports whether a stored snapshot schema version is
-// compatible with this binary. A newer version means this build is too old
-// to safely interpret the snapshot; an older version means the snapshot
-// predates a breaking change and must be dropped and rebuilt rather than
-// partially trusted.
+// ValidateSchema accepts only helpers.StoreSnapshotSchemaVersion: a newer
+// version is unsupported by this build, an older one predates a breaking change
+// and must be dropped and rebuilt rather than partially trusted.
 func ValidateSchema(version int) error {
 	switch {
 	case version == helpers.StoreSnapshotSchemaVersion:
@@ -1483,10 +1162,8 @@ func runSteps(steps []func() error) error {
 	return nil
 }
 
-// jsonBucketIO is one data bucket bound to the maps it is mirrored in, in
-// both directions at once: load fills the live store's map, save writes the
-// snapshot copy's. Binding both together means a bucket cannot be listed for
-// one direction and forgotten in the other.
+// jsonBucketIO binds one data bucket to its load and save directions at once,
+// so a bucket cannot be listed for one direction and forgotten in the other.
 type jsonBucketIO struct {
 	load func(*bolt.Tx) error
 	save func(*bolt.Tx) error
@@ -1501,11 +1178,9 @@ func bindJSONBucket[T any](name string, dst, src map[string]T) jsonBucketIO {
 	}
 }
 
-// jsonBuckets lists the twelve data buckets in the one fixed order both
-// runners follow (api_cache, deps_cache, installed, graph, requirements,
-// resolved, versions_cache, warmed, git_pins, installed_roles, role_pins,
-// url_pins), which fault injection tests rely on for the save side - a new
-// bucket is appended, never inserted.
+// jsonBuckets lists the data buckets in the one fixed order both runners use.
+// A new bucket is appended, never inserted: save-side fault tests depend on
+// the order (TestSaveRollsBackWholeTransactionOnMidSaveFailure).
 func jsonBuckets(store *Store, data snapshotData) []jsonBucketIO {
 	return []jsonBucketIO{
 		bindJSONBucket(helpers.StoreBucketAPICache, store.APICache, data.APICache),
@@ -1544,12 +1219,9 @@ func runSaveSteps(tx *bolt.Tx, data snapshotData) error {
 	return runSteps(steps)
 }
 
-// loadMeta reads the meta bucket into store.Meta. When the meta bucket does
-// not exist at all (a brand-new file), the schema version keeps the current
-// default set by New(). When the bucket exists but the schema key is
-// missing, the version is treated as 0 (outdated) rather than silently
-// keeping the current-version default, so a populated-but-unstamped
-// database is dropped and rebuilt instead of passing validation.
+// loadMeta reads the meta bucket into store.Meta. A missing bucket (new file)
+// keeps New()'s current version; a bucket without the schema key reads as 0,
+// so a populated but unstamped database is dropped rather than trusted.
 func loadMeta(tx *bolt.Tx, store *Store) error {
 	metaBucket := tx.Bucket([]byte(helpers.StoreBucketMeta))
 	if metaBucket == nil {
@@ -1571,11 +1243,9 @@ func loadMeta(tx *bolt.Tx, store *Store) error {
 		}
 		store.Meta.LastSnapshot = t
 	}
-	// An absent key leaves the zero value, which HasRecordedContent reads as
-	// "no run has recorded on-disk content here". That is the conservative
-	// answer and it is also what a snapshot written by a binary predating this
-	// key produces, so an older binary sharing the cache can only make a
-	// destructive pass do less, never more.
+	// An absent key reads as zero, "no content recorded": the conservative
+	// answer, and what an older binary's snapshot yields, so a shared older
+	// binary can only make a destructive pass do less.
 	if v := metaBucket.Get([]byte(helpers.StoreMetaContentRecorded)); v != nil {
 		t, err := time.Parse(time.RFC3339Nano, string(v))
 		if err != nil {
@@ -1603,10 +1273,8 @@ func saveMeta(tx *bolt.Tx, meta SnapshotMeta) error {
 	if err := metaBucket.Put([]byte(helpers.StoreMetaLastSnapshot), []byte(meta.LastSnapshot.Format(time.RFC3339Nano))); err != nil {
 		return err
 	}
-	// Written only when set, so a cache no content-recording run has ever
-	// touched carries no key at all rather than a zero timestamp - the same
-	// shape a binary predating this key leaves behind, which is what keeps
-	// loadMeta's absent-key path the one both produce.
+	// Written only when set, so an unrecorded cache carries no key at all: the
+	// same shape an older binary leaves, and loadMeta's one absent-key path.
 	if !meta.ContentRecorded.IsZero() {
 		if err := metaBucket.Put([]byte(helpers.StoreMetaContentRecorded), []byte(meta.ContentRecorded.Format(time.RFC3339Nano))); err != nil {
 			return err
@@ -1645,26 +1313,9 @@ func loadBucket(tx *bolt.Tx, name string, fn func(k, v []byte) error) error {
 	return bucket.ForEach(fn)
 }
 
-// loadJSONBucket decodes every value in the named bucket as a JSON-encoded T
-// and stores it in dst under that entry's bucket key. A bucket that does not
-// exist is not an error; loadBucket above owns that contract.
-//
-// A value that does not decode is reported as an error rather than stored as a
-// zero T: every current-schema value is written as valid JSON by
-// saveJSONBucket, so a decode failure means the stored bytes are genuinely
-// corrupt, and coercing them into a zero entry would hand a caller a garbage
-// record it cannot tell from a real one.
-//
-// The error names both the bucket and the key because a caller of Load
-// otherwise gets a bare encoding/json message identifying neither, leaving an
-// operator with a corrupt cache and nothing to look at. The key renders through
-// %q because it is a byte string read back from persisted cache state, so an
-// unprintable or empty key still renders unambiguously.
-//
-// The destination is the map rather than the *Store, so a decoded entry is
-// written into it directly and this function has no receiver through which to
-// reach a mutator - which is what leaves Store.Dirty false after a load (see
-// Store.Dirty, and TestDirtyIsFalseAfterEveryLoadPath for the pin).
+// loadJSONBucket decodes every value of the named bucket into dst. A value that
+// does not decode is corruption, reported with bucket and key, never a zero T;
+// filling dst directly, with no *Store, is what keeps Dirty false after a load.
 func loadJSONBucket[T any](tx *bolt.Tx, name string, dst map[string]T) error {
 	return loadBucket(tx, name, func(k, v []byte) error {
 		var entry T
@@ -1676,12 +1327,8 @@ func loadJSONBucket[T any](tx *bolt.Tx, name string, dst map[string]T) error {
 	})
 }
 
-// saveJSONBucket replaces the named bucket's contents with data, within the
-// caller's transaction, encoding every value as JSON under its map key.
-//
-// The encoding is not a parameter because every bucket of this snapshot is
-// JSON, and the load side assumes exactly that: loadJSONBucket above decodes
-// whatever it finds as JSON and treats anything else as corruption.
+// saveJSONBucket replaces the named bucket's contents with data as JSON within
+// the caller's transaction; loadJSONBucket treats anything else as corruption.
 func saveJSONBucket[T any](tx *bolt.Tx, name string, data map[string]T) error {
 	bucket, err := ensureEmptyBucket(tx, name)
 	if err != nil {

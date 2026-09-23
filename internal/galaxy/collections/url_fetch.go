@@ -10,21 +10,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// urlFetchToCache re-downloads one pinned url collection's artifact from its
-// URL, the install-time counterpart of downloadCollectionToCache and the url
-// sibling of gitFetchToCache. It is reached only when discovery did not
-// leave the artifact in the cache: after a --dry-run discovery, on a
-// --frozen run whose cached artifact was evicted, or through
-// prepareWithRecovery's one bounded refetch of a corrupt cached artifact.
-//
-// The pin is enforced twice over the fresh bytes. The downloaded sha256 must
-// equal the locator's - the URL now serving different bytes than the pin
-// records is helpers.ErrSHA256Mismatch, the same verdict a tampered Galaxy
-// artifact earns. The manifest's identity must then equal the collection
-// being installed - the attribution a url artifact gets, for the reason
-// gitFetchToCache gives: the signature path's checkManifestAttribution runs
-// only after a signature verified, which a url artifact (carrying none)
-// never reaches.
+// urlFetchToCache re-downloads a pinned url collection whose cached artifact is
+// missing or corrupt. The bytes must match the locator's sha256 and the manifest
+// its identity, since an unsigned artifact never reaches checkManifestAttribution.
 func urlFetchToCache(ctx context.Context, deps installDeps, col collection, useCache bool) (downloadResult, error) {
 	loc, err := col.urlLocator()
 	if err != nil {

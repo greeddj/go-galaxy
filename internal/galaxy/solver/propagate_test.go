@@ -45,10 +45,8 @@ func TestRelationOnDecision(t *testing.T) {
 	}
 }
 
-// TestRelationNoAssignments covers the one non-exact answer left: zero
-// assignments for the package is always INCONCLUSIVE, regardless of the
-// term's own content - the vacuous seed must never satisfy or contradict
-// anything on its own.
+// TestRelationNoAssignments pins that a package with no assignments relates
+// inconclusive to any term: the vacuous seed never satisfies or contradicts.
 func TestRelationNoAssignments(t *testing.T) {
 	t.Parallel()
 	s := newTestState(newFakeProvider())
@@ -58,12 +56,9 @@ func TestRelationNoAssignments(t *testing.T) {
 	}
 }
 
-// TestRelationExactWithoutUniverse pins the exactness the signed algebra
-// buys: with only a derivation on record and the package's universe never
-// fetched, subset, disjointness, and partial overlap are all judged
-// exactly - including detecting two disjoint positive ranges as an outright
-// contradiction, which the retired symbolic key-identity comparison had to
-// defer as inconclusive.
+// TestRelationExactWithoutUniverse pins that, with the universe never
+// fetched, subset, disjointness and partial overlap are judged exactly, two
+// disjoint positive ranges included as an outright contradiction.
 func TestRelationExactWithoutUniverse(t *testing.T) {
 	t.Parallel()
 	s := newTestState(newFakeProvider())
@@ -87,12 +82,9 @@ func TestRelationExactWithoutUniverse(t *testing.T) {
 	}
 }
 
-// TestRelationNegativeAccumulation pins the sign asymmetries the reference
-// term arithmetic mandates: a package known only through negative facts
-// never satisfies a positive term (it asserts no selection) and never
-// contradicts a negative one - the pair of judgments that keeps a
-// dependency's terms derivable for such a package instead of vacuously
-// settled.
+// TestRelationNegativeAccumulation pins that a package known only through
+// negative facts never satisfies a positive term nor contradicts a negative
+// one, which keeps its dependency terms derivable rather than settled.
 func TestRelationNegativeAccumulation(t *testing.T) {
 	t.Parallel()
 	s := newTestState(newFakeProvider())
@@ -139,13 +131,8 @@ func TestRelateAlmostSatisfied(t *testing.T) {
 }
 
 // TestUnitPropagationNewestToOldest pins that a package's incompatibilities
-// are scanned newest to oldest: given two incompatibilities that could both
-// derive something, the one added LAST must be the one whose derivation
-// wins (observable via which CauseIndex the resulting derivation records).
-// The two foo constraints overlap without either containing the other's
-// derivation, so the second incompatibility stays almost-satisfied (not
-// satisfied, not contradicted) after the first derivation lands and both
-// derivations are recorded.
+// are scanned newest first: of two that both derive, the newest one's
+// derivation is recorded first.
 func TestUnitPropagationNewestToOldest(t *testing.T) {
 	t.Parallel()
 	s := newTestState(newFakeProvider())
@@ -167,11 +154,8 @@ func TestUnitPropagationNewestToOldest(t *testing.T) {
 		t.Fatalf("unitPropagation: %v", err)
 	}
 
-	// Both incompatibilities are almost satisfied (each names a different
-	// foo constraint, so neither derivation is a duplicate of the other),
-	// so scanning them all produces two derivations - but the newest-first
-	// scan order means the derivation caused by newInc must be appended
-	// before the one caused by oldInc.
+	// Both are almost satisfied with different foo constraints, so two
+	// derivations land, the one caused by newInc first.
 	p := s.ps.pkgState("foo")
 	if len(p.indices) != 2 {
 		t.Fatalf("expected two derivations for foo, got %d", len(p.indices))

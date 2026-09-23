@@ -9,13 +9,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 )
 
-// TestRootMetadataURLCandidatesEmptyMemoMatchesFullSet asserts that with an
-// empty (or nil) memo, rootMetadataURLCandidates returns every apiRoot
-// variant apiRootCandidates derives for base - in apiRootCandidates' own
-// priority order (/api/v3, /v3, /api/v2, /v2, /api) - each with and without
-// a trailing slash. This locks down behavior-preservation for the common
-// first-probe case: /api/v3 stays first, so the galaxy.ansible.com shape
-// never pays for the Galaxy NG / Automation Hub fallback candidates.
+// TestRootMetadataURLCandidatesEmptyMemoMatchesFullSet pins that an empty or
+// nil memo yields every API root in priority order, with and without a
+// trailing slash, /api/v3 first so galaxy.ansible.com pays for no fallback.
 func TestRootMetadataURLCandidatesEmptyMemoMatchesFullSet(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets"}
@@ -42,10 +38,8 @@ func TestRootMetadataURLCandidatesEmptyMemoMatchesFullSet(t *testing.T) {
 	}
 }
 
-// TestRootMetadataURLCandidatesWithRecordedWinner asserts that once base's
-// winning apiRoot is recorded, only that apiRoot's two trailing-slash
-// variants are emitted - the losing apiRoot variants are dropped entirely,
-// not merely reordered.
+// TestRootMetadataURLCandidatesWithRecordedWinner pins that a memoized winning
+// API root yields only its two trailing-slash variants; the losers are dropped.
 func TestRootMetadataURLCandidatesWithRecordedWinner(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "widgets"}
@@ -71,9 +65,8 @@ type apiRootCandidatesCase struct {
 	want []string
 }
 
-// apiRootCandidatesCases is TestAPIRootCandidates' table, pulled out to a
-// package-level var purely to keep the test function itself short: every
-// case is otherwise independent and reused nowhere else.
+// apiRootCandidatesCases is TestAPIRootCandidates' table, hoisted to keep the
+// test function short.
 //
 //nolint:gochecknoglobals // test-only fixture, not runtime-mutable state.
 var apiRootCandidatesCases = map[string]apiRootCandidatesCase{
@@ -153,12 +146,9 @@ func TestAPIRootCandidates(t *testing.T) {
 	}
 }
 
-// TestNormalizeServerBase pins normalizeServerBase's declared order of
-// operations: whitespace is trimmed before the quotes are inspected (so a
-// value quoted inside surrounding whitespace still loses its quotes), exactly
-// one surrounding double-quote pair is stripped and only when both ends carry
-// one (an unbalanced quote is kept as-is), and trailing slashes are removed
-// last.
+// TestNormalizeServerBase pins the order of steps: whitespace is trimmed, then
+// one balanced pair of double quotes is stripped (an unbalanced quote is
+// kept), then trailing slashes are removed.
 func TestNormalizeServerBase(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {
@@ -221,11 +211,7 @@ var multiServerTestCfg = &config.Config{
 }
 
 // serverCandidatesCases is TestServerCandidates' table, hoisted to package
-// level so the test function itself stays within the complexity budget:
-// pinned by id, pinned by origin (a source: naming a different path under a
-// configured server's origin), a pinned source matching nothing, the
-// unpinned multi-server walk (in order, deduplicated by normalized base),
-// an empty Servers list falling back to cfg.Server, and cfg == nil.
+// level to keep the test function within the complexity budget.
 //
 //nolint:gochecknoglobals // test-only fixture, not runtime-mutable state.
 var serverCandidatesCases = []serverCandidatesCase{
@@ -291,16 +277,9 @@ func TestServerCandidates(t *testing.T) {
 	}
 }
 
-// TestUnmatchedSourceIsWarnedAboutOncePerHost covers the signal a source:
-// naming a host no configured server does carries. Such a source is still
-// requested - the run continues, mirroring the download path's own
-// host-mismatch warning rather than refusing - and is named once per host.
-//
-// The three rows are the three answers this can have, and each is needed:
-// silence on a match by id, silence on a match by origin (the case a
-// repo-scoped path under a configured host produces, which must not warn),
-// and exactly one warning on a host configured nowhere. Without the two silent
-// rows a warning that fired for every source would pass just as well.
+// TestUnmatchedSourceIsWarnedAboutOncePerHost pins that a source: on a host
+// configured nowhere warns exactly once, while a match by id or by origin
+// stays silent, so a warning that fired for every source would fail.
 func TestUnmatchedSourceIsWarnedAboutOncePerHost(t *testing.T) {
 	t.Parallel()
 

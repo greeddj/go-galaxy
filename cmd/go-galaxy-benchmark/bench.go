@@ -32,12 +32,9 @@ const workDirsPerTarget = 3
 // lasting minutes costs a few hundred string formats.
 const livePeriod = 200 * time.Millisecond
 
-// liveLine repaints the spinner's suffix with how long the current run and
-// the whole measurement have been going.
-//
-// It ticks only where a spinner exists. Without one, Printf writes a fresh
-// line per call rather than replacing a suffix, and five updates a second
-// would bury a CI log under the thing they were meant to make legible.
+// liveLine repaints the spinner's suffix with the current run's and the whole
+// measurement's elapsed time. It ticks only where a spinner exists, since
+// without one every update would be a fresh line in a CI log.
 type liveLine struct {
 	out     output.Printer
 	started time.Time
@@ -107,10 +104,8 @@ type runner struct {
 	opts options
 }
 
-// target is one measured tool: where its binary is, what environment isolates
-// it from the other tool, and which directories a scenario has to wipe. The
-// two targets differ only in these fields, so the scenario code below is
-// written once.
+// target is one measured tool: its binary, the environment that isolates it
+// from the other tool, and the directories a scenario wipes.
 type target struct {
 	name        string
 	bin         string
@@ -120,13 +115,9 @@ type target struct {
 	subcommands []string
 }
 
-// ansibleTarget describes ansible-galaxy.
-//
-// ANSIBLE_LOCAL_TEMP is set explicitly because it defaults to ~/.ansible/tmp,
-// where ansible-galaxy downloads and unpacks every tarball. Left alone it
-// would do that work on whichever filesystem $HOME lives on while go-galaxy
-// works under the work directory, and the two tools would not be measured on
-// the same storage.
+// ansibleTarget describes ansible-galaxy. ANSIBLE_LOCAL_TEMP moves its
+// download and unpack work out of ~/.ansible/tmp into the work directory, so
+// both tools are measured on the same filesystem.
 func ansibleTarget(opts options) target {
 	root := filepath.Join(opts.workDir, "ag")
 	install := filepath.Join(root, "collections")
@@ -193,22 +184,9 @@ func (t target) command(ctx context.Context, req string, resolveDeps bool) *exec
 	return cmd
 }
 
-// once runs the command a single time and returns how long it took. stdin is
-// left nil, which exec turns into /dev/null: a tool that decides to prompt
-// would otherwise block forever and look exactly like a hang.
-//
-// The clock covers fork, exec and the child's own startup, which is what a
-// caller of these tools pays. Measured against /usr/bin/true, everything this
-// function adds on top of the child is about 1 ms per run.
-//
-// One known deviation from a plain `>/dev/null`: neither io.Discard nor the
-// stderr tail is an *os.File, so exec gives the child pipes and copies what it
-// writes rather than handing it a descriptor to throw output away into. That
-// copying happens inside the measured window. It is left as it is because the
-// volume was measured rather than assumed - installing ten collections,
-// ansible-galaxy writes 5.9 KB to stdout and go-galaxy 1.0 KB, neither writes
-// to stderr at all, and copying that costs microseconds against runs lasting
-// seconds. Keeping the stderr tail is worth more than removing it.
+// once runs the command once and times it, fork and startup included. stdin
+// stays nil (/dev/null), so a tool that prompts exits on EOF instead of looking
+// hung; copying its output pipes is inside the window but costs microseconds.
 func (t target) once(ctx context.Context, req string, resolveDeps bool) (time.Duration, error) {
 	cmd := t.command(ctx, req, resolveDeps)
 	tail := &tailBuffer{limit: stderrTailBytes}
@@ -322,11 +300,9 @@ func prepareWorkDir(opts options, targets []target) error {
 	return reset(dirs...)
 }
 
-// series measures one tool, one scenario and one size.
-//
-// cold wipes the cache and the install tree before every run. warm primes the
-// cache once, unmeasured, and then wipes only the install tree, so what is
-// timed is an install that finds everything it needs already fetched.
+// series measures one tool, one scenario and one size: cold wipes cache and
+// install tree before every run, warm primes the cache once unmeasured and then
+// wipes only the install tree. A failed run is counted, not sampled.
 func (r runner) series(ctx context.Context, tgt target, scenario string, size int, req string) (Result, error) {
 	result := Result{Scenario: scenario, Tool: tgt.name, Size: size}
 
@@ -394,9 +370,8 @@ func resetFor(scenario string, tgt target) error {
 }
 
 // describeHost records what the numbers depend on but the harness does not
-// control. The filesystem matters more than it looks: this workload is mostly
-// inode creation, and that cost varies by an order of magnitude between
-// filesystems.
+// control, the filesystem above all: this workload is mostly inode creation,
+// whose cost varies by an order of magnitude between filesystems.
 func describeHost(ctx context.Context, workDir string) Host {
 	return Host{
 		OS:         runtime.GOOS,

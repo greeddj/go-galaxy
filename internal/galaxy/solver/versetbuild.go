@@ -1,29 +1,8 @@
 package solver
 
-// Constraint-to-verSet construction. semver.NewConstraint stays the sole
-// accept/reject authority: newVerSet first runs the raw expression through
-// it and propagates any parse error verbatim, so the accepted grammar (and
-// its length/group limits) is exactly Masterminds'. Only on acceptance does
-// the mirror parser below run; it replicates the vendored v3.5.0 grammar
-// (rewriteRange, the constraint regexes, parseConstraint's dirty-flag
-// substitutions) and maps each comparator to exact piece runs per the
-// vendored comparator functions' own branch structure. The differential
-// test suite (versetbuild_test.go) enforces bug-for-bug agreement with
-// Check over every constraint form and probe; a divergence is always a
-// builder bug to fix here, never a judgment call against Check. A mirror
-// failure on input the authority accepted is grammar drift and surfaces as
-// an error wrapping errSolverBug.
-//
-// One shape is deliberately not built: "!=" with an x-range patch and a
-// prerelease operand (e.g. "!=1.2.x-beta"). The vendored comparator
-// excludes the infinite comb {1.2.q-beta : every q} - isolated points with
-// other prereleases strictly between any two - which is not a finite union
-// of runs on either subline, and admitting a comb piece kind would destroy
-// the algebra's closure under complement. newVerSet reports it as a plain
-// constraint error (wrapping errNonIntervalConstraint): the form is
-// semantically bizarre, appears in no real Galaxy metadata, and a loud
-// refusal beats a silent approximation in an algebra whose whole point is
-// exactness.
+// Constraint-to-verSet construction. semver.NewConstraint alone decides what
+// parses; the mirror parser then replicates the vendored v3.5.0 grammar, held
+// to agreement with Check by TestVerSetDifferentialAgainstCheck.
 
 import (
 	"errors"
@@ -35,9 +14,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// errNonIntervalConstraint marks the single accepted-by-Masterminds
-// constraint shape that has no exact interval representation (see the
-// package comment above on the "!=" x-range prerelease comb).
+// errNonIntervalConstraint marks the one shape Masterminds accepts with no
+// interval form: "!=" with a patch x-range and a prerelease operand excludes an
+// infinite comb, and admitting one would break closure under complement.
 var errNonIntervalConstraint = errors.New("solver: constraint has no exact interval representation")
 
 // vbOps and vbCVRegex mirror the vendored Masterminds v3.5.0 operator and
@@ -55,11 +34,9 @@ var vbFindRegex = regexp.MustCompile(`(` + vbOps + `)\s*(` + vbCVRegex + `)`)
 
 var vbRangeRegex = regexp.MustCompile(`\s*(` + vbCVRegex + `)\s+-\s+(` + vbCVRegex + `)\s*`)
 
-// comparator is one parsed constraint token, mirroring the vendored
-// constraint struct's fields: con is the zero-filled comparison version
-// (metadata kept, exactly as the vendor keeps it; bounds strip it later),
-// orig the version text without the operator, and the dirty flags record
-// which trailing segments were x-ranges or omitted.
+// comparator is one parsed token mirroring the vendored constraint struct: con
+// is the zero-filled comparison version (metadata kept), orig the text after
+// the operator, and the dirty flags mark x-ranged or omitted segments.
 type comparator struct {
 	con        *semver.Version
 	op         string
@@ -69,10 +46,9 @@ type comparator struct {
 	patchDirty bool
 }
 
-// vbRewriteRange mirrors the vendored rewriteRange: every "A - B" hyphen
-// range becomes ">= A, <= B " before any splitting. Group 1 is the first
-// constraint version, group 11 the second (each cv contributes nine inner
-// groups).
+// vbRewriteRange mirrors the vendored rewriteRange, turning every "A - B" into
+// ">= A, <= B " before splitting. Groups 1 and 11 hold the two versions, since
+// each cv contributes nine inner groups.
 func vbRewriteRange(s string) string {
 	m := vbRangeRegex.FindAllStringSubmatch(s, -1)
 	if m == nil {
@@ -143,11 +119,9 @@ func parseSegment(segment string) ([]comparator, error) {
 	return out, nil
 }
 
-// newVerSet builds the exact set a constraint expression denotes. The empty
-// normalized form (raw "*" or raw empty) is the full set: the solver's
-// unconstrained reading is vacuous truth, prereleases included, matching
-// the anySet identity it replaces rather than Masterminds' own closed-gate
-// reading of a literal "*".
+// newVerSet builds the exact set a constraint denotes. The unconstrained form
+// ("" or "*") is fullVerSet, prereleases included, deliberately unlike
+// Masterminds' closed-gate reading of "*".
 func newVerSet(raw string) (verSet, error) {
 	normalized := helpers.NormalizeConstraint(raw)
 	if normalized == "" {
@@ -180,10 +154,9 @@ func newVerSet(raw string) (verSet, error) {
 	return out, nil
 }
 
-// attachSingleton records the concrete pinned version on a set built from a
-// single exact comparator ("=X" or a bare version), so exact-pin decision
-// making can recover the original registry spelling. comps is nil when the
-// expression had more than one OR group.
+// attachSingleton records the pinned version on a set built from one exact
+// comparator ("=X" or bare), so exact-pin decisions recover the original
+// spelling; comps is nil when the expression had several OR groups.
 func attachSingleton(s *verSet, comps []comparator) {
 	if len(comps) != 1 || comps[0].dirty {
 		return
@@ -205,10 +178,8 @@ func singletonVerSet(v Version) verSet {
 	return s
 }
 
-// buildGroup intersects one AND group's comparators and then applies the
-// vendored group-level prerelease gate: a group in which no comparator's
-// comparison version carries a prerelease matches no prerelease version at
-// all, regardless of what the individual runs would admit.
+// buildGroup intersects one AND group's comparators, then applies the vendored
+// prerelease gate: a group with no prerelease operand admits no prerelease.
 func buildGroup(comps []comparator) (verSet, error) {
 	hasPre := false
 	acc := fullVerSet()
@@ -272,10 +243,9 @@ func buildGreaterEqual(c comparator) verSet {
 	}
 }
 
-// buildGreater: the non-dirty and fully wildcarded forms are strict
-// precedence comparisons against con; a minor x-range requires the next
-// major row, a patch x-range the next minor row (prerelease operands on
-// x-range forms do not participate in the vendored branch).
+// buildGreater: plain and fully wildcarded forms compare strictly against con;
+// a minor x-range needs the next major row, a patch x-range the next minor row,
+// and a prerelease operand plays no part in either x-range branch.
 func buildGreater(c comparator) verSet {
 	switch {
 	case c.minorDirty:
@@ -312,11 +282,9 @@ func preUptoFloor(hi relBound, ok bool) []piece[*semver.Version] {
 	return preUpto(preFloor(hi), true)
 }
 
-// buildLess ignores every dirty flag, exactly as the vendored "<" does:
-// a strict precedence comparison against the zero-filled con. Releases
-// strictly below con's triple; prereleases strictly below the smallest
-// prerelease at or above con (a release's own prereleases sort below it,
-// so they are all admitted).
+// buildLess ignores every dirty flag, as the vendored "<" does: releases below
+// con's triple and prereleases below the smallest prerelease at or above con,
+// which admits all of a release operand's own prereleases.
 func buildLess(c comparator) verSet {
 	preHi, preOK := preCeil(c.con)
 	return verSet{
@@ -348,10 +316,9 @@ func buildLessEqual(c comparator) verSet {
 	}
 }
 
-// buildTilde: the vendored special case (a 0.0.0 comparison version with
-// neither minor nor patch x-ranged, which covers "~0.0.0", "~*", and their
-// prerelease-floored variants) degenerates to ">= con"; a minor x-range
-// spans con's major row, everything else spans con's minor row.
+// buildTilde: a 0.0.0 comparison version with neither minor nor patch x-ranged
+// ("~0.0.0", "~*") degenerates to ">= con", as vendored; a minor x-range spans
+// con's major row, everything else con's minor row.
 func buildTilde(c comparator) verSet {
 	t := relOf(c.con)
 	if t == (relBound{}) && !c.minorDirty && !c.patchDirty {
@@ -387,11 +354,9 @@ func comparatorPoint(con *semver.Version) verSet {
 	return verSet{pre: preRange(con, true, succPre(con), true)}
 }
 
-// buildCaret follows the vendored branch order: a positive major (or minor
-// x-range) spans the major row; a zero major with positive minor (or patch
-// x-range) spans the minor row; what remains (major and minor both zero,
-// nothing x-ranged, which includes the fully wildcarded "^*") requires an
-// exact patch match at or above con.
+// buildCaret follows the vendored branch order: a positive major or a minor
+// x-range spans the major row, else a positive minor or a patch x-range the
+// minor row, else (as for "^*") only an exact match of con's triple from con up.
 func buildCaret(c comparator) verSet {
 	t := relOf(c.con)
 	preLo, preOK := preCeil(c.con)
@@ -413,12 +378,9 @@ func buildCaret(c comparator) verSet {
 	}
 }
 
-// buildNotEqual: the non-dirty and fully wildcarded forms exclude con's
-// single precedence point; a minor x-range excludes con's whole major row
-// on both sublines (a prerelease operand does not participate in that
-// branch); a patch x-range without a prerelease operand excludes only the
-// row's releases and keeps every prerelease; a patch x-range with a
-// prerelease operand is the comb exclusion no interval algebra can carry.
+// buildNotEqual: plain and fully wildcarded forms exclude con's point, a minor
+// x-range con's whole major row, a patch x-range only the releases of con's
+// minor row; a patch x-range with a prerelease operand is refused as a comb.
 func buildNotEqual(c comparator) (verSet, error) {
 	t := relOf(c.con)
 	switch {

@@ -18,11 +18,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// lockTiming holds the tunable timing parameters of the distributed lock
-// state machine. It lives on Backend (rather than as bare package-level
-// values) so tests can shrink every interval to make the lock's behavior
-// fast and deterministic without touching the production defaults, which
-// New populates from the package's lock* constants.
+// lockTiming holds the distributed lock's timing parameters. It lives on
+// Backend so tests can shrink every interval; New fills it from the lock*
+// constants.
 type lockTiming struct {
 	// ttl is the lifetime a lock holder is granted before another acquirer
 	// may consider it dead and reclaim it.
@@ -36,10 +34,9 @@ type lockTiming struct {
 	// fresh context independent of the (possibly already-canceled) context
 	// the caller originally acquired the lock with.
 	releaseTimeout time.Duration
-	// waitCeiling bounds the total time acquireLock spends contending for
-	// the lock before giving up - with errS3LockWaitTimeout if this wait
-	// ever observed another acquirer holding the lock, or
-	// errS3LockWaitNoHolderObserved otherwise (see waitCeilingErr).
+	// waitCeiling bounds the total time acquireLock contends before giving
+	// up with errS3LockWaitTimeout or errS3LockWaitNoHolderObserved (see
+	// waitCeilingErr).
 	waitCeiling time.Duration
 	// backoffBase and backoffCap bound the full-jitter exponential backoff
 	// between failed acquisition attempts.
@@ -47,11 +44,9 @@ type lockTiming struct {
 	backoffCap  time.Duration
 }
 
-// lockRecord mirrors the lock object's authoritative X-Amz-Meta-* headers in
-// the object body, purely so a human inspecting the object (e.g. via `aws
-// s3 cp` and `cat`) can read it without decoding headers. The protocol
-// itself never parses this body back; only the metadata headers, read via
-// HEAD, are authoritative.
+// lockRecord mirrors the lock object's X-Amz-Meta-* headers in its body for a
+// human reading the object. The protocol never parses it back: only the
+// metadata headers, read via HEAD, are authoritative.
 type lockRecord struct {
 	Token    string `json:"token"`
 	Deadline string `json:"deadline"`
@@ -59,27 +54,9 @@ type lockRecord struct {
 	Updated  string `json:"updated"`
 }
 
-// acquireLock owns the lifetime of one lock holding: it establishes the
-// holder context, runs the acquisition state machine (acquireLockLoop), and
-// hands both the holder context and the release closure back on success. The
-// holder context is canceled - with errS3LockLost as its cause - the moment
-// the heartbeat observes that some other acquirer's token now sits on the
-// lock object, so a run that has provably lost exclusivity stops working
-// instead of installing, committing, and persisting under a lock it no longer
-// holds.
-//
-// holderCtx is derived from ctx, the caller's own context, and deliberately
-// NOT from the wait-ceiling context acquireLockLoop builds internally: that
-// one expires lockWaitCeiling (5 minutes) after the acquisition began, so a
-// holder context derived from it would kill every run that holds the lock
-// for longer than five minutes - which is most of the runs this lock exists
-// to protect in the first place.
-//
-// On failure nothing is held, so holderCancel runs here and the returned
-// context is nil; that nil is a shape callers handle rather than an accident
-// (see cache.LockLostError's own nil-holder guard). On success holderCancel
-// must outlive this function, which is why it is threaded down to the
-// heartbeat and to the release closure rather than deferred here.
+// acquireLock returns a holder context, canceled with errS3LockLost when the
+// heartbeat sees a foreign token, and its release. The context derives from
+// ctx, not the wait ceiling, which would kill any run holding the lock past it.
 func (b *Backend) acquireLock(ctx context.Context, key string) (context.Context, func() error, error) {
 	holderCtx, holderCancel := context.WithCancelCause(ctx)
 	release, err := b.acquireLockLoop(ctx, key, holderCancel)
@@ -90,20 +67,9 @@ func (b *Backend) acquireLock(ctx context.Context, key string) (context.Context,
 	return holderCtx, release, nil
 }
 
-// acquireLockLoop creates or reclaims the lock object at key using a
-// token-verified, create-if-absent protocol: acquirers race to PUT with
-// If-None-Match: *, and an existing object is only ever reclaimed after its
-// writer-recorded deadline (via lockExpired) shows its holder's TTL has
-// elapsed. All attempts run against waitCtx, a fixed wait-ceiling derived
-// from ctx. The release closure returned on success does not use ctx (or
-// waitCtx) at all: it runs its own S3 calls on a fresh context, since it may
-// be invoked long after acquireLock returned and ctx may by then already be
-// canceled (e.g. the install run it belongs to was interrupted) - using it
-// would leak the lock object until its TTL elapses instead of releasing it.
-//
-// holderCancel is carried through every attempt purely so the heartbeat this
-// loop eventually starts can reach it; nothing in the acquisition protocol
-// itself reads or calls it.
+// acquireLockLoop creates the lock object with If-None-Match: * or reclaims
+// one whose recorded deadline has passed, retrying until the wait ceiling.
+// holderCancel is only passed through to the heartbeat that claim starts.
 func (b *Backend) acquireLockLoop(ctx context.Context, key string, holderCancel context.CancelCauseFunc) (func() error, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, b.lock.waitCeiling)
 	defer cancel()
@@ -116,24 +82,14 @@ func (b *Backend) acquireLockLoop(ctx context.Context, key string, holderCancel 
 		return nil, err
 	}
 
-	// consecutiveRetryNow counts consecutive retryNow handoffs from
-	// tryAcquireOnce/reclaimIfExpired without an intervening backoff sleep.
-	// A conforming backend only ever produces one such handoff in a row
-	// (the object vanished right after our failed create; the next attempt
-	// either succeeds or observes a live/expired object), so bounding this
-	// counter guards against a misbehaving backend that answers the
-	// create-if-absent PUT with 412 while HEAD keeps reporting the object
-	// as missing, which would otherwise spin PUT+HEAD with no backoff at
-	// all for the entire waitCeiling window.
+	// consecutiveRetryNow bounds immediate retries, so a backend answering the
+	// create with 412 while HEAD reports no object cannot spin PUT+HEAD with no
+	// backoff for the whole wait.
 	var consecutiveRetryNow int
 
-	// observedHolder records whether ANY attempt during this wait completed
-	// an observation that another acquirer holds the lock - see lockAttempt
-	// and waitCeilingErr for what counts. It accumulates before the switch
-	// below so every branch (including retryNow's continue) contributes,
-	// and it is never reset: one observation anywhere in the wait is enough
-	// to classify the eventual timeout as contention rather than an
-	// unreachable backend.
+	// observedHolder is set once any attempt saw another acquirer holding the
+	// lock and is never reset: it makes an eventual ceiling contention rather
+	// than an unreachable backend (see waitCeilingErr).
 	var observedHolder bool
 
 	for attempt := 0; ; attempt++ {
@@ -149,12 +105,8 @@ func (b *Backend) acquireLockLoop(ctx context.Context, key string, holderCancel 
 			if consecutiveRetryNow <= maxImmediateLockRetries {
 				continue
 			}
-			// The immediate-retry budget is exhausted: exhausting it
-			// means a misbehaving backend (repeatedly answering the
-			// create-if-absent PUT with 412 while HEAD keeps reporting
-			// the object as missing), so degrade to the same backoff
-			// sleep the normal-miss branch takes below instead of
-			// spinning without one.
+			// The budget is spent, which means a misbehaving backend: fall
+			// through to the ordinary backoff sleep instead of spinning.
 		default:
 			consecutiveRetryNow = 0
 		}
@@ -164,23 +116,9 @@ func (b *Backend) acquireLockLoop(ctx context.Context, key string, holderCancel 
 	}
 }
 
-// acquireLockAttemptErr classifies a failed attempt's error inside
-// acquireLockLoop's loop. It is split out purely to keep that function under the
-// cyclomatic-complexity budget: it is one classification step, not a
-// decision point of its own.
-//
-// An in-flight S3 call can fail with a raw transport error (e.g. "context
-// deadline exceeded") the instant waitCtx's timeout fires, before ever
-// reaching the backoff select in lockBackoff. Once waitCtx is done, classify
-// why: a caller cancellation must still surface as such (so the exit-code
-// taxonomy maps a Ctrl-C to ExitInterrupt); otherwise, waitCeilingErr decides
-// by observed - whether some earlier attempt in this wait already produced a
-// completed observation of another acquirer - not by whether this particular
-// attempt happened to end in an error, since the ceiling lands inside an
-// in-flight attempt about as often as inside a backoff sleep (see
-// waitCeilingErr's doc comment for why that ordering matters). A live waitCtx
-// means the error is this attempt's own, unrelated to the ceiling, and is
-// returned unclassified.
+// acquireLockAttemptErr classifies an attempt's error: once waitCtx is done it
+// goes through waitCeilingErr, since the ceiling can fire inside an in-flight
+// call; while waitCtx is live the error is the attempt's own and returned as is.
 func acquireLockAttemptErr(ctx, waitCtx context.Context, observed bool, err error) error {
 	if waitCtx.Err() != nil {
 		return waitCeilingErr(ctx, observed, err)
@@ -188,40 +126,18 @@ func acquireLockAttemptErr(ctx, waitCtx context.Context, observed bool, err erro
 	return err
 }
 
-// lockAttempt describes what one create-or-reclaim step learned. The zero
-// value means "this attempt proved nothing": a new return path that forgets
-// to set observed degrades to "contention not proven", never to a false
-// claim that another acquirer was seen. release and a non-nil error are
-// mutually exclusive: acquireLockLoop's loop checks err before release, so a
-// producer that returned both would silently drop the closure, leaking the
-// heartbeat goroutine and the lock object until its TTL elapses. No current
-// path returns both.
+// lockAttempt is what one create-or-reclaim step learned; the zero value
+// proves nothing. release and a non-nil error must never both be set: the loop
+// checks err first and would leak the heartbeat and the lock object.
 type lockAttempt struct {
 	release  func() error // non-nil once this call holds the lock
 	retryNow bool         // the object vanished between our PUT and the HEAD; retry with no backoff
 	observed bool         // the backend answered that another acquirer has it
 }
 
-// tryAcquireOnce performs a single create-or-reclaim step against the lock
-// object. opCtx bounds all the S3 calls made during this step (the shared
-// wait-ceiling context). See lockAttempt for what the returned value means;
-// a non-nil error means the step itself failed rather than merely losing the
-// race. holderCancel is carried through to whichever branch ends up starting
-// the heartbeat and is never called here.
-//
-// Both of its own error arms abandon the object their create-if-absent PUT may
-// have written, under the identical rule reclaimIfExpired applies to its swap:
-// any error returned after that PUT was issued does a best-effort,
-// token-guarded release first, so a lock object this run never went on to hold
-// is released on the way out rather than blocking every other acquirer for a
-// full TTL. The rule is the same on both paths because the hazard is: a create
-// and a swap alike can land while the response saying so is lost.
-//
-// The 412 arm deliberately abandons nothing and must not be changed to: a
-// precondition failure proves the object was already there and is somebody
-// else's, so there is nothing of ours to release - and releaseLock's own token
-// guard would decline the delete anyway, making the call a round trip that
-// changes nothing.
+// tryAcquireOnce makes one create-if-absent attempt and reclaims on 412. A
+// failed claim or a PUT error other than 412 or 409 abandons the object the PUT
+// may have written; a 412 or 409 proves it wrote nothing.
 func (b *Backend) tryAcquireOnce(
 	opCtx context.Context, key, token string, holderCancel context.CancelCauseFunc,
 ) (lockAttempt, error) {
@@ -241,37 +157,14 @@ func (b *Backend) tryAcquireOnce(
 		return attempt, err
 	}
 	if errors.Is(putErr, errS3ConditionalConflict) {
-		// A concurrent request beat this create to the object. S3 documents the
-		// write as not having been applied and safe to retry, so this is a lost
-		// race rather than a failure: report nothing and let the loop back off,
-		// which is the retry that documentation calls for. Nothing is abandoned,
-		// for the same reason the 412 arm below abandons nothing - the remote
-		// answered, and what it answered is that this call wrote nothing.
-		//
-		// Deliberately not recorded as observed: a conflict names a concurrent
-		// request, not necessarily another acquirer of this lock, and observed
-		// is what turns an eventual ceiling into a contention verdict.
+		// 409: a concurrent request beat this create, and S3 documents the write
+		// as not applied and safe to retry, so back off. Not observed: the
+		// conflict names a request, not necessarily another acquirer.
 		return lockAttempt{}, nil
 	}
 	if !errors.Is(putErr, errS3PreconditionFailed) {
-		// A create-if-absent PUT that failed without answering 412 may still
-		// have landed, the same ambiguity putObject records for every
-		// conditional write and never retries through.
-		//
-		// This arm also covers a PUT answered 404, which on a write carrying no
-		// If-Match names the bucket rather than the object: nothing was created
-		// there, so the abandon is one HEAD that finds nothing. That cost is
-		// accepted rather than special-cased, because the rule this arm follows
-		// is a predicate - an error taken after the PUT was issued - and
-		// carving out statuses would turn it into a list nobody keeps current.
-		//
-		// DOCUMENTED-UNCOVERED: no test reaches this call, for the same reason
-		// its counterpart in reclaimIfExpired is uncovered - the failure that
-		// makes it necessary is a PUT the remote applied whose response never
-		// came back, which the in-memory fake cannot model. Arming a PUT failure
-		// here only ever produces the other reading, where nothing landed.
-		// Removing the call loses exactly the unmodelable case.
-		//
+		// A PUT failing without a 412 may still have landed, so it is abandoned;
+		// no test reaches it, since the fake cannot lose an applied PUT's reply.
 		//nolint:contextcheck // abandonLockObject builds its own fresh context instead of
 		// taking opCtx for the same reason as the arm above.
 		b.abandonLockObject(key, token)
@@ -280,38 +173,9 @@ func (b *Backend) tryAcquireOnce(
 	return b.reclaimIfExpired(opCtx, key, token, holderCancel)
 }
 
-// reclaimIfExpired runs after a failed create-if-absent PUT: it HEADs the
-// existing object and, if its TTL has elapsed, takes it over with a
-// compare-and-swap write conditioned on the ETag that same HEAD returned. See
-// tryAcquireOnce for the return contract.
-//
-// Observing an expired holder is deliberately NOT recorded as observed: an
-// expired lock is ours to take, not evidence that another acquirer holds it.
-// Two outcomes below do count: a live, unexpired holder, and a compare-and-swap
-// that loses to another writer, which is that writer observed.
-//
-// The swap replaces what used to be an unconditional delete followed by a
-// create. That pair could not arbitrate between two acquirers acting on the
-// same expired object - each observed the object absent and each created it -
-// so the code around it narrowed the window probabilistically instead: a
-// re-read immediately before the delete, and an ownership check taken after a
-// settle interval. A conditional write settles it directly: both reclaimers
-// swap against the ETag their own HEAD read, the object has exactly one
-// current ETag, so exactly one swap can match it and the other gets 412.
-//
-// This does not make the path provably exclusive, and it must not be sold as
-// closing the race. putObject's own rule states the residual it inherits
-// unchanged: a conditional PUT whose response is lost is indistinguishable
-// from a lost success, which is why it is never retried. So a swap may have
-// landed while this call reports failure, and the run that reports failure is
-// then not the run holding the object. What bounds a divergence surviving that
-// is the same thing as before - the heartbeat's own token check, which cancels
-// the holder context once the object records somebody else's token.
-//
-// An error taken after the swap PUT has been issued abandons the object that
-// PUT may have written, so a lock this run never held is released on the way
-// out - and when that release itself fails, expires with the TTL exactly as it
-// would have anyway; abandonLockObject states what it costs.
+// reclaimIfExpired HEADs the existing object and, once its deadline passed,
+// takes it over with If-Match on that HEAD's ETag so only one reclaimer wins.
+// An expired holder is not an observation; a live holder or a lost swap is.
 func (b *Backend) reclaimIfExpired(
 	opCtx context.Context, key, token string, holderCancel context.CancelCauseFunc,
 ) (lockAttempt, error) {
@@ -333,13 +197,8 @@ func (b *Backend) reclaimIfExpired(
 
 	etag := strings.TrimSpace(headers.Get("ETag"))
 	if etag == "" {
-		// The endpoint answered a HEAD without identifying the version it
-		// described, so there is nothing to condition a swap on. Refused
-		// rather than downgraded to an unconditional overwrite: this is the
-		// same missing guarantee Open's own probe rejects, reached against
-		// real remote state instead of against the probe, and silently taking
-		// a lock without arbitration is exactly what the swap exists to
-		// prevent.
+		// No ETag leaves nothing to condition the swap on: refuse rather than
+		// overwrite unconditionally, which would take the lock unarbitrated.
 		return lockAttempt{}, errS3CompareAndSwapUnsupported
 	}
 
@@ -362,55 +221,26 @@ func (b *Backend) reclaimIfExpired(
 		return lockAttempt{}, nil
 	}
 	if errors.Is(putErr, errS3NotFound) {
-		// The object was deleted between the HEAD above and this swap, so
-		// there was no version left to swap against - the shape S3 answers
-		// with 404 rather than 412. Every deleter of this key is a holder
-		// releasing it, so this is the same race the HEAD's own 404 arm
-		// already handles, arriving one step later: the create is worth
-		// attempting again at once. Nothing is abandoned, for the same reason
-		// the 412 arm abandons nothing - a refusal the remote itself answered
-		// proves this call wrote nothing that could outlive it.
+		// 404: a releasing holder deleted the object after our HEAD, so retry
+		// the create at once. The remote answered, so nothing is abandoned.
 		return lockAttempt{retryNow: true}, nil
 	}
 	if !errors.Is(putErr, errS3PreconditionFailed) {
-		// A conditional PUT that failed without answering 412 may still have
-		// landed: putObject never retries one precisely because a transport
-		// failure there is indistinguishable from a lost success. The abandon
-		// is correct in both readings of that ambiguity, since releaseLock
-		// deletes only an object recording our token and treats a missing one
-		// as already released.
-		//
-		// DOCUMENTED-UNCOVERED: no test reaches this call. The failure that
-		// makes it necessary is a PUT the remote applied whose response never
-		// came back, which the in-memory fake cannot model - arming a PUT
-		// failure here only ever produces the other reading, where nothing
-		// landed and the abandon is a HEAD that finds no object. Removing the
-		// call loses exactly the unmodelable case: a swap whose PUT landed
-		// under a dropped response leaves an object carrying this run's token,
-		// with no heartbeat behind it, blocking every other acquirer for a
-		// full lock TTL.
-		//
+		// A PUT failing without a 412 may still have landed, so it is abandoned;
+		// no test reaches it, since the fake cannot lose an applied PUT's reply.
 		//nolint:contextcheck // abandonLockObject builds its own fresh context instead of
-		// taking opCtx for the same reason as the arm above: opCtx is a plausible cause of the
-		// PUT failure being cleaned up after, so it cannot be what the cleanup runs on.
+		// taking opCtx for the same reason as the arm above.
 		b.abandonLockObject(key, token)
 		return lockAttempt{}, putErr
 	}
-	// Somebody else's write reached the object between our HEAD and our swap,
-	// so its ETag no longer matches: that writer is another acquirer we
-	// observed, even though the reclaim itself lost. Nothing is abandoned
-	// here - a 412 proves this call wrote nothing that could outlive it.
+	// 412: another writer changed the object between our HEAD and swap, so it
+	// is an observed acquirer; the refusal proves we wrote nothing to abandon.
 	return lockAttempt{observed: true}, nil
 }
 
-// claim verifies that the lock object this call just wrote is still ours
-// (guarding against a concurrent writer racing in between the PUT and this
-// check) and, if so, starts the heartbeat and returns the release closure. A
-// foreign token found on the object counts as observing another acquirer,
-// covering both paths that reach it: the fresh-create race, and the one
-// following a reclaim's compare-and-swap.
-// holderCancel is handed to the heartbeat this call starts, which is the only
-// thing that ever invokes it on a loss.
+// claim confirms the object just written still carries token and, if so,
+// starts the heartbeat, handing it holderCancel. A foreign token counts as
+// observing another acquirer.
 func (b *Backend) claim(
 	opCtx context.Context, key, token string, holderCancel context.CancelCauseFunc,
 ) (lockAttempt, error) {
@@ -426,17 +256,9 @@ func (b *Backend) claim(
 	return lockAttempt{release: b.startHeartbeat(key, token, holderCancel)}, nil
 }
 
-// verifyOwner reports whether the lock object's recorded token matches
-// token, i.e. whether this call is (still) the object's writer.
-//
-// An absent X-Amz-Meta-Token header is a mismatch, not a missing answer, and
-// must stay one: the HEAD succeeded, so the backend did answer, and what it
-// answered is that nothing on that object identifies this run as its writer.
-// Treating that as transient - retry, keep the lock, keep working - would let
-// a run go on writing under a lock it may no longer hold, which is the exact
-// failure the heartbeat's loss detection exists to stop. A genuinely
-// transient failure has its own shape here already: the error return above,
-// which heartbeatTick answers by retrying on the next tick.
+// verifyOwner reports whether the lock object records token. An absent token
+// header is a mismatch, never a transient failure: treating it as transient
+// would let a run keep writing under a lock it may no longer hold.
 func (b *Backend) verifyOwner(ctx context.Context, key, token string) (bool, error) {
 	headers, err := b.client.headObject(ctx, key)
 	if err != nil {
@@ -445,13 +267,9 @@ func (b *Backend) verifyOwner(ctx context.Context, key, token string) (bool, err
 	return headers.Get("X-Amz-Meta-Token") == token, nil
 }
 
-// putLock writes the lock object's four authoritative metadata headers
-// (token, deadline, owner, updated) plus a JSON body mirroring them for
-// human debugging. cond selects which of the three writes on this path this
-// one is: create-if-absent (If-None-Match: *) for the initial acquisition,
-// compare-and-swap (If-Match, the ETag a HEAD just reported) for taking over
-// a dead holder's object, and an unconditional overwrite for the heartbeat's
-// own deadline refresh under a token the object already carries.
+// putLock writes the lock's four metadata headers plus a JSON mirror body.
+// cond picks create-if-absent (acquire), If-Match on a HEAD's ETag (reclaim)
+// or an unconditional overwrite (the heartbeat's refresh under our token).
 func (b *Backend) putLock(ctx context.Context, key, token string, deadline time.Time, cond putCondition) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	owner := lockOwner()
@@ -484,10 +302,9 @@ func lockOwner() string {
 	return host + "/" + strconv.Itoa(os.Getpid())
 }
 
-// generateLockToken returns a fresh 32-hex-character token unique to one
-// acquisition attempt. It never falls back to a weaker source: a
-// crypto/rand failure is reported as errS3TokenGeneration rather than
-// silently degrading the lock's uniqueness guarantee.
+// generateLockToken returns a fresh 32-hex-character token for one
+// acquisition. A crypto/rand failure is errS3TokenGeneration, never a fallback
+// to a weaker source.
 func generateLockToken() (string, error) {
 	buf := make([]byte, lockTokenBytes)
 	if _, err := cryptorand.Read(buf); err != nil {
@@ -496,72 +313,9 @@ func generateLockToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-// waitCeilingErr classifies why the wait-ceiling context ended. The
-// discriminator is positive evidence, not timing: observed reports whether
-// any attempt during this wait completed an answer from the backend that
-// another acquirer holds the lock (see lockAttempt), accumulated by
-// acquireLockLoop across the whole wait and never reset - one observation
-// anywhere in the wait is enough. inFlight is the raw error the attempt in
-// progress when the ceiling fired returned, if any; it is consulted only
-// when observed is false.
-//
-// The check order is load-bearing:
-//
-//  1. parent.Err() != nil: the caller's own context was canceled or hit its
-//     deadline first. That error is propagated unchanged, regardless of
-//     observed or inFlight, so the exit-code taxonomy still maps a caller
-//     Ctrl-C to ExitInterrupt.
-//  2. observed: some attempt in this wait already produced a completed
-//     answer that another acquirer holds the lock. This is genuine
-//     contention: errS3LockWaitTimeout. Checked before inFlight,
-//     deliberately: the acquisition loop alternates an attempt and a
-//     backoff sleep, so the ceiling lands inside an in-flight attempt about
-//     as often as inside a sleep, and ordinary contention therefore ends
-//     with inFlight non-nil about as often as it ends with inFlight nil.
-//     Testing inFlight first would misclassify ordinary contention as an
-//     unreachable backend purely on where the ceiling happened to land.
-//  3. inFlight != nil: the ceiling fired with a request still outstanding
-//     and no prior observation - errS3LockWaitNoHolderObserved, wrapping
-//     inFlight for diagnostic context.
-//  4. otherwise: the ceiling fired during a backoff sleep with no prior
-//     observation at all - a misbehaving backend that never once produced
-//     a usable answer (e.g. a create-if-absent PUT that keeps answering
-//     412 while a follow-up HEAD keeps reporting the object missing).
-//     Also errS3LockWaitNoHolderObserved, with no cause to wrap.
-//
-// RESIDUAL: stale evidence, and only in the hanging/silent case. An
-// attempt's error only ever reaches this function once the ceiling has
-// already fired - acquireLockAttemptErr returns any attempt error
-// unclassified while waitCtx is still live, so a backend that keeps
-// answering, even with failures, never gets this far (see the next
-// paragraph). The residual is real only when this run observed a holder
-// once, early in the wait, and the backend then goes silent - hangs, or
-// stops answering at all - for the rest of the wait: errS3LockWaitTimeout
-// still reports contention in that case, since it claims "at some point
-// during this wait the backend told us another acquirer had it", never "the
-// backend was healthy when we gave up".
-// TestLockAcquireTimesOutAfterObservationThenSilence (lock_test.go) is this
-// residual's executable proof: an observed holder followed by a HEAD that
-// never answers again until the ceiling.
-//
-// A backend that answers only with failures is a different case, not this
-// residual: any attempt error while the wait ceiling is still live ends the
-// whole acquisition immediately (acquireLockAttemptErr's own live-waitCtx
-// branch), so a HEAD/PUT/DELETE that comes back with its own 5xx surfaces
-// that call's own errS3*Failed sentinel directly, not either wait-ceiling
-// one. It only reaches errS3LockWaitNoHolderObserved in the narrower case
-// where that attempt - including its own internal client-level retries - is
-// still unresolved once the ceiling has already elapsed. Either way the
-// class is identical, since errS3*Failed already carries
-// helpers.ErrCacheBackendUnavailable on its own.
-// TestLockAcquireSurfacesAHardFailureOverTheCeiling (lock_test.go) is this
-// paragraph's executable proof.
-//
-// The cause is rendered with %v, never %w: this sentinel describes why work
-// ended, so leaving context.DeadlineExceeded/context.Canceled reachable
-// through errors.Is here would hand a hostile or dead endpoint the interrupt
-// exit code instead of the network one, since exitcode.FromError checks
-// cancellation first.
+// waitCeilingErr classifies an ended wait: a parent error passes unchanged,
+// then observed beats inFlight, since the ceiling hits a request as often as a
+// sleep. inFlight is %v, never %w, so exitcode cannot read it as an interrupt.
 func waitCeilingErr(parent context.Context, observed bool, inFlight error) error {
 	if err := parent.Err(); err != nil {
 		return err
@@ -576,12 +330,8 @@ func waitCeilingErr(parent context.Context, observed bool, inFlight error) error
 	return errS3LockWaitNoHolderObserved
 }
 
-// lockBackoff sleeps a full-jitter exponential backoff interval before the
-// next acquisition attempt, honoring waitCtx cancellation. It returns
-// waitCeilingErr(parent, observed, nil) once waitCtx (the shared
-// wait-ceiling context derived from parent) expires: nil for inFlight
-// because no request is outstanding during a backoff sleep, and observed is
-// acquireLockLoop's own accumulated flag, passed through unchanged.
+// lockBackoff sleeps one full-jitter backoff interval, or returns
+// waitCeilingErr with no in-flight error once waitCtx expires.
 func (b *Backend) lockBackoff(parent, waitCtx context.Context, attempt int, observed bool) error {
 	timer := time.NewTimer(helpers.BackoffDelay(b.lock.backoffBase, b.lock.backoffCap, attempt))
 	defer timer.Stop()
@@ -593,21 +343,9 @@ func (b *Backend) lockBackoff(parent, waitCtx context.Context, attempt int, obse
 	}
 }
 
-// startHeartbeat launches the lock's background lifecycle goroutine and
-// returns the release closure bound to it. The heartbeat periodically
-// refreshes the lock object's deadline under the same token so a long-running
-// holder never needs to re-run the acquisition state machine; if it ever
-// observes a different token (meaning some other acquirer reclaimed the
-// lock, e.g. after this holder stalled past its TTL), it records the loss so
-// release refuses to delete a lock it no longer owns AND cancels the holder
-// context through holderCancel so the run itself stops working under a lock
-// it no longer holds. Neither
-// the heartbeat loop nor the release closure it returns depend on the context
-// the caller used to acquire the lock: the heartbeat runs on its own
-// independent background context so it keeps refreshing the deadline for as
-// long as the holder keeps the lock, and release builds its own fresh,
-// timeout-bounded context for its final HEAD/DELETE (see releaseLock) so a
-// canceled caller context can never prevent the lock from being released.
+// startHeartbeat refreshes the lock's deadline on its own background context
+// until release; on a foreign token it marks the lock lost and cancels the
+// holder context. The returned release runs on a fresh timeout context.
 func (b *Backend) startHeartbeat(key, token string, holderCancel context.CancelCauseFunc) func() error {
 	hbCtx, hbCancel := context.WithCancel(context.Background())
 	var lost atomic.Bool
@@ -631,25 +369,9 @@ func (b *Backend) startHeartbeat(key, token string, holderCancel context.CancelC
 
 	return func() error {
 		hbCancel()
-		// Two independent facts keep a loss cause readable after release, and
-		// the order of the next two statements is one of them. The join below
-		// is the HAPPENS-BEFORE: it waits until the heartbeat goroutine has
-		// exited, so a tick that was mid-decision has already finished - and
-		// already recorded its loss cause - before holderCancel runs at all.
-		// first-cancel-wins is the RETENTION: context.CancelCauseFunc keeps
-		// the first cause it was given, so the nil below cannot overwrite a
-		// loss the heartbeat already set, and cache.LockLostError can still
-		// read it afterward.
-		//
-		// Each fails on its own and neither substitutes for the other.
-		// Hoisting holderCancel above the join leaves retention intact and
-		// still loses the cause, because the tick has not set one yet - the
-		// window is real and is measured by
-		// TestReleaseRacingTheTickKeepsTheLossCause (lock_race_test.go),
-		// which quotes what that edit reports. Passing an explicit non-nil
-		// cause instead of nil leaves the join intact and overwrites nothing,
-		// but reclassifies every clean release; that one is caught by
-		// TestLockHolderContextStaysLiveWhileOwned's clean-release assertions.
+		// Join before holderCancel: a mid-decision tick must record its loss
+		// cause first, and first-cancel-wins keeps it over the nil below.
+		// TestReleaseRacingTheTickKeepsTheLossCause pins this order.
 		<-done
 		// The holder context always ends here, on the ordinary release path
 		// too, so a clean release does not leave a child context hanging off
@@ -658,31 +380,17 @@ func (b *Backend) startHeartbeat(key, token string, holderCancel context.CancelC
 		if lost.Load() {
 			return errS3LockLost
 		}
-		// A fresh, timeout-bounded context: the caller's original context
-		// (used throughout acquisition) may already be canceled by now -
-		// e.g. an interrupted or failed install run - and using it here
-		// would make releaseLock's HEAD/DELETE fail immediately, leaking
-		// the lock object until its TTL elapses instead of releasing it.
+		// A fresh context: the caller's may already be canceled, and releasing
+		// on it would leave the lock object blocking others until its TTL.
 		relCtx, cancel := context.WithTimeout(context.Background(), b.lock.releaseTimeout)
 		defer cancel()
 		return b.releaseLock(relCtx, key, token)
 	}
 }
 
-// heartbeatTick refreshes the lock's deadline under token. It returns false
-// only on a definitive token mismatch (ownership lost to another acquirer),
-// setting lost and canceling the holder context accordingly; transient errors
-// (network failures, a momentary S3 hiccup) return true so the next tick
-// simply retries rather than declaring the lock lost.
-//
-// A definitive mismatch is one fact with two consumers, which is why it is
-// recorded twice. lost is what the release closure reads, so it refuses to
-// delete an object that now belongs to somebody else; holderCancel is what
-// the run reads, so it stops doing work it can no longer claim exclusivity
-// for. Deriving the first from context.Cause(holderCtx) instead would make
-// release's refusal depend on cancellation being first-cancel-wins - the
-// release closure cancels the same context on its own ordinary path - so the
-// two stay independent.
+// heartbeatTick refreshes the deadline and returns false only on a token
+// mismatch, setting lost (read by release) and canceling the holder context
+// (read by the run); transient errors return true for the next tick to retry.
 func (b *Backend) heartbeatTick(
 	hbCtx context.Context, key, token string, lost *atomic.Bool, holderCancel context.CancelCauseFunc,
 ) bool {
@@ -704,17 +412,9 @@ func (b *Backend) heartbeatTick(
 	return true
 }
 
-// releaseLock deletes the lock object only if the HEAD ahead of that delete
-// still saw token on it, matching the same token-verified guard as heartbeat
-// loss detection, so a release declines the delete for any object it read under
-// another acquirer's token. A missing object is treated as already released.
-//
-// The delete itself is unconditional, so one round trip stands between the HEAD
-// and it: a competing acquirer whose write lands in that window is deleted
-// anyway. This is now the only unarbitrated write left on the lock path - the
-// reclaim's own take-over became a compare-and-swap - and it is bounded by the
-// same backstop as before: the heartbeat's token check cancels the holder
-// context of whichever run stops being the object's writer.
+// releaseLock deletes the lock object only if a HEAD still sees token on it; a
+// missing object is already released. The delete is unconditional, the one
+// unarbitrated write left, bounded by the heartbeat's token check.
 func (b *Backend) releaseLock(ctx context.Context, key, token string) error {
 	headers, err := b.client.headObject(ctx, key)
 	if errors.Is(err, errS3NotFound) {
@@ -729,63 +429,20 @@ func (b *Backend) releaseLock(ctx context.Context, key, token string) error {
 	return b.client.deleteObject(ctx, key)
 }
 
-// abandonLockObject releases a lock object this acquisition's own write may
-// have put there, as the cleanup behind one rule: any error returned after a
-// PUT was issued does a best-effort, token-guarded release first, so an object
-// written by an acquisition this run never went on to hold is released on the
-// way out - and when that release itself fails, is left to expire with the TTL
-// exactly as it would have without this call. Without the call that expiry is
-// the only outcome: such an object sits in the bucket recording our token with
-// no heartbeat behind it to refresh or release it, and every other acquirer
-// waits out a full lock TTL against a holder that does not exist - lockTTL is
-// twice lockWaitCeiling, so each of them burns its whole wait and gives up.
-//
-// The rule is the acquisition path's as a whole rather than any one branch's,
-// and all three sites it applies to are the same shape: reclaimIfExpired's
-// claim-error and failed-swap arms, and tryAcquireOnce's own two. Nothing about
-// the helper is specific to either, since what it takes is a key and the token
-// whose object it may delete - which is also why it cannot over-reach: an
-// object carrying anybody else's token is left alone.
-//
-// A nil error is deliberately excluded even when the attempt reports observed:
-// the object then records the competing writer's token, so releaseLock's own
-// guard would decline the delete and the call would be a round trip that
-// changes nothing.
-//
-// Two things it deliberately does not do. It never touches holderCancel: no
-// heartbeat has been started on this path - claim starts one, and an error
-// here means it did not get that far - so nothing is running under the holder
-// context for a cancel to stop, and the cancellation this failure does deserve
-// is acquireLock's own, which cancels that context with the acquisition's
-// error as the cause once the error returned here reaches it. Cancel-cause is
-// first-cancel-wins, so a cancel from here would preempt that cause with a less
-// informative one. And it declines the delete for any object releaseLock's own
-// HEAD read under a foreign token, so a competing acquirer's write is left
-// untouched rather than cleaned up as if it were ours; the residual is the
-// one round trip between that HEAD and the delete, bounded by the same
-// heartbeat token check that bounds every other divergence on this path (see
-// releaseLock). Its own failure is discarded because there is nothing further to
-// do with it: the run is already returning an error, and an object this call
-// could not delete expires on its own after a lock TTL.
+// abandonLockObject is the best-effort, token-guarded release run when an
+// acquisition errs after its PUT, so an object with no heartbeat does not block
+// others for a lockTTL. It never calls holderCancel: acquireLock sets the cause.
 func (b *Backend) abandonLockObject(key, token string) {
-	// A fresh context, deliberately not the acquisition's: a dead acquisition
-	// context - canceled by the caller, or out of wait-ceiling budget - is one
-	// of the ways this cleanup is reached, so reusing it would fail the cleanup
-	// for the very reason it was needed. It is no worse for the ways that
-	// arrive with a live one, since a release wants a budget of its own
-	// regardless of what ended the claim. releaseTimeout bounds it rather than
-	// a constant of this function's own, since this is the release path's own
-	// HEAD/DELETE pair under another name.
+	// A fresh context: a dead acquisition context is one way this is reached,
+	// and it would fail the cleanup for the very reason it was needed.
 	ctx, cancel := context.WithTimeout(context.Background(), b.lock.releaseTimeout)
 	defer cancel()
 	_ = b.releaseLock(ctx, key, token)
 }
 
-// lockExpired reports whether the lock described by headers may be reclaimed.
-// The writer-recorded deadline is authoritative; a malformed or absent deadline
-// falls back to age-based staleness against ttl, and uninterpretable timing is
-// treated as reclaimable so a corrupt lock object can never permanently block
-// acquisition.
+// lockExpired reports whether the lock may be reclaimed: the recorded deadline
+// decides, else Last-Modified age against ttl, else yes, so a corrupt lock
+// object can never block acquisition forever.
 func lockExpired(headers http.Header, ttl time.Duration) bool {
 	now := time.Now().UTC()
 	if dl := strings.TrimSpace(headers.Get("X-Amz-Meta-Deadline")); dl != "" {

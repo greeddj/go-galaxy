@@ -1,35 +1,8 @@
 package solver
 
-// verSet is the exact, universe-independent version set the solver's term
-// algebra is built on. It replaces classification against a package's
-// published universe with interval arithmetic over the whole version space,
-// so a set's value and identity never depend on which packages have been
-// materialized. The space is quotiented by semver precedence (build metadata
-// is invisible to membership, exactly as it is to Masterminds' Check) and
-// factored into two independent sublines that together cover it:
-//
-//   - the release subline: all versions without a prerelease, totally
-//     ordered by their (major, minor, patch) triple, which has a total
-//     successor (patch+1), so every release piece normalizes to a
-//     half-open [lo, hi) run of triples;
-//   - the prerelease subline: all versions with a prerelease, ordered by
-//     full semver precedence. Bounds on this subline are always
-//     prerelease-typed, metadata-free versions; that restriction is what
-//     makes the normal form canonical, since for prerelease-typed b < b'
-//     the bound b is itself a member of [b, b'), so distinct bound lists
-//     always denote distinct sets.
-//
-// The two-subline factoring exists because Masterminds' prerelease gate
-// (a constraint group without a prerelease operand never matches any
-// prerelease version) makes constraint sets non-convex over the single
-// full-precedence order: "every release >= 1.2.0" has no interval form
-// there, but is one piece on the release subline and one on the prerelease
-// subline. Each subline's piece list is kept canonical - sorted by lo,
-// nonempty, disjoint, non-abutting - so structural equality coincides with
-// set equality and the canonical byte encoding is injective.
-//
-// A verSet value is immutable: every operation returns a fresh value and
-// never mutates a receiver's piece slices.
+// verSet is an exact, universe-independent version set over two sublines
+// (releases by triple, prereleases by precedence), kept canonical so structural
+// equality is set equality. Values are immutable: operations return fresh sets.
 
 import (
 	"fmt"
@@ -93,13 +66,8 @@ func cmpPre(a, b *semver.Version) int {
 var preMinBound = semver.New(0, 0, 0, "0", "")
 
 // ---- generic piece algebra --------------------------------------------------
-//
-// All operations consume and produce canonical lists (sorted, nonempty,
-// disjoint, non-abutting pieces). Intersection and complement preserve
-// canonicality directly: an intersection boundary always coincides with a
-// strict gap in one operand, and a complement's pieces are separated by the
-// operand's own pieces. Union is derived via De Morgan from those two, so it
-// is canonical by construction as well.
+// Every operation takes and returns canonical lists (sorted, nonempty, disjoint,
+// non-abutting); union is derived from the other two via De Morgan.
 
 // intersectPieces returns the canonical intersection of a and b.
 func intersectPieces[B any](a, b []piece[B], cmp func(B, B) int) []piece[B] {
@@ -256,12 +224,9 @@ func containsPoint[B any](a []piece[B], x B, cmp func(B, B) int) bool {
 
 // ---- the verSet value -------------------------------------------------------
 
-// verSet is an exact set of versions: rel covers the release subline, pre
-// the prerelease subline. single carries the concrete version a
-// singleton-built set denotes (decisions and exact pins need the original
-// registry spelling back, which the pieces alone cannot reproduce); display
-// is the cosmetic label error reporting prefers over rendering the pieces,
-// and must never be branched on for any logic decision.
+// verSet is an exact set of versions over the rel and pre sublines. single
+// keeps a singleton's original registry spelling for decisions and exact pins;
+// display is a cosmetic label no logic decision may branch on.
 type verSet struct {
 	single    Version
 	display   string
@@ -275,11 +240,9 @@ func emptyVerSet() verSet {
 	return verSet{}
 }
 
-// fullVerSet returns the set containing every version, prereleases
-// included. This is deliberately wider than Masterminds' own reading of
-// "*" (whose closed prerelease gate excludes prereleases): the solver's
-// unconstrained set is vacuous truth, and a set that silently dropped
-// prereleases would wrongly contradict a prerelease decision.
+// fullVerSet returns every version, prereleases included, unlike Masterminds'
+// "*": unconstrained is vacuous truth, and dropping prereleases would wrongly
+// contradict a prerelease decision.
 func fullVerSet() verSet {
 	return verSet{
 		rel:     []piece[relBound]{{lo: relBound{}, hiInf: true}},
@@ -354,10 +317,8 @@ func (s verSet) decidedVersion() (Version, bool) {
 	return s.single, s.hasSingle
 }
 
-// writeCanonical writes s's injective canonical encoding: equal sets (and
-// only equal sets) produce identical bytes, which is what incompatibility
-// hashing stands on. Bound versions are always metadata-free by
-// construction, so String() is itself canonical per bound.
+// writeCanonical writes s's injective encoding: equal sets, and only those,
+// produce identical bytes, which incompatibility hashing relies on.
 func (s verSet) writeCanonical(w io.Writer) {
 	for _, p := range s.rel {
 		_, _ = fmt.Fprintf(w, "R%d.%d.%d,", p.lo.major, p.lo.minor, p.lo.patch)
@@ -378,13 +339,8 @@ func (s verSet) writeCanonical(w io.Writer) {
 }
 
 // ---- bound arithmetic -------------------------------------------------------
-//
-// Successor arithmetic is used only while constructing pieces from
-// constraint comparators; the algebra above works on comparisons alone.
-// Overflow of a uint64 segment means no representable version lies above,
-// so a lower bound built from an overflowed successor denotes the empty run
-// and an upper bound built from one denotes an unbounded run; both are
-// exact, not approximations.
+// An overflowed successor is exact, not an approximation: as a lower bound it
+// makes the run empty, as an upper bound it makes the run unbounded.
 
 // relOf returns v's release-subline bound (its bare triple).
 func relOf(v *semver.Version) relBound {
@@ -423,11 +379,9 @@ func preFloor(b relBound) *semver.Version {
 	return semver.New(b.major, b.minor, b.patch, "0", "")
 }
 
-// succPre returns the prerelease immediately after w: w with a ".0"
-// identifier appended. Nothing sorts strictly between, because a shorter
-// prerelease precedes every extension of itself, "0" is the minimal
-// identifier, and any other prerelease above w already differs from w at or
-// before w's own length, which places it at or above w.0 too.
+// succPre returns the prerelease immediately after w: w with ".0" appended.
+// Nothing sorts strictly between, since "0" is the minimal identifier and a
+// shorter prerelease precedes every extension of itself.
 func succPre(w *semver.Version) *semver.Version {
 	return semver.New(w.Major(), w.Minor(), w.Patch(), w.Prerelease()+".0", "")
 }
@@ -470,10 +424,8 @@ func preCeilStrict(con *semver.Version) (*semver.Version, bool) {
 }
 
 // ---- piece constructors -----------------------------------------------------
-//
-// Each returns a canonical (possibly empty) list. The ok flags thread the
-// successor overflow convention through: a missing lower bound means the
-// run is empty, a missing upper bound means it is unbounded.
+// Each returns a canonical, possibly empty list; a false ok flag on a lower
+// bound means an empty run, on an upper bound an unbounded one.
 
 func relFrom(lo relBound, ok bool) []piece[relBound] {
 	if !ok {

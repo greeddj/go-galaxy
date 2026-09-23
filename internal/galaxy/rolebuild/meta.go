@@ -45,21 +45,16 @@ const (
 	tagStr  = "!!str"
 )
 
-// ParseMetaMain parses the bytes of a meta/main.yml into its dependencies and
-// role name. An empty document is a role with no dependencies and a warning,
-// as ansible-galaxy treats it; a document that is not a mapping, a
-// dependencies: that is not a list, and a list item of a shape role_yaml_parse
-// would not accept are refused under helpers.ErrRoleMetaInvalid with the
-// defect named. The fields of a spec are carried as written.
+// ParseMetaMain parses meta/main.yml bytes into dependencies and role name.
+// An empty document is no dependencies and a warning, as in ansible-galaxy;
+// a shape role_yaml_parse would not accept is helpers.ErrRoleMetaInvalid.
 func ParseMetaMain(data []byte) (Meta, error) {
 	return parseMetaMain(data, metaMainPath)
 }
 
-// ParseMetaRequirements parses the bytes of a meta/requirements.yml: a list
-// of role specs in the shapes ParseMetaMain accepts under dependencies:, or
-// an empty document. A mapping at the top is refused, as ansible refuses it
-// for this file (the roles:/collections: form belongs to a requirements file
-// handed to the CLI, not to a role's meta).
+// ParseMetaRequirements parses meta/requirements.yml bytes: a list of specs or
+// an empty document. A top-level mapping is refused, as ansible refuses it:
+// the roles:/collections: form belongs to a CLI requirements file.
 func ParseMetaRequirements(data []byte) ([]gitsource.RoleDependency, []string, error) {
 	return parseMetaRequirements(data, metaRequirementsPath)
 }
@@ -95,10 +90,8 @@ func parseMetaRequirements(data []byte, file string) ([]gitsource.RoleDependency
 	return parseSpecList(root, file)
 }
 
-// decodeDocument applies the size cap and parses data into its root node,
-// which is nil for an empty document. The cap is decided on the bytes given,
-// so a caller that reads through a larger reader is refused here all the
-// same.
+// decodeDocument applies the size cap to the bytes given and parses them into
+// the root node, a null node for an empty document.
 func decodeDocument(data []byte, file string) (*yaml.Node, error) {
 	if len(data) > metadataMaxBytes {
 		return nil, fmt.Errorf("%w: %s is %d bytes, the limit is %d", helpers.ErrRoleMetaInvalid, file, len(data), metadataMaxBytes)
@@ -165,10 +158,8 @@ func parseSpecList(list *yaml.Node, where string) ([]gitsource.RoleDependency, [
 	return deps, warnings, nil
 }
 
-// parseSpec reads one item of a spec list: a string, carried verbatim as
-// Src, or a mapping read by specFromMapping. Every other shape - a number, a
-// null, a nested list - is one role_yaml_parse would crash on, and is refused
-// naming the index.
+// parseSpec reads one spec: a string, carried verbatim as Src, or a mapping.
+// Any other shape is one role_yaml_parse would crash on, and is refused.
 func parseSpec(item *yaml.Node, where string, i int) (gitsource.RoleDependency, []string, error) {
 	switch {
 	case item.Kind == yaml.ScalarNode && item.Tag == tagStr:
@@ -205,10 +196,9 @@ func specFromMapping(m map[string]yaml.Node, where string, i int) (gitsource.Rol
 	return newStyleSpec(fields, where, i)
 }
 
-// oldStyleSpec reads a spec under role:: the install name is the role and
-// the source is the role unless src: says otherwise; a comma in it is the
-// refusal ansible raises; a name: beside it is overridden, with a warning,
-// as role_yaml_parse overrides it.
+// oldStyleSpec reads a spec under role:, which is the install name and, unless
+// src: is given, the source. A comma in it is refused and a name: beside it is
+// overridden with a warning, both as role_yaml_parse does.
 func oldStyleSpec(fields map[string]string, role, where string, i int) (gitsource.RoleDependency, []string, error) {
 	if strings.Contains(role, ",") {
 		return gitsource.RoleDependency{}, nil, fmt.Errorf("%w: %s[%d] is an invalid old style role requirement: %q",

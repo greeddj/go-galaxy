@@ -16,11 +16,8 @@ import (
 // reading it, so the text only has to be recognizable in the assertions.
 const testRolesPathWarning = `roles_path lists multiple paths; using "./roles" and ignoring the rest: [./shared/roles]`
 
-// runLoadRoots writes body as a requirements.yml and drives loadRoots over
-// it, with the role-scoped warning queue pre-filled the way
-// BuildCollectionConfig would have filled it for a multi-entry roles_path. It
-// reports how many role requirements the file yielded, alongside every
-// warning the run printed about roles_path.
+// runLoadRoots drives loadRoots over body with a queued roles_path warning
+// and returns the role root count and every roles_path warning printed.
 func runLoadRoots(t *testing.T, body string) (int, []string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "requirements.yml")
@@ -43,12 +40,9 @@ func runLoadRoots(t *testing.T, body string) (int, []string) {
 	return len(roleRoots), warns
 }
 
-// TestRoleConfigWarningsSuppressedWithoutRolesBlock pins the rule that
-// decides when a roles_path warning is worth printing: the requirements
-// file's own roles: block, the first thing in a run that answers whether
-// roles_path will be read at all. A file without one - or with one that is
-// empty, which installs no role either - must stay silent about a setting it
-// never reaches.
+// TestRoleConfigWarningsSuppressedWithoutRolesBlock pins that a queued
+// roles_path warning stays silent when the requirements file has no roles:
+// block or an empty one, since such a run never reads roles_path.
 func TestRoleConfigWarningsSuppressedWithoutRolesBlock(t *testing.T) {
 	t.Parallel()
 	bodies := map[string]string{

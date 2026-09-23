@@ -1,14 +1,8 @@
 package collections
 
-// This file pins the incremental snapshot-reuse path
-// (tryIncrementalResolveWithSnapshot), since its recursive
-// resolveCollectionsInternal call for the changed-root subset goes through
-// the version solver: an unchanged root's subgraph must be served verbatim
-// from the snapshot with zero network access, a newly added root's subgraph
-// must be resolved fresh through the solver, the two must merge into one
-// correct graph, and a genuine version clash between the preserved subset
-// and the freshly-resolved subset must fall back to a full, combined-context
-// solve rather than failing or silently keeping stale data.
+// This file pins tryIncrementalResolveWithSnapshot: unchanged roots are served
+// from the snapshot with no network, changed roots are solved fresh, and a
+// version clash between the two falls back to a full combined solve.
 
 import (
 	"context"
@@ -21,15 +15,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestIncrementalResolveMergesPreservedAndSolverResolvedSubsets drives two
-// resolveCollectionsInternal calls sharing one store: the first resolves a
-// single root (acme.app, depending on acme.lib) and records the snapshot;
-// the second adds a brand new root (acme.tool) while keeping acme.app's own
-// spec identical, which routes resolution through
-// tryIncrementalResolveWithSnapshot. Every endpoint acme.app/acme.lib could
-// touch is armed to fail hard before the second call, so if the incremental
-// path re-resolved either of them instead of preserving them from the
-// snapshot, the call would error out rather than silently passing.
+// TestIncrementalResolveMergesPreservedAndSolverResolvedSubsets asserts that
+// adding acme.tool beside an unchanged acme.app serves acme.app and acme.lib
+// from the snapshot, their endpoints armed to fail, and solves acme.tool fresh.
 func TestIncrementalResolveMergesPreservedAndSolverResolvedSubsets(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -66,10 +54,8 @@ func TestIncrementalResolveMergesPreservedAndSolverResolvedSubsets(t *testing.T)
 	assertToolResolvedFresh(t, resolved2, graph2)
 }
 
-// assertAppLibResolved asserts acme.app and acme.lib are both at
-// testVersion100 in resolved, and that graph carries the app -> lib edge -
-// shared between the first (fresh) and second (preserved) resolve of this
-// test, so both calls check the exact same invariant.
+// assertAppLibResolved asserts acme.app and acme.lib are at testVersion100
+// with exactly the app -> lib edge, the invariant both resolves share.
 func assertAppLibResolved(t *testing.T, label string, resolved map[string]collection, graph map[string][]string, appKey, libKey string) {
 	t.Helper()
 	if resolved["acme.app"].Version != testVersion100 || resolved["acme.lib"].Version != testVersion100 {
@@ -107,16 +93,9 @@ func armHardFailure(srv *fakegalaxy.Server, name string) {
 	}
 }
 
-// TestIncrementalMergeConflictFallsBackToFullSolve pins the recovery path:
-// when the preserved (unchanged-root) subset and the freshly solver-resolved
-// (changed-root) subset disagree on a shared transitive dependency's
-// version, the incremental merge must not fail the whole resolve or keep
-// either side's partial-context answer - it must fall back to a full,
-// combined-context solve. The three constraint values are chosen so that
-// the preserved answer (1.6.0), the changed-subset-alone answer (1.9.0),
-// and the only value a full combined solve can produce (1.3.0) are all
-// distinct: landing on 1.3.0 is only possible via genuine recomputation
-// with both roots' constraints in view together.
+// TestIncrementalMergeConflictFallsBackToFullSolve asserts a version clash
+// between the preserved and the freshly solved subset falls back to a full
+// solve: 1.6.0 and 1.9.0 are the partial answers, only 1.3.0 the combined one.
 func TestIncrementalMergeConflictFallsBackToFullSolve(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -152,18 +131,14 @@ func TestIncrementalMergeConflictFallsBackToFullSolve(t *testing.T) {
 		t.Fatalf("second resolveCollectionsInternal (must fall back to a full solve, not fail): %v", err)
 	}
 
-	// acme.b alone (the incremental path's changed-subset resolve) would
-	// pick 1.9.0 for acme.shared ("!=1.6.0" alone is satisfied by the
-	// highest overall version) - conflicting with the preserved 1.6.0. Only
-	// a full solve combining "<1.9.0" (from a) with "!=1.6.0" (from b),
-	// leaving {1.0.0, 1.3.0} as candidates, lands on 1.3.0.
+	// acme.b alone would pick 1.9.0, clashing with the preserved 1.6.0; only a
+	// full solve of "<1.9.0" together with "!=1.6.0" lands on 1.3.0.
 	assertFullSolveRecovered(t, resolved2, graph2)
 }
 
-// assertFullSolveRecovered asserts the full-solve fallback's expected
-// combined-context outcome: acme.shared at 1.3.0 (unreachable by either
-// isolated resolution), both roots at testVersion100, and a graph edge from
-// each root to the shared dependency.
+// assertFullSolveRecovered asserts the full solve's outcome: acme.shared at
+// 1.3.0, unreachable by either partial resolve, both roots at testVersion100,
+// and an edge from each root to acme.shared.
 func assertFullSolveRecovered(t *testing.T, resolved map[string]collection, graph map[string][]string) {
 	t.Helper()
 	if got := resolved["acme.shared"].Version; got != "1.3.0" {
@@ -182,11 +157,9 @@ func assertFullSolveRecovered(t *testing.T, resolved map[string]collection, grap
 	}
 }
 
-// TestMergeResolvedGraphsDetectsVersionConflict is a fast, pure unit test of
-// mergeResolvedGraphs' own conflict-detection rule, independent of any
-// network simulation: two resolved sets sharing a fqdn at different
-// versions must not merge, while two resolved sets that are either disjoint
-// or agree on any shared fqdn must merge cleanly.
+// TestMergeResolvedGraphsDetectsVersionConflict asserts mergeResolvedGraphs
+// refuses two resolved sets sharing a fqdn at different versions and merges
+// disjoint ones cleanly.
 func TestMergeResolvedGraphsDetectsVersionConflict(t *testing.T) {
 	t.Parallel()
 	preservedResolved := map[string]collection{

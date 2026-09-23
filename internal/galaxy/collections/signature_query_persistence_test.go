@@ -1,10 +1,8 @@
 package collections
 
-// This file pins the persisted-spec query cut: a signature source's query
-// string must not survive into buildRequirementsSpec's output, must not
-// survive into the serialized snapshot that output feeds, and a store
-// carrying an entry written before the cut existed must not fail a run over
-// it.
+// A signature source's query must survive neither into buildRequirementsSpec's
+// output nor into the snapshot it feeds, and a store holding an uncut entry
+// must not fail a run.
 
 import (
 	"bytes"
@@ -22,12 +20,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// signatureCapabilityMarker is the sensitive part of the query string below,
-// checked for on its own because json.Marshal HTML-escapes '&' into the
-// six-byte sequence \u0026 (backslash, u, 0, 0, 2, 6): a needle spanning the
-// '&' between the two query parameters would never literally appear in
-// serialized bytes even when the query survives unstripped, silently
-// defeating the byte-level check this file uses it for.
+// signatureCapabilityMarker is the sensitive part of the query below, matched
+// alone because json.Marshal escapes '&' as \u0026, so a needle spanning the
+// '&' would never appear in serialized bytes even if the query survived.
 const signatureCapabilityMarker = "X-Amz-Signature=deadbeefcapability"
 
 // signatureCapabilityQuery is a presigned-URL-shaped query string, standing
@@ -43,14 +38,9 @@ const (
 	signatureSourceStripped  = "https://sigs.example.com/acme-app.asc"
 )
 
-// TestBuildRequirementsSpecCutsSignatureQuery proves buildRequirementsSpec
-// (through normalizeSignatures) strips a declared signature source's query
-// before it ever reaches the persisted spec, and that the cut is a cut
-// rather than a wipe: scheme, host and path survive byte for byte.
-//
-// The positive control lives on the same fixture as the refusal it proves
-// something about: without it, a stored value of "" would also carry no "?"
-// and this test would pass for the wrong reason.
+// TestBuildRequirementsSpecCutsSignatureQuery pins that buildRequirementsSpec
+// cuts a signature source's query and only the query: scheme, host and path
+// survive byte for byte, so an emptied value cannot pass.
 func TestBuildRequirementsSpecCutsSignatureQuery(t *testing.T) {
 	t.Parallel()
 	roots := []collection{{
@@ -78,27 +68,9 @@ func TestBuildRequirementsSpecCutsSignatureQuery(t *testing.T) {
 	}
 }
 
-// TestRequirementsSnapshotDoesNotCarrySignatureQueryCapability is the sink assertion:
-// a spec built from a query-bearing signature source, once stored through
-// Store.SetRequirements and serialized through Store.MarshalSnapshot, must never
-// contain the capability substring. It is deliberately insensitive to which cut
-// enforces that, so it survives a refactor that moves the cut. The per-cut jobs are
-// pinned one site each: TestBuildRequirementsSpecCutsSignatureQuery above pins the
-// producer cut, TestMarshalSnapshotCutsRequirementsSignatureQueryWrittenDirectly
-// (internal/galaxy/store) pins the persist cut.
-//
-// KILLING MUTATION, run and reverted: both cuts that could strip this query
-// neutralized at once - normalizeSignatures' own helpers.WithoutQuery call
-// replaced by the bare trimmed value it used to append (resolve.go), and
-// store.snapshotData's own persist-side backstop (copyRequirementsCutQuery)
-// replaced by the maps.Copy it replaced
-// (internal/galaxy/store/snapshot.go) - applied through go test -overlay
-// against both files at once so neither production file was left edited.
-// Either cut alone now suffices to pass this test, which is the backstop's
-// whole point, so this is the smallest mutation that still kills it. The
-// substring check fails:
-//
-//	signature_query_persistence_test.go:121: snapshot contains a signature capability "X-Amz-Signature=deadbeefcapability"
+// TestRequirementsSnapshotDoesNotCarrySignatureQueryCapability pins the sink:
+// a serialized snapshot never holds the capability, whichever cut removed it;
+// the producer and store persist cuts each have their own test.
 func TestRequirementsSnapshotDoesNotCarrySignatureQueryCapability(t *testing.T) {
 	t.Parallel()
 	roots := []collection{{
@@ -139,12 +111,9 @@ func TestRequirementsSnapshotDoesNotCarrySignatureQueryCapability(t *testing.T) 
 	}
 }
 
-// legacyRequirementsSignature reproduces requirementsSignatureFromSpec's
-// pre-cut formula: trim and sort only, no helpers.WithoutQuery. It exists so
-// TestUnstrippedPersistedSignatureQuerySelfHeals can seed a store the way a
-// binary predating this cut actually would have left it - a requirements
-// hash computed the same, self-consistent way the persisted spec itself was
-// written, over an unstripped signature.
+// legacyRequirementsSignature is requirementsSignatureFromSpec without the
+// query cut, so a test can seed a store as a binary without the cut left it:
+// an uncut spec with a hash consistent with it.
 func legacyRequirementsSignature(t *testing.T, spec map[string]store.RequirementSpec, noDeps bool, serversSig string) string {
 	t.Helper()
 	parts := make([]string, 0, len(spec))
@@ -164,21 +133,9 @@ func legacyRequirementsSignature(t *testing.T, spec map[string]store.Requirement
 	return hex.EncodeToString(sum[:])
 }
 
-// TestUnstrippedPersistedSignatureQuerySelfHeals is the upgrade direction:
-// a store whose Requirements bucket was written before this cut existed -
-// signature query intact, and a requirements hash computed the same,
-// pre-cut way over it - does not fail a run against it. The stored hash and
-// the freshly recomputed one disagree once this binary's own
-// normalizeSignatures strips the query, so snapshotMatchesRequirements and
-// tryIncrementalResolve's own identical check both refuse to treat the
-// snapshot as current; the run falls back to a full resolve instead of
-// failing, and recordResolutionIfNeeded then rewrites the persisted spec in
-// the current, stripped form.
-//
-// Both checks failing here is a property of the upgrade direction alone, not
-// of the cut in general: the downgrade direction disagrees, and
-// normalizeSignatures' own doc comment (resolve.go) holds that half of the
-// argument.
+// TestUnstrippedPersistedSignatureQuerySelfHeals pins that an uncut stored spec
+// no longer matches the recomputed hash, so the run falls back to a full
+// resolve instead of failing and rewrites the spec in cut form.
 func TestUnstrippedPersistedSignatureQuerySelfHeals(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -216,23 +173,9 @@ func TestUnstrippedPersistedSignatureQuerySelfHeals(t *testing.T) {
 	}
 }
 
-// TestLegacyRequirementsSignatureAgreesOnlyOnAStrippedSpec pins the
-// downgrade-direction identity normalizeSignatures' own doc comment now
-// states: legacyRequirementsSignature (the pre-cut formula - trim and sort
-// only) agrees with today's requirementsSignatureFromSpec on a spec whose
-// signature sources are already query-free, because helpers.WithoutQuery is
-// a no-op over a value with nothing left to cut. That agreement is what lets
-// an old binary's own self-consistency check pass against a hash a newer
-// binary computed, take the targeted incremental path, and restore the
-// query on write - the mechanism that doc comment's downgrade paragraph
-// describes.
-//
-// The two formulas disagree on the identical spec shape carrying an
-// unstripped query instead, asserted here as the fixture's own positive
-// control, in the same test as the agreement it qualifies: without it, an
-// equality assertion that never fires on any input - because the two
-// formulas happened to always agree, or the test built a spec neither could
-// tell apart - would pass for the wrong reason.
+// TestLegacyRequirementsSignatureAgreesOnlyOnAStrippedSpec pins that the
+// formula without the cut agrees with requirementsSignatureFromSpec on a
+// query-free spec, so an older binary accepts the hash, and differs otherwise.
 func TestLegacyRequirementsSignatureAgreesOnlyOnAStrippedSpec(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Server: "https://galaxy.example.com"}
@@ -248,11 +191,8 @@ func TestLegacyRequirementsSignatureAgreesOnlyOnAStrippedSpec(t *testing.T) {
 			legacyStripped, currentStripped)
 	}
 
-	// Positive control: the same two formulas over the same spec shape, but
-	// carrying the query the stripped fixture above lacks, must disagree -
-	// this is the upgrade direction's own mismatch, and its absence here
-	// would mean the equality above proved nothing about the cut
-	// specifically.
+	// Positive control: with the query present the two formulas must
+	// disagree, or the equality above proved nothing about the cut.
 	unstrippedSpec := map[string]store.RequirementSpec{
 		"acme.app": {Constraint: "^1.0.0", Source: cfg.Server, Signatures: []string{signatureSourceWithQuery}},
 	}

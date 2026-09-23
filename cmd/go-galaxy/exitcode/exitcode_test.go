@@ -19,17 +19,11 @@ import (
 var errTestGeneric = errors.New("some unclassified error")
 
 // errTestSaveFailure stands in for a snapshot-save failure in
-// TestSaveFailureDoesNotMaskIntegrity. Declared as a static package-level
-// sentinel, rather than an inline errors.New call, purely to satisfy err113 -
-// production code never compares against it.
+// TestSaveFailureDoesNotMaskIntegrity, declared at package level for err113.
 var errTestSaveFailure = errors.New("simulated save failure")
 
-// errTestUnreadableCause stands in for a project requirements file's
-// non-fs.ErrNotExist read/parse failure (a malformed YAML document, not a
-// missing file) in fromErrorCases's "project requirements unreadable,
-// non-fs.ErrNotExist cause" row. Declared as a static package-level
-// sentinel, rather than an inline errors.New call, purely to satisfy err113 -
-// production code never compares against it.
+// errTestUnreadableCause stands in for a requirements file that exists but
+// fails to parse, a cause other than fs.ErrNotExist, in fromErrorCases.
 var errTestUnreadableCause = errors.New("yaml: unexpected end of file")
 
 // exitCase is one FromError classification expectation.
@@ -39,12 +33,8 @@ type exitCase struct {
 	wantCode int
 }
 
-// fromErrorCases is TestFromError's table, hoisted to package level so the
-// test function itself stays within the complexity budget as classes are
-// added. It checks one representative wrapped error per exit class, plus
-// the nil/context/fs.ErrNotExist/unclassified edge cases; wrapping with
-// fmt.Errorf("%w: ctx", sentinel) verifies FromError matches through
-// errors.Is rather than requiring exact identity.
+// fromErrorCases is TestFromError's table: one wrapped error per exit class
+// plus the nil, context, fs.ErrNotExist and unclassified edge cases.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var fromErrorCases = []exitCase{
@@ -78,11 +68,8 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitIntegrity,
 	},
 	{
-		// ErrCollectionsPathEscape is grouped with the archive/symlink sentinels
-		// in isSymlinkError, since a symlinked ansible_collections (or a
-		// namespace/name component beneath it) is the same class of unsafe
-		// filesystem write as an unsafe symlink found inside an extracted
-		// archive - both must exit ExitInstall, not the generic fallback.
+		// A symlinked ansible_collections, or a component beneath it, is the
+		// same unsafe-write class as an unsafe symlink inside an archive.
 		name:     "collections path escape",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrCollectionsPathEscape),
 		wantCode: ExitInstall,
@@ -98,19 +85,15 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitNetwork,
 	},
 	{
-		// validateDownloadInputs refuses a download_url whose scheme is not
-		// http or https. It classifies with the rest of isMetadataFetchError
-		// rather than as an integrity failure: nothing was fetched, hashed, or
-		// compared - the metadata simply cannot name a fetchable artifact.
+		// A download_url with a non-http(s) scheme is a metadata fault, not an
+		// integrity one: nothing was fetched or hashed.
 		name:     "unsupported download url scheme",
 		err:      fmt.Errorf("%w: %q", helpers.ErrUnsupportedDownloadURLScheme, "file:///etc/passwd"),
 		wantCode: ExitNetwork,
 	},
 	{
-		// The discriminator against the row directly above, which keeps
-		// ExitNetwork: that one's metadata could not name a fetchable artifact
-		// at all, while this one names a perfectly fetchable artifact and is
-		// refused for the credential that would ride along to it.
+		// Unlike the row above, the artifact is fetchable and is refused for
+		// the credential that would ride along to it.
 		name:     "download url with userinfo",
 		err:      fmt.Errorf("%w: %q", helpers.ErrDownloadURLUserinfo, "https://h/a.tar.gz"),
 		wantCode: ExitInstall,
@@ -151,10 +134,8 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
-		// buildCollectionsMap raises this over a malformed resolved identity
-		// (ns/name/version) before any install work starts, the same
-		// plan-build-time class as ErrDuplicateCollectionKey right below it in
-		// isCollectionListUsageError - not an install-time or a network failure.
+		// buildCollectionsMap raises this for a malformed resolved identity
+		// before any install work starts: a plan-build usage error.
 		name:     "unsafe collection identifier",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrUnsafeCollectionIdentifier),
 		wantCode: ExitUsage,
@@ -165,11 +146,8 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
-		// buildCollectionsMap raises this over a resolved version that is not
-		// helpers.IsExactVersion (a constraint string like "*"), before any
-		// install work starts - the identical plan-build-time reasoning the
-		// row above already states for ErrUnsafeCollectionIdentifier, kept as
-		// its own sentinel rather than folded into that one.
+		// buildCollectionsMap raises this for a resolved version that is not
+		// exact (a constraint like "*"), at plan-build time like the row above.
 		name:     "invalid collection version",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrInvalidCollectionVersion),
 		wantCode: ExitUsage,
@@ -200,12 +178,8 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitNetwork,
 	},
 	{
-		// The real shape downloadCollectionToCache/fetchArtifact produce:
-		// helpers.ErrArtifactDownloadDeadline deliberately does not wrap its
-		// context.DeadlineExceeded cause with %w (see the sentinel's own doc
-		// comment), so this must classify as ExitNetwork through the
-		// sentinel match alone, never as ExitInterrupt via a reachable
-		// context.Canceled/context.DeadlineExceeded.
+		// The producer renders the context cause with %v, so this must be
+		// ExitNetwork through the sentinel alone, never ExitInterrupt.
 		name: "artifact download deadline wraps its cause with %v, not %w",
 		// Pinning the real, deliberately non-wrapping shape; see
 		// helpers.ErrArtifactDownloadDeadline's own doc comment for why.
@@ -246,30 +220,17 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitCacheBusy,
 	},
 	{
-		// A shape-fidelity row, and deliberately not a guard on the
-		// rendering: the literal below hard-codes what
-		// cacheManager.LockLostError has ALREADY produced - the sentinel
-		// with its cause flattened in by %v - so no edit to that rendering
-		// can change what this row hands FromError, and a %v-to-%w edit
-		// there cannot fail it. What it does pin is the exit code a CI
-		// script actually reads for the commonest lock-loss shape: the run's
-		// own error carrying context.Canceled, since canceling the holder
-		// context is how a backend signals the loss. The rendering is
-		// guarded where it lives, by TestLockLostError's own mustNotMatch
-		// rows in internal/galaxy/cache.
+		// The exit code of cacheManager.LockLostError's commonest output, a
+		// canceled run flattened by %v; the rendering itself is pinned by
+		// TestLockLostError in internal/galaxy/cache.
 		name:     "cache lock lost carrying a flattened cancellation cause",
 		err:      fmt.Errorf("%w: %v", helpers.ErrCacheLockLost, context.Canceled), //nolint:errorlint
 		wantCode: ExitCacheBusy,
 	},
 	{
-		// The same shape-fidelity row for the supersession case, and it
-		// cannot pin supersession either: helpers.ErrSHA256Mismatch is text
-		// in this literal rather than a matchable sentinel, so the integrity
-		// class never competes for FromError's ordering here at all.
-		// Supersession is a property of the rendering and is pinned by
-		// TestLockLostError's "supersedes the run's own integrity failure"
-		// row; what this row adds is that the string that rendering produces
-		// still reaches a CI script as 8 rather than 7.
+		// The flattened integrity cause is text, not a sentinel, so this pins
+		// only that the rendering exits 8 rather than 7; supersession itself
+		// is pinned by TestLockLostError.
 		name:     "cache lock lost carrying a flattened integrity cause",
 		err:      fmt.Errorf("%w: %v", helpers.ErrCacheLockLost, helpers.ErrSHA256Mismatch), //nolint:errorlint
 		wantCode: ExitCacheBusy,
@@ -285,13 +246,8 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitCacheCorrupt,
 	},
 	{
-		// The production shape internal/cache/s3's readObject builds, cause
-		// and all, so the classification is asserted against the tree a run
-		// produces rather than the headline alone. The wrap decides the code
-		// - without it the tree falls through every class to ExitError - and
-		// the cause beside it is not decoration: it pins that
-		// helpers.ErrEmptyGzipMember joins no predicate checked above this
-		// class, since one that ever claimed it would flip this row's code.
+		// The shape internal/cache/s3's readObject builds; the
+		// ErrEmptyGzipMember cause pins that no higher class claims it.
 		name: "state object that will not inflate",
 		err: fmt.Errorf("%w: state object %s: %w",
 			helpers.ErrCorruptStateObject, "state/store.json.gz", helpers.ErrEmptyGzipMember),
@@ -306,12 +262,8 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
-		// The real production shape wraps a second cause with %w
-		// (fmt.Errorf("%w: %s: %w", ...)); a non-fs.ErrNotExist cause is the
-		// row that actually exercises isConfigUsageError's own arm rather
-		// than the fs.ErrNotExist row already covered elsewhere in this
-		// table - this is what proves the same-condition/two-codes split
-		// documented on isConfigUsageError is gone.
+		// The production shape wraps a second, non-fs.ErrNotExist cause with
+		// %w, so this row reaches isConfigUsageError's own arm.
 		name:     "project requirements unreadable, non-fs.ErrNotExist cause",
 		err:      fmt.Errorf("%w: requirements.yml: %w", helpers.ErrProjectRequirementsUnreadable, errTestUnreadableCause),
 		wantCode: ExitUsage,
@@ -337,22 +289,15 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitInstall,
 	},
 	{
-		// Raised by the download path's shape probe, not by the extractor,
-		// before the bytes are ever committed to the artifact cache. It
-		// classifies with the install-time sentinels rather than as a transport
-		// failure, since the transfer itself succeeded and no retry turns the
-		// delivered bytes into an archive.
+		// Raised by the download shape probe after a successful transfer: no
+		// retry turns the delivered bytes into an archive, so not network.
 		name:     "artifact is not a tar.gz",
 		err:      fmt.Errorf("%w: /tmp/a: gzip: invalid header", helpers.ErrArtifactNotTarGz),
 		wantCode: ExitInstall,
 	},
 	{
-		// Raised by the same shape probe, on bytes that ARE a gzipped tar and
-		// spend the probe's whole scan bound on meta headers without ever
-		// presenting an entry. It classifies with the row above rather
-		// than as a transport failure for the same reason: the transfer
-		// succeeded, and the same URL delivers the same prologue however many
-		// times it is asked.
+		// A gzipped tar whose meta headers exhaust the probe's scan bound:
+		// install class like the row above, as a retry gets the same prologue.
 		name:     "artifact presents no tar header inside the probe's bound",
 		err:      fmt.Errorf("%w: /tmp/a", helpers.ErrArtifactTarHeaderNotFound),
 		wantCode: ExitInstall,
@@ -368,55 +313,36 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitInstall,
 	},
 	{
-		// The retention sibling of the row above, and the one archive sentinel
-		// no extraction can raise: it bounds what a reader holds on to or
-		// renders rather than what an archive writes or decompresses to, so it
-		// arrives from a pass that walks an archive without unpacking it.
+		// Raised by the manifest chain walk and the tree archive writer rather
+		// than by extraction; it still classifies with the archive family.
 		name:     "archive entry name too long",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrArchiveEntryNameTooLong),
 		wantCode: ExitInstall,
 	},
 	{
-		// The byte-budget sibling of the row above: the per-entry cap is
-		// charged against the declared size of every header the extractor is
-		// handed, whatever its typeflag, not only against the regular files
-		// extraction actually writes to disk.
+		// The per-entry cap is charged against every header's declared size,
+		// whatever its typeflag, not only against regular files.
 		name:     "archive entry too large",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrArchiveEntryIsTooLarge),
 		wantCode: ExitInstall,
 	},
 	{
-		// The declared-size budget's counterpart on the bytes actually read: an
-		// archive whose headers understate what archive/tar consumes for them is
-		// refused by the decompressed-stream cap rather than by either row above,
-		// and only once it pulls a byte past that ceiling - below it, the
-		// understatement is accepted. It classifies with the archive family, not
-		// as a transport failure, which is why it is not ErrResponseTooLarge.
+		// Headers that understate what archive/tar consumes hit the
+		// decompressed-stream cap: the archive family, not ErrResponseTooLarge.
 		name:     "archive decompressed stream too large",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrArchiveDecompressedTooLarge),
 		wantCode: ExitInstall,
 	},
 	{
-		// Paired with "response too large, aggregated" below: this row is the
-		// bare/unaggregated shape, reached wherever a capped body overruns
-		// its ceiling outside any per-collection worker - an oversized Galaxy
-		// metadata document at resolve time, or an oversized S3 listing or
-		// batch-delete response during an init-time ClearFiles - so no
-		// helpers.ErrInstallationFailed headline exists to fold it behind. It
-		// classifies ExitNetwork: a size ceiling, not a digest mismatch, so
-		// ExitIntegrity is deliberately not the answer.
+		// Bare, as an overrun outside any install worker arrives: a size
+		// ceiling is network class, not a digest mismatch.
 		name:     "response too large, bare",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrResponseTooLarge),
 		wantCode: ExitNetwork,
 	},
 	{
-		// Paired with "response too large, bare" above: the identical
-		// sentinel, joined behind collections.Start's own
-		// helpers.ErrInstallationFailed headline the way a per-collection
-		// worker's failure actually reaches FromError, classifies
-		// ExitInstall instead - proving the two rows exercise different
-		// classifiers (isTransportError bare vs. isFileIntegrityError's
-		// headline match once aggregated) rather than the same one twice.
+		// The same sentinel joined behind the install headline, as a worker
+		// failure arrives, exits ExitInstall instead.
 		name: "response too large, aggregated behind installation failure",
 		err: errors.Join(
 			fmt.Errorf("%w for 1 collections", helpers.ErrInstallationFailed),
@@ -425,30 +351,15 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitInstall,
 	},
 	{
-		// outdated's own aggregation headline, bare: every lookup that failed
-		// was a metadata-fetch failure (a 404, a 5xx, a timeout), none of them
-		// a lockfile-shape problem, so this classifies through
-		// isMetadataFetchError like every other member of that set.
-		//
-		// Mutation: removing helpers.ErrLatestVersionLookupFailed from
-		// isMetadataFetchError makes this row fail with
-		// "FromError(latest version lookup failed for 1 collections) = 1,
-		// want 4" - run and confirmed. The paired "joined with an invalid
-		// lockfile entry name" row below is unaffected by that same mutation,
-		// since isLockError claims that tree first regardless.
+		// outdated's aggregation headline alone: every failed lookup was a
+		// metadata-fetch failure, so it classifies through isMetadataFetchError.
 		name:     "latest version lookup failed, bare",
 		err:      fmt.Errorf("%w for 1 collections", helpers.ErrLatestVersionLookupFailed),
 		wantCode: ExitNetwork,
 	},
 	{
-		// Paired with the bare row above: the identical headline, this time
-		// joined with a cause that must classify differently - a lockfile
-		// entry whose name is not a "namespace.name" FQDN. isLockError is
-		// checked ahead of isNetworkError in the exitClasses table, so it
-		// claims the whole joined tree even though the headline alone would
-		// have classified ExitNetwork. This is the predicate isMetadataFetchError's
-		// own doc comment describes: which cause is joined determines the
-		// class, not which command produced the headline.
+		// The same headline joined with an invalid lockfile entry: isLockError
+		// precedes isNetworkError, so the joined cause decides the class.
 		name: "latest version lookup failed, joined with an invalid lockfile entry name",
 		err: errors.Join(
 			fmt.Errorf("%w for 2 collections", helpers.ErrLatestVersionLookupFailed),
@@ -472,11 +383,8 @@ func TestFromError(t *testing.T) {
 	}
 }
 
-// galaxyServerConfigSentinels is every Galaxy server configuration sentinel
-// this package must classify as ExitUsage. It is listed exhaustively rather
-// than sampled: each one is raised only while building the config, and a
-// missed entry would silently exit 1 - indistinguishable to a CI pipeline
-// from a genuine runtime failure it should retry.
+// galaxyServerConfigSentinels lists every Galaxy server configuration
+// sentinel exhaustively: a missed one would exit 1 instead of ExitUsage.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var galaxyServerConfigSentinels = []struct {
@@ -499,11 +407,9 @@ var galaxyServerConfigSentinels = []struct {
 	{name: "token tls policy from ansible.cfg", err: helpers.ErrTokenTLSPolicyFromAnsibleConfig},
 }
 
-// TestGalaxyServerConfigErrorsMapToUsage pins every Galaxy server
-// configuration sentinel to ExitUsage. These are raised before any request
-// is made, so a pipeline that branches on the exit code must be able to
-// tell "your ansible.cfg is wrong, editing it is the only fix" apart from
-// a transient failure worth retrying.
+// TestGalaxyServerConfigErrorsMapToUsage pins every Galaxy server config
+// sentinel to ExitUsage: raised before any request, so a pipeline can tell
+// "fix ansible.cfg" apart from a transient failure worth retrying.
 func TestGalaxyServerConfigErrorsMapToUsage(t *testing.T) {
 	t.Parallel()
 	for _, tt := range galaxyServerConfigSentinels {
@@ -517,11 +423,8 @@ func TestGalaxyServerConfigErrorsMapToUsage(t *testing.T) {
 	}
 }
 
-// integritySentinels is every artifact-digest-authentication sentinel this
-// package must classify as ExitIntegrity. Listed exhaustively, not sampled,
-// mirroring galaxyServerConfigSentinels's own convention: a missed entry
-// would silently fall back to a different exit class, indistinguishable to a
-// CI pipeline from a class where retrying the same run might actually help.
+// integritySentinels lists every artifact-digest sentinel exhaustively, as
+// galaxyServerConfigSentinels does, since each must exit ExitIntegrity.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var integritySentinels = []struct {
@@ -548,18 +451,9 @@ func TestIntegritySentinelsMapToExitIntegrity(t *testing.T) {
 	}
 }
 
-// TestIntegrityOutranksInstallFailureHeadline proves that once
-// collections.Start starts joining a per-collection integrity cause behind
-// the helpers.ErrInstallationFailed headline, FromError still classifies the
-// combined tree as ExitIntegrity rather than stopping at the headline it
-// finds first in the tree. The positive control in the same test - the
-// identical headline joined with helpers.ErrDownloadFailed instead - proves
-// this is not just "any joined error becomes ExitIntegrity": only the
-// presence of an actual integrity sentinel does. The killing mutation is
-// moving the isIntegrityError entry of exitClasses below the isLockError
-// and isInstallError entries, which makes isInstallError claim the headline
-// first; verified, that mutation makes this test fail with:
-// "exitcode_test.go:569: FromError(integrity join) = 5, want 7".
+// TestIntegrityOutranksInstallFailureHeadline pins that an integrity cause
+// joined behind helpers.ErrInstallationFailed exits ExitIntegrity, while the
+// same headline joined with helpers.ErrDownloadFailed stays ExitInstall.
 func TestIntegrityOutranksInstallFailureHeadline(t *testing.T) {
 	t.Parallel()
 	headline := fmt.Errorf("%w for 1 collections", helpers.ErrInstallationFailed)
@@ -587,10 +481,8 @@ func TestIntegrityOutranksNetworkCause(t *testing.T) {
 	}
 }
 
-// TestIntegrityPrecedenceIndependentOfCauseOrder proves the ExitIntegrity
-// classification does not depend on where, in the joined tree, the integrity
-// sentinel sits - both orderings of the same three causes, and a nested join
-// of them, all classify identically.
+// TestIntegrityPrecedenceIndependentOfCauseOrder pins that the integrity
+// sentinel wins wherever it sits in the joined tree, nested joins included.
 func TestIntegrityPrecedenceIndependentOfCauseOrder(t *testing.T) {
 	t.Parallel()
 	headline := fmt.Errorf("%w for 1 collections", helpers.ErrInstallationFailed)
@@ -611,11 +503,8 @@ func TestIntegrityPrecedenceIndependentOfCauseOrder(t *testing.T) {
 	}
 }
 
-// TestSaveFailureDoesNotMaskIntegrity proves the annotateSaveFailure-shaped
-// wrap collections.Start builds ("%w; snapshot save failed: %w") still
-// classifies as ExitIntegrity when its primary side already carries an
-// integrity cause, matching the real shape a frozen install with a corrupted
-// pin and a failing snapshot save would produce.
+// TestSaveFailureDoesNotMaskIntegrity pins that annotateSaveFailure's
+// "%w; snapshot save failed: %w" wrap keeps an integrity cause ExitIntegrity.
 func TestSaveFailureDoesNotMaskIntegrity(t *testing.T) {
 	t.Parallel()
 	headline := fmt.Errorf("%w for 1 collections", helpers.ErrInstallationFailed)
@@ -627,13 +516,9 @@ func TestSaveFailureDoesNotMaskIntegrity(t *testing.T) {
 	}
 }
 
-// TestLockDriftOutranksSaveFailure proves the annotateSaveFailure-shaped wrap
-// lockFrozen builds ("%w; snapshot save failed: %w") still classifies as
-// ExitLock when its primary side already carries helpers.ErrLockfileDrift,
-// matching the real shape a frozen lock run that found drift and then also
-// failed its tail snapshot save would produce - the drift verdict, not the
-// save failure's own network-class sentinel, is what the operator must act
-// on.
+// TestLockDriftOutranksSaveFailure pins that lock --frozen's drift verdict
+// wrapped by annotateSaveFailure still exits ExitLock: the drift, not the
+// save failure's network-class cause, is what the operator must act on.
 func TestLockDriftOutranksSaveFailure(t *testing.T) {
 	t.Parallel()
 	drift := fmt.Errorf("%w: galaxy.lock: run `go-galaxy lock` to update it", helpers.ErrLockfileDrift)
@@ -658,10 +543,8 @@ func TestCanceledOutranksIntegrity(t *testing.T) {
 	}
 }
 
-// TestSolverConflictMapsToResolution pins that a *solver.ConflictError, the
-// error type the version solver returns for an unsatisfiable requirement
-// set, classifies as ExitResolution - both bare and wrapped, matching
-// through errors.Is via ConflictError's own Is method.
+// TestSolverConflictMapsToResolution pins *solver.ConflictError to
+// ExitResolution, bare and wrapped, through ConflictError's own Is method.
 func TestSolverConflictMapsToResolution(t *testing.T) {
 	t.Parallel()
 	err := error(&solver.ConflictError{})
@@ -673,17 +556,9 @@ func TestSolverConflictMapsToResolution(t *testing.T) {
 	}
 }
 
-// TestArtifactDownloadDeadlineClassification pins helpers.ErrArtifactDownloadDeadline's
-// full classification story beyond the single representative case already
-// covered in fromErrorCases: unaggregated it is ExitNetwork, joined behind
-// collections.Start's helpers.ErrInstallationFailed headline it is ExitInstall
-// (identical to every other per-collection failure, helpers.ErrDownloadFailed
-// included - this is not a behavior change), and it is never ExitInterrupt in
-// either shape, which is exactly what the sentinel's deliberate %v-not-%w
-// cause rendering buys: leaving context.DeadlineExceeded or context.Canceled
-// reachable via errors.Is would let FromError's cancellation check (checked
-// first, ahead of every other class) misclassify a hostile or slow server as
-// a caught Ctrl-C.
+// TestArtifactDownloadDeadlineClassification pins the deadline sentinel as
+// ExitNetwork bare and ExitInstall behind the install headline, never
+// ExitInterrupt: its %v-rendered cause keeps a slow server from reading as one.
 func TestArtifactDownloadDeadlineClassification(t *testing.T) {
 	t.Parallel()
 	bare := helpers.ErrArtifactDownloadDeadline
@@ -706,24 +581,9 @@ func TestArtifactDownloadDeadlineClassification(t *testing.T) {
 	}
 }
 
-// TestReadStalledClassification pins helpers.ErrReadStalled's full
-// classification story beyond the single representative case already
-// covered in fromErrorCases, mirroring TestArtifactDownloadDeadlineClassification:
-// (a) the bare sentinel is ExitNetwork; (b) the real production shape
-// watchdogBody.Read builds - the cause rendered with %v, not wrapped with %w
-// - is also ExitNetwork; (c) joined behind collections.Start's
-// helpers.ErrInstallationFailed headline it is ExitInstall, identical to
-// every other per-collection failure. This test does NOT prove the watchdog
-// fix itself: it builds its own error shape rather than calling into
-// package fetch, so reverting internal/galaxy/fetch/watchdog.go's %v back to
-// %w does not make this test fail - only TestMixedDripAndStallDoesNotClassifyAsInterrupt
-// in package collections exercises the real producer end to end.
-//
-// The got != ExitInterrupt checks below are documentary, not independent
-// pins: they are implied by the preceding got == ExitNetwork/ExitInstall
-// checks on the same value, the same redundancy TestArtifactDownloadDeadlineClassification
-// already carries. They are kept anyway because they name the security
-// property this test exists to cover.
+// TestReadStalledClassification pins ErrReadStalled bare and in watchdogBody's
+// %v shape as ExitNetwork and joined as ExitInstall; the real producer is
+// covered only by TestMixedDripAndStallDoesNotClassifyAsInterrupt.
 func TestReadStalledClassification(t *testing.T) {
 	t.Parallel()
 	bare := helpers.ErrReadStalled
@@ -753,14 +613,9 @@ func TestReadStalledClassification(t *testing.T) {
 	}
 }
 
-// TestMixedDeadlineAndStallShapeIsNotInterrupt is a deliberately synthetic
-// shape contract: it joins one collection's real deadline-cause rendering
-// with a second collection's real stall-cause rendering behind a single
-// installation headline - the shape a mixed byte-dripped/stalled run
-// produces - and asserts the combination still classifies as ExitInstall,
-// never ExitInterrupt, even though both causes carry a rendered
-// context.Canceled/context.DeadlineExceeded that is unreachable through
-// errors.Is.
+// TestMixedDeadlineAndStallShapeIsNotInterrupt pins that a deadline cause and
+// a stall cause joined behind one install headline exit ExitInstall, never
+// ExitInterrupt, though both render a context error with %v.
 func TestMixedDeadlineAndStallShapeIsNotInterrupt(t *testing.T) {
 	t.Parallel()
 	headline := fmt.Errorf("%w for 2 collections", helpers.ErrInstallationFailed)
@@ -778,13 +633,9 @@ func TestMixedDeadlineAndStallShapeIsNotInterrupt(t *testing.T) {
 	}
 }
 
-// TestFromErrorInterruptSurvivesStallSentinel is what makes the rejected
-// alternative fix (checking helpers.ErrReadStalled ahead of the
-// isCanceled entry of exitClasses) enforceable: joining the production
-// stall shape with a genuine, separate context.Canceled - the shape a real
-// Ctrl-C produces alongside an in-flight stall - must still classify as
-// ExitInterrupt. Any stall class placed above the isCanceled entry in
-// exitClasses would make this test fail.
+// TestFromErrorInterruptSurvivesStallSentinel pins that a stall joined with a
+// genuine context.Canceled still exits ExitInterrupt, so no stall class may
+// sit above isCanceled in exitClasses.
 func TestFromErrorInterruptSurvivesStallSentinel(t *testing.T) {
 	t.Parallel()
 	//nolint:errorlint // pinning the real, deliberately non-wrapping shape watchdogBody.Read builds.
@@ -796,26 +647,9 @@ func TestFromErrorInterruptSurvivesStallSentinel(t *testing.T) {
 	}
 }
 
-// TestMetadataFetchDeadlineClassification pins helpers.ErrMetadataFetchDeadline's
-// full classification story, mirroring TestArtifactDownloadDeadlineClassification:
-// the bare sentinel is ExitNetwork; joined behind collections.Start's
-// helpers.ErrInstallationFailed headline it is ExitInstall, identical to
-// every other per-collection failure; and the real rendered shape (%v, not
-// %w) is ExitNetwork, never ExitInterrupt. Killing mutation: removing the
-// errors.Is(err, helpers.ErrMetadataFetchDeadline) check from
-// isMetadataFetchError makes the bare-sentinel assertion fail with
-// "FromError(bare sentinel) = 1, want ExitNetwork (4)".
-//
-// FALSIFIABILITY CONTROL: the "not ExitInterrupt" assertion on the
-// %v-rendered shape is unfalsifiable on its own - a %v-rendered cause can
-// never match context.Canceled through errors.Is, so that check would pass
-// even against a classifier that always returns something other than
-// ExitInterrupt. TestReadStalledClassification and
-// TestArtifactDownloadDeadlineClassification carry the identical trap; this
-// sibling row closes it the same way they do: the identical message shape,
-// but %w-wrapping context.Canceled instead of %v-rendering it, DOES
-// classify as ExitInterrupt, proving the %v row's assertion actually
-// discriminates rather than passing vacuously.
+// TestMetadataFetchDeadlineClassification pins ErrMetadataFetchDeadline as
+// ExitNetwork bare and %v-rendered and ExitInstall joined; the %w control
+// shows the "not ExitInterrupt" assertion is not vacuous.
 func TestMetadataFetchDeadlineClassification(t *testing.T) {
 	t.Parallel()
 	bare := helpers.ErrMetadataFetchDeadline
@@ -843,28 +677,9 @@ func TestMetadataFetchDeadlineClassification(t *testing.T) {
 	}
 }
 
-// TestStateObjectDeadlineClassification pins helpers.ErrStateObjectDeadline's
-// full classification story, mirroring
-// TestMetadataFetchDeadlineClassification: the bare sentinel is ExitNetwork;
-// the real rendered shape (%v, not %w) is ExitNetwork, never ExitInterrupt,
-// with the identical %v/%w falsifiability control; and it CAN be aggregated,
-// since WithStateDeadline bounds SaveStore as well as the init-time reads,
-// and SaveStore is called well past init too: finalizeInstall and
-// warmWithState fold a save failure in through annotateSaveFailure
-// ("%w; snapshot save failed: %w"), so a tail save failure joined behind
-// helpers.ErrInstallationFailed classifies ExitInstall, identical to every
-// other per-collection failure and to how helpers.ErrMetadataFetchDeadline
-// classifies once joined the same way.
-//
-// Killing mutations, both verified: removing the
-// errors.Is(err, helpers.ErrStateObjectDeadline) check from isTransportError
-// makes the bare-sentinel assertion fail with "FromError(bare sentinel) = 1,
-// want ExitNetwork (4)"; removing isFileIntegrityError from isInstallError's
-// checks (the sub-check that matches helpers.ErrInstallationFailed itself)
-// makes the tail-save-failure assertion fail with
-// "FromError(tail save failure) = 4, want ExitInstall (5)" - the joined tree
-// falls through to isNetworkError instead, since nothing left in
-// isInstallError still matches the headline.
+// TestStateObjectDeadlineClassification pins ErrStateObjectDeadline like its
+// metadata sibling, plus a tail SaveStore failure that annotateSaveFailure
+// joins behind the install headline, which exits ExitInstall.
 func TestStateObjectDeadlineClassification(t *testing.T) {
 	t.Parallel()
 	bare := helpers.ErrStateObjectDeadline
@@ -872,12 +687,8 @@ func TestStateObjectDeadlineClassification(t *testing.T) {
 		t.Errorf("FromError(bare sentinel) = %d, want ExitNetwork (%d)", got, ExitNetwork)
 	}
 
-	// This bare shape is not only "the sentinel hit at init": it is the exact
-	// tree finalizeInstall/warmWithState return for a byte-dripped SaveStore
-	// on a run that recorded zero collection failures (summary.count == 0,
-	// so annotateSaveFailure is never reached) - the common case, since most
-	// runs have no collection failures. No separate row is needed for that
-	// case; this one already covers it.
+	// Also the tree a byte-dripped tail SaveStore returns on a run with no
+	// collection failures, where annotateSaveFailure is not reached.
 	//nolint:errorlint // pinning the real, deliberately non-wrapping shape; see ErrStateObjectDeadline's own doc comment.
 	renderedCause := fmt.Errorf("%w after 1m0s: %v", helpers.ErrStateObjectDeadline, context.DeadlineExceeded)
 	if got := FromError(renderedCause); got != ExitNetwork {
@@ -891,10 +702,8 @@ func TestStateObjectDeadlineClassification(t *testing.T) {
 		t.Errorf("control: FromError(%%w-wrapped cause) = %d, want ExitInterrupt (%d)", got, ExitInterrupt)
 	}
 
-	// A tail SaveStore failure (finalizeInstall/warmWithState, well past
-	// init) joins the same way a per-collection failure does:
-	// annotateSaveFailure's exact wrap shape, "%w; snapshot save failed: %w",
-	// around a headline that already carries helpers.ErrInstallationFailed.
+	// A tail SaveStore failure in annotateSaveFailure's exact wrap, around a
+	// headline that already carries helpers.ErrInstallationFailed.
 	headline := fmt.Errorf("%w for 1 collections", helpers.ErrInstallationFailed)
 	tailSaveFailure := fmt.Errorf("%w; snapshot save failed: %w", headline, renderedCause)
 	if got := FromError(tailSaveFailure); got != ExitInstall {
@@ -903,23 +712,8 @@ func TestStateObjectDeadlineClassification(t *testing.T) {
 }
 
 // TestCacheBusyFoldedBehindInstallFailureClassifiesAsInstall pins that a
-// contention failure joined behind helpers.ErrInstallationFailed classifies
-// ExitInstall, the same as every other per-collection cause - identical to
-// how helpers.ErrStateObjectDeadline already classifies once joined the same
-// way (TestStateObjectDeadlineClassification's tail-save-failure assertion).
-//
-// This shape is SYNTHETIC: no production path in this repository aggregates
-// a helpers.ErrCacheBusy failure behind helpers.ErrInstallationFailed today
-// - the distributed lock is acquired once at init, before any per-collection
-// work starts, so a contention failure there is always returned bare, never
-// joined. This test pins the invariant the classifier must keep if that
-// ever changes: the per-collection aggregation rule outranks the cache-busy
-// class, exactly as it already outranks every other per-collection cause.
-//
-// KILLING MUTATION, run and reverted: moving the isCacheBusyError entry of
-// exitClasses above its isInstallError entry makes this test fail with:
-//
-//	exitcode_test.go:928: FromError(joined) = 8, want 5
+// contention failure joined behind the install headline exits ExitInstall; the
+// shape is synthetic, as the lock is taken once at init and fails bare.
 func TestCacheBusyFoldedBehindInstallFailureClassifiesAsInstall(t *testing.T) {
 	t.Parallel()
 	headline := fmt.Errorf("%w for 1 collections", helpers.ErrInstallationFailed)
@@ -929,11 +723,9 @@ func TestCacheBusyFoldedBehindInstallFailureClassifiesAsInstall(t *testing.T) {
 	}
 }
 
-// TestNetworkOutranksCacheBusyWithoutAnInstallHeadline pins one adjacent pair
-// of exitClasses: isNetworkError is checked before isCacheBusyError, so a
-// tree carrying both a network-class and a cache-busy sentinel - with no
-// helpers.ErrInstallationFailed headline to route it to an earlier entry
-// instead - classifies as ExitNetwork, not ExitCacheBusy.
+// TestNetworkOutranksCacheBusyWithoutAnInstallHeadline pins that a tree with a
+// network-class and a cache-busy sentinel and no install headline exits
+// ExitNetwork, since isNetworkError precedes isCacheBusyError.
 func TestNetworkOutranksCacheBusyWithoutAnInstallHeadline(t *testing.T) {
 	t.Parallel()
 	joined := errors.Join(helpers.ErrCacheBusy, helpers.ErrCacheBackendUnavailable)
@@ -942,10 +734,8 @@ func TestNetworkOutranksCacheBusyWithoutAnInstallHeadline(t *testing.T) {
 	}
 }
 
-// TestCacheBusyOutranksUsage pins that isCacheBusyError is checked before
-// isUsageError in exitClasses: a helpers.ErrCacheBusy wrapped around
-// fs.ErrNotExist (isUsageError's own broad fs.ErrNotExist arm) still
-// classifies as ExitCacheBusy, not ExitUsage.
+// TestCacheBusyOutranksUsage pins that ErrCacheBusy wrapping fs.ErrNotExist
+// exits ExitCacheBusy, not ExitUsage through isUsageError's broad arm.
 func TestCacheBusyOutranksUsage(t *testing.T) {
 	t.Parallel()
 	err := fmt.Errorf("%w: %w", helpers.ErrCacheBusy, fs.ErrNotExist)
@@ -954,10 +744,8 @@ func TestCacheBusyOutranksUsage(t *testing.T) {
 	}
 }
 
-// TestCanceledOutranksCacheBusy pins the top of exitClasses: a
-// context.Canceled sentinel still outranks a joined helpers.ErrCacheBusy,
-// since the isCanceled entry is checked before the isCacheBusyError entry is
-// ever reached.
+// TestCanceledOutranksCacheBusy pins that context.Canceled joined with
+// helpers.ErrCacheBusy exits ExitInterrupt.
 func TestCanceledOutranksCacheBusy(t *testing.T) {
 	t.Parallel()
 	joined := errors.Join(context.Canceled, helpers.ErrCacheBusy)
@@ -966,11 +754,8 @@ func TestCanceledOutranksCacheBusy(t *testing.T) {
 	}
 }
 
-// TestCacheCorruptOutranksUsage pins that isCacheCorruptError is checked
-// before isUsageError in exitClasses, mirroring TestCacheBusyOutranksUsage:
-// a helpers.ErrCorruptProjectRegistry wrapped around fs.ErrNotExist
-// (isUsageError's own broad fs.ErrNotExist arm) still classifies as
-// ExitCacheCorrupt, not ExitUsage.
+// TestCacheCorruptOutranksUsage pins that ErrCorruptProjectRegistry wrapping
+// fs.ErrNotExist exits ExitCacheCorrupt, not ExitUsage.
 func TestCacheCorruptOutranksUsage(t *testing.T) {
 	t.Parallel()
 	err := fmt.Errorf("%w: %w", helpers.ErrCorruptProjectRegistry, fs.ErrNotExist)
@@ -979,10 +764,8 @@ func TestCacheCorruptOutranksUsage(t *testing.T) {
 	}
 }
 
-// TestCanceledOutranksCacheCorrupt pins the top of exitClasses: a
-// context.Canceled sentinel still outranks a joined
-// helpers.ErrCorruptProjectRegistry, since the isCanceled entry is checked
-// before the isCacheCorruptError entry is ever reached.
+// TestCanceledOutranksCacheCorrupt pins that context.Canceled joined with
+// helpers.ErrCorruptProjectRegistry exits ExitInterrupt.
 func TestCanceledOutranksCacheCorrupt(t *testing.T) {
 	t.Parallel()
 	joined := errors.Join(context.Canceled, helpers.ErrCorruptProjectRegistry)
@@ -991,27 +774,8 @@ func TestCanceledOutranksCacheCorrupt(t *testing.T) {
 	}
 }
 
-// genericSentinels is every sentinel this package deliberately leaves
-// unclassified - FromError falls back to ExitError for each - rather than by
-// omission. A fixed table naming both the sentinel and the reason it stays
-// generic: an error absorbed at its own producer before ever reaching
-// FromError, or an internal nil guard with no operator-actionable meaning.
-// The rest of this file is this table's own positive control: the same
-// FromError demonstrably returns every other exit code for every other
-// sentinel it recognizes, so ExitError here is a verdict, not the absence of
-// a check.
-//
-// This table covers internal/galaxy/helpers only. The exported sentinels
-// declared outside it - internal/galaxy/extracted's ErrStoreNotConfigured,
-// ErrSHAEmpty, and ErrSHAUnsafe - are deliberately not matched by name
-// anywhere in this package, on a predicate rather than a list: every path
-// that raises one runs inside a per-collection install or warm worker, so it
-// arrives joined behind helpers.ErrInstallationFailed and isFileIntegrityError
-// already classifies the tree ExitInstall. Matching them by name would mean
-// importing internal/galaxy/extracted into the CLI's classifier for no
-// behavioral change. If one of them is ever surfaced outside such a worker it
-// silently becomes ExitError, which is the case this note exists to make
-// visible.
+// genericSentinels lists the helpers sentinels deliberately left at ExitError,
+// each absorbed by its producer or an internal nil guard.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var genericSentinels = []struct {
@@ -1019,18 +783,14 @@ var genericSentinels = []struct {
 	name string
 }{
 	{
-		// Consumed at the producer: internal/cache/s3/backend.go's LoadStore
-		// and internal/galaxy/store/snapshot.go's Load both resolve this
-		// sentinel into a drop-and-rebuild (a fresh empty store, nil error)
-		// before it can ever propagate to a caller, let alone FromError.
+		// Absorbed at the producer: the s3 backend's LoadStore and store.Load
+		// turn it into a drop-and-rebuild before any caller sees it.
 		name: "outdated schema version",
 		err:  helpers.ErrOutdatedSchemaVersion,
 	},
 	{
-		// Consumed at the producer: internal/galaxy/cleanup/scan.go warns
-		// and continues past a MANIFEST.json that fails to parse, treating it
-		// as neither a reachability root nor a deletion candidate rather than
-		// returning it from Start.
+		// Absorbed at the producer: the cleanup scan warns and skips a
+		// MANIFEST.json that fails to parse rather than returning it.
 		name: "corrupt manifest",
 		err:  helpers.ErrCorruptManifest,
 	},
@@ -1072,10 +832,8 @@ type fakeSignal struct{}
 func (fakeSignal) String() string { return "fake" }
 func (fakeSignal) Signal()        {}
 
-// TestFromSignal checks the shell-convention 128+signal mapping for the
-// signals go-galaxy handles (plus SIGQUIT, still a valid direct FromSignal
-// input even though main.go does not subscribe to it) and the
-// non-syscall.Signal fallback.
+// TestFromSignal pins the shell-convention 128+signal mapping, SIGQUIT
+// included though main does not subscribe to it, and the non-syscall fallback.
 func TestFromSignal(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1100,18 +858,9 @@ func TestFromSignal(t *testing.T) {
 	}
 }
 
-// TestLockfileUserinfoClassifiesAsLock pins which class wins when a lockfile
-// entry's source embeds URL userinfo. lockfile.File.validate wraps both
-// helpers.ErrLockfileInvalid and helpers.ErrGalaxyServerURLUserinfo into one
-// error, and the two belong to different classes on their own - the lockfile
-// class, and the Galaxy-server configuration class that lands in ExitUsage.
-// exitClasses puts isLockError ahead of the entry that would claim the
-// second, so the run exits ExitLock, which is the right answer: the file
-// that failed to load is the lockfile, not an operator's server config.
-//
-// The negative half is the point of the test - without it, "it exits 6" would
-// not distinguish this ordering from one where the usage class had simply
-// never been reachable for this shape at all.
+// TestLockfileUserinfoClassifiesAsLock pins that a lockfile source carrying
+// userinfo, wrapped as both ErrLockfileInvalid and ErrGalaxyServerURLUserinfo,
+// exits ExitLock, while the userinfo sentinel alone exits ExitUsage.
 func TestLockfileUserinfoClassifiesAsLock(t *testing.T) {
 	t.Parallel()
 	joined := fmt.Errorf("%w: acme.widgets: %w", helpers.ErrLockfileInvalid, helpers.ErrGalaxyServerURLUserinfo)
@@ -1125,40 +874,16 @@ func TestLockfileUserinfoClassifiesAsLock(t *testing.T) {
 }
 
 // serverSuppliedURLPolicyCase is one row of
-// TestServerSuppliedURLPolicyClassifiesUniformly: an error tree carrying one
-// of the two server-supplied-URL sentinels under one of the three aggregation
-// shapes this project's headlines put an error into.
+// TestServerSuppliedURLPolicyClassifiesUniformly: a server-supplied-URL
+// sentinel under one aggregation shape.
 type serverSuppliedURLPolicyCase struct {
 	err  error
 	name string
 }
 
-// serverSuppliedURLPolicyCases is a deliberate cross-product, not a catalog
-// of shapes production produces: both sentinels times all three aggregation
-// shapes, including two cells nothing produces today. A bare download-URL
-// refusal is one - checkDownloadURL is reached only from
-// validateDownloadInputs inside an install worker, so it always arrives behind
-// the install headline - and a download-URL refusal behind the
-// latest-version-lookup headline is the other, since outdated resolves root
-// metadata and never validates a download URL at all. Both are still rows,
-// because what the entry under test promises is a property of the error tree
-// rather than of the command that built it: a sentinel classifies the same
-// wherever it is joined, and a table cut down to today's reachable cells would
-// go quiet the moment a command grew a path into one of the others.
-//
-// The three shapes, named as properties of the tree rather than as a list of
-// the commands that build them: the sentinel alone, wrapped by prefixes that
-// add no sentinel of their own; the sentinel joined behind the per-collection
-// install-failure headline; and the sentinel joined behind the per-entry
-// latest-version-lookup headline. Both headlines are spelled exactly as
-// failureSummary renders them, "%w for %d collections", so a cell that IS a
-// production shape pins what a run actually produces rather than something
-// written for this test.
-//
-// Every row must classify identically. That is the whole point of the
-// isServerSuppliedURLPolicyError entry: without it the three shapes above
-// answer three different predicates, so one condition with one remedy would
-// report a different exit code depending only on what it was joined behind.
+// serverSuppliedURLPolicyCases is the full cross-product of both sentinels and
+// three shapes (bare, install headline, outdated headline), reachable today or
+// not, since the class must not depend on what a sentinel is joined behind.
 func serverSuppliedURLPolicyCases() []serverSuppliedURLPolicyCase {
 	installHeadline := fmt.Errorf("%w for 1 collections", helpers.ErrInstallationFailed)
 	outdatedHeadline := fmt.Errorf("%w for 1 collections", helpers.ErrLatestVersionLookupFailed)
@@ -1175,20 +900,9 @@ func serverSuppliedURLPolicyCases() []serverSuppliedURLPolicyCase {
 	}
 }
 
-// TestServerSuppliedURLPolicyClassifiesUniformly pins the class this run
-// reports when a Galaxy server, or a snapshot replaying one, supplies a URL
-// carrying a credential: ExitInstall, whatever the tree it arrives in.
-//
-// KILLING MUTATION, run: removing the isServerSuppliedURLPolicyError entry
-// from exitClasses fails four of the six rows - the two bare ones as ExitError
-// and the two behind the latest-version-lookup headline as ExitNetwork, while
-// the two behind the install-failure headline stay green because isInstallError
-// claims that headline anyway:
-//
-//	exitcode_test.go:1199: FromError(collection download url must not contain
-//	userinfo: "https://h/a.tar.gz") = 1, want ExitInstall (5)
-//
-// and, on the outdated-shaped rows, the same assertion reporting = 4.
+// TestServerSuppliedURLPolicyClassifiesUniformly pins ExitInstall for a URL a
+// Galaxy server, or a snapshot replaying one, supplies with a credential in
+// it, whatever tree it arrives in.
 func TestServerSuppliedURLPolicyClassifiesUniformly(t *testing.T) {
 	t.Parallel()
 
@@ -1202,16 +916,8 @@ func TestServerSuppliedURLPolicyClassifiesUniformly(t *testing.T) {
 	}
 }
 
-// wantExitClassOrder is the precedence exitClasses must express, written out
-// as exit codes so the expectation is readable as the contract a CI branches
-// on rather than as a list of predicate names. Kept as a separate literal
-// from the table it checks: a copy of exitClasses's own order would agree
-// with any reordering by construction.
-//
-// Two adjacent entries carry the same code, which is a property of the table
-// rather than a typo here: isServerSuppliedURLPolicyError yields ExitInstall
-// and sits immediately above isInstallError, since what its entry buys is a
-// uniform class across every aggregation shape, not a code of its own.
+// wantExitClassOrder is exitClasses's precedence as codes, a separate literal
+// so a reordering cannot agree by construction; ExitInstall appears twice.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var wantExitClassOrder = []int{
@@ -1228,19 +934,8 @@ var wantExitClassOrder = []int{
 	ExitUsage,
 }
 
-// TestExitClassOrderIsPinned pins exitClasses's order entry by entry. It is a
-// change detector on purpose: swapping two entries of that table is a
-// one-line, compiling edit that silently changes which exit code a CI reads
-// for an error tree carrying both classes, so the order is a specification
-// and a silent reordering is exactly the failure this must catch. The length
-// check comes first so that an added or removed class is reported as such
-// rather than as a cascade of mismatched codes.
-//
-// KILLING MUTATION, run and reverted: swapping the isCacheBusyError and
-// isCacheCorruptError entries of exitClasses makes this test fail with:
-//
-//	exitcode_test.go:1251: exitClasses[7].code = 9, want 8
-//	exitcode_test.go:1251: exitClasses[8].code = 8, want 9
+// TestExitClassOrderIsPinned is a deliberate change detector on exitClasses's
+// order: swapping two entries compiles yet changes the code a CI reads.
 func TestExitClassOrderIsPinned(t *testing.T) {
 	t.Parallel()
 	if len(exitClasses) != len(wantExitClassOrder) {
@@ -1253,10 +948,8 @@ func TestExitClassOrderIsPinned(t *testing.T) {
 	}
 }
 
-// exitPrecedenceCase is one adjacent-pair precedence expectation: higher and
-// lower are sentinels whose classes sit next to each other in exitClasses,
-// wantJoined is the code their join must produce, and wantHigher/wantLower
-// are the codes each must produce on its own.
+// exitPrecedenceCase is one adjacent pair of exitClasses: the code the join of
+// higher and lower must yield, and the code each yields alone.
 type exitPrecedenceCase struct {
 	higher     error
 	lower      error
@@ -1266,20 +959,8 @@ type exitPrecedenceCase struct {
 	wantLower  int
 }
 
-// adjacentExitPrecedenceCases holds one row per adjacent pair of exitClasses,
-// each naming a sentinel that reaches only the higher class and one that
-// reaches only the lower. Adjacent pairs are what a reordering actually
-// disturbs first, and covering every pair means no swap anywhere in the table
-// can leave this table silent.
-//
-// One adjacent pair has no row and cannot have one:
-// isServerSuppliedURLPolicyError sits directly above isInstallError and yields
-// that entry's own code, so no error tree can distinguish which of the two
-// claimed it and a row would assert nothing. The "lock over install" row is
-// the other consequence of that entry - the pair it names is no longer
-// adjacent - and it is kept anyway, since a lockfile verdict outranking the
-// install class is worth pinning whether or not another entry sits between
-// them.
+// adjacentExitPrecedenceCases has one row per adjacent pair of exitClasses,
+// except the server-supplied URL policy and install pair, which share a code.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var adjacentExitPrecedenceCases = []exitPrecedenceCase{
@@ -1365,19 +1046,8 @@ var adjacentExitPrecedenceCases = []exitPrecedenceCase{
 	},
 }
 
-// TestAdjacentExitClassPrecedence proves each adjacent pair of exitClasses
-// resolves the way the table says: an error tree carrying both sentinels
-// classifies as the higher entry's code. The two solo assertions are the
-// positive control, and they are what makes the joined one mean anything -
-// without them, "the lower class did not win" would be indistinguishable from
-// "the lower sentinel is not recognized at all", which is the state a deleted
-// predicate leaves behind.
-//
-// KILLING MUTATION, run and reverted: swapping the isCacheBusyError and
-// isCacheCorruptError entries of exitClasses makes the "cache busy over cache
-// corrupt" row fail with:
-//
-//	exitcode_test.go:1388: FromError(joined) = 9, want 8
+// TestAdjacentExitClassPrecedence pins that each adjacent pair's join yields
+// the higher code; the solo assertions prove the lower sentinel is recognized.
 func TestAdjacentExitClassPrecedence(t *testing.T) {
 	t.Parallel()
 	for _, tt := range adjacentExitPrecedenceCases {
@@ -1397,31 +1067,14 @@ func TestAdjacentExitClassPrecedence(t *testing.T) {
 	}
 }
 
-// aggregatedBehindInstallFailure builds the shape a per-collection failure
-// actually reaches FromError in: the cause joined behind the
-// helpers.ErrInstallationFailed headline finalizeInstall and warmWithState
-// render for a run that recorded at least one failed collection.
+// aggregatedBehindInstallFailure joins cause behind the
+// helpers.ErrInstallationFailed headline, as a per-collection failure arrives.
 func aggregatedBehindInstallFailure(cause error) error {
 	return errors.Join(fmt.Errorf("%w for 1 collections", helpers.ErrInstallationFailed), cause)
 }
 
-// signatureExitCases is TestSignatureExitClassification's table: every
-// signature-family sentinel in both shapes it can reach FromError in - bare,
-// and joined behind the installation-failure headline a per-collection worker
-// aggregates it behind - plus the two shapes that bound the class from above.
-//
-// Read as a specification, the table says one thing: the signature class is
-// helpers.ErrSignatureVerificationFailed and
-// helpers.ErrSignatureAttributionMismatch, the two ways a run ends up unable to
-// attribute an artifact to a publisher it accepts. Every other
-// sentinel here classifies by what actually failed - a wire failure, a
-// configuration value this run cannot use, an artifact's shape, or bytes
-// against a digest - rather than by having been raised while checking a
-// signature. The bare/aggregated pair is what makes that visible per sentinel:
-// for all but the verdict itself and the manifest-chain mismatch, the
-// aggregated shape classifies ExitInstall like every other per-collection
-// cause, and those two exceptions are exactly the classes that sit above
-// isInstallError in exitClasses.
+// signatureExitCases pins that only a failed verdict and an attribution
+// mismatch exit ExitSignature; the rest classify by what actually failed.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var signatureExitCases = []exitCase{
@@ -1431,19 +1084,15 @@ var signatureExitCases = []exitCase{
 		wantCode: ExitSignature,
 	},
 	{
-		// The row the isSignatureError entry's position exists for: a
-		// per-collection verdict arrives joined behind the installation
-		// headline, so a class placed below isInstallError would never be
-		// reached for the only shape that actually occurs.
+		// A per-collection verdict arrives behind the install headline, so
+		// the signature class must sit above isInstallError to be reached.
 		name:     "signature verification failed, aggregated",
 		err:      aggregatedBehindInstallFailure(helpers.ErrSignatureVerificationFailed),
 		wantCode: ExitSignature,
 	},
 	{
-		// The second member of the signature class: the signatures verified and
-		// vouched for another collection, so the artifact is unattributed for a
-		// different reason than a failed policy - and lands in the same class,
-		// since an operator holds bytes nobody they trust vouched for either way.
+		// Signatures that verified but vouched for another collection share
+		// the class: either way nobody the operator trusts vouched for them.
 		name:     "signature attribution mismatch, bare",
 		err:      fmt.Errorf("%w: acme.app@1.0.0", helpers.ErrSignatureAttributionMismatch),
 		wantCode: ExitSignature,
@@ -1495,10 +1144,8 @@ var signatureExitCases = []exitCase{
 		wantCode: ExitInstall,
 	},
 	{
-		// The message deliberately names a credential-free rendering of the
-		// offending value, which is what the producer builds; the row is here
-		// for the class, and the hygiene of that rendering is pinned in the
-		// producer's own package.
+		// The producer renders a credential-free value; this row pins only
+		// the class.
 		name:     "signature source userinfo, bare",
 		err:      fmt.Errorf("%w: %q", helpers.ErrSignatureSourceUserinfo, "https://hub.example/sig.asc"),
 		wantCode: ExitUsage,
@@ -1584,11 +1231,8 @@ var signatureExitCases = []exitCase{
 		wantCode: ExitInstall,
 	},
 	{
-		// The one pair that does not discriminate, and it is written down
-		// rather than left to be rediscovered: both shapes reach ExitInstall
-		// through isInstallError, the bare one via isArtifactShapeError and the
-		// aggregated one via the headline isFileIntegrityError matches. The row
-		// documents the aggregated shape rather than pinning a precedence.
+		// The one non-discriminating pair: both shapes reach ExitInstall
+		// through isInstallError, so this row only documents the shape.
 		name:     "manifest not found, aggregated",
 		err:      aggregatedBehindInstallFailure(helpers.ErrManifestNotFound),
 		wantCode: ExitInstall,
@@ -1599,10 +1243,8 @@ var signatureExitCases = []exitCase{
 		wantCode: ExitIntegrity,
 	},
 	{
-		// Aggregation does not move it either, and here that IS the claim: the
-		// isIntegrityError entry sits above isInstallError, so a chain mismatch
-		// found inside a per-collection worker still reports as an integrity
-		// failure rather than as a generic install failure.
+		// isIntegrityError sits above isInstallError, so a chain mismatch
+		// inside a worker still reports as an integrity failure.
 		name:     "manifest chain mismatch, aggregated",
 		err:      aggregatedBehindInstallFailure(helpers.ErrManifestChainMismatch),
 		wantCode: ExitIntegrity,
@@ -1623,16 +1265,8 @@ var signatureExitCases = []exitCase{
 	},
 }
 
-// TestSignatureExitClassification walks signatureExitCases. The failure
-// message names the row instead of rendering the error, because an aggregated
-// row's errors.Join renders across several lines and the citation below has to
-// name a single one.
-//
-// KILLING MUTATION, run and reverted: moving the isSignatureError entry of
-// exitClasses below its isInstallError entry. Both aggregated rows fail:
-//
-//	exitcode_test.go:1642: FromError(signature verification failed, aggregated) = 5, want 10
-//	exitcode_test.go:1642: FromError(signature attribution mismatch, aggregated) = 5, want 10
+// TestSignatureExitClassification walks signatureExitCases, naming the row in
+// failures because an aggregated errors.Join renders across several lines.
 func TestSignatureExitClassification(t *testing.T) {
 	t.Parallel()
 	for _, tt := range signatureExitCases {
@@ -1645,23 +1279,9 @@ func TestSignatureExitClassification(t *testing.T) {
 	}
 }
 
-// TestMetadataRequestBuildFailedClassifiesNetwork pins the classification
-// helpers.ErrMetadataRequestBuildFailed's own doc comment claims for itself,
-// on both shapes it reaches FromError in: bare, as internal/galaxy/cache
-// raises it, and wrapped, as collections.loadCollectionMetadata carries it up.
-// Both are asserted because they arrive by different routes and
-// isMetadataFetchError has to claim each one.
-//
-// It is a test of its own rather than another row in the tables above, and the
-// reason has nothing to do with this sentinel: each of those tables is
-// followed by a comment citing a line of this file by number, so inserting a
-// row silently invalidates every citation below it.
-//
-// KILLING MUTATION, run: deleting the helpers.ErrMetadataRequestBuildFailed
-// line from isMetadataFetchError. Both assertions fail:
-//
-//	exitcode_test.go:1669: FromError(bare) = 1, want 4
-//	exitcode_test.go:1673: FromError(wrapped) = 1, want 4
+// TestMetadataRequestBuildFailedClassifiesNetwork pins
+// helpers.ErrMetadataRequestBuildFailed to ExitNetwork, bare as
+// internal/galaxy/cache raises it and wrapped by loadCollectionMetadata.
 func TestMetadataRequestBuildFailedClassifiesNetwork(t *testing.T) {
 	t.Parallel()
 
@@ -1674,20 +1294,9 @@ func TestMetadataRequestBuildFailedClassifiesNetwork(t *testing.T) {
 	}
 }
 
-// TestCommandLineUsageErrorsMapToExitUsage pins isCommandLineUsageError's two
-// sentinels to ExitUsage, each bare and wrapped, since the argument validators
-// in cmd/go-galaxy/commands raise both shapes: helpers.ErrUnexpectedArguments
-// for an argument a command does not take, helpers.ErrMissingArgument for the
-// one explain requires. A test of its own for the reason
-// TestMetadataRequestBuildFailedClassifiesNetwork gives: a new row in a table
-// above would move every line citation below it.
-//
-// KILLING MUTATION, run and reverted, in isCommandLineUsageError
-// (exitcode.go) - delete the helpers.ErrMissingArgument clause. Only that
-// sentinel's two rows fail:
-//
-//	exitcode_test.go:1696: FromError(missing argument) = 1, want 2
-//	exitcode_test.go:1696: FromError(missing argument: explain takes one) = 1, want 2
+// TestCommandLineUsageErrorsMapToExitUsage pins ErrUnexpectedArguments and
+// ErrMissingArgument to ExitUsage, bare and wrapped, as the argument
+// validators in cmd/go-galaxy/commands raise both shapes.
 func TestCommandLineUsageErrorsMapToExitUsage(t *testing.T) {
 	t.Parallel()
 	for _, sentinel := range []error{helpers.ErrUnexpectedArguments, helpers.ErrMissingArgument} {

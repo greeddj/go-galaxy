@@ -28,21 +28,16 @@ const tinyTimeout = 50 * time.Millisecond
 // test instead of hanging the suite.
 const waitBound = 5 * time.Second
 
-// TestNew_ResponseHeaderTimeout_FiresOnHang exercises the transport-level
-// half of the no-progress timeout: a server that never writes a status line
-// or headers must make the request fail once ResponseHeaderTimeout - wired
-// to cfg.Timeout - elapses, rather than hang indefinitely; the client
-// carries no whole-response Timeout to fall back on, only this
-// transport-level bound and watchdogTransport's own per-read guard.
+// TestNew_ResponseHeaderTimeout_FiresOnHang pins that a server which never
+// writes headers fails the request once ResponseHeaderTimeout elapses: the
+// client has no whole-response Timeout to fall back on.
 func TestNew_ResponseHeaderTimeout_FiresOnHang(t *testing.T) {
 	t.Parallel()
 
 	s := fakegalaxy.New(t)
 	s.AddVersion("acme", "hangs", "1.0.0", nil)
-	// Count: 1 is required here, not cosmetic: a zero-value Fault.Count
-	// never matches ruleMatches (its exhausted-rule check treats Count == 0
-	// as "already used up"), so an unbounded Hang needs an explicit
-	// positive Count the same way every other fakegalaxy fault test does.
+	// Count must be positive: ruleMatches treats a zero Count as a rule
+	// already used up, so the Hang would never fire.
 	s.Fail(fakegalaxy.EndpointRootMetadata, "acme", "hangs", fakegalaxy.Fault{Hang: true, Count: 1})
 
 	client := fetch.New(tinyTimeout, nil)
@@ -76,11 +71,8 @@ func TestNew_ResponseHeaderTimeout_FiresOnHang(t *testing.T) {
 	}
 }
 
-// TestNew_SuccessfulRoundTrip_ReadsBodyAndCloses is a happy-path companion
-// to the hang test above: it exercises the same client's watchdog-wrapped
-// transport end to end against a server that answers normally, confirming
-// the wrapping added around the response body does not disturb an ordinary
-// request.
+// TestNew_SuccessfulRoundTrip_ReadsBodyAndCloses pins that the watchdog-wrapped
+// body leaves an ordinary request intact: the payload reads whole and closes.
 func TestNew_SuccessfulRoundTrip_ReadsBodyAndCloses(t *testing.T) {
 	t.Parallel()
 
@@ -120,10 +112,8 @@ func TestNew_SuccessfulRoundTrip_ReadsBodyAndCloses(t *testing.T) {
 	}
 }
 
-// mustGetRequest builds a GET *http.Request bound to t's test context,
-// failing the test immediately on a parse error. It exists so this file's
-// TLS-dispatch tests can drive requests through http.Client.Do (satisfying
-// the noctx linter) without repeating the same three lines everywhere.
+// mustGetRequest builds a GET request bound to t's context (as noctx wants),
+// failing the test on a parse error.
 func mustGetRequest(t *testing.T, target string) *http.Request {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, target, nil)
@@ -133,11 +123,9 @@ func mustGetRequest(t *testing.T, target string) *http.Request {
 	return req
 }
 
-// TestNewOffline_AttachesNothing_ReachesNoTransport pins the contract that
-// NewOffline's client never reaches the auth/TLS-dispatch layering this
-// unit adds: it rejects the request outright, before either layer could run,
-// so a future refactor that accidentally routed the offline client through
-// them would be caught here rather than surfacing as a token leak later.
+// TestNewOffline_AttachesNothing_ReachesNoTransport pins that the offline
+// client refuses a request with ErrOfflineMode before any auth or TLS layer
+// runs, so nothing is attached to it.
 func TestNewOffline_AttachesNothing_ReachesNoTransport(t *testing.T) {
 	t.Parallel()
 
@@ -157,15 +145,9 @@ func TestNewOffline_AttachesNothing_ReachesNoTransport(t *testing.T) {
 	}
 }
 
-// TestNewUnauthenticatedAttachesNoAuthorization pins the property the
-// constructor exists for: a client built with no server configuration at all
-// attaches no credential, whatever origin the request happens to name.
-//
-// The positive control on the same fixture is what makes that mean anything.
-// The second half drives fetch.New against the very same server, configured
-// with that server's own origin and a token, and requires the header to arrive
-// - so "no Authorization was seen" is separated from "no request was seen",
-// which is otherwise the identical observation.
+// TestNewUnauthenticatedAttachesNoAuthorization pins that a client with no
+// server configuration sends no credential; the fetch.New control on the same
+// server proves the fixture would have seen a token had one been sent.
 func TestNewUnauthenticatedAttachesNoAuthorization(t *testing.T) {
 	t.Parallel()
 
@@ -220,26 +202,17 @@ func TestNewUnauthenticatedOfflineRefuses(t *testing.T) {
 	}
 }
 
-// redirectQuery is the capability a presigned URL carries. It is what
-// net/http's own refererForURL would hand to a redirect target: that function
-// strips a URL's userinfo and suppresses the header on an https->http
-// downgrade, and keeps the query string through both.
+// redirectQuery is a presigned URL's capability, which net/http's refererForURL
+// keeps in the Referer it hands a redirect target.
 const redirectQuery = "?X-Amz-Signature=deadbeef&X-Amz-Expires=900"
 
 // redirectBody is what the redirect target answers with, so a test can tell
 // "the hop arrived carrying no Referer" from "the hop never happened".
 const redirectBody = "redirect-target-body"
 
-// TestClientsSendNoRefererAcrossARedirect pins the third property
-// NewUnauthenticated's contract rests on, and pins it where it actually lives:
-// on newClient, so every client this package builds has it. The two
-// constructors are run against one fixture pair for exactly that reason - a
-// property proven on one of them says nothing about the other.
-//
-// The positive control is in the same assertion block rather than a separate
-// test: the redirect must be followed and the target's own body must arrive,
-// since "the target saw no Referer" is otherwise indistinguishable from "the
-// target was never reached at all".
+// TestClientsSendNoRefererAcrossARedirect pins that both New and
+// NewUnauthenticated follow a redirect with no Referer; the target's own body
+// must arrive, so "no Referer" cannot mean "never reached".
 func TestClientsSendNoRefererAcrossARedirect(t *testing.T) {
 	t.Parallel()
 
@@ -275,13 +248,8 @@ func TestClientsSendNoRefererAcrossARedirect(t *testing.T) {
 	}
 
 	for _, tc := range clients {
-		// Deleting req.Header.Del("Referer") from checkRedirect, applied
-		// through go test -overlay so no production file is edited, fails on
-		// the last assertion - at the New row, since t.Fatalf stops the test
-		// before the second client runs. The header goes to the log, since it
-		// carries the fixture's own ephemeral port and no two runs would agree:
-		//
-		//	client_test.go:299: New: the redirect target received a Referer
+		// The Referer goes to the log rather than the failure message: it
+		// carries the fixture's ephemeral port, so no two runs would agree.
 		resp, err := tc.client.Do(mustGetRequest(t, source.URL+"/sig.asc"+redirectQuery))
 		if err != nil {
 			t.Fatalf("%s: Do error = %v, want nil", tc.name, err)
@@ -301,14 +269,9 @@ func TestClientsSendNoRefererAcrossARedirect(t *testing.T) {
 	}
 }
 
-// TestClientsStillRefuseAnEndlessRedirectChain is the other half of assigning
-// CheckRedirect at all: the field REPLACES http.Client's own default check, so
-// a hook that only stripped a header would turn this fixture from a bounded
-// failure into an unbounded loop.
-//
-// The hop count is asserted as well as the error, because the error alone would
-// also be produced by a hook that refused the first redirect outright - which
-// would break every legitimate presigned download in the process.
+// TestClientsStillRefuseAnEndlessRedirectChain pins that a redirect loop stops
+// after exactly 10 hops, as net/http's default did: CheckRedirect replaces that
+// check, and refusing the first hop would break presigned downloads.
 func TestClientsStillRefuseAnEndlessRedirectChain(t *testing.T) {
 	t.Parallel()
 
@@ -319,25 +282,8 @@ func TestClientsStillRefuseAnEndlessRedirectChain(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Two mutations, applied through go test -overlay so no production file is
-	// edited, one per half of what this hook owes the fixture.
-	//
-	// Returning nil unconditionally - the shape a hook that only stripped the
-	// Referer would have, and exactly what assigning CheckRedirect costs, since
-	// the field REPLACES http.Client's own default check - does not fail this
-	// test, it hangs it, following the fixture's redirects forever. The
-	// artifact is a timeout under an explicit -timeout rather than an
-	// assertion, recorded as it came:
-	//
-	//	panic: test timed out after 20s
-	//		running tests:
-	//			TestClientsStillRefuseAnEndlessRedirectChain (20s)
-	//
-	// Refusing at the first hop instead - len(via) >= 1 - passes both
-	// assertions above it and fails the hop count, which is what makes that
-	// one pinned rather than documentary:
-	//
-	//	client_test.go:352: server served 1 requests, want 10: the ceiling must bite where net/http's own default did
+	// A hook that never refuses hangs this test rather than failing it, so a
+	// hang here means the hop ceiling is gone.
 	resp, err := fetch.New(waitBound, nil).Do(mustGetRequest(t, srv.URL+"/sig.asc"))
 	if resp != nil {
 		_ = resp.Body.Close()
@@ -353,12 +299,9 @@ func TestClientsStillRefuseAnEndlessRedirectChain(t *testing.T) {
 	}
 }
 
-// TestNew_InsecureIsNeverGlobal is the most important test in this unit:
-// two independent httptest.NewTLSServer instances, each with its own
-// self-signed certificate, in one run. Only one of them is configured
-// validate_certs=false; the other must still fail with a certificate error,
-// proving the insecure policy is scoped to that one origin rather than
-// disabling verification for the whole client.
+// TestNew_InsecureIsNeverGlobal pins that validate_certs=false on one
+// self-signed TLS server leaves a second one in the same client failing
+// certificate verification: the policy is scoped to one origin.
 func TestNew_InsecureIsNeverGlobal(t *testing.T) {
 	t.Parallel()
 
@@ -399,15 +342,9 @@ func TestNew_InsecureIsNeverGlobal(t *testing.T) {
 	}
 }
 
-// TestNew_RedirectFromInsecureOriginToSecureOriginUsesSecureTransport
-// drives a real redirect, through http.Client, from the one configured
-// insecure origin to an unconfigured one: the redirect hop must fail with a
-// certificate error, proving it was routed through the fully-verifying
-// secure transport rather than inheriting the first hop's insecure policy.
-// The companion property - that the token is also dropped across the
-// redirect - is proven directly at the auth layer by
-// TestAuthTransport_RoundTrip_CrossOriginRedirectDropsToken; this test's
-// job is the TLS-dispatch half specifically.
+// TestNew_RedirectFromInsecureOriginToSecureOriginUsesSecureTransport pins
+// that a redirect out of the insecure origin fails certificate verification:
+// the hop is routed to the verifying pool, not the first hop's policy.
 func TestNew_RedirectFromInsecureOriginToSecureOriginUsesSecureTransport(t *testing.T) {
 	t.Parallel()
 
@@ -448,12 +385,9 @@ func TestNew_RedirectFromInsecureOriginToSecureOriginUsesSecureTransport(t *test
 	}
 }
 
-// TestNew_S3ShapedOriginIsIsolatedFromGalaxyServerConfig covers the
-// documented sharing of this *http.Client with the S3 cache backend
-// (internal/cache/cache.go passes runtime.HTTP into s3.New): a request to
-// an origin that is not any configured Galaxy server must never carry a
-// Galaxy server's token, even when another configured server in the same
-// client is insecure and does carry one.
+// TestNew_S3ShapedOriginIsIsolatedFromGalaxyServerConfig pins that the shared
+// client, which the S3 cache backend also uses, sends an unconfigured origin
+// no Galaxy token even beside an insecure, token-bearing server.
 func TestNew_S3ShapedOriginIsIsolatedFromGalaxyServerConfig(t *testing.T) {
 	t.Parallel()
 
@@ -489,10 +423,8 @@ func TestNew_S3ShapedOriginIsIsolatedFromGalaxyServerConfig(t *testing.T) {
 	}
 }
 
-// offlineFixturePassword is the credential this file's offline fixture
-// smuggles into the URL it refuses. Distinctive on purpose: a substring search
-// for a value that can collide with nothing else in a rendered message is an
-// answer rather than a coincidence.
+// offlineFixturePassword is the credential the offline fixture smuggles into
+// its URL, distinctive so a substring match cannot be a coincidence.
 const offlineFixturePassword = "pa55w0rd-must-not-be-rendered"
 
 // offlineFixtureHostPath is the part of that fixture an operator reading the
@@ -508,45 +440,9 @@ const offlineFixtureQuery = "?X-Amz-Signature=deadbeefcafe&X-Amz-Expires=900"
 // one fixture covers both halves of the cut under test.
 const offlineFixtureURL = "https://u:" + offlineFixturePassword + "@" + offlineFixtureHostPath + offlineFixtureQuery
 
-// TestNewOffline_RefusalNamesTheURLWithItsCredentialsCut pins the cut
-// offlineTransport.RoundTrip applies to the URL it names.
-//
-// The assertion is on the transport's own error rather than on the *url.Error
-// http.Client wraps it in, because that inner value is what an operator
-// actually reads. Every re-render on the paths reaching this transport drops
-// net/http's outer message and prints the cause beside a display of its own -
-// helpers.CutTransportURL does that for a metadata or artifact request,
-// signature.transportCause for a signature source - so whatever this transport
-// renders survives every cut applied above it. Asserting on the outer render
-// instead would assert nothing about this code: net/http's own masking
-// rewrites that URL to "u:***@..." with the query left intact, which carries
-// both the userinfo prefix and the presigned query no matter what happens
-// here.
-//
-// The five checks are independent t.Errorf calls rather than a t.Fatalf chain:
-// a message that carries a capability, one that names nothing at all, and one
-// that stopped classifying are three different defects with three different
-// remedies, and a chain would only ever report the first.
-//
-// assertOfflineRefusalNamesACleanURL is the positive control, on this same
-// transport with a URL that has nothing to cut: it proves a refusal does name
-// the URL it refused, so "carries no query" here cannot be satisfied by a
-// message that dropped the URL altogether.
-//
-// KILLING MUTATION, run: rendering req.URL in place of the cut form in
-// offlineTransport.RoundTrip fails three of the five checks - the password,
-// the userinfo prefix and the presigned query. The host-and-path check stays
-// green under it, since the uncut value contains that substring too, which is
-// what makes it a control on the cut rather than a second pin of it, and so
-// does the classification check, since the mutation moves no sentinel. The
-// first failure reads:
-//
-//	client_test.go:565: offline refusal carries the password: offline mode is
-//	enabled, network access is forbidden: GET https://u:pa55w0rd-must-not-be-rendered@hub.example/api/v3/collections/acme/widgets/
-//	?X-Amz-Signature=deadbeefcafe&X-Amz-Expires=900
-//
-// assertOfflineRefusalNamesACleanURL stays green through it as well: a URL
-// with nothing to cut renders identically either way.
+// TestNewOffline_RefusalNamesTheURLWithItsCredentialsCut pins that the offline
+// transport's own error, which wrappers print verbatim, names host and path but
+// no password, userinfo or presigned query, and still classifies as offline.
 func TestNewOffline_RefusalNamesTheURLWithItsCredentialsCut(t *testing.T) {
 	t.Parallel()
 

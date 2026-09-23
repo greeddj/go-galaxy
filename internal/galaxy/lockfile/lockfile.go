@@ -1,22 +1,6 @@
-// Package lockfile reads and writes go-galaxy lockfiles. The lockfile pins
-// every transitive collection to an exact version with a SHA256 - or, for a
-// collection built from a git source, to the commit it was built from - so
-// CI runs are reproducible and hermetic: once a lockfile exists, install only
-// reads the cache, never the Galaxy API or the git remote.
-//
-// Four schema versions are written and all four are read. Schema 1 is the
-// Galaxy-only shape every lockfile had before git sources existed; schema 2
-// adds the git fields to an entry and is written exactly when a file carries
-// at least one git entry; schema 3 adds the roles list and is written
-// exactly when a file carries at least one role; schema 4 admits the url
-// entry shape - a collection or role pinned to a tarball URL by its sha256 -
-// and is written exactly when a file carries one. canonicalize decides among
-// them from the entries alone, so a project with no git source, role or url
-// source keeps producing a schema-1 file that every release reads, and a
-// project that drops its last git source, role or url source goes back on
-// its next lock. An older binary reading a newer file refuses it loudly
-// instead of installing a git or url entry's source as if it were a Galaxy
-// server, or ignoring a roles list it does not know.
+// Package lockfile reads, validates and writes galaxy.lock, which pins every
+// collection and role so a frozen install reads only the cache. The schema
+// (1 to 4) is derived from the entries, so an older binary refuses a newer shape.
 package lockfile
 
 import (
@@ -65,19 +49,9 @@ const SchemaVersionURL = 4
 // DefaultName is the conventional lockfile name beside requirements.yml.
 const DefaultName = "galaxy.lock"
 
-// Entry is a single pinned collection in the lockfile. A Galaxy entry pins a
-// version and the artifact's SHA256 under the server it came from; a git
-// entry (Type == TypeGit) pins the commit the collection was built from,
-// with Source naming the repository URL, Ref the branch, tag or commit the
-// requirements file asked for, and Subdir the collection's directory inside
-// the repository. A git entry carries no SHA256: the artifact is rebuilt
-// deterministically from the commit, and the gzip bytes of that rebuild
-// depend on the toolchain that produced them, so a digest over them would
-// fail a frozen install for no reason the operator could act on. A url entry
-// (Type == TypeURL) is the opposite case and its SHA256 is required: Source
-// names the tarball URL, the artifact is the origin's own bytes rather than
-// a rebuild, and the digest is the whole pin - there is no ref, commit or
-// subdir dimension to carry.
+// Entry is one pinned collection: a Galaxy entry pins version and SHA256, a
+// git entry (TypeGit) the commit and no SHA256, since a rebuild's gzip bytes
+// depend on the toolchain; a url entry (TypeURL) requires the origin's SHA256.
 type Entry struct {
 	Name    string   `yaml:"name"`
 	Type    string   `yaml:"type,omitempty"`
@@ -97,10 +71,8 @@ func (e Entry) IsGit() bool { return e.Type == TypeGit }
 func (e Entry) IsURL() bool { return e.Type == TypeURL }
 
 // SchemaVersionFor returns the schema a file holding entries and roles is
-// written with, the highest feature present winning: SchemaVersionURL when
-// any collection or role entry is a url entry, else SchemaVersionRoles when
-// there is any role, else SchemaVersionGit when any entry is a git entry,
-// else SchemaVersion.
+// written with, the highest feature present winning: SchemaVersionURL, then
+// SchemaVersionRoles, then SchemaVersionGit, else SchemaVersion.
 func SchemaVersionFor(entries []Entry, roles []RoleEntry) int {
 	switch {
 	case anyURLEntry(entries, roles):
@@ -121,15 +93,9 @@ func anyURLEntry(entries []Entry, roles []RoleEntry) bool {
 
 // File is the on-disk lockfile structure.
 type File struct {
-	// Server records the Galaxy server this lockfile was generated against -
-	// provenance for a human reviewing a committed lockfile, never a source
-	// of truth an entry's own resolution defers to: indexLockfile defaults a
-	// source-less entry's Source from the consuming RUN's own cfg.Server, not
-	// from this field. It is nonetheless part of the file's identity: Hash
-	// covers it and Compare reports a change to it via Diff.Server, so a
-	// server_list reorder or edit that changes the effective default server
-	// counts as drift the same way a changed pin does, even when every
-	// collection entry is otherwise untouched.
+	// Server is provenance: a source-less entry takes its Source from the run's
+	// cfg.Server, not from here. Hash covers it and Compare reports it via
+	// Diff.Server, so a server_list change that moves the default is drift.
 	Server      string  `yaml:"server,omitempty"`
 	Collections []Entry `yaml:"collections"`
 	// Roles is every role the run installs, pinned to its commit; absent
@@ -151,18 +117,9 @@ func ResolveDefaultPath(requirementsFile, override string) string {
 	return filepath.Join(filepath.Dir(requirementsFile), DefaultName)
 }
 
-// Load parses a lockfile from disk. Every error it returns means exactly one
-// of two things, and the two are mutually exclusive by construction: either
-// the file is not there (IsNotExist(err) is true - the original
-// fs.ErrNotExist, or an OS-specific variant like ENOTDIR that also satisfies
-// errors.Is(err, fs.ErrNotExist)), or the file is there and unusable in some
-// way (errors.Is(err, helpers.ErrLockfileInvalid) is true - unreadable,
-// unparseable, or internally inconsistent). Three consumers depend on that
-// dichotomy being exhaustive: resolveOrLoadLockfile and lockFrozen both
-// classify --frozen's behavior by which arm holds, and lockDryRunBaseline
-// treats anything that is not IsNotExist the same way (warn, then proceed as
-// if no baseline existed) - none of the three have a third case to fall
-// into.
+// Load parses and validates a lockfile. Every error either satisfies
+// IsNotExist or wraps helpers.ErrLockfileInvalid, never both and never neither:
+// LoadRequired, outdated and lock --dry-run tell absence from breakage by it.
 func Load(path string) (*File, error) {
 	//nolint:gosec // path is user-provided lockfile location.
 	data, err := os.ReadFile(path)
@@ -170,14 +127,8 @@ func Load(path string) (*File, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, err
 		}
-		// Wrapped with %s, not %w: the fs.ErrNotExist guard above already
-		// makes this arm and the one above mutually exclusive, so %w buys no
-		// additional exclusivity here. %s is chosen instead because it
-		// matches the sibling YAML-unmarshal arm two lines below, and
-		// because nothing in this program branches on the underlying errno,
-		// so keeping it reachable through errors.Is would buy nothing.
-		// err.Error() still carries the real OS error text for a human
-		// reading the message; it is simply not reachable through errors.Is.
+		// %s, not %w: the fs.ErrNotExist guard above already keeps the two arms
+		// exclusive, and nothing branches on the underlying errno.
 		return nil, fmt.Errorf("%w: %s", helpers.ErrLockfileInvalid, err.Error())
 	}
 	var f File
@@ -225,10 +176,9 @@ func (f *File) Hash() (string, error) {
 // default is four.
 const lockfileIndent = 2
 
-// marshal renders f as the one byte sequence both Save and Hash use. Sharing
-// it is what keeps Hash the SHA256 of the file Save wrote, so the indent is
-// part of the contract `go-galaxy hash` prints: changing it changes every
-// CI cache key built on a lockfile.
+// marshal renders f as the one byte sequence Save writes and Hash digests,
+// so the indent is part of what `go-galaxy hash` prints: changing it changes
+// every CI cache key built on a lockfile.
 func marshal(f *File) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -263,27 +213,9 @@ func (f *File) canonicalClone() *File {
 	return &clone
 }
 
-// validate rejects lockfiles that are internally inconsistent, on two
-// independent grounds: a duplicate collection name, which would otherwise
-// let indexLockfile silently drop an entry and make a frozen install
-// ambiguous, and an entry whose pinned version is not helpers.IsExactVersion
-// - a constraint string like "*" rather than a version anything can install.
-// The latter closes the route a --frozen install would otherwise take when a
-// lockfile entry carried an unresolved constraint: resolveFromLockfile would
-// build a collection from it, exactVersionFromConstraints would treat it as
-// unpinned, and the run would silently install the server's highest version
-// under a path built from the literal constraint text. Save does not call
-// this, and the two shapes it would have caught are ruled out at the
-// producer by two different mechanisms, not one: buildLockfile carries its
-// own helpers.IsExactVersion guard over the resolved map it builds a File
-// from, so it cannot hand Save a non-exact version; a duplicate name simply
-// cannot arise in the first place, because that same map is keyed by fqdn,
-// so two entries can never share a name to begin with.
-//
-// A git entry is judged on top of that by validateGitEntry, and a schema-1
-// file carrying one is refused outright: the schema is what tells an older
-// binary to stop, so a file that claims the old schema while carrying the
-// new shape has been edited by hand.
+// validate rejects a duplicate or malformed name, a non-exact version (a
+// --frozen install would then take the server's highest), a source with
+// userinfo, a malformed git or url pin, and an entry its schema predates.
 func (f *File) validate() error {
 	seen := make(map[string]struct{}, len(f.Collections))
 	for _, e := range f.Collections {
@@ -291,11 +223,8 @@ func (f *File) validate() error {
 			return fmt.Errorf("%w: duplicate collection name %q", helpers.ErrLockfileInvalid, e.Name)
 		}
 		seen[e.Name] = struct{}{}
-		// Checked before the version, and quoted, because until it passes
-		// nothing here knows what e.Name contains: the version message below
-		// prints the name, and a name carrying a newline would compose extra
-		// lines into the very error reporting it. Once this check has passed,
-		// a name is an ordinary identifier again.
+		// Checked before the version because the version message prints the
+		// name, and a name carrying a newline would forge extra output lines.
 		if err := checkEntryName(e); err != nil {
 			return err
 		}
@@ -315,11 +244,9 @@ func (f *File) validate() error {
 	return f.validateRoles()
 }
 
-// checkEntryName judges an entry's name by the alphabet its type earns: a
-// url entry's identity came from its artifact's own MANIFEST.json and is
-// held to the relaxed rule that admits it (see
-// helpers.IsURLCollectionNamePart), every other entry to the Galaxy
-// alphabet a server-resolved name has already passed.
+// checkEntryName holds a url entry's name, read from its artifact's own
+// MANIFEST.json, to helpers.IsURLCollectionNamePart, and every other entry to
+// the Galaxy alphabet a server-resolved name has already passed.
 func checkEntryName(e Entry) error {
 	if e.IsURL() {
 		namespace, name, ok := helpers.SplitFQDN(e.Name)
@@ -336,16 +263,9 @@ func checkEntryName(e Entry) error {
 	return nil
 }
 
-// validateEntryType judges the fields that distinguish a git or url entry
-// from a Galaxy one. A Galaxy entry may carry none of them; a git entry must
-// carry a canonical repository URL as its source, a valid ref, a full
-// lowercase commit and a valid subdir, must not carry a SHA256 (see Entry for
-// why), and may only appear in a schema-2 or later file; a url entry must
-// carry a canonical tarball URL as its source and a full lowercase sha256,
-// nothing of the git triple, and may only appear in a schema-4 file. The URL
-// is re-parsed rather than trusted because the source is repository content:
-// anything a later run connects to has to pass the same grammar a
-// requirements entry does.
+// validateEntryType judges the fields that set a git or url entry apart from
+// a Galaxy one, and the minimum schema each needs. Sources are re-parsed and
+// must round-trip unchanged, since a lockfile is repository content.
 func validateEntryType(e Entry, schema int) error {
 	var minSchema int
 	var problem func(Entry) string
@@ -407,24 +327,9 @@ func urlEntryProblem(e Entry) string {
 	return ""
 }
 
-// sourceHasUserinfo reports whether an entry's source embeds URL userinfo
-// ("https://user:pass@hub/"). It is the lockfile's half of a rule
-// requirements.checkSourceUserinfo already applies to the same value arriving
-// through the other boundary it enters by, and it exists because a lockfile is
-// repository content just as requirements.yml is: an entry's source flows
-// unchanged into root-metadata request URLs, warning lines, the resolved
-// snapshot, and GALAXY.yml, and url.URL.String() renders a userinfo password
-// back out in plain text at every one of them. It also decides what
-// credential goes to that host at all - net/http sets Basic auth from a URL's
-// userinfo before any transport runs, and internal/galaxy/fetch's
-// authTransport declines to attach the operator's configured token to a
-// request that already carries an Authorization header - so a source with
-// userinfo substitutes the repository's credential for the operator's.
-//
-// A source naming a bare server_list id (e.g. "internal", never URL-shaped)
-// is left alone, the same exception its sibling documents: url.Parse succeeds
-// on such a value but yields no scheme and no host, so the userinfo branch is
-// unreachable for it.
+// sourceHasUserinfo is the lockfile's half of requirements.checkSourceUserinfo:
+// net/http turns URL userinfo into Basic auth that displaces the operator's
+// token. A bare server_list id has no scheme or host and is left alone.
 func sourceHasUserinfo(source string) bool {
 	if source == "" {
 		return false
@@ -441,23 +346,9 @@ func IsNotExist(err error) bool {
 	return errors.Is(err, fs.ErrNotExist)
 }
 
-// LoadRequired is Load for a caller that cannot proceed without the lockfile:
-// an absent file becomes helpers.ErrLockfileMissing naming the path, instead
-// of the bare fs.ErrNotExist Load returns.
-//
-// The distinction it draws is between commands, not between failures. "The
-// lockfile you asked me to read is not there" is a fact about the lockfile,
-// which is why it classifies as the lockfile exit class; a bare fs.ErrNotExist
-// reaching a command instead lands it in the environment-usage class, the
-// wrong class for that fact. Every command that requires a lockfile goes
-// through here, so all of them stay in the lockfile class and the
-// classification is a property of the loader rather than something each call
-// site has to remember.
-//
-// hash is the one deliberate exception and does not call this: a missing
-// lockfile there is not a failure at all, since it falls back to hashing the
-// requirements file for repositories that do not lock. It stays on Load and
-// branches on IsNotExist itself.
+// LoadRequired is Load for a command that cannot proceed without the file:
+// absence becomes helpers.ErrLockfileMissing (exit 6), since a bare
+// fs.ErrNotExist exits 2. A caller that falls back on absence uses Load.
 func LoadRequired(path string) (*File, error) {
 	f, err := Load(path)
 	switch {
@@ -470,11 +361,8 @@ func LoadRequired(path string) (*File, error) {
 	}
 }
 
-// canonicalize sorts the entries and their deps and sets the schema version
-// from the entries, unconditionally: the schema is a function of the
-// content, never a value a producer chooses, which is what keeps a Galaxy-only
-// file at schema 1 and flips a file to schema 2 exactly when its first git
-// entry appears.
+// canonicalize sorts the entries, roles and their deps, and sets the schema
+// from the content unconditionally: it is never a value a producer chooses.
 func canonicalize(f *File) {
 	f.SchemaVersion = SchemaVersionFor(f.Collections, f.Roles)
 	slices.SortFunc(f.Collections, func(a, b Entry) int {

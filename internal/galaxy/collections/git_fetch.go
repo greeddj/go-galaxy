@@ -9,21 +9,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// gitFetchToCache rebuilds one pinned git collection's artifact from its
-// commit, the install-time counterpart of downloadCollectionToCache. It is
-// reached only when discovery did not leave the artifact in the cache: after
-// a --dry-run discovery, on a --frozen run whose cached artifact was evicted,
-// or through prepareWithRecovery's one bounded refetch of a corrupt cached
-// artifact. The acquisition is restricted to the pinned collection
-// (gitsource.Request.Only), so a repository that no longer builds that
-// identity at that commit fails as helpers.ErrGitArtifactIdentityMismatch
-// rather than installing whatever it builds now.
-//
-// The identity check below is the attribution a git artifact gets: the
-// signature path's checkManifestAttribution runs only after a signature
-// verified, which a git artifact (carrying none) never reaches, so the
-// namespace, name and version the builder read out of galaxy.yml are
-// compared here against the collection being installed.
+// gitFetchToCache rebuilds a pinned git collection's artifact from its commit
+// on a cache miss, restricted to its identity: that check is a git artifact's
+// only attribution, so another identity is ErrGitArtifactIdentityMismatch.
 func gitFetchToCache(ctx context.Context, deps installDeps, col collection, useCache bool) (downloadResult, error) {
 	runtime := deps.runtime
 	if runtime == nil || runtime.Git == nil {

@@ -14,22 +14,17 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// Document is one entry the caller writes ahead of the tree: a listing or a
-// manifest the archive's readers expect to meet first. It is a regular file
-// at the archive root with the same fixed mode and time as every other
-// entry.
+// Document is a lead entry written ahead of the tree, such as a manifest
+// readers expect first: a regular file at the archive root with the same fixed
+// mode and time as every other entry.
 type Document struct {
 	Name string
 	Data []byte
 }
 
-// Write streams the artifact into file - the lead documents in the order
-// given, then the planned entries - digesting the compressed bytes as they
-// are written, and returns the lowercase hex sha256. Every entry is stamped
-// with the Source's committer time, truncated to the second, which is what
-// makes two builds of one commit byte-identical under one toolchain (the
-// package comment says why the toolchain is part of that). The caller owns
-// the file: Write neither closes nor removes it.
+// Write streams the lead documents, then the planned entries, into file and
+// returns the lowercase hex sha256 of the compressed bytes. Every entry carries
+// the commit time to the second; the caller owns file.
 func (p *Plan) Write(ctx context.Context, file *os.File, lead []Document) (string, error) {
 	h := sha256.New()
 	gz := gzip.NewWriter(io.MultiWriter(file, h))

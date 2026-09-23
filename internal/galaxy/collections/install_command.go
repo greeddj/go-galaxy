@@ -19,30 +19,19 @@ func Start(ctx context.Context, cfg *config.Config, runtime *infra.Infra) error 
 	return runInstall(ctx, cfg, runtime)
 }
 
-// runInstall drives the install command through the backend lifecycle every
-// collection command shares (see withBackend, which owns that lifecycle and
-// the lock-loss verdict), with installWithState as its work half. install
-// adds nothing of its own ahead of it.
+// runInstall drives install through withBackend, which owns the backend
+// lifecycle and the lock-loss verdict, with installWithState as the work.
 func runInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) error {
 	return withBackend(ctx, cfg, runtime, "Starting installation process", installWithState)
 }
 
-// installWithState performs install's actual work against an
-// already-initialized state: build the plan, install every level, save the
-// snapshot, write the run metrics report - in that order, since the report
-// always runs regardless of whether the save succeeded. It assumes the
-// backend is already open and locked - runInstall holds that lifecycle - so
-// it never touches state.release or state.backend.Close.
+// installWithState builds the plan, installs every level, saves the snapshot
+// and then writes the metrics report whether or not the save succeeded. It
+// runs under runInstall's open, locked backend and never releases either.
 func installWithState(ctx context.Context, cfg *config.Config, runtime *infra.Infra, state *installState, start time.Time) error {
-	// Opened once, here, before requirements are even loaded, so every
-	// downstream consumer - the prefetcher and every install worker across
-	// every level - shares the same os.Root instead of each racing to open its
-	// own. create is tied to !cfg.DryRun: a dry run must never create the
-	// directory it is only describing (see openCollectionsRoot's own doc
-	// comment). Opening it here, once, rather than once per collection, is
-	// also what turns a symlinked ansible_collections into exactly one
-	// operator-facing failure for the whole run instead of one per collection
-	// in the level - see openCollectionsRoot's own doc comment for why.
+	// One root for the prefetcher and every install worker, so a symlinked
+	// ansible_collections fails the run once rather than once per collection;
+	// a dry run must not create the directory it only describes.
 	root, err := openCollectionsRoot(cfg.DownloadPath, !cfg.DryRun)
 	if err != nil {
 		return err
@@ -57,26 +46,14 @@ func installWithState(ctx context.Context, cfg *config.Config, runtime *infra.In
 	if err != nil {
 		return err
 	}
-	// A callee's defers always run before its caller's: installWithState is a
-	// callee of runInstall, so this defer - registered here, inside
-	// installWithState - is guaranteed to run and finish (canceling and
-	// joining every prefetch worker) before installWithState returns control
-	// to runInstall, which only then unwinds its own lock-release and
-	// backend-close defers. A late prefetch worker can therefore never call
-	// backend.Artifacts().Commit (or mutate the Store) after the lock is gone
-	// - structurally, by Go's defer-then-return ordering across this call
-	// boundary, not by convention of registering this defer after two other
-	// defers within one function. On the dry-run path below, this defer is
-	// still harmless: prepareInstallPlan never started the prefetcher (see
-	// startPrefetcher's own cfg.DryRun guard), so plan.prefetch.Close() is a
-	// no-op against a prefetcher that was never armed.
+	// Deferred in this callee so every prefetch worker is joined before
+	// runInstall's own defers release the lock: a late worker can never commit
+	// to the cache unlocked. On a dry run the prefetcher never started.
 	defer plan.prefetch.Close()
 
-	// The roles root is opened only when the plan holds a role: a
-	// collections-only project must not grow an empty roles directory on
-	// every run. Unlike the collections root it can wait until the plan is
-	// built, since no prefetcher reads it. create follows !cfg.DryRun for the
-	// same reason openCollectionsRoot's does.
+	// Opened only when the plan holds a role, so a collections-only project
+	// never grows an empty roles directory; no prefetcher reads it, so it can
+	// wait for the plan. A dry run never creates it.
 	rolesRoot, err := openRolesRootIfNeeded(cfg, plan)
 	if err != nil {
 		return err
@@ -100,10 +77,9 @@ func installWithState(ctx context.Context, cfg *config.Config, runtime *infra.In
 	if err != nil {
 		return err
 	}
-	// Roles install after the collections and only when every collection
-	// level went through: a level loop that broke on a failure has already
-	// decided the run's outcome, and the roles that were never attempted must
-	// not be reported as failed or, worse, installed against a half-done tree.
+	// Roles install only when every collection level succeeded: a failed run
+	// must not report unattempted roles as failed or install them against a
+	// half-done tree.
 	if summary.count == 0 {
 		var roleFailures failureRecorder
 		installRoles(ctx, depsCtx, plan.roles, &roleFailures)
@@ -134,41 +110,9 @@ func (p *installPlan) counts(failures int) runCounts {
 	return runCounts{Collections: len(p.collections), Roles: len(p.roles.roles), Failures: failures}
 }
 
-// installDryRun is installLevels' dry-run substitute: instead of downloading,
-// extracting, writing GALAXY.yml, or calling recordInstall for any
-// collection, it reports what install would do (classifyDryRun) and stops
-// there. writeRunMetrics is still called, unconditionally, matching every
-// other command's tail - it self-suppresses under cfg.DryRun (see its own
-// doc comment), so this call site does not need to know that.
-//
-// The failure error reuses failureSummary.installError - the identical
-// headline finalizeInstall's own real failure wrap builds - through the same
-// annotateSaveFailure helper, rather than a bespoke fmt.Errorf: the
-// summary's recorded causes are joined behind that headline exactly as they
-// are on a real run (see failureSummary.wrap), which is what lets the
-// preview's exit code track the real run's per underlying cause instead of a
-// single fixed class - ExitIntegrity when a recorded cause is
-// helpers.ErrSHA256Mismatch (dryRunPinVerdict's own verdict), ExitInstall
-// otherwise (the offline case, or a collections-tree write a real install
-// would refuse), matching exactly what a real --frozen --offline install
-// would exit with for the identical cause.
-//
-// The snapshot is saved only when state.store.WasPersisted() was already
-// true when this run loaded it - i.e. only when a persisted snapshot already
-// existed. When it did, the resolve-side caches this run's fresh solve wrote
-// (Meta.RequirementsHash/Meta.Server, Requirements, the resolved/graph snapshot, plus
-// APICache/DepsCache/Versions picked up along the way) are pure,
-// reconstructible cache, not this command's product, so saving them is free
-// value - exactly the half of this write --dry-run must not suppress. When
-// no persisted snapshot existed, the save is skipped, mirroring
-// finalizeCleanup's identical guard in internal/galaxy/cleanup: a fresh
-// snapshot's Save/MarshalSnapshot both stamp Meta.LastSnapshot
-// unconditionally, and doing that here would manufacture the exact
-// persisted-and-empty-installed shape sweepExtractedStore's own
-// WasPersisted() guard exists to distinguish from "nothing is installed or
-// warmed anywhere" - handing a later cleanup run false positive evidence to
-// wipe the whole extracted store on a cold-cache preview that touched
-// nothing.
+// installDryRun reports what install would do; its error reuses installError
+// so the preview exits per cause as a real run would. It saves the snapshot
+// only if one existed, so cleanup never reads a fresh empty one as evidence.
 func installDryRun(
 	ctx context.Context,
 	cfg *config.Config,
@@ -196,14 +140,9 @@ func installLevels(ctx context.Context, depsCtx installDeps, plan *installPlan) 
 	var failures failureRecorder
 	for _, level := range plan.levels {
 		if err := runInstallLevel(ctx, depsCtx, plan.collections, plan.graph, level, plan.prefetch, &failures); err != nil {
-			// err here is helpers.ErrMissingCollection, a usage-class plan bug in
-			// the level/collections map built before any level ran - not an
-			// install failure. installWithState returns this err directly,
-			// never reaching finalizeInstall, so the summary's causes (if any
-			// were already recorded by workers dispatched earlier in this same
-			// level) are deliberately discarded rather than joined into it:
-			// doing so would let a plan bug misclassify as an install/integrity
-			// failure instead of the usage error it is.
+			// ErrMissingCollection is a usage-class plan bug: returned without
+			// the causes earlier workers recorded, so it never misclassifies as
+			// an install or integrity failure.
 			return failures.summary(), err
 		}
 		if failures.count() > 0 {
@@ -213,14 +152,9 @@ func installLevels(ctx context.Context, depsCtx installDeps, plan *installPlan) 
 	return failures.summary(), nil
 }
 
-// runInstallLevel dispatches installs for one level's keys onto a
-// Workers-bounded pool and joins them before returning. wg.Wait is deferred
-// ahead of the loop so every exit - including the ErrMissingCollection guard,
-// which can trip after earlier keys in this level were already dispatched -
-// waits the in-flight workers rather than leaking them past installLevels (and
-// past runInstall's backend-lock release). failures is shared across levels
-// and is safe for concurrent use by every worker, recording each one's own
-// cause alongside its count.
+// runInstallLevel installs one level's keys on a Workers-bounded pool. wg.Wait
+// is deferred ahead of the loop so every exit, the ErrMissingCollection guard
+// included, joins dispatched workers before runInstall releases the lock.
 func runInstallLevel(
 	ctx context.Context,
 	depsCtx installDeps,
@@ -237,26 +171,9 @@ func runInstallLevel(
 	defer wg.Wait()
 
 	for _, key := range level {
-		// Once ctx is canceled, no further key in this level is handed to the
-		// worker pool: the loop stops dispatching here, on this iteration,
-		// while every worker already started keeps running to completion under
-		// the deferred wg.Wait above, so no in-flight install is abandoned
-		// mid-write. break rather than return: a bare return would still run
-		// that same deferred wait, so nothing is skipped either way, but break
-		// keeps this function's single nil-returning exit point instead of
-		// adding a second one. This function still returns nil on this path,
-		// exactly as it does when a level finishes normally - not ctx.Err() -
-		// because installLevels propagates a non-nil return straight up past
-		// finalizeInstall, and an interrupted run must still reach it to save
-		// its snapshot. The process's own exit code is decided separately, by
-		// cmd/go-galaxy/main.go's handleResult reading the caught signal, so it
-		// does not depend on what this function returns.
-		//
-		// Residual: if cancellation lands exactly between two dispatches and
-		// every worker already started still finishes without error, this
-		// level's failure count stays zero and finalizeInstall reports its
-		// ordinary success line even though the run was interrupted - the exit
-		// code still comes from the caught signal, not from that count.
+		// On cancellation stop dispatching but return nil, not ctx.Err():
+		// started workers finish, finalizeInstall still saves the snapshot, and
+		// the exit code comes from the caught signal in main's handleResult.
 		if ctx.Err() != nil {
 			break
 		}
@@ -287,15 +204,9 @@ func runInstallLevel(
 	return nil
 }
 
-// finalizeInstall saves the run's snapshot and reports the run's outcome.
-// The save is attempted first but does not short-circuit: whether it
-// succeeds or fails, the returned error still classifies by the
-// collection-failure count, so the exit class a CI script branches on does
-// not depend on whether the tail also happened to hit a full disk. The one
-// classification that still outranks it is cancellation - cmd/go-galaxy/exitcode
-// checks context.Canceled ahead of every class - so a save that fails because
-// the run was interrupted still exits as interrupted, which is what an
-// interrupted run should report.
+// finalizeInstall saves the snapshot and reports the outcome. A failed save is
+// annotated onto the install error rather than replacing it, so a full disk in
+// the tail never changes the exit class the collection failures decide.
 func finalizeInstall(
 	ctx context.Context,
 	runtime *infra.Infra,

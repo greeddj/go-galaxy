@@ -12,14 +12,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// roleLockfileEntries renders every resolved role as a lockfile entry, in
-// install-name order. A Galaxy role records the server whose v1 API answered
-// for it as its source (the run's default when a replayed pin predates that
-// record) and the repository the server pointed at; a git role
-// records the repository as its source. Both record the ref asked for and
-// the commit it resolved to, and no sha256 (see lockfile.RoleEntry). The
-// locator is taken apart so the file a human reviews names the repository,
-// not an internal key.
+// roleLockfileEntries renders every resolved role as a lockfile entry in
+// install-name order, taking the locator apart so the reviewed file names
+// the repository and commit rather than an internal key.
 func roleLockfileEntries(cfg *config.Config, roles roleResolution) ([]lockfile.RoleEntry, error) {
 	if len(roles.roles) == 0 {
 		return nil, nil
@@ -76,9 +71,8 @@ func roleLockfileEntry(cfg *config.Config, r resolvedRole) (lockfile.RoleEntry, 
 }
 
 // urlRoleLockfileEntry renders a url role's pin: the tarball URL as its
-// source and the origin bytes' sha256 - required where a git role's digest
-// is refused (see lockfile.RoleEntry) - with no ref, commit, galaxy or
-// repository to carry.
+// source and the origin bytes' sha256, which a url entry requires where a
+// git entry's is refused.
 func urlRoleLockfileEntry(r resolvedRole) (lockfile.RoleEntry, error) {
 	loc, err := urlsource.ParseLocator(r.Source)
 	if err != nil {
@@ -98,10 +92,8 @@ func urlRoleLockfileEntry(r resolvedRole) (lockfile.RoleEntry, error) {
 }
 
 // resolveRolesFromLockfile is resolveFromLockfile for the roles list: every
-// requirement must be locked as it is written, and every role entry becomes
-// a resolved role whose artifact the install fetches from the cache or, on
-// a miss, by the pinned commit - exactly as a git collection is materialized.
-// No network is touched here.
+// requirement must be locked as written, and every entry becomes a resolved
+// role; no network is touched here.
 func resolveRolesFromLockfile(lf *lockfile.File, roots []requirements.RoleRequirement) (roleResolution, error) {
 	byName := make(map[string]lockfile.RoleEntry, len(lf.Roles))
 	for _, e := range lf.Roles {
@@ -154,11 +146,8 @@ func resolvedRoleFromLockfile(e lockfile.RoleEntry) resolvedRole {
 }
 
 // verifyRoleRootAgainstLockfile checks one roles: entry, as written, against
-// the lockfile: the install name must be locked, from the same source - the
-// Galaxy name for a Galaxy role, the repository for a git role - and from
-// the same ref; for a Galaxy role with a version asked for, that version. A
-// ref change is a mismatch even when the commit happens to be the same, for
-// the reason verifyGitRootAgainstLockfile gives.
+// the lockfile: the install name must be locked from the same source, and a
+// ref change is a mismatch even at the same commit.
 func verifyRoleRootAgainstLockfile(root requirements.RoleRequirement, byName map[string]lockfile.RoleEntry) error {
 	entry, ok := byName[root.Name]
 	if !ok {

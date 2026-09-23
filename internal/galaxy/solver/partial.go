@@ -2,10 +2,8 @@ package solver
 
 import "fmt"
 
-// assignment is one entry in the partial solution's ordered list: either a
-// decision (a concrete chosen version, CauseIndex == -1) or a derivation (a
-// term forced by an incompatibility, CauseIndex pointing at that
-// incompatibility in the store).
+// assignment is one entry of the partial solution: a decision (CauseIndex
+// -1) or a derivation whose CauseIndex points at the forcing incompatibility.
 type assignment struct {
 	term          term
 	DecisionLevel int
@@ -18,12 +16,9 @@ func (a *assignment) isDecision() bool {
 	return a.CauseIndex == -1
 }
 
-// decisionVersionOf extracts the concrete version a decision's term denotes.
-// Every decision's term is built by singletonVerSet, which carries the
-// version alongside its set for exactly this purpose. It returns an error
-// wrapping errSolverBug when t carries none, as an invariant assertion
-// about how a decision term is built rather than a check against reachable
-// input.
+// decisionVersionOf extracts the version a decision's singletonVerSet term
+// carries; a term carrying none is an invariant violation, reported as an
+// error wrapping errSolverBug.
 func decisionVersionOf(t term) (Version, error) {
 	v, ok := t.Set.decidedVersion()
 	if !ok {
@@ -32,12 +27,9 @@ func decisionVersionOf(t term) (Version, error) {
 	return v, nil
 }
 
-// packageAssignments is one package's bookkeeping inside a partialSolution:
-// the append-order list of its assignment indices, its decision (if any),
-// and accum, the signed conjunction of every one of its assignments' terms
-// (term.go), maintained incrementally from the very first assignment on.
-// accum is exact regardless of whether the package's universe has been
-// fetched - the property the whole migration to exact sets exists for.
+// packageAssignments is one package's bookkeeping: its assignment indices,
+// its decision if any, and accum, the signed conjunction of all its terms,
+// which is exact whether or not the package's universe was fetched.
 type packageAssignments struct {
 	decisionVersion Version
 	indices         []int32
@@ -75,10 +67,8 @@ func (ps *partialSolution) pkgState(pkg string) *packageAssignments {
 	return p
 }
 
-// append adds one assignment to the partial solution and updates the
-// affected package's bookkeeping, folding the term into its signed
-// accumulation. It is the single mutation point decide and derive funnel
-// through.
+// append adds one assignment and folds its term into the package's
+// accumulation; it is the single mutation point decide and derive share.
 func (ps *partialSolution) append(term term, level, causeIndex int) *assignment {
 	idx := len(ps.assignments)
 	ps.assignments = append(ps.assignments, assignment{
@@ -98,10 +88,8 @@ func (ps *partialSolution) append(term term, level, causeIndex int) *assignment 
 	return a
 }
 
-// decide records pkg@v as a decision. The root package is always decided at
-// level 0 and never advances the decision counter; every other package's
-// first decision is level 1, its next is level 2, and so on. No caller needs
-// the resulting assignment, only the side effect of it being recorded.
+// decide records pkg@v as a decision. Root is always decided at level 0 and
+// never advances the decision counter, so the first real decision is level 1.
 func (ps *partialSolution) decide(pkg string, v Version) {
 	level := ps.decisions
 	if pkg != rootPkg {
@@ -120,11 +108,8 @@ func (ps *partialSolution) derive(term term, causeIndex int) *assignment {
 }
 
 // hasEquivalentAssignment reports whether term's package already carries an
-// assignment content-identical to it (same polarity, same set). Deriving an
-// already-recorded fact again would be a pure duplicate: it can never
-// change what relation() concludes about that package, so skipping it is
-// always sound and keeps any accidental re-derivation from appending
-// identical assignments without ever making progress.
+// identical assignment; re-deriving it could never change relation(), so
+// skipping it is sound and stops a no-progress loop.
 func (ps *partialSolution) hasEquivalentAssignment(term term) bool {
 	p, ok := ps.packages[term.Package]
 	if !ok {
@@ -138,15 +123,9 @@ func (ps *partialSolution) hasEquivalentAssignment(term term) bool {
 	return false
 }
 
-// rebuildPackageAssignments replays ps.assignments front to back, building
-// each named package's index list, signed accumulation, and - for a
-// decision-shaped assignment (CauseIndex == -1) - its decisionVersion. It
-// is backtrackTo's rebuild step, and it owns the partially built map for
-// that map's whole lifetime: the first decisionVersionOf failure returns a
-// nil map alongside the error, so a map built from only a prefix of the
-// assignments can never reach a caller. ps.packages sizes the result -
-// backtracking only ever drops assignments, so the packages the survivors
-// name are a subset of the ones tracked there.
+// rebuildPackageAssignments replays ps.assignments into fresh per-package
+// bookkeeping for backtrackTo. On a decisionVersionOf failure it returns a
+// nil map, so a map built from a prefix never reaches a caller.
 func (ps *partialSolution) rebuildPackageAssignments() (map[string]*packageAssignments, error) {
 	rebuilt := make(map[string]*packageAssignments, len(ps.packages))
 	for i := range ps.assignments {
@@ -170,19 +149,9 @@ func (ps *partialSolution) rebuildPackageAssignments() (map[string]*packageAssig
 	return rebuilt, nil
 }
 
-// backtrackTo truncates the assignment list to drop every assignment whose
-// decision level exceeds level, then rebuilds every package's bookkeeping
-// (including signed accumulations) by replaying the survivors front to
-// back. At Galaxy scale this full rebuild is microseconds, so no per-level
-// snapshot machinery is kept around for it. It returns the first error
-// decisionVersionOf reports; the truncation above has already happened by
-// then, while ps.packages is left untouched, so a map rebuilt from only a
-// prefix of the survivors never replaces the live one. A caller that gets
-// an error must abandon this partial solution rather than continue against
-// it. A package that loses every one of its assignments simply drops out of
-// the rebuilt map: with exact sets there is nothing to preserve for it -
-// two symbolically different constraints that denote the same set ARE the
-// same set, so no state distinguishes it from a never-touched package.
+// backtrackTo drops every assignment above level and rebuilds all package
+// bookkeeping by replay, which is microseconds at Galaxy scale. On error the
+// assignments are already truncated: the caller must abandon the solution.
 func (ps *partialSolution) backtrackTo(level int) error {
 	cut := len(ps.assignments)
 	for cut > 0 && ps.assignments[cut-1].DecisionLevel > level {

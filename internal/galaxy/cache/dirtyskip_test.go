@@ -1,10 +1,7 @@
 package cache_test
 
-// This file exercises WithCleanSaveSkip. It stays in this external test
-// package for the identical reason statedeadline_test.go (this package's
-// own doc comment) does: keeping it out of the internal cache package leaves
-// the production seam (WithCleanSaveSkip, exported) exactly what a caller in
-// another package actually uses.
+// This file exercises WithCleanSaveSkip from the external test package, the
+// way a caller in another package uses it.
 
 import (
 	"context"
@@ -14,12 +11,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// saveCountingBackend is a minimal cacheManager.Backend whose SaveStore
-// counts every call it actually receives, letting a test assert how many
-// times WithCleanSaveSkip let a call reach the wrapped backend. It is a
-// separate stub from stubStateBackend (statedeadline_test.go) rather than a
-// field added to that one: that stub's shape is pinned by a different file's
-// tests, and a save counter is not part of the property it exists to prove.
+// saveCountingBackend is a minimal cacheManager.Backend that counts the
+// SaveStore calls WithCleanSaveSkip lets through.
 type saveCountingBackend struct {
 	saveCalls int
 }
@@ -60,10 +53,8 @@ func (s *saveCountingBackend) LoadProjectRegistry(_ context.Context) (*store.Pro
 func (s *saveCountingBackend) Artifacts() cacheManager.ArtifactStore { return nil }
 func (s *saveCountingBackend) SweepTemp(_ context.Context) error     { return nil }
 
-// TestCleanSaveSkipSkipsUnmutatedStore proves WithCleanSaveSkip's SaveStore
-// never reaches the wrapped backend for a store reporting Dirty() == false,
-// and carries the mandatory positive control on the same store: after one
-// mutator call, the identical SaveStore call does reach it.
+// TestCleanSaveSkipSkipsUnmutatedStore pins that a clean store's save never
+// reaches the wrapped backend, and that one mutator call makes it reach it.
 func TestCleanSaveSkipSkipsUnmutatedStore(t *testing.T) {
 	t.Parallel()
 
@@ -78,10 +69,8 @@ func TestCleanSaveSkipSkipsUnmutatedStore(t *testing.T) {
 		t.Fatalf("SaveStore(clean store) reached the wrapped backend %d times, want 0", inner.saveCalls)
 	}
 
-	// Positive control, same store: a single mutator call flips Dirty to
-	// true, and the identical SaveStore call must now reach the wrapped
-	// backend - proving the skip above is a real observation of a clean
-	// store, not a decorator that never calls through at all.
+	// Positive control on the same store: one mutator makes it dirty, so the
+	// identical save must now reach the wrapped backend.
 	st.SetGraph("a.b@1.0.0", []string{"c.d@1.2.3"})
 	if err := wrapped.SaveStore(context.Background(), st); err != nil {
 		t.Fatalf("SaveStore(dirty store) error = %v, want nil", err)
@@ -91,13 +80,9 @@ func TestCleanSaveSkipSkipsUnmutatedStore(t *testing.T) {
 	}
 }
 
-// TestCleanSaveSkipPassesThroughNilStore proves the st != nil guard in
-// SaveStore is load-bearing: Store.Dirty() on a nil receiver returns false,
-// so a nil store must still reach the wrapped backend rather than being read
-// as "clean" and silently skipped - which would swallow whatever the wrapped
-// backend does with a nil store (local.Backend returns helpers.ErrStoreNil
-// for it; the S3 backend returns nil) behind a false "nothing to do" skip
-// this decorator must never invent.
+// TestCleanSaveSkipPassesThroughNilStore pins that a nil store reaches the
+// wrapped backend rather than reading as clean, so local.Backend's
+// helpers.ErrStoreNil is not swallowed.
 func TestCleanSaveSkipPassesThroughNilStore(t *testing.T) {
 	t.Parallel()
 

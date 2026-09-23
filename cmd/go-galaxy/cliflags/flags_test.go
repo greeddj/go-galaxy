@@ -76,19 +76,9 @@ func TestLockInspectFlags(t *testing.T) {
 			flag: flags[0],
 			want: wantStringFlag{
 				name: "requirements-file",
-				// The default is what makes hash, tree and explain agree with
-				// install about which file they read when nobody says. Without
-				// it each would re-implement the default in its own Action, and
-				// the three --help outputs would advertise no default while
-				// install's advertised one. The lock-file row below expects an
-				// empty Value, and is the positive control that this assertion
-				// can distinguish the two rather than passing on anything.
-				//
-				// KILLING MUTATION, run and reverted - drop the Value line
-				// from LockInspectFlags's requirements-file flag, which is
-				// the state this row exists to forbid:
-				//
-				//	flags_test.go:113: Value = "", want "requirements.yml"
+				// The default keeps hash, tree and explain reading the same file
+				// as install when nobody says; the lock-file row's empty Value is
+				// the control that this assertion tells the two apart.
 				value:   "requirements.yml",
 				aliases: []string{"r", "role-file"},
 				usage:   "Path to requirements.yml",

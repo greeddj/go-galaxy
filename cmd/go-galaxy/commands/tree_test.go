@@ -8,13 +8,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 )
 
-// hostileLockfileName and hostileLockfileSource mirror the adversarial
-// shape at internal/galaxy/lockfile/compare_test.go's own
-// hostileEntryName/hostileEntrySource: a path-traversal name and a value
-// carrying a NUL byte, an ANSI escape, and a CRLF. A lockfile is data this
-// printer trusts no more than the S3 error text safeout.Clean was written
-// for - a hand-edited or otherwise untrusted lockfile can carry the same
-// bytes into any of an Entry's string fields.
+// hostileLockfileName and hostileLockfileSource are a path-traversal name and
+// a value carrying NUL, an ANSI escape and CRLF, bytes a hand-edited lockfile
+// can put in any Entry string field; the lockfile package tests share the shape.
 const (
 	hostileLockfileName   = "../../../../etc/passwd"
 	hostileLockfileSource = "https://x.example\x00\x1b[31m\r\nInstalled: totally.fine"
@@ -80,16 +76,9 @@ func TestPrintTreeMissingDependency(t *testing.T) {
 	}
 }
 
-// TestPrintTreeSanitizesLockfileText proves printTree's safeout.NewWriter
-// wrap (its first statement) reaches every write walkTree makes: no raw
-// ESC/CR/NUL byte survives anywhere in the output, U+FFFD stands in for
-// each of them, and the output stays valid UTF-8. The root entry's Name
-// carries the path-traversal shape and its one dependency carries the
-// control-byte shape, so both the root line and the "(missing in
-// lockfile)" branch each render a hostile value. The final assertion - the
-// tree's own branch decoration is still present - is the positive control:
-// it proves the writer sanitized the hostile text rather than discarding
-// the whole line or the whole tree.
+// TestPrintTreeSanitizesLockfileText pins that printTree's safeout wrap reaches
+// the root line and the "(missing in lockfile)" branch: no raw ESC, CR or NUL,
+// valid UTF-8, and the branch decoration kept as the positive control.
 func TestPrintTreeSanitizesLockfileText(t *testing.T) {
 	t.Parallel()
 	lf := &lockfile.File{

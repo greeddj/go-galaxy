@@ -31,15 +31,9 @@ type Entry struct {
 	Size int64
 }
 
-// Source is a read-only view of a source tree at one commit. Paths
-// are "/"-joined and relative to the repository root, "" being the root.
-// ReadDir returns the entries of a directory in the tree's own order with
-// every name already validated by the implementation (an invalid name is an
-// error, never a skipped entry); Open streams a file's or a symlink's blob,
-// capped by the implementation at the per-entry archive size; CommitTime is
-// the committer time of the commit, which the builder stamps on every
-// archive entry so two builds of one commit are byte-identical under one
-// toolchain.
+// Source is a read-only tree at one commit, paths "/"-joined from the root "".
+// It validates every name ReadDir returns and caps Open at the per-entry size;
+// CommitTime stamps every entry, so one toolchain rebuilds identical bytes.
 type Source interface {
 	ReadDir(path string) ([]Entry, error)
 	Open(path string) (io.ReadCloser, error)

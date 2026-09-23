@@ -32,14 +32,9 @@ func pagedVersions(n int) []string {
 	return out
 }
 
-// TestLoadVersionsListCachedPagesThroughAllVersions registers a versions
-// list large enough to span three offset pages (100 + 100 + 50, at
-// versionLimit entries per page) and asserts loadVersionsListCached
-// collects every version across all of them, in exact offset order, issuing
-// exactly one request per page. DownloadWorkers is set above 1 so the pages
-// after page 0 are genuinely fetched concurrently, which is what makes the
-// order assertion meaningful: however the concurrent fetches land, the
-// assembled list must be the offset-ordered one.
+// TestLoadVersionsListCachedPagesThroughAllVersions pins that three pages
+// fetched concurrently (DownloadWorkers 4) assemble in offset order with
+// exactly one request per page.
 func TestLoadVersionsListCachedPagesThroughAllVersions(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -71,11 +66,9 @@ func TestLoadVersionsListCachedPagesThroughAllVersions(t *testing.T) {
 	}
 }
 
-// TestLoadVersionsListCachedStopsAtMetaCount registers exactly two full
-// pages' worth of versions and asserts loadVersionsListCached stops after
-// the second request via the meta.count early-stop path (the next offset
-// would reach the declared total), rather than issuing a third, empty
-// request to discover there is nothing left.
+// TestLoadVersionsListCachedStopsAtMetaCount pins that two full pages stop
+// at the declared meta.count after the second request, never issuing a
+// third, empty one.
 func TestLoadVersionsListCachedStopsAtMetaCount(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -102,12 +95,9 @@ func TestLoadVersionsListCachedStopsAtMetaCount(t *testing.T) {
 	}
 }
 
-// newDeclaredCountServer starts an httptest server that pages actual out
-// through ?limit=&offset= slices while declaring exactly count in every
-// response's meta.count, however far that diverges from what it actually
-// serves - the mismatch the production walk must never trust the total
-// over. The handler only reads shared state, so concurrent page fetches are
-// safe against it; served counts every request received.
+// newDeclaredCountServer pages actual by ?limit=&offset= while declaring
+// count as meta.count, however far that diverges from what it serves. The
+// handler only reads shared state, so concurrent fetches are safe.
 func newDeclaredCountServer(t *testing.T, actual []string, count int) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var served atomic.Int32
@@ -126,9 +116,8 @@ func newDeclaredCountServer(t *testing.T, actual []string, count int) (*httptest
 		}
 		body, err := json.Marshal(&page)
 		if err != nil {
-			// page is built entirely from strings and an int; marshaling it
-			// cannot fail, so a non-nil error is a structural bug in this
-			// fixture rather than a scenario to answer.
+			// Marshaling strings and an int cannot fail; an error is a bug
+			// in this fixture, not a scenario to answer.
 			panic(fmt.Sprintf("marshal fixture page: %v", err))
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -138,14 +127,9 @@ func newDeclaredCountServer(t *testing.T, actual []string, count int) (*httptest
 	return srv, &served
 }
 
-// TestLoadVersionsListCachedExceedsPageCeilingFailsHard drives a server that
-// answers every request with a full page and no meta.count at all (0), so
-// nothing ever schedules or stops the walk except the ceiling: without a
-// declared total the sequential fallback pages on demand, and this asserts
-// it hard-fails with helpers.ErrVersionsPagingExceeded after exactly
-// maxVersionPages requests, rather than paging forever or silently
-// returning a truncated list. fakegalaxy is not usable here: it honestly
-// reflects its registered versions and could never keep a walk unsatisfied.
+// TestLoadVersionsListCachedExceedsPageCeilingFailsHard pins that endless
+// full pages with no meta.count fail with helpers.ErrVersionsPagingExceeded
+// after exactly maxVersionPages requests, never a truncated list.
 func TestLoadVersionsListCachedExceedsPageCeilingFailsHard(t *testing.T) {
 	t.Parallel()
 	srv, served := newDeclaredCountServer(t, pagedVersions(maxVersionPages*versionLimit+versionLimit), 0)
@@ -164,15 +148,9 @@ func TestLoadVersionsListCachedExceedsPageCeilingFailsHard(t *testing.T) {
 	}
 }
 
-// TestLoadVersionsListCachedExcessiveTotalFailsUpFront asserts a page-0
-// meta.count implying more pages than maxVersionPages fails hard with
-// helpers.ErrVersionsPagingExceeded after that single request - no page the
-// verdict already condemns is ever fetched, and the list is never truncated
-// to what those requests would have carried. The count is huge for a second
-// reason too: an up-front verdict is also what keeps a hostile meta.count
-// away from the pre-size allocation (an unbounded make cap would panic with
-// "cap out of range" long before any page ceiling fired). 1 << 50 is
-// float64-exact, so it survives the JSON meta.count parse unchanged.
+// TestLoadVersionsListCachedExcessiveTotalFailsUpFront pins that a page-0
+// meta.count past the ceiling fails after that one request, before a hostile
+// total can size an allocation; 1<<50 survives the JSON parse exactly.
 func TestLoadVersionsListCachedExcessiveTotalFailsUpFront(t *testing.T) {
 	t.Parallel()
 	srv, served := newDeclaredCountServer(t, pagedVersions(versionLimit), 1<<50)
@@ -191,13 +169,9 @@ func TestLoadVersionsListCachedExcessiveTotalFailsUpFront(t *testing.T) {
 	}
 }
 
-// TestLoadVersionsListCachedToleratesLyingTotal covers the walk against a
-// server whose declared total promises five pages it does not have: the
-// concurrently prefetched schedule covers all five offsets, and the walk
-// must still end the list at the first short or empty page - discarding
-// whatever the over-scheduled offsets returned - collecting exactly the
-// offset-ordered sequence a strictly sequential walk of the same responses
-// yields, with no error.
+// TestLoadVersionsListCachedToleratesLyingTotal pins that a meta.count
+// promising pages the server lacks still ends the list at the first short or
+// empty page, discarding the over-scheduled prefetches, with no error.
 func TestLoadVersionsListCachedToleratesLyingTotal(t *testing.T) {
 	t.Parallel()
 	const declared = 5 * versionLimit
@@ -230,11 +204,9 @@ func TestLoadVersionsListCachedToleratesLyingTotal(t *testing.T) {
 	}
 }
 
-// TestLoadVersionsListCachedZeroTotalFallsBackSequential asserts a server
-// that never reports a total (meta.count 0) is paged sequentially, on
-// demand: nothing is scheduled ahead, each page is requested only because
-// the one before it was full, and the walk still ends on the short page
-// with the complete list - three requests for 250 entries, never a fourth.
+// TestLoadVersionsListCachedZeroTotalFallsBackSequential pins that a server
+// reporting no total (meta.count 0) is paged on demand and ends on the short
+// page: three requests for 250 entries, never a fourth.
 func TestLoadVersionsListCachedZeroTotalFallsBackSequential(t *testing.T) {
 	t.Parallel()
 	const actual = 2*versionLimit + 50

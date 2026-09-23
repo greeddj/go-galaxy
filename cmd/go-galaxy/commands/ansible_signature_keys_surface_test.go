@@ -1,13 +1,8 @@
 package commands
 
-// This file pins the ansible.cfg half of the signature surface at the seam an
-// operator actually crosses: a real file on disk, discovered the way discovery
-// discovers one, resolved through the real BuildCollectionConfig with the flag
-// set install really mounts.
-//
-// internal/galaxy/config pins the parser and the warning text; what neither can
-// pin from inside that package is that the parsed names survive the whole
-// config build and land on the Config a command consumes.
+// These tests pin the ansible.cfg half of the signature surface through a real
+// discovered file and the real BuildCollectionConfig with install's flag set:
+// the key names reach the Config, the values never do.
 
 import (
 	"os"
@@ -18,14 +13,9 @@ import (
 	galaxyhelpers "github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// ansibleCfgWithSignatureKeys writes an ansible.cfg carrying all four of
-// ansible's signature keys, each with a value this program must not read, and
-// points $ANSIBLE_CONFIG at it.
-//
-// It runs neutralizeAnsibleDiscovery first and then overrides $ANSIBLE_CONFIG,
-// for the reason ansibleCfgWithServerList already gives: that helper points the
-// variable at a file that does not exist, which is the opposite of what this
-// needs.
+// ansibleCfgWithSignatureKeys writes an ansible.cfg carrying ansible's four
+// signature keys and points $ANSIBLE_CONFIG at it, overriding the nonexistent
+// path neutralizeAnsibleDiscovery sets.
 func ansibleCfgWithSignatureKeys(t *testing.T) string {
 	t.Helper()
 	neutralizeAnsibleDiscovery(t)
@@ -43,25 +33,9 @@ func ansibleCfgWithSignatureKeys(t *testing.T) string {
 	return path
 }
 
-// TestAnsibleSignatureKeysReachTheConfig proves the detection half of the
-// ansible.cfg story is wired: a discovered file carrying the four signature
-// keys leaves their NAMES on the Config a verifying command reads, which is
-// what its one warning is rendered from.
-//
-// The second half of the assertion is the security property, and it is checked
-// through the same real config build rather than against the parser alone: not
-// one of the four VALUES reaches cfg.Signature. The keyring stays empty, the
-// count resolves to the flag default rather than to the file's 0, and the
-// disable switch stays false rather than following the file's "yes" - so a
-// repository that drops an ansible.cfg into a checkout can neither point the
-// keyring somewhere else nor relax the policy nor switch verification off.
-//
-// KILLING MUTATION, run and reverted: the assignment
-// `cfg.AnsibleSignatureKeys = ansibleConfig.Galaxy.SignatureKeys` deleted from
-// applyAnsibleConfig (internal/galaxy/config/config.go), which leaves the
-// parser recording the names and nothing carrying them to the run:
-//
-//	ansible_signature_keys_surface_test.go:75: AnsibleSignatureKeys = [], want the four ansible signature key names
+// TestAnsibleSignatureKeysReachTheConfig pins that a discovered ansible.cfg's
+// four signature key names reach cfg.AnsibleSignatureKeys for the warning,
+// while none of their values reaches cfg.Signature.
 func TestAnsibleSignatureKeysReachTheConfig(t *testing.T) {
 	path := ansibleCfgWithSignatureKeys(t)
 

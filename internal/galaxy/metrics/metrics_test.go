@@ -8,10 +8,8 @@ import (
 	"time"
 )
 
-// mustReadFile reads path and fails the test on error. Centralizing the read
-// keeps each Write test case focused on its own assertion and gives gosec's
-// G304 (potential file inclusion via variable) a single call site to
-// annotate instead of one per test.
+// mustReadFile reads path and fails the test on error, giving gosec's G304 a
+// single call site to annotate.
 func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 	//nolint:gosec // path is built from this test's own t.TempDir fixture, never external input.
@@ -22,12 +20,8 @@ func mustReadFile(t *testing.T, path string) []byte {
 	return data
 }
 
-// TestWriteEmptyPathIsNoOp asserts Write("", ...) is a no-op returning nil so
-// callers can pass cfg.MetricsFile unconditionally. There is nothing further
-// to observe: the empty path is rejected before any filesystem call, and were
-// the guard ever dropped, filepath.Dir("") is "." - the write would land in
-// the process working directory and fail at the rename, which this nil check
-// already catches.
+// TestWriteEmptyPathIsNoOp pins that Write("", ...) returns nil without
+// touching the filesystem, so callers can pass cfg.MetricsFile unconditionally.
 func TestWriteEmptyPathIsNoOp(t *testing.T) {
 	t.Parallel()
 
@@ -71,13 +65,9 @@ func TestWriteProducesReadableReport(t *testing.T) {
 	}
 }
 
-// TestWriteReplacesSymlinkTarget is the operator-facing pin of the original
-// security finding, exercised at the API an operator actually calls: a
-// symlink planted at the metrics path is replaced rather than followed, the
-// victim it pointed at is untouched, and the resulting file is a regular
-// file whose content parses as a Report. This deliberately overlaps the
-// helpers package's own symlink test - the duplication is the point: this
-// test fails if Write ever regresses to os.WriteFile.
+// TestWriteReplacesSymlinkTarget pins that a symlink planted at the metrics
+// path is replaced by a regular report file and its target left untouched, so
+// a Write regressed to os.WriteFile fails here.
 func TestWriteReplacesSymlinkTarget(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

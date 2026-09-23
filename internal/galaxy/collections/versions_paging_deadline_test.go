@@ -1,27 +1,8 @@
 package collections
 
-// TestVersionsPagingSharesOneMetadataBudget covers loadVersionsListCached's
-// loop-level budget: the one place a per-request metadata budget alone is
-// not enough, since the number of pages is chosen by the server (it
-// declares meta.count), not by the operator or a fixed program constant.
-//
-// This test was verified against a real revert of the production change it
-// pins, and this comment quotes the actual observed output:
-//
-//   - Deleting the loop-level budget in loadVersionsListCached (passing ctx
-//     straight through to fetchVersionsPage instead of a dlCtx bounded by
-//     deps.runtime.MetadataDeadline(), and calling fetchVersionsPage's error
-//     straight through instead of through cacheManager.MetadataDeadlineError)
-//     makes every one of the 8 pages complete (each pays only its own
-//     roughly 150ms per-request budget, well under the 2-minute default, and
-//     nothing else bounds the loop as a whole), so loadVersionsListCached
-//     SUCCEEDS instead of failing, observed as:
-//     "unexpected error: <nil>, want errors.Is ErrMetadataFetchDeadline"
-//     Margin: at 150ms per page against the 500ms loop budget used here,
-//     each page has roughly 3.2x headroom before the loop budget would
-//     itself become the reason a healthy server's pages start failing - a
-//     future edit narrowing that margin should re-check this test still
-//     reliably ends before all 8 pages complete.
+// These tests pin loadVersionsListCached's loop-level metadata budget: the
+// server picks the page count through meta.count, so a per-request budget
+// alone would not bound the paging loop.
 
 import (
 	"context"
@@ -51,12 +32,9 @@ const versionsPagingDeadlineTotalPages = 8
 // deps.runtime.MetadataDeadline() budget every test in this file uses.
 const versionsPagingDeadlineBudget = 500 * time.Millisecond
 
-// newVersionsPagingDelayServer starts an httptest server that sleeps delay
-// before answering every request with one full page of versionLimit
-// version entries and a meta.count forcing
-// versionsPagingDeadlineTotalPages total pages. served counts every request
-// the handler receives, incremented before the delay so it reflects an
-// in-flight request even if the client aborts before the response arrives.
+// newVersionsPagingDelayServer serves a full page after delay, declaring
+// versionsPagingDeadlineTotalPages pages; served is counted before the
+// delay so a request the client aborts still counts.
 func newVersionsPagingDelayServer(t *testing.T, delay time.Duration) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	var served atomic.Int32
@@ -84,12 +62,9 @@ func newVersionsPagingDelayServer(t *testing.T, delay time.Duration) (*httptest.
 	return srv, &served
 }
 
-// TestVersionsPagingSharesOneMetadataBudget asserts a server that keeps
-// answering every page (never a short page, never reaching meta.count) but
-// takes 150ms per response is caught by loadVersionsListCached's own
-// loop-level budget: the call fails with helpers.ErrMetadataFetchDeadline
-// having served fewer than versionsPagingDeadlineTotalPages pages, rather
-// than completing all of them under a per-request-only budget.
+// TestVersionsPagingSharesOneMetadataBudget pins that a server answering
+// every full page in 150ms trips the loop-level budget with
+// helpers.ErrMetadataFetchDeadline before all pages are served.
 func TestVersionsPagingSharesOneMetadataBudget(t *testing.T) {
 	t.Parallel()
 	const pageDelay = 150 * time.Millisecond
@@ -111,11 +86,9 @@ func TestVersionsPagingSharesOneMetadataBudget(t *testing.T) {
 	}
 }
 
-// TestVersionsPagingDeadlineFixturePositiveControl is the positive control
-// for TestVersionsPagingSharesOneMetadataBudget: the identical fixture with
-// no per-page delay completes every page under the same loop-level budget,
-// proving that budget is not itself what would fail an ordinary paging run
-// against this fixture.
+// TestVersionsPagingDeadlineFixturePositiveControl pins that the same
+// fixture with no delay completes every page under the same budget, so the
+// budget alone does not fail TestVersionsPagingSharesOneMetadataBudget.
 func TestVersionsPagingDeadlineFixturePositiveControl(t *testing.T) {
 	t.Parallel()
 	srv, served := newVersionsPagingDelayServer(t, 0)

@@ -21,21 +21,14 @@ func queryLatestRoleVersions(ctx context.Context, deps collectionDeps, roles []l
 	return out
 }
 
-// lookupRoleOutdated reports one locked role's drift. A git role is judged
-// as a git collection is (lookupGitOutdated): the remote is asked what the
-// ref points at now. A Galaxy role is judged the way ansible-galaxy would
-// pick it today: the v1 API's highest tag against the locked version, by
-// name rather than by semver order, since role tags are not held to semver;
-// a role the server lists no tags for is judged by its default branch's
-// commit. The entry's name carries the role marker so a role and a
-// collection sharing a name stay apart in the report.
+// lookupRoleOutdated reports one locked role's drift: a git role by commit,
+// a Galaxy role by the v1 API's highest tag compared by name (role tags are
+// not semver), or by its default branch's commit when it lists no tags.
 func lookupRoleOutdated(ctx context.Context, deps collectionDeps, e lockfile.RoleEntry) outdatedEntry {
 	display := "role " + e.Name
 	if e.IsURL() {
-		// A url pin is content-addressed: the source has no version feed,
-		// and "the same URL now serves different bytes" is drift --refresh
-		// and --frozen own, not "newer". The verdict the lockfile can give
-		// is the one reported.
+		// A url pin is content-addressed and has no version feed; changed
+		// bytes behind the URL are drift --refresh and --frozen own.
 		return outdatedEntry{Name: display, Locked: e.Version, Latest: e.Version, Newer: false}
 	}
 	if e.IsGit() {

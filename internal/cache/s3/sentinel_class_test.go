@@ -7,9 +7,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// cacheBackendClass names which of the three helpers cache-backend sentinels
-// - or none - a given package-private S3 sentinel is expected to carry, per
-// variables.go's own partition doc.
+// cacheBackendClass names which of the three helpers cache-backend classes,
+// or none, an S3 sentinel is expected to carry.
 type cacheBackendClass int
 
 const (
@@ -19,13 +18,8 @@ const (
 	classBusy
 )
 
-// sentinelClassCases is every sentinel declared in variables.go's var block,
-// listed exhaustively rather than sampled - the same convention
-// cmd/go-galaxy/exitcode/exitcode_test.go's galaxyServerConfigSentinels
-// establishes (see its own doc comment): each one is a hand-classified fact
-// about this package's error vocabulary, and a missed or silently
-// reclassified entry would move a failure's exit code with nothing to catch
-// it.
+// sentinelClassCases pins each listed S3 sentinel to the cache-backend class
+// it must carry, or to none; a reclassified entry would move an exit code.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var sentinelClassCases = []struct {
@@ -57,23 +51,9 @@ var sentinelClassCases = []struct {
 	{name: "errArtifactSHA256Mismatch", err: errArtifactSHA256Mismatch, class: classNone},
 }
 
-// TestSentinelClassPartitionIsExhaustiveAndExclusive walks every sentinel
-// declared in variables.go and asserts it carries exactly the one helpers
-// cache-backend class its row names, matching that class through errors.Is
-// and matching NEITHER of the other two. Without the exclusivity half, a
-// future edit that silently added a second class to some sentinel's wrap -
-// e.g. errS3LockWaitTimeout also picking up
-// helpers.ErrCacheBackendUnavailable - would move that failure's exit code
-// with nothing here to catch it, since cmd/go-galaxy/exitcode's FromError
-// would just silently pick whichever class it happens to check first
-// (network before usage; see variables.go's own doc comment on this
-// invariant).
-//
-// KILLING MUTATION, run and reverted: adding helpers.ErrCacheBackendUnavailable
-// to errS3LockWaitTimeout's wrap makes the "errS3LockWaitTimeout" subtest
-// fail with:
-//
-//	sentinel_class_test.go:87: errors.Is(err, helpers.ErrCacheBackendUnavailable) = true, want false
+// TestSentinelClassPartitionIsExhaustiveAndExclusive pins that each listed
+// sentinel matches its row's class and neither other one, since exitcode's
+// FromError would otherwise pick whichever class it checks first.
 func TestSentinelClassPartitionIsExhaustiveAndExclusive(t *testing.T) {
 	t.Parallel()
 	for _, tt := range sentinelClassCases {

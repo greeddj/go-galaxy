@@ -17,46 +17,27 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
-// MetadataProvider adapts go-galaxy's real Galaxy metadata layer (root
-// metadata, versions paging, per-version dependency fetches, and their
-// shared cache/policy plumbing) to solver.Provider, so Solve can resolve
-// against the live registry the same way the existing resolve.go pipeline
-// does - same candidate URLs, same cache buckets, same offline behavior.
+// MetadataProvider adapts go-galaxy's Galaxy metadata layer to solver.Provider,
+// sharing the install pipeline's candidate URLs, cache buckets and offline
+// behavior. It is not safe for concurrent use.
 type MetadataProvider struct {
 	deps collectionDeps
-	// sources maps a root fqdn to its explicit install source (see
-	// sourceOf): a root without one, and every transitive dependency, is
-	// simply absent from this map, so sourceOf falls through to "" -
-	// unpinned - letting serverCandidates walk the whole configured server
-	// list for it.
+	// sources maps each root fqdn to its explicit install source, "" when it
+	// has none (see sourceOf). A transitive dependency is never a key.
 	sources map[string]string
-	// bindings maps every fqdn this provider has successfully fetched root
-	// metadata for to the server base that answered it (see recordBinding).
-	// It is a plain map with no mutex, deliberately: a single Solve call
-	// drives every MetadataProvider method from one goroutine only, so an
-	// unsynchronized map is sufficient here, unlike apiRootMemo (shared
-	// across the install and prefetch worker pools, which is why that one
-	// needs a mutex and this one does not). solveCollections reads it once
-	// Solve returns, to stamp the same winning server onto each resolved
-	// collection's Source.
+	// bindings maps each fqdn to the server base that answered it, which
+	// becomes its resolved source. No mutex: one Solve drives a provider from
+	// a single goroutine, and prewarm builds a fresh provider per call.
 	bindings map[string]string
-	// pins maps every fqdn a git or url discovery produced this run to what
-	// it found (see mergeExactPins). A pinned fqdn is answered from here and
-	// never from a Galaxy server: its universe is the single version its
-	// galaxy.yml or MANIFEST.json declares, its dependencies are that
-	// document's, and no binding is recorded for it -
-	// solverResultToResolvedGraph takes a pinned fqdn's source from the pin
-	// directly. Read-only after construction.
+	// pins holds every fqdn a git or url discovery produced this run. A pinned
+	// fqdn is answered from its identity document, never from a Galaxy server,
+	// and records no binding. Read-only after construction.
 	pins map[string]exactPin
 }
 
-// exactPin is the provider's one view of a discovery pin, whichever source
-// kind produced it: the locator that is the collection's Source, the exact
-// version and validated dependency map its identity document declares, and
-// the kind-specific halves - a git pin's ref, a url pin's sha256 - each
-// empty on the other kind. It exists so the solver-facing code dispatches on
-// one shape while gitPin and urlPin keep the fields their own discovery
-// phases need.
+// exactPin is the provider's one view of a git or url discovery pin: the
+// locator, exact version and validated dependencies, plus the kind-specific
+// ref (git) or sha256 (url), each empty on the other kind.
 type exactPin struct {
 	deps    map[string]string
 	locator string
@@ -80,19 +61,9 @@ func mergeExactPins(git map[string]gitPin, urls map[string]urlPin) map[string]ex
 	return out
 }
 
-// NewMetadataProvider builds a MetadataProvider sharing cfg/runtime/st with
-// the rest of the install pipeline, so its cache reads and writes land in
-// the same Store buckets loadCollectionMetadata uses -
-// a warm entry written by either path satisfies the other. sources maps a
-// root fqdn to its explicit install source (see sourceOf); passing nil (or
-// an empty map) means every fqdn resolves against cfg.Server.
-//
-// It builds a fresh collectionDeps (a fresh apiRootMemo and
-// unmatchedSourceMemo, scoped to this one provider) rather than reusing a
-// caller's own: a caller that needs its provider to share those memos with
-// the rest of its own pipeline - the solve phase's own provider, sharing
-// deps.apiRoots with resolveCollectionsInternal's prewarm - uses
-// newMetadataProviderWithDeps directly instead.
+// NewMetadataProvider builds a MetadataProvider over a fresh collectionDeps
+// sharing cfg, runtime and st with the install pipeline, so a warm cache
+// entry serves both. A nil sources leaves every fqdn unpinned.
 func NewMetadataProvider(
 	cfg *config.Config,
 	runtime *infra.Infra,
@@ -102,11 +73,9 @@ func NewMetadataProvider(
 	return newMetadataProviderWithDeps(newCollectionDeps(cfg, runtime, st), sources)
 }
 
-// newMetadataProviderWithDeps builds a MetadataProvider over an
-// already-built collectionDeps, so its apiRootMemo and unmatchedSourceMemo -
-// not just its Store - are shared with whatever else deps is threaded
-// through, rather than each provider getting its own scoped-to-nothing-else
-// copy the way NewMetadataProvider's own newCollectionDeps call produces.
+// newMetadataProviderWithDeps builds a MetadataProvider over an existing
+// collectionDeps, sharing its memos and Store with every other user of
+// deps, such as the resolve phase's prewarm.
 func newMetadataProviderWithDeps(deps collectionDeps, sources map[string]string) *MetadataProvider {
 	return &MetadataProvider{
 		deps:     deps,
@@ -116,11 +85,9 @@ func newMetadataProviderWithDeps(deps collectionDeps, sources map[string]string)
 	}
 }
 
-// Highest returns fqdn's registry-reported highest_version, with no
-// constraint checking of its own - the core checks membership itself. An
-// unknown package (translated from a 404/exhausted-candidates root-metadata
-// fetch) or a package whose root metadata carries no highest_version
-// reports ok=false, sending the core to Universe instead.
+// Highest returns fqdn's registry-reported highest_version without checking
+// constraints. An unknown package or an empty highest_version reports
+// ok=false, sending the core to Universe.
 func (p *MetadataProvider) Highest(ctx context.Context, fqdn string) (solver.Version, bool, error) {
 	if v, pinned, err := p.pinnedVersion(fqdn); pinned || err != nil {
 		return v, pinned, err
@@ -144,13 +111,9 @@ func (p *MetadataProvider) Highest(ctx context.Context, fqdn string) (solver.Ver
 	return v, true, nil
 }
 
-// Universe returns every published version of fqdn, deduplicated by
-// original string and sorted into the solver's own descending total order
-// (semver precedence, then original string, both descending) - the sort
-// order Universe's own contract only requires as a defense-in-depth
-// convention, never load-bearing for correctness, but computed here anyway
-// since the core would otherwise re-sort with the exact same comparator. An
-// unknown package returns (nil, nil), matching solver.Provider's contract.
+// Universe returns every published version of fqdn, deduplicated and sorted
+// in the solver's descending total order (see buildSolverUniverse). An
+// unknown package returns (nil, nil), per solver.Provider's contract.
 func (p *MetadataProvider) Universe(ctx context.Context, fqdn string) ([]solver.Version, error) {
 	if v, pinned, err := p.pinnedVersion(fqdn); pinned || err != nil {
 		if err != nil {
@@ -177,15 +140,9 @@ func (p *MetadataProvider) Universe(ctx context.Context, fqdn string) ([]solver.
 	return buildSolverUniverse(raw), nil
 }
 
-// Dependencies returns the validated dependency map of fqdn@v: dependency
-// fqdn mapped to its canonical Constraint. A warm deps-cache entry (written
-// under the helpers.ScopedDepsCacheKey it computes, scoped to whichever
-// server fqdn is bound to - see boundBaseFor) is served without any network
-// access when that server is known with no ambiguity; a miss fetches the
-// version's metadata, validates and caches its dependency map, and returns
-// it. A malformed dependency key aborts with helpers.ErrInvalidDependencyKey;
-// an unparseable constraint aborts wrapped, both as a provider contract
-// violation the core never tries to guess around.
+// Dependencies returns fqdn@v's validated dependency map, served from the
+// deps cache scoped to fqdn's bound server (see boundBaseFor) when warm. A
+// malformed key or constraint aborts as a provider contract violation.
 func (p *MetadataProvider) Dependencies(ctx context.Context, fqdn string, v solver.Version) (map[string]solver.Constraint, error) {
 	if pin, ok := p.pins[fqdn]; ok {
 		if v.Original() != pin.version {
@@ -228,37 +185,9 @@ func (p *MetadataProvider) Dependencies(ctx context.Context, fqdn string, v solv
 	return canonicalizeDependencies(fqdn, raw)
 }
 
-// boundBaseFor returns the server base fqdn's deps-cache key must be scoped
-// to (see ScopedDepsCacheKey), resolving it over the network only when
-// genuinely ambiguous. When col has only one possible server candidate - a
-// pinned col.Source, or a single configured server, both cases
-// serverCandidates already resolves with no network access - that candidate
-// IS the server fqdn will end up bound to, so it is recorded as fqdn's
-// binding and returned directly. This is also what keeps a warm
-// single-server deps-cache hit zero-network: the overwhelming majority of
-// deployments configure exactly one server, so this branch covers them
-// without ever touching resolveRootMetadata.
-//
-// Recording the binding here, rather than leaving it to the fetch below, is
-// what keeps bindings complete for a root the solver settles through its
-// exact-pin fast path: Dependencies returns on its deps-cache hit before
-// ever reaching that fetch, so a warm cache - prewarmRootMetadata's own, or
-// an earlier run's - would otherwise leave such a root unbound and
-// solverResultToResolvedGraph would stamp the first configured server onto
-// a collection pinned to a different one. The write is idempotent: the
-// candidate is a pure function of col.Source and the configured server
-// list, and a walk over a one-entry candidate list can only ever win on
-// that same entry, so this and the fetch below always record the same base.
-//
-// Otherwise (more than one configured server, so which one actually serves
-// fqdn is genuinely undetermined without asking) it prefers whatever server
-// has already answered a prior Highest/Universe/Dependencies call for fqdn
-// this Solve (p.bindings). Failing that - reached only when the solver
-// decides fqdn's version via its exact-pin fast path before ever probing it
-// with Highest or Universe (see the solver's packageIsExactPin), which
-// requirements pinning an exact version trigger routinely - it resolves root
-// metadata now to settle which server actually serves it, recording the
-// binding via recordBinding so every later call for fqdn reuses it.
+// boundBaseFor returns the server base fqdn's deps-cache key is scoped to and
+// records it as fqdn's binding, with no network access for a single candidate
+// server; otherwise a prior binding or a root-metadata fetch settles it.
 func (p *MetadataProvider) boundBaseFor(ctx context.Context, col collection, fqdn string, policy cacheManager.Policy) (string, error) {
 	if candidates := serverCandidates(p.deps, col); len(candidates) == 1 {
 		p.recordBinding(fqdn, candidates[0].base)
@@ -275,35 +204,16 @@ func (p *MetadataProvider) boundBaseFor(ctx context.Context, col collection, fqd
 	return root.base, nil
 }
 
-// sourceOf returns fqdn's install source: its own entry in sources when one
-// was recorded (a root with an explicit source), or "" otherwise - a
-// transitive dependency is never recorded in sources, and a root without an
-// explicit source is recorded with "" too, so both cases fall through to
-// unpinned here. An unpinned fqdn's serverCandidates then walks the whole
-// configured server list rather than being nailed to a single one; there is
-// no source inheritance from a requiring parent to its dependencies.
+// sourceOf returns fqdn's explicit install source, or "" (unpinned) for a
+// root without one and for every transitive dependency: a dependency never
+// inherits its parent's source.
 func (p *MetadataProvider) sourceOf(fqdn string) string {
 	return p.sources[fqdn]
 }
 
-// recordBinding remembers base as the server serving fqdn, so
-// solveCollections can later stamp that same server onto fqdn's resolved
-// collection (see sourceFor). Two things record one: a root-metadata fetch
-// that just succeeded against base, and boundBaseFor settling on base as
-// fqdn's only possible candidate without fetching anything at all.
-//
-// A fetch success records unconditionally, never conditioned on what the
-// caller does with the result afterward: Highest reports known=false when
-// the fetch succeeded but HighestVersion.Version is empty, and a package
-// later decided via Universe must not be left unbound just because that
-// earlier Highest call rejected it for an unrelated reason.
-//
-// A later write simply replaces an earlier one, which is what makes both
-// callers safe to repeat: they can only ever disagree if a candidate walk
-// ended somewhere other than the sole candidate it started with, which a
-// one-entry candidate list cannot do. base == "" (never expected from
-// either caller) is a no-op rather than poisoning the map with an empty
-// winner.
+// recordBinding remembers base as the server serving fqdn, for sourceFor to
+// stamp onto the resolved collection. Callers record every root-metadata fetch
+// success, whatever they then do with the answer; an empty base is ignored.
 func (p *MetadataProvider) recordBinding(fqdn, base string) {
 	if base == "" {
 		return
@@ -311,13 +221,9 @@ func (p *MetadataProvider) recordBinding(fqdn, base string) {
 	p.bindings[fqdn] = base
 }
 
-// resolveRoot loads fqdn's root metadata (built from ns/name, with fqdn's
-// own source per sourceOf), translating a 404 or an exhausted-candidate-list
-// failure into known=false rather than an error, so Highest/Universe can
-// both report "unknown package" instead of aborting the solve. Any other
-// failure (a genuine network/offline error, a non-404 HTTP status, or a
-// classified auth/availability abort) propagates unchanged. A successful
-// fetch is recorded via recordBinding before it is ever inspected further.
+// resolveRoot loads fqdn's root metadata and records its binding, turning an
+// unknown package into known=false so Highest and Universe report it to the
+// core. Any other failure, auth and availability included, aborts.
 func (p *MetadataProvider) resolveRoot(
 	ctx context.Context,
 	fqdn, ns, name string,
@@ -335,16 +241,9 @@ func (p *MetadataProvider) resolveRoot(
 	return root.meta, root.versionsURL, true, nil
 }
 
-// isUnknownPackageError reports whether err represents "this package does
-// not exist in the registry" rather than a genuine failure. Every fqdn -
-// root or transitive dependency, with or without an explicit source - now
-// falls through loadRootMetadataCached's full v3/v2/bare-API candidate list
-// on a 404 instead of failing on the first one, so the common outcome for an
-// unknown package is that every candidate 404s and loadRootMetadataCached
-// returns the last of those 404s as-is (a raw *cacheManager.HTTPStatusError).
-// helpers.ErrLoadMetadataFailed is only reached in the narrower case of an
-// empty candidate list (no server configured and no explicit source), so
-// both forms must be recognized here.
+// isUnknownPackageError reports whether err means the package does not
+// exist: the last 404 of an all-404 candidate walk, or ErrLoadMetadataFailed
+// from an empty candidate list. Anything else must abort the solve.
 func isUnknownPackageError(err error) bool {
 	if errors.Is(err, helpers.ErrLoadMetadataFailed) {
 		return true
@@ -353,11 +252,9 @@ func isUnknownPackageError(err error) bool {
 	return ok && statusErr.Code == http.StatusNotFound
 }
 
-// splitFQDN validates fqdn as a "namespace.name" fully qualified collection
-// name, wrapping helpers.ErrInvalidDependencyKey - the same sentinel
-// parseDependencies uses - since a malformed key reaching this provider,
-// whether from a root requirement or a dependency map entry, is the same
-// class of provider-contract violation.
+// splitFQDN validates fqdn as "namespace.name", wrapping
+// helpers.ErrInvalidDependencyKey like parseDependencies, since a malformed
+// key here is the same provider contract violation.
 func splitFQDN(fqdn string) (string, string, error) {
 	ns, name, ok := helpers.SplitFQDN(fqdn)
 	if !ok {
@@ -366,12 +263,9 @@ func splitFQDN(fqdn string) (string, string, error) {
 	return ns, name, nil
 }
 
-// canonicalizeDependencies normalizes and validates every constraint in raw,
-// returning a fresh map keyed identically. A constraint that normalizes to
-// the empty string is left unconstrained; any other normalized form must
-// parse via Masterminds/semver, or the whole call fails - a malformed
-// constraint is a provider contract violation surfaced from here, not
-// guessed at by the core.
+// canonicalizeDependencies normalizes every constraint in raw into a fresh
+// map. An empty normalized form is unconstrained; any other must parse via
+// Masterminds/semver, or the call fails as a contract violation.
 func canonicalizeDependencies(fqdn string, raw map[string]string) (map[string]solver.Constraint, error) {
 	out := make(map[string]solver.Constraint, len(raw))
 	for dep, rawConstraint := range raw {
@@ -394,15 +288,9 @@ type rankedVersion struct {
 	original solver.Version
 }
 
-// buildSolverUniverse parses raw into solver.Versions, dropping any string
-// that fails to parse, deduplicating by original string, and sorting the
-// result descending by the solver's own total order: semver precedence
-// descending, tied-broken by the original string descending (byte-wise).
-// This total order matters only as a defense-in-depth convention (the core
-// re-sorts regardless), but is cheap to get right here directly rather than
-// reusing buildCandidates' single-level GreaterThan, which is not a total
-// order for equal-precedence strings (e.g. "1.0.0" vs "1.0.0+build") and
-// would make this provider's own output non-deterministic.
+// buildSolverUniverse parses raw into solver.Versions, dropping unparseable
+// and duplicate strings, sorted by semver precedence then original string,
+// both descending: a total order even for "1.0.0" and "1.0.0+build".
 func buildSolverUniverse(raw []string) []solver.Version {
 	seen := make(map[string]bool, len(raw))
 	ranked := make([]rankedVersion, 0, len(raw))
@@ -449,11 +337,8 @@ func compareRankedVersionsDescending(a, b rankedVersion) int {
 	}
 }
 
-// noDepsProvider wraps a solver.Provider so every package resolves as if it
-// declared no dependencies, for a --no-deps run: Highest and Universe
-// delegate unchanged (a package's own version candidates are unaffected),
-// but Dependencies always reports an empty map, so the solve never adds a
-// single dependency edge.
+// noDepsProvider wraps a solver.Provider for a --no-deps run: Highest and
+// Universe delegate unchanged, while Dependencies always reports none.
 type noDepsProvider struct {
 	solver.Provider
 }

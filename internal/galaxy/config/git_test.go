@@ -194,10 +194,9 @@ func assertGitCredentials(t *testing.T, got, want []GitCredential) {
 	}
 }
 
-// TestLoadGitCredentialsNone pins that an absent or blank list is not a
-// configuration at all: no error, no entries, and no warning, even when a
-// stray GO_GALAXY_GIT_X_* variable sits in the environment for an id that
-// was never declared.
+// TestLoadGitCredentialsNone pins that an absent or blank list configures
+// nothing: no error, no entries and no warning, even beside a stray
+// GO_GALAXY_GIT_X_* variable for an id never declared.
 func TestLoadGitCredentialsNone(t *testing.T) {
 	for name, env := range map[string]map[string]string{
 		"unset":                    {"GO_GALAXY_GIT_STRAY_URL": "https://x.example"},
@@ -317,11 +316,9 @@ func gitRefusedCases() []gitRefusedCase {
 	}
 }
 
-// TestLoadGitCredentialsRefused drives every refusal. Each row pins the
-// sentinel, one phrase that names the offending variable, and - on every
-// row, whatever it is about - that the text carries neither the password,
-// the key nor the passphrase, since the whole point of naming variables is
-// that the error is safe to print.
+// TestLoadGitCredentialsRefused drives every refusal, pinning its sentinel, a
+// phrase naming the offending variable, and that the text carries no
+// password, key or passphrase, so the error is safe to print.
 func TestLoadGitCredentialsRefused(t *testing.T) {
 	for _, tc := range gitRefusedCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -356,10 +353,9 @@ func mustNotContainSecrets(t *testing.T, text string) {
 	}
 }
 
-// TestLoadGitCredentialsUnknownVariableWarns pins the unknown-variable
-// warning: one per variable, for declared ids only, sorted, and never for a
-// variable that is a known key of another declared id whose prefix happens
-// to extend this one's.
+// TestLoadGitCredentialsUnknownVariableWarns pins one sorted warning per
+// unknown variable of a declared id, and none for a known key of another
+// declared id whose prefix extends this one's.
 func TestLoadGitCredentialsUnknownVariableWarns(t *testing.T) {
 	setGitEnv(t, map[string]string{
 		"GO_GALAXY_GIT_CREDENTIALS":    "a,a_b",
@@ -399,10 +395,9 @@ func gitRedactionFixture() GitCredential {
 	}
 }
 
-// TestGitCredentialRedactsSecrets is TestS3CacheConfigRedactsSecrets for
-// the git shape: every rendering path a Secret closes, against the whole
-// struct. The fixture carries all three secrets at once, which no loaded
-// credential does, so a rendering that leaks any one of them fails.
+// TestGitCredentialRedactsSecrets is TestS3CacheConfigRedactsSecrets for the
+// git shape; its fixture carries all three secrets at once, which no loaded
+// credential does, so a rendering leaking any one of them fails.
 func TestGitCredentialRedactsSecrets(t *testing.T) {
 	t.Parallel()
 	cred := gitRedactionFixture()

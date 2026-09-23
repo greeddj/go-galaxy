@@ -20,22 +20,15 @@ const (
 	protocolSSH   = "ssh"
 )
 
-// hardenOnce guards the one-time edit of go-git's process-global state. The
-// registry and the ssh config reader are globals by go-git's design, so the
-// guard has to be one too; every Fetcher runs it from its constructor and the
-// edit is idempotent.
+// hardenOnce guards the one-time, idempotent edit of go-git's process-global
+// transport registry and ssh config reader; every Fetcher constructor runs it.
 //
 //nolint:gochecknoglobals // go-git's transport registry is process-global; this Once is its single editor
 var hardenOnce sync.Once
 
-// harden removes the two transports this tool never uses from go-git's
-// registry and stops go-git from consulting ~/.ssh/config. The file transport
-// execs git-upload-pack, which would break the no-external-process property
-// for any URL that reached it; the git transport is unauthenticated plaintext
-// TCP. Both are already refused by gitsource.ParseURL, and this is the second
-// lock on the same door. The ssh config rewrite is switched off because a
-// Hostname or Port entry in a developer's file would silently redirect which
-// host a run connects to and verifies the host key of.
+// harden deregisters go-git's file transport (it execs git-upload-pack) and git
+// transport (plaintext TCP) behind gitsource.ParseURL's refusal, and stops
+// ~/.ssh/config from redirecting which host a run dials and verifies.
 func harden() {
 	hardenOnce.Do(func() {
 		client.InstallProtocol(protocolFile, nil)
@@ -44,11 +37,9 @@ func harden() {
 	})
 }
 
-// transportFor picks the transport for an endpoint. http and https run on
-// this Fetcher's own client, wrapped by go-git's smart-HTTP transport; ssh
-// runs on go-git's default ssh transport, whose auth and host-key policy are
-// set per session by authFor. Anything else is refused, which cannot happen
-// after gitsource.ParseURL but is checked rather than assumed.
+// transportFor picks an endpoint's transport: http(s) on this Fetcher's own
+// client, never go-git's global registry, and ssh on go-git's default client
+// with per-session auth from authFor; any other protocol is refused.
 func (f *Fetcher) transportFor(ep *transport.Endpoint) (transport.Transport, error) {
 	switch ep.Protocol {
 	case protocolHTTP, protocolHTTPS:

@@ -24,10 +24,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// signingKeyCache memoizes the SigV4 signing key for the current UTC date.
-// Secret and region are immutable for the client's lifetime, so date is the
-// only cache key; a plain mutex protects the string compare and the slice
-// swap, both cheap enough that an RWMutex would add overhead without benefit.
+// signingKeyCache memoizes the SigV4 signing key for the current UTC date;
+// secret and region are fixed for the client's lifetime, so the date is the
+// only cache key.
 type signingKeyCache struct {
 	date string
 	key  []byte
@@ -68,81 +67,21 @@ func newClient(cfg config.S3CacheConfig, httpClient *http.Client) (*Client, erro
 	if parsed.Host == "" {
 		return nil, fmt.Errorf("%w: %s", errS3InvalidEndpoint, endpoint)
 	}
-	// cfg.Endpoint is trimmed of a trailing "/" below, but that trim never
-	// touches the host or scheme components, so parsed.Host/parsed.Scheme
-	// here are exactly what requestURL would have derived from the trimmed
-	// cfg.Endpoint on every request - safe to cache once and reuse.
+	// The trailing-slash trim leaves host and scheme untouched, so the parsed
+	// values are safe to cache once for requestURL.
 	cfg.Endpoint = strings.TrimRight(endpoint, "/")
 
-	// This client gets its own private copy of httpClient, with
-	// CheckRedirect set to refuseRedirect (see that function's doc comment
-	// for why every redirect is refused, not just a cross-host one), rather
-	// than a mutation of httpClient in place. httpClient is the same
-	// *http.Client internal/galaxy/fetch builds and internal/cache.New
-	// threads through as runtime.HTTP for Galaxy metadata fetches and
-	// artifact downloads too - and that client carries a CheckRedirect of its
-	// own, internal/galaxy/fetch's hook, which FOLLOWS a redirect while
-	// deleting the Referer net/http composed for it and re-imposing the hop
-	// ceiling. That it follows one at all is load-bearing there:
-	// internal/galaxy/fetch/client_test.go's
-	// TestNew_RedirectFromInsecureOriginToSecureOriginUsesSecureTransport and
-	// auth_test.go's TestAuthTransport_RoundTrip_CrossOriginRedirectDropsToken
-	// both drive a real redirect through that exact client and assert on the
-	// outcome. Overwriting httpClient.CheckRedirect here would replace that
-	// hook and silently disable redirects for those callers as a side effect
-	// of constructing an S3 client, which is not this function's business to
-	// decide. The copy is a shallow struct copy, so Transport (and Jar, if
-	// any) stay shared with httpClient - the connection pool is unaffected -
-	// only the two http.Client values' CheckRedirect fields diverge.
+	// Refuse redirects on a private shallow copy: httpClient is the shared
+	// Galaxy client, whose own CheckRedirect must keep following redirects,
+	// and the copy still shares its Transport and connection pool.
 	redirectless := *httpClient
 	redirectless.CheckRedirect = refuseRedirect
 	return &Client{cfg: cfg, client: &redirectless, endpointHost: parsed.Host, endpointScheme: parsed.Scheme}, nil
 }
 
-// refuseRedirect is the redirectless http.Client copy's CheckRedirect hook:
-// it refuses every redirect the S3 endpoint answers with, unconditionally,
-// rather than allowing same-origin or same-host-scheme-upgrade hops through.
-// SigV4 signs the Host header and the canonical URI, so a redirect to a
-// different path breaks the signature, and a redirect to a different host
-// breaks it further by losing the Authorization header - which net/http
-// strips only for a destination that is neither the same hostname nor a
-// subdomain of it, comparing hostnames alone, so neither a different port
-// nor a different scheme causes a strip. Such a hop cannot produce a
-// verifiable request in any shape this client emits; following it only
-// trades a legible "redirected to <origin>" for an opaque
-// "403 SignatureDoesNotMatch".
-//
-// What following a redirect adds, beyond that, is exposure. net/http strips
-// only Authorization, Www-Authenticate, Cookie, Cookie2, and the two Proxy-
-// headers, so every X-Amz-* header this client sets - X-Amz-Security-Token,
-// X-Amz-Content-Sha256, X-Amz-Date - travels to the target, which is the one
-// party that did not already see the original request. On 307 and 308 the
-// body is replayed too whenever GetBody is set, which it is for every
-// bytes.Reader body here (the gzipped snapshot, the project registry, the
-// lock object). And because the hostname comparison ignores the scheme, an
-// https-to-http hop would carry the whole signed header set in cleartext,
-// where it is replayable rather than merely observable.
-//
-// A same-host scheme upgrade is refused too, deliberately: it is the one hop
-// that could in principle verify (SigV4 does not sign the scheme), so
-// refusing it does cost a working configuration - an http:// endpoint whose
-// front redirects to https:// on the same host and path. Papering over that
-// endpoint is still worse than surfacing it, because the request that
-// triggered the redirect already put this client's credentials on the wire
-// in the clear before this hook ever runs: its SigV4 Authorization header
-// always, and X-Amz-Security-Token whenever a session token is configured.
-//
-// Who can emit a redirect is a predicate, not a list: any party that already
-// sees this request in the clear - the configured endpoint itself, or any
-// intermediate the client accepts a certificate from, which on a plaintext
-// endpoint includes an environment-configured HTTP proxy and any on-path
-// attacker.
-//
-// req is the pending request for the redirect target, not the request that
-// triggered it; req.Response is the response that caused this redirect and
-// is populated only during a client redirect, so it is nil-checked before
-// use. via (the redirect chain so far) is unused: refusing on the first hop
-// makes a chain impossible.
+// refuseRedirect refuses every redirect, a same-host scheme upgrade included:
+// SigV4 signs Host and path, and a followed hop would carry the X-Amz-*
+// headers, session token included, and a replayed body to a new party.
 func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	status := "redirect"
 	if req.Response != nil {
@@ -152,117 +91,23 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 		errS3RedirectRefused, status, helpers.Origin(req.URL))
 }
 
-// do delegates to c.client.Do and normalizes a transport-level failure into
-// helpers.ErrCacheBackendUnavailable, so a dead bucket is distinguishable
-// from the caller's own configuration mistakes and from a request that
-// merely returned a non-2xx status (each idempotent verb's own status
-// handling, e.g. s3StatusError, already carries the class that applies to
-// its status).
-//
-// The exclusion below asks exactly one question - did whoever asked for this
-// work stop wanting it - by checking req.Context().Err(), not the shape of
-// err. req.Context() is the caller's own context: newRequest builds req with
-// it (http.NewRequestWithContext below) and nothing between there and here
-// re-points it - watchdogTransport wraps every request in its own derived
-// context but calls its base RoundTripper with req.Clone(wctx), leaving the
-// req object held in this function untouched, and authTransport /
-// tlsDispatchTransport dispatch purely by request origin without touching
-// the context at all. This is the same discriminator
-// internal/galaxy/cache's deadlineError (its parent.Err() != nil check) and
-// internal/galaxy/collections' artifactDeadlineError already use for the
-// identical question on their own surfaces, not a new pattern introduced
-// here.
-//
-// It deliberately does not test the shape of err instead (e.g.
-// errors.Is(err, context.DeadlineExceeded)). Measured on go1.26.5 with this
-// project's transport settings, both a net.Dialer timeout
-// (helpers.FetchDialContextTimeout) and http.Transport's own
-// ResponseHeaderTimeout satisfy errors.Is(err, context.DeadlineExceeded)
-// while the caller's own context is still live, so an error-shape test would
-// silently exclude the two commonest outage shapes from ever reaching the
-// sentinel: a black-holed endpoint (the dial never completes) and one that
-// accepts a connection and then never answers (headers never arrive). A
-// future reader must be able to re-derive that defect from this comment
-// without re-measuring it, which is why both shapes are named here. Do not
-// reintroduce errors.Is(err, context.Canceled) or
-// errors.Is(err, context.DeadlineExceeded) as a second, "for symmetry" or
-// belt-and-suspenders check: such an error already classifies ExitInterrupt
-// in exitcode.FromError regardless of what this function returns, since that
-// check runs first, so the check buys nothing - and leaving any error-shape
-// test in place is exactly what would silently restore this exclusion.
-//
-// When a state-object or artifact budget is in force, the context that
-// budget's own context.WithTimeout built IS req.Context() by the time this
-// method runs - every call site in this file threads its ctx parameter
-// straight into newRequest, and callers higher up construct that ctx from
-// the relevant budget (see internal/galaxy/cache's stateDeadlineBackend and
-// internal/galaxy/collections' downloadCollectionToCache/fetchArtifact). So a
-// budget expiry returns the raw context-carrying error here, unwrapped, and
-// internal/galaxy/cache's deadlineError / internal/galaxy/collections'
-// artifactDeadlineError normalize it into their own sentinel by testing
-// errors.Is against that same raw error - true by construction, not by
-// coincidence of how the standard library happens to shape a timeout error.
-//
-// helpers.ErrCacheBackendUnavailable means the backend did not answer for a
-// reason that is not this program's own doing; no consumer of that sentinel
-// has to reason about an error tree that also carries a context signal.
-//
-// The predicate is not what decides the exit code: cmd/go-galaxy/exitcode's
-// isTransportError matches both context.DeadlineExceeded and
-// helpers.ErrCacheBackendUnavailable into the same ExitNetwork class, so a
-// dial timeout or a ResponseHeaderTimeout classifies the same way whichever
-// of the two it carries. What it buys is message accuracy - the sentinel
-// means what it says for every transport failure with a live caller context,
-// not only a connect refusal - and defense in depth for a future consumer
-// that distinguishes the two classes.
-//
-// The funnel's boundary: only a failure c.client.Do itself returns is
-// normalized here. A mid-stream body-read failure - Artifacts'
-// downloadToFile, or readObject's io.ReadAll after a 200 response - happens
-// after do has already returned successfully and is never labeled by this
-// method.
-//
-// One race is resolved deliberately, not by accident: if the caller cancels
-// in the same instant a genuine transport error arrives, req's own context
-// already carries that cancellation by the time this check runs, so the raw
-// error returns unlabeled rather than as helpers.ErrCacheBackendUnavailable -
-// the caller's own decision to stop wins over labeling the failure as the
-// backend's fault.
-//
-// A redirect refusal (errS3RedirectRefused, raised by c.client's
-// CheckRedirect hook - see refuseRedirect) gets an arm of its own, and what
-// matters about its position is only that it precedes the wrap below; its
-// order relative to the context exclusion above is not observable, since
-// both arms return the same error unwrapped. Without the arm the refusal
-// would fall through to the wrap and pick up
-// helpers.ErrCacheBackendUnavailable on top of the
-// helpers.ErrCacheBackendUnusable errS3RedirectRefused already carries - two
-// classes on one error tree, which this package's own partition rule (see
-// variables.go) forbids - and s3Retryable would then retry it as an ordinary
-// transport failure, spending the whole retry budget re-triggering the same
-// refusal instead of returning it once.
-//
-// c.client.Do returns a non-nil *http.Response alongside a CheckRedirect
-// error and this arm discards it, which leaks nothing: net/http has already
-// closed that body before returning, as http.Client.CheckRedirect's own
-// godoc states.
+// do sends req and wraps a transport failure in errS3TransportFailed unless the
+// caller's own context ended. It tests req.Context().Err(), never the error's
+// shape: dial and response-header timeouts also match DeadlineExceeded.
 func (c *Client) do(req *http.Request) (*http.Response, error) {
 	// #nosec G704 -- req's own Host header is always this Client's configured
-	// S3 endpoint: requestURL builds it from c.cfg.Endpoint/c.cfg.Bucket in
-	// path-style mode, or from c.endpointHost/c.endpointScheme in virtual-host
-	// mode - never from a remote value. Only the object key path segment
-	// varies, which is not an SSRF vector since req's own destination host is
-	// fixed by configuration; c.client's CheckRedirect (refuseRedirect, set
-	// once in newClient on this client's own private copy) refuses every
-	// redirect the endpoint answers with, so a later hop can never move this
-	// request's destination host away from what this guard bounds either.
+	// S3 endpoint, built by requestURL and never from a remote value, and
+	// refuseRedirect keeps any hop from moving it.
 	resp, err := c.client.Do(req)
 	if err == nil {
 		return resp, nil
 	}
+	// The refusal already carries ErrCacheBackendUnusable; wrapping it would
+	// add a second class and make s3Retryable retry it.
 	if errors.Is(err, errS3RedirectRefused) {
 		return nil, err
 	}
+	// A cancellation racing a transport error wins over blaming the backend.
 	if req.Context().Err() != nil {
 		return nil, err
 	}
@@ -277,12 +122,9 @@ type s3ErrorResponse struct {
 	Message string `xml:"Message"`
 }
 
-// s3StatusError builds an error wrapping sentinel that folds in the response
-// body's S3 error code and message when one is present, falling back to the
-// bare HTTP status line when the body is empty, is not XML, or lacks a Code
-// element. Reading or parsing the body never fails this call outright - a
-// malformed or truncated error body must not hide the original failure - and
-// the caller remains responsible for closing resp.Body afterward.
+// s3StatusError wraps sentinel with the status line and, when the body is an
+// S3 <Error> document, its Code and Message; an empty or malformed body falls
+// back to the status alone. The caller still closes resp.Body.
 func s3StatusError(sentinel error, resp *http.Response) error {
 	data, err := io.ReadAll(io.LimitReader(resp.Body, s3ErrorBodyLimit))
 	if err != nil {
@@ -295,13 +137,9 @@ func s3StatusError(sentinel error, resp *http.Response) error {
 	return fmt.Errorf("%w: %s (%s: %s)", sentinel, resp.Status, parsed.Code, parsed.Message)
 }
 
-// getObject performs a GET request for the object key, retrying a
-// transient failure (a retryable HTTP status or a stalled body read) up to
-// s3RetryPolicy's bound. Each attempt builds a fresh request via newRequest
-// so its X-Amz-Date and signature are never stale by the time a retry
-// fires; a failed attempt's response body is closed before the next one, and
-// only the eventual successful response is returned open for the caller to
-// read and close.
+// getObject GETs key, retrying a transient failure with a freshly signed
+// request per attempt; only the successful response is returned open, for the
+// caller to read and close.
 func (c *Client) getObject(ctx context.Context, key string) (*http.Response, error) {
 	var success *http.Response
 	err := helpers.Retry(ctx, s3RetryPolicy(), func() error {
@@ -331,10 +169,8 @@ func (c *Client) getObject(ctx context.Context, key string) (*http.Response, err
 	return success, nil
 }
 
-// headObject performs a HEAD request for the object key, retrying a
-// transient failure like getObject. HEAD responses never carry a body
-// (net/http elides it even if a handler writes one), so the failure here
-// stays status-only rather than going through s3StatusError.
+// headObject HEADs key, retrying like getObject; a HEAD response has no body,
+// so its failure stays status-only rather than going through s3StatusError.
 func (c *Client) headObject(ctx context.Context, key string) (http.Header, error) {
 	var headers http.Header
 	err := helpers.Retry(ctx, s3RetryPolicy(), func() error {
@@ -364,16 +200,9 @@ func (c *Client) headObject(ctx context.Context, key string) (http.Header, error
 	return headers, nil
 }
 
-// putCondition is the conditional header a write carries, and the two forms
-// are mutually exclusive in practice rather than by construction: a
-// create-if-absent write (ifNoneMatch) asserts the object is not there, while
-// a compare-and-swap write (ifMatch, an ETag) asserts it is there and is
-// still exactly the version the caller last read. The zero value is an
-// unconditional overwrite.
-//
-// The type exists rather than a second bool parameter because the retry rule
-// below turns on "is this write conditional at all", which a caller must not
-// be able to get wrong by passing the two flags independently.
+// putCondition is a write's precondition: ifNoneMatch for create-if-absent,
+// ifMatch (an ETag) for compare-and-swap, the zero value for an overwrite. A
+// type rather than two flags, so no caller misjudges whether a write may retry.
 type putCondition struct {
 	ifMatch     string
 	ifNoneMatch bool
@@ -385,11 +214,9 @@ func (c putCondition) isConditional() bool {
 	return c.ifNoneMatch || c.ifMatch != ""
 }
 
-// putObjectAttrs groups the attributes one PUT carries alongside its body:
-// the Content-Type and Content-Encoding headers, the X-Amz-Meta-* user
-// metadata, and the payload's precomputed sha256 hex. The zero value carries
-// none of them - an empty string sets no header, nil meta writes no user
-// metadata, and an empty payloadHash makes putObject hash the body itself.
+// putObjectAttrs holds a PUT's Content-Type, Content-Encoding, X-Amz-Meta-*
+// metadata and precomputed sha256 hex; a zero field sets nothing, and an empty
+// payloadHash makes putObject hash the body itself.
 type putObjectAttrs struct {
 	meta            map[string]string
 	contentType     string
@@ -397,20 +224,9 @@ type putObjectAttrs struct {
 	payloadHash     string
 }
 
-// putObject uploads an object with optional metadata. A conditional PUT -
-// create-if-absent or compare-and-swap alike - is single-shot and never
-// retried, deliberately including a transport failure that never produced a
-// response: such a failure is indistinguishable from a lost success (the PUT
-// may already have landed on the remote before the response was lost), so
-// retrying it would observe 412 (the object it just wrote now exists, or no
-// longer carries the ETag it swapped against) and misreport its own success
-// as contention, which the distributed lock's acquireLock loop cannot
-// distinguish from a live holder - see reclaimIfExpired/tryAcquireOnce, whose
-// own loop is the sole retrier of conditional PUTs, transport failures
-// included. That ambiguity is unchanged by compare-and-swap: a CAS write
-// narrows who may win, not whether a lost response can be read two ways. An
-// unconditional overwrite is safe to retry: each attempt reseeks body to its
-// start and rebuilds the request (fresh signature) before resending.
+// putObject uploads an object. A conditional PUT is single-shot even on a
+// transport failure: it may have landed, and a retry would see 412 and misread
+// its own success as contention, so only the lock loop retries one.
 func (c *Client) putObject(
 	ctx context.Context,
 	key string,
@@ -480,11 +296,8 @@ func (c *Client) deleteObject(ctx context.Context, key string) error {
 // Delete (DeleteObjects) accepts in a single request.
 const deleteObjectsMaxKeys = 1000
 
-// deleteAllUnderPrefix lists and deletes every object under prefix, one
-// DeleteObjects batch per list page, so memory stays bounded to a single page
-// (<=1000 keys) rather than the whole key set. A page is chunked to
-// deleteObjectsMaxKeys defensively, in case a non-standard endpoint returns a
-// larger page than S3's 1000 default.
+// deleteAllUnderPrefix deletes every object under prefix one listing page at a
+// time, so memory stays bounded to a single page of keys.
 func (c *Client) deleteAllUnderPrefix(ctx context.Context, prefix string) error {
 	var token string
 	for {
@@ -503,10 +316,8 @@ func (c *Client) deleteAllUnderPrefix(ctx context.Context, prefix string) error 
 	return nil
 }
 
-// deleteObjects deletes keys via one or more DeleteObjects batches of at most
-// maxKeys each, so a page larger than S3's own 1000-key ceiling still gets
-// chunked correctly. maxKeys is an injectable test seam; production always
-// passes deleteObjectsMaxKeys.
+// deleteObjects deletes keys in DeleteObjects batches of at most maxKeys, a
+// test seam that production sets to deleteObjectsMaxKeys.
 func (c *Client) deleteObjects(ctx context.Context, keys []string, maxKeys int) error {
 	for start := 0; start < len(keys); start += maxKeys {
 		end := min(start+maxKeys, len(keys))
@@ -547,17 +358,9 @@ type deleteError struct {
 	Message string `xml:"Message"`
 }
 
-// deleteObjectsBatch issues one DeleteObjects (POST ?delete) request for up
-// to deleteObjectsMaxKeys keys, retrying a transient failure like the other
-// idempotent verbs. The request body is built with encoding/xml rather than
-// string templating: an object key is bucket-derived (a trust boundary - see
-// the package's trust-model notes), so templating it into the XML body would
-// be an XML-injection vector. A 200 status is never itself treated as
-// success: S3 reports a per-key failure as an <Error> element inside a 200
-// body, so the body is always parsed and any <Error> is surfaced as a
-// terminal failure via errS3DeleteFailed (s3Retryable's default-deny
-// classifies a plain error as non-retryable, so a per-key failure fails this
-// call closed rather than being silently retried).
+// deleteObjectsBatch issues one DeleteObjects request, retried like the other
+// idempotent verbs. Keys are bucket-derived, so the body is built with
+// encoding/xml; a per-key <Error> inside a 200 body fails the call.
 func (c *Client) deleteObjectsBatch(ctx context.Context, keys []string) error {
 	objects := make([]deleteObjectEntry, len(keys))
 	for i, key := range keys {
@@ -571,10 +374,8 @@ func (c *Client) deleteObjectsBatch(ctx context.Context, keys []string) error {
 
 	hash := sha256.Sum256(payload)
 	payloadHash := hex.EncodeToString(hash[:])
-	// Content-MD5 is the S3-mandated protocol integrity header for
-	// DeleteObjects (S3 rejects a request missing it), not a security
-	// primitive - the payload is already authenticated via the SigV4
-	// signature over its sha256 hash.
+	// S3 rejects DeleteObjects without Content-MD5; it is an integrity header,
+	// not a security primitive, since SigV4 already signs the sha256.
 	sum := md5.Sum(payload) //nolint:gosec // see the Content-MD5 comment above
 	contentMD5 := base64.StdEncoding.EncodeToString(sum[:])
 
@@ -599,11 +400,8 @@ func (c *Client) deleteObjectsBatch(ctx context.Context, keys []string) error {
 		}
 		data, err := io.ReadAll(helpers.NewSizeLimitedReader(resp.Body, helpers.S3ListMaxSize))
 		if err != nil {
-			// NewSizeLimitedReader's helpers.ErrResponseTooLarge is a bare size
-			// ceiling shared with the artifact-download and metadata-fetch
-			// surfaces, so it is wrapped here naming this one - an S3
-			// batch-delete response - to keep errors.Is matching intact while
-			// telling an operator which response actually overran.
+			// Name the surface that overran; %w keeps errors.Is matching
+			// helpers.ErrResponseTooLarge.
 			return fmt.Errorf("s3 batch-delete response: %w", err)
 		}
 		var result deleteResult
@@ -660,31 +458,9 @@ func applyContentHeaders(req *http.Request, contentType, contentEncoding string)
 	}
 }
 
-// handlePutResponse turns one PUT response into this package's vocabulary.
-// Every status but 404 means the same thing whatever the write carried; 404 is
-// the one whose meaning is decided by the precondition, which is why cond is a
-// parameter rather than something the caller compensates for afterwards.
-//
-// A 404 answering an unconditional or create-if-absent PUT names the bucket:
-// the write asserted nothing about an existing object, so the only thing S3
-// can report missing is the container. A 404 answering a compare-and-swap
-// names the object instead - S3 answers one when the key no longer exists,
-// which happens exactly when a delete lands between the caller's read of the
-// ETag and this write. Reporting that as errS3BucketNotFound would be wrong
-// twice over: it accuses a bucket that is demonstrably there, and it hands a
-// caller that could have retried immediately an unavailable-backend error
-// instead (see reclaimIfExpired, whose lock object is deleted by any holder
-// releasing it).
-//
-// A 409 answering a conditional write of either kind is the same shape of
-// mistake one step further out. S3 documents it for a concurrent request
-// racing the write - a delete completing first - and documents the write as
-// safe to retry afterwards, so it names a lost race rather than a backend that
-// cannot serve. Left in the default arm it becomes errS3PutFailed, which is
-// not retryable and therefore ends the whole acquisition; errS3ConditionalConflict
-// lets the lock's own loop, the sole retrier of conditional writes, back off
-// and try again. An unconditional PUT keeps the default arm, since nothing in
-// this client's use of one makes 409 mean that.
+// handlePutResponse maps a PUT response to this package's errors. A 404 on an
+// If-Match write means the object was deleted after its ETag was read, not a
+// missing bucket; a 409 on a conditional write is a race the lock loop retries.
 func handlePutResponse(resp *http.Response, cond putCondition) error {
 	switch resp.StatusCode {
 	case http.StatusPreconditionFailed:
@@ -706,13 +482,9 @@ func handlePutResponse(resp *http.Response, cond putCondition) error {
 	}
 }
 
-// listObjectsPage fetches one ListObjectsV2 page, retrying the whole
-// request-read-parse cycle on a transient failure. bucketRequest is
-// single-shot, so this outer retry is the sole layer: it recovers both a
-// transient status (surfaced by bucketRequest as a retryable-classified
-// error) and a body-read stall (helpers.ErrReadStalled) during the io.ReadAll
-// here, which happens after bucketRequest has already returned a 200, within
-// one bounded attempt budget.
+// listObjectsPage fetches one ListObjectsV2 page. bucketRequest is
+// single-shot, so this retry alone covers both a transient status and a
+// stalled body read, within one attempt budget.
 func (c *Client) listObjectsPage(ctx context.Context, prefix, token string) (listBucketResult, error) {
 	query := url.Values{}
 	query.Set("list-type", "2")
@@ -731,11 +503,8 @@ func (c *Client) listObjectsPage(ctx context.Context, prefix, token string) (lis
 		data, err := io.ReadAll(helpers.NewSizeLimitedReader(resp.Body, helpers.S3ListMaxSize))
 		_ = resp.Body.Close()
 		if err != nil {
-			// NewSizeLimitedReader's helpers.ErrResponseTooLarge is a bare size
-			// ceiling shared with the artifact-download and metadata-fetch
-			// surfaces, so it is wrapped here naming this one - an S3 listing
-			// response - to keep errors.Is matching intact while telling an
-			// operator which response actually overran.
+			// Name the surface that overran; %w keeps errors.Is matching
+			// helpers.ErrResponseTooLarge.
 			return fmt.Errorf("s3 listing response: %w", err)
 		}
 		var parsed listBucketResult
@@ -760,11 +529,8 @@ func appendKeys(dst []string, contents []listBucketContent) []string {
 	return dst
 }
 
-// keysFrom extracts each entry's key from a single ListObjectsV2 page's
-// Contents, skipping any empty key (mirrors appendKeys's same defensive
-// skip). Unlike appendKeys, which accumulates across every page of a full
-// listing, this is scoped to one page's worth of keys - deleteAllUnderPrefix
-// deletes a page at a time precisely so it never needs the accumulated form.
+// keysFrom returns one listing page's non-empty keys; unlike appendKeys it
+// does not accumulate, so deleteAllUnderPrefix holds one page at a time.
 func keysFrom(contents []listBucketContent) []string {
 	keys := make([]string, 0, len(contents))
 	for _, item := range contents {
@@ -786,10 +552,8 @@ func (c *Client) ensureBucket(ctx context.Context) error {
 	return nil
 }
 
-// headBucket checks whether the configured bucket exists. Like headObject,
-// this is a HEAD request with no response body, so its failure stays
-// status-only rather than going through s3StatusError. It retries a
-// transient failure like the other idempotent verbs.
+// headBucket checks that the bucket exists, retrying like the other idempotent
+// verbs; a HEAD has no body, so its failure stays status-only.
 func (c *Client) headBucket(ctx context.Context) error {
 	return helpers.Retry(ctx, s3RetryPolicy(), func() error {
 		req, err := c.newReadRequest(ctx, http.MethodHead, "", nil)
@@ -858,12 +622,9 @@ func (c *Client) createBucket(ctx context.Context) error {
 	return nil
 }
 
-// bucketRequest issues a single request against the bucket root. Its sole
-// caller, listObjectsPage, owns the retry, so a transient status (returned
-// here as a retryable-classified error via wrapRetryableStatus) and a
-// body-read stall during the listing share one bounded attempt budget rather
-// than nesting two. On a non-2xx it closes the response body and returns; on
-// 200 it returns the response with its body still open for the caller to read.
+// bucketRequest issues one unretried request against the bucket root, since
+// listObjectsPage owns the retry. A 200 is returned with its body open for the
+// caller; any other status closes it.
 func (c *Client) bucketRequest(ctx context.Context, method string, query url.Values) (*http.Response, error) {
 	req, err := c.newReadRequest(ctx, method, "", query)
 	if err != nil {
@@ -899,11 +660,8 @@ type listBucketContent struct {
 	Key string `xml:"Key"`
 }
 
-// newReadRequest builds and signs a body-less request (GET, HEAD, DELETE, or
-// a query-only bucket call), binding the invariants every such request
-// carries: no body, the empty-payload sha256, no user metadata, and no write
-// precondition. A request that carries a body goes through newRequest
-// directly.
+// newReadRequest builds and signs a body-less request: the empty-payload
+// sha256, no user metadata and no write precondition.
 func (c *Client) newReadRequest(ctx context.Context, method, key string, query url.Values) (*http.Request, error) {
 	return c.newRequest(ctx, method, key, query, nil, emptySHA256, nil, putCondition{})
 }
@@ -973,11 +731,8 @@ func (c *Client) requestURL(key string, query url.Values) (string, string, strin
 		objectPath = "/" + key
 	}
 
-	// escapedPath is used for BOTH the signed canonical URI and the sent
-	// wire path below, so they are byte-identical: signing and sending
-	// through two different encoders (net/url's escaping vs. this one) is
-	// exactly what let a reserved character in a key produce a
-	// SignatureDoesNotMatch (403) - see awsURIEncode's doc comment.
+	// Sign and send the same escaped path: net/url escapes reserved characters
+	// differently, and any mismatch is a 403 SignatureDoesNotMatch.
 	escapedPath := encodePath(objectPath)
 	canonicalURI := escapedPath
 	canonicalQuery := canonicalizeQuery(query)
@@ -991,21 +746,14 @@ func (c *Client) requestURL(key string, query url.Values) (string, string, strin
 	return reqURL, host, canonicalURI, canonicalQuery
 }
 
-// signingKeyForDate returns the SigV4 signing key for date, deriving it once
-// per UTC date and reusing it for every request on the same date. Secret and
-// region are immutable for the client's lifetime, so date is the only cache
-// key; the key is recomputed when the date rolls over at UTC midnight, since a
-// key for the wrong date signs the wrong scope and the request would 403. The
-// cached slice is never mutated after derivation, so returning it directly
-// (no copy) is race-free once the field access is guarded.
+// signingKeyForDate returns the SigV4 signing key for date, derived once per
+// UTC date, since a key for another date signs the wrong scope and gets a 403.
+// The cached slice is never mutated, so returning it uncopied is race-free.
 func (c *Client) signingKeyForDate(date string) []byte {
 	c.signing.mu.Lock()
 	defer c.signing.mu.Unlock()
 	if c.signing.key == nil || c.signing.date != date {
-		// Reveal here feeds the SigV4 HMAC chain, the one operation that needs
-		// the plaintext secret. deriveSigningKey keeps a plain-string
-		// signature deliberately: it is cryptography over key material and has
-		// no business knowing this program's configuration types.
+		// The HMAC chain is the one operation that needs the plaintext secret.
 		c.signing.key = deriveSigningKey(c.cfg.SecretKey.Reveal(), date, c.cfg.Region)
 		c.signing.date = date
 	}
@@ -1113,11 +861,8 @@ func awsEncode(value string) string {
 	return escaped
 }
 
-// encodePath encodes a path for signature calculations and, since requestURL
-// now builds the sent URL from this same result, for the wire request too.
-// It defers to awsURIEncode with slashes left literal, so "/" segment
-// boundaries survive untouched while every other byte gets S3's exact
-// percent-encoding.
+// encodePath escapes a path with awsURIEncode, leaving "/" literal; the result
+// is both the signed canonical URI and the wire path.
 func encodePath(value string) string {
 	if value == "" {
 		return "/"
@@ -1129,21 +874,14 @@ func encodePath(value string) string {
 // uppercase, unlike net/url's lowercase output.
 const upperHex = "0123456789ABCDEF"
 
-// awsURIEncode percent-encodes s per AWS SigV4 UriEncode: A-Za-z0-9 and -._~
-// stay literal; "/" stays literal when encodeSlash is false (path) and becomes
-// %2F otherwise (query); every other byte is percent-encoded with UPPERCASE
-// hex. It iterates raw UTF-8 bytes, so a multibyte rune becomes its individual
-// %XX bytes. Stricter than url.PathEscape (which leaves +$&,;=:@ literal);
-// matching S3's exact encoding on both the signed canonical URI and the wire
-// path is what stops a reserved character producing a SignatureDoesNotMatch.
+// awsURIEncode percent-encodes s per SigV4 UriEncode: A-Za-z0-9 and -._~ stay
+// literal, "/" too unless encodeSlash, every other byte becomes uppercase %XX.
+// url.PathEscape leaves +$&,;=:@ literal, which S3 would sign differently.
 func awsURIEncode(s string, encodeSlash bool) string {
 	var b strings.Builder
 	b.Grow(len(s))
-	// Range over the integer length, not the string itself: ranging over a
-	// string decodes UTF-8 and would skip the byte indices of a multibyte
-	// rune's continuation bytes, which is exactly what this loop must not
-	// do - it needs every raw byte, since a multibyte rune must become its
-	// individual %XX escapes.
+	// Index raw bytes: ranging over the string would decode UTF-8, and each
+	// byte of a multibyte rune needs its own %XX.
 	for i := range len(s) {
 		c := s[i]
 		switch {

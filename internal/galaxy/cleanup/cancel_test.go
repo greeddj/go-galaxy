@@ -16,24 +16,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
 )
 
-// TestCleanupStopsRemovingWhenTheContextEnds pins the guarantee runCleanup's
-// own doc comment states: once this run stops owning the cache, the removal
-// loop stops at the next collection rather than deleting the rest of them.
-// The context it stops on is the holder context - the same one an S3
-// heartbeat cancels after another acquirer takes the lock away - which the
-// local backend hands back unchanged, so a caller-canceled context reaches
-// removeUnused by exactly the path a stolen lock would.
-//
-// Two collections are seeded, both unreferenced and therefore both removal
-// candidates, and the sorted iteration order makes the first of them the one
-// the loop would reach first: a check placed after the reachable skip instead
-// of before it would still stop here, but a check placed after the removal
-// would not, and the surviving first collection is what separates them.
-//
-// The live-context row is the mandatory positive control on the identical
-// fixture: it must remove both, which is what makes "nothing was removed"
-// mean the loop stopped rather than that the fixture never had anything to
-// remove.
+// TestCleanupStopsRemovingWhenTheContextEnds pins that removeUnused stops at
+// the next collection once the holder context ends: a canceled run keeps both
+// unreferenced collections, while the live-context control removes both.
 func TestCleanupStopsRemovingWhenTheContextEnds(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -72,10 +57,9 @@ func cleanupTestContext(t *testing.T, canceled bool) context.Context {
 	return ctx
 }
 
-// assertCleanupRemoval checks the outcome of one row of
-// TestCleanupStopsRemovingWhenTheContextEnds: a canceled run must report the
-// cancellation, classify as an interrupt rather than a lock-loss, and leave
-// both trees alone; a live run must report nothing and remove both.
+// assertCleanupRemoval checks one row of
+// TestCleanupStopsRemovingWhenTheContextEnds: a canceled run reports an
+// interrupt, not a lock loss, and keeps both trees; a live run removes both.
 func assertCleanupRemoval(t *testing.T, err error, downloadPath string, canceled bool) {
 	t.Helper()
 	first := filepath.Join(downloadPath, "ansible_collections", "ns", "first", "MANIFEST.json")
@@ -95,10 +79,8 @@ func assertCleanupRemoval(t *testing.T, err error, downloadPath string, canceled
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Start = %v, want errors.Is context.Canceled", err)
 	}
-	// The cancellation is propagated with %w rather than flattened, and this
-	// is the assertion that keeps it that way: an operator's Ctrl-C during
-	// cleanup must stay an interrupt. Only a genuine lock-loss cause turns
-	// into exit 8, and this run's context carries no such cause.
+	// The cancellation must stay wrapped with %w so an operator's Ctrl-C exits
+	// as an interrupt; only a genuine lock-loss cause becomes exit 8.
 	if got := exitcode.FromError(err); got != exitcode.ExitInterrupt {
 		t.Fatalf("exitcode.FromError = %d, want ExitInterrupt (%d)", got, exitcode.ExitInterrupt)
 	}
@@ -112,17 +94,9 @@ func assertCleanupRemoval(t *testing.T, err error, downloadPath string, canceled
 	}
 }
 
-// TestSweepLegacyArtifactsStopsWhenTheContextEnds covers the second of the
-// three per-iteration stop points runCleanup's doc states, and covers it
-// directly, because no end-to-end run can reach it with a context that ends
-// in between: removeUnused returns first on a context canceled before the
-// run, and a context that ends mid-run needs a real S3 heartbeat. Calling the
-// pass itself is what makes the granularity
-// ("the next legacy artifact key") testable at all.
-//
-// The live-context row is the positive control: the same seeded artifact must
-// actually be swept, so "it survived" means the pass stopped rather than that
-// it never had a candidate.
+// TestSweepLegacyArtifactsStopsWhenTheContextEnds pins that the legacy sweep
+// purges nothing under an ended context. It calls the pass directly, since an
+// end-to-end run stops in removeUnused first; the live row is the control.
 func TestSweepLegacyArtifactsStopsWhenTheContextEnds(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

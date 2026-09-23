@@ -5,11 +5,9 @@ import (
 	"testing"
 )
 
-// TestOrigin checks the normalization rules documented on Origin: scheme
-// and host are lowercased, an implicit default port (443 for https, 80 for
-// http) is made explicit so it compares equal to the same port written out
-// literally, a non-default port is preserved, a different scheme never
-// collapses, and an IPv6 literal loses its brackets.
+// TestOrigin pins Origin's normalization: lower-cased scheme and host, an
+// explicit default port, a kept non-default port, no collapse across
+// schemes, and an IPv6 literal without brackets.
 func TestOrigin(t *testing.T) {
 	t.Parallel()
 
@@ -44,11 +42,9 @@ func TestOrigin(t *testing.T) {
 	}
 }
 
-// TestOriginCollapsesEquivalentSpellings checks that every URL spelling
-// that ought to denote the same endpoint - implicit vs. explicit default
-// port, host case, scheme case, and an incidental trailing slash - produces
-// the exact same Origin value, not merely values that individually look
-// right in isolation.
+// TestOriginCollapsesEquivalentSpellings pins that every spelling of one
+// endpoint yields the identical Origin, while another port or scheme does
+// not.
 func TestOriginCollapsesEquivalentSpellings(t *testing.T) {
 	t.Parallel()
 

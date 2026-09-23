@@ -42,11 +42,8 @@ func gitAcceptedStringCases() []gitAcceptedCase {
 			want:  CollectionRequirement{Type: TypeGit, Source: "https://github.com/acme/mono.git", Ref: "v1.2.3", Subdir: "collections/app"},
 		},
 		{
-			// ansible's parse_scm order is comma first, then fragment, so a
-			// fragment written after the ref becomes part of the ref name:
-			// "main#sub" is a ref git would accept and no remote will have.
-			// The same spelling fails under ansible at checkout time; here it
-			// fails at advertise time, with the same remedy (write #sub,main).
+			// ansible's parse_scm cuts the comma first, so a fragment after the
+			// ref stays in the ref ("main#sub") and fails as ansible's does.
 			name:  "string ref then fragment keeps ansible's order",
 			input: "- git+https://github.com/acme/app.git,main#sub\n",
 			want:  CollectionRequirement{Type: TypeGit, Source: "https://github.com/acme/app.git", Ref: "main#sub"},

@@ -1,14 +1,8 @@
 package collections_test
 
-// This file (continued from e2e_test.go) exercises the `warm` command's real
-// pipeline end-to-end against the fake Galaxy server, mirroring the shape of
-// the install-side e2e suite: a cold warm, a re-warm served entirely from
-// cache, a frozen lockfile-pinned warm (both honoring and rejecting a pin),
-// an offline warm, a partial failure that still caches the collection that
-// succeeded, lock discipline across a failing run, the --no-cache usage
-// rejection (with and without --dry-run), and the metrics file warm now
-// shares with install. `warm --dry-run`'s own real preview behavior is
-// covered in dry_run_e2e_test.go instead, alongside install's.
+// These e2e tests drive the warm command's real pipeline against fakegalaxy,
+// mirroring the install suite; warm --dry-run's preview is covered in
+// dry_run_e2e_test.go.
 
 import (
 	"context"
@@ -42,10 +36,8 @@ func assertExtractedStorePresent(t *testing.T, cacheDir, sha string) {
 	}
 }
 
-// loadStoreSnapshot opens cfg's cache backend, loads its persisted snapshot,
-// and returns it, closing the backend before returning. Safe to use only
-// after any collections.Warm/Start run against the same cache directory has
-// already completed and released its own lock.
+// loadStoreSnapshot loads cfg's persisted snapshot and closes the backend.
+// Call it only after every Warm/Start run on that cache has returned.
 func loadStoreSnapshot(t *testing.T, cfg *config.Config, runtime *infra.Infra) *store.Store {
 	t.Helper()
 	ctx := context.Background()
@@ -84,15 +76,9 @@ func assertMetricsCommand(t *testing.T, path, want string) {
 	}
 }
 
-// TestWarmColdCachePopulatesCacheWithoutInstalling asserts a cold-cache warm
-// downloads and extracts every collection in the dependency graph into the
-// artifact cache and the content-addressable extracted store, without ever
-// creating an ansible_collections tree under cfg.DownloadPath (warm never
-// installs) and without recording anything in the persisted snapshot's
-// installed set (warm never calls recordInstall). It also asserts warm's own
-// bookkeeping: each collection gets a Warmed entry keyed by its own
-// ns.name@version, recording exactly the artifact sha the collection
-// actually resolved to.
+// TestWarmColdCachePopulatesCacheWithoutInstalling pins that a cold warm
+// fills both caches, creates no ansible_collections tree, records no install,
+// and writes a warmed entry per ns.name@version holding its artifact sha.
 func TestWarmColdCachePopulatesCacheWithoutInstalling(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -122,11 +108,9 @@ func TestWarmColdCachePopulatesCacheWithoutInstalling(t *testing.T) {
 	}
 }
 
-// TestWarmColdCacheDownloadsEachArtifactOnce pins warm's prefetch handoff:
-// on a cold cache every collection's artifact is downloaded by a prefetch
-// worker and the temp is handed to the warm worker via Wait, so each
-// artifact costs exactly one GET - a warm worker that re-downloaded instead
-// of consuming the handoff would double the count.
+// TestWarmColdCacheDownloadsEachArtifactOnce pins warm's prefetch handoff: a
+// cold warm costs exactly one artifact GET per collection, where a worker
+// that re-downloaded instead of taking the handoff would double it.
 func TestWarmColdCacheDownloadsEachArtifactOnce(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -140,12 +124,9 @@ func TestWarmColdCacheDownloadsEachArtifactOnce(t *testing.T) {
 	}
 }
 
-// TestInstallRecordsNoWarmedEntries proves installCollection never calls
-// recordWarmed: recordInstall alone already keeps a normal install's
-// extracted tree reachable through InstalledArtifactSHAByKey, and a warmed
-// entry there would be redundant at best (see recordWarmed's own doc
-// comment) - this guards that invariant against a future refactor
-// accidentally wiring the call in on the install path too.
+// TestInstallRecordsNoWarmedEntries pins that install writes no warmed
+// entry: its install record already keeps the extracted tree, and a warmed
+// one would outlive cleanup's removal of that install.
 func TestInstallRecordsNoWarmedEntries(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -160,19 +141,9 @@ func TestInstallRecordsNoWarmedEntries(t *testing.T) {
 	}
 }
 
-// TestInstallPreservesWarmedEntries is TestInstallRecordsNoWarmedEntries's
-// guard pair from the opposite side: that test proves install never adds a
-// warmed entry, this one proves install never removes or rewrites one that
-// warm already wrote. This is pinned as its own regression test rather than
-// left to whatever installCollection and recordWarmed happen to do, because
-// initInstall loads the full snapshot and finalizeInstall writes it back
-// through the shared snapshotData copy path - the warmed set only survives an
-// install because nothing on the install path mutates m.Warmed, an invariant
-// a future change to either function could break with every other test still
-// green. Concretely, this guards against a future "prune warmed entries for
-// keys we just installed" optimization, which would silently reintroduce the
-// original bug (see TestWarmColdCachePopulatesCacheWithoutInstalling) with an
-// otherwise green suite.
+// TestInstallPreservesWarmedEntries pins that install neither removes nor
+// rewrites a warmed entry: the install path writes the whole snapshot back,
+// so pruning warmed keys it installed would expose warmed trees to cleanup.
 func TestInstallPreservesWarmedEntries(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -227,13 +198,9 @@ func TestWarmRewarmIsFullyCacheServed(t *testing.T) {
 	}
 }
 
-// TestWarmFrozenHonorsLockfilePinAndFailsClosedOnCorruption asserts --frozen
-// warm honors a lockfile pin (installing/caching the pinned version rather
-// than a higher one also registered on the server), that a corrupted pin
-// fails the whole warm run rather than warming drifted bytes, and that the
-// cache is left un-poisoned by the failed pin check: a later unfrozen warm
-// still serves acme.app entirely from the cache the first, honest run
-// populated, proving the cached tarball was never corrupted.
+// TestWarmFrozenHonorsLockfilePinAndFailsClosedOnCorruption pins that a
+// frozen warm caches the pinned version over a higher one, and that a
+// corrupted pin fails the run without poisoning the cached tarball.
 func TestWarmFrozenHonorsLockfilePinAndFailsClosedOnCorruption(t *testing.T) {
 	f := newE2EFixture(t)
 	lockPath, lf := newFrozenPinFixture(t, f)
@@ -263,13 +230,9 @@ func assertWarmFrozenHonorsPin(t *testing.T, f *e2eFixture) {
 	}
 }
 
-// assertWarmFrozenCorruptedPinFailsClosed corrupts acme.app's pin, asserts
-// the resulting frozen warm fails the whole run, then restores the true pin
-// and re-warms (still frozen): if the failed run had left the cache poisoned
-// or missing an entry, this second warm - served entirely from
-// lockfile-driven resolution plus an artifact-cache hit, with no pin
-// mismatch this time - would have no choice but to hit the network to
-// repair it. It must not.
+// assertWarmFrozenCorruptedPinFailsClosed fails a frozen warm on a corrupted
+// pin, then restores the pin and re-warms with no HTTP at all, proving the
+// failed run left the cache intact.
 func assertWarmFrozenCorruptedPinFailsClosed(t *testing.T, f *e2eFixture, lockPath string, lf *lockfile.File) {
 	t.Helper()
 	setAppPin(lf, corruptedAppSHA256)
@@ -281,14 +244,8 @@ func assertWarmFrozenCorruptedPinFailsClosed(t *testing.T, f *e2eFixture, lockPa
 	if !errors.Is(err, helpers.ErrInstallationFailed) {
 		t.Fatalf("expected errors.Is ErrInstallationFailed for the corrupted pin, got %v", err)
 	}
-	// warmCollections now joins each worker's own cause behind the headline
-	// (see failureSummary), so the actual triggering sentinel is reachable
-	// here too, not just the aggregate classification - the same tree shape
-	// install's own corrupted-pin case pins in e2e_test.go. Verified against a
-	// real revert of failureSummary.wrap (dropping the per-collection cause):
-	// that mutation makes the assertion below fail with:
-	// "expected errors.Is ErrSHA256Mismatch for the corrupted pin, got
-	// installation failed: warm failed for 1 collections"
+	// Each worker's cause is joined behind the headline, so the triggering
+	// sentinel is reachable too, not just the aggregate classification.
 	if !errors.Is(err, helpers.ErrSHA256Mismatch) {
 		t.Fatalf("expected errors.Is ErrSHA256Mismatch for the corrupted pin, got %v", err)
 	}
@@ -352,17 +309,9 @@ func TestWarmOffline(t *testing.T) {
 	})
 }
 
-// TestWarmPartialFailureKeepsSuccessfulCollectionCached asserts that a warm
-// run in which one collection's artifact download persistently fails still
-// caches (both tarball and extracted tree) the other, successful collection,
-// still saves the snapshot, and still records nothing in the installed set -
-// warm has no ordering dependency between collections and never calls
-// recordInstall, so a partial failure must not corrupt or roll back the work
-// that did succeed. It also asserts the corresponding warmed-set split: the
-// successful acme.app has a warmed entry recording its extracted artifact
-// sha, while the failed acme.lib has none - recordWarmed only ever runs after
-// prepareWithRecovery/warmVerifyAndEnsure have already succeeded for that
-// one collection.
+// TestWarmPartialFailureKeepsSuccessfulCollectionCached pins that one failed
+// download still leaves the other collection cached and warmed, the snapshot
+// saved, and no warmed entry for the failed one.
 func TestWarmPartialFailureKeepsSuccessfulCollectionCached(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -377,10 +326,8 @@ func TestWarmPartialFailureKeepsSuccessfulCollectionCached(t *testing.T) {
 	assertExtractedStorePresent(t, f.cfg.CacheDir, f.appV1.SHA256)
 
 	st := loadStoreSnapshot(t, f.cfg, f.runtime)
-	// Resolution always calls Store.SetRequirements, independent of any later
-	// artifact-download outcome, so a non-empty snapshot here proves SaveStore
-	// actually ran and persisted despite the partial failure - it is not just
-	// a fresh, still-empty store created by LoadStore on a first read.
+	// Resolution always records requirements, so a non-empty set proves the
+	// save ran despite the partial failure.
 	if got := len(st.RequirementsSnapshot()); got == 0 {
 		t.Errorf("RequirementsSnapshot is empty, want the snapshot to have been saved despite the partial failure")
 	}
@@ -404,18 +351,13 @@ func collectionKey(v fakegalaxy.Version) string {
 	return v.Namespace + "." + v.Name + "@" + v.Version
 }
 
-// TestWarmLockReleasedAfterFailingRun asserts that a failing warm run still
-// releases the backend's exclusive lock, proving a second Warm against the
-// same cache directory is not left blocked behind the first run's lock.
+// TestWarmLockReleasedAfterFailingRun pins that a failing warm releases the
+// exclusive lock, so a second Warm on the same cache is not blocked.
 func TestWarmLockReleasedAfterFailingRun(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
-	// Bounded to exactly what a cold failing warm attempts: the prefetch
-	// worker's retry-bounded download and warmOne's own fallback download
-	// each spend helpers.FetchRetryMaxAttempts requests, so the first Warm
-	// exhausts this fault itself and the rule is disarmed by the time it
-	// returns - the second Warm below hits a clean server rather than
-	// needing its own fault-clearing step.
+	// The fault covers the prefetch and fallback downloads' retries exactly,
+	// so the first Warm exhausts it and the second hits a clean server.
 	f.server.Fail(fakegalaxy.EndpointArtifact, "acme", "lib", fakegalaxy.Fault{
 		Status: http.StatusServiceUnavailable,
 		Count:  2 * helpers.FetchRetryMaxAttempts,
@@ -431,14 +373,9 @@ func TestWarmLockReleasedAfterFailingRun(t *testing.T) {
 	}
 }
 
-// TestWarmNoCacheRejectsBeforeResolving asserts warm --no-cache is rejected
-// as a usage error, before any resolution or network call, rather than
-// silently downloading every artifact and discarding it uncommitted while
-// reporting success. Its --dry-run sub-case proves this holds even combined
-// with --dry-run: --no-cache makes warm meaningless regardless of dry-run, so
-// runWarm's --no-cache guard runs first and unconditionally, before the
-// dry-run guard would even matter - previewing a meaningless run is still
-// meaningless.
+// TestWarmNoCacheRejectsBeforeResolving pins that warm --no-cache exits as a
+// usage error before any network call, with or without --dry-run, and with
+// --dry-run also before the backend is opened.
 func TestWarmNoCacheRejectsBeforeResolving(t *testing.T) {
 	t.Parallel()
 
@@ -472,9 +409,8 @@ func TestWarmNoCacheRejectsBeforeResolving(t *testing.T) {
 		if got := f.server.Total(); got != 0 {
 			t.Errorf("Total() = %d, want 0 (--no-cache must reject before any network call)", got)
 		}
-		// The cache directory is never created: proof the backend was never
-		// opened at all (cacheBackend.New/backend.Open both create it), not just
-		// that no lock survived to be released.
+		// Opening the backend creates the cache directory, so its absence
+		// proves the backend was never opened.
 		if _, statErr := os.Stat(f.cfg.CacheDir); !os.IsNotExist(statErr) {
 			t.Errorf("expected cacheDir to never be created, stat error = %v", statErr)
 		}

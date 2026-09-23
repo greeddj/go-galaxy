@@ -9,24 +9,13 @@ import (
 	"unicode/utf8"
 )
 
-// ansibleBOM is the leading UTF-8 byte order mark some ansible.cfg files
-// carry (e.g. when authored by editors that default to BOM-prefixed UTF-8).
-// ansible decodes the file as plain utf-8, so configparser meets the mark
-// before the first header and refuses the whole file ("File contains no
-// section headers"). This reader strips it and reads the header after it
-// instead, the leniency it shows every other line configparser refuses.
+// ansibleBOM is a leading UTF-8 byte order mark. ansible refuses such a file
+// ("File contains no section headers"); this reader strips the mark instead,
+// the same leniency it shows every other line configparser refuses.
 const ansibleBOM = "\uFEFF"
 
-// signatureKeyNames are the four [galaxy] keys ansible reads its signature
-// policy from. This program deliberately reads none of their VALUES (see
-// applySignatureConfig and cliflags.SignatureFlags for why a setting that can
-// relax a verification check must not come from a file whose author this
-// program cannot establish), so the array exists to recognize the names and
-// nothing else.
-//
-// Adding a fifth key ansible learns is one edit here: assignAnsibleValue tests
-// membership in this array and the warning renders it by filtering this same
-// array, so neither has a list of its own to keep current.
+// signatureKeyNames are ansible's [galaxy] signature keys, recognized by name
+// only: a file of unknown authorship must not relax verification.
 //
 //nolint:gochecknoglobals // a fixed, immutable name table, not mutable shared state.
 var signatureKeyNames = [...]string{
@@ -41,18 +30,12 @@ type ansibleGalaxyConfig struct {
 	CacheDir   string
 	Server     string
 	ServerList string
-	// ServerTimeout is server_timeout exactly as written; it is judged only
-	// where it is applied, by applyAnsibleTimeout, since only a command with a
-	// request budget has any use for it.
+	// ServerTimeout is server_timeout exactly as written, judged only by
+	// applyAnsibleTimeout, since only a command with a request budget uses it.
 	ServerTimeout string
-	// SignatureKeys names the signature keys this file carried, and holds no
-	// value any of them was set to. Recording the NAME and never the value is
-	// the security property rather than an economy: no ansible.cfg-sourced
-	// signature value enters Config at all, so no later change can accidentally
-	// honor one - it would first have to teach the parser to read a value it
-	// currently never stores. What the names buy is the one thing silence costs
-	// an operator: a run that verifies nothing while their keyring sits in
-	// ~/.ansible.cfg gets told which keys were ignored.
+	// SignatureKeys names the signature keys this file carried and never a
+	// value: storing no value is the security property, so no later change
+	// can honor an ansible.cfg signature setting by accident.
 	SignatureKeys []string
 }
 
@@ -70,13 +53,9 @@ type ansibleConfig struct {
 	Galaxy        ansibleGalaxyConfig
 }
 
-// parseAnsibleConfig reads an ansible.cfg (INI-style) file and extracts the
-// handful of keys this tool cares about. It deliberately mirrors CPython's
-// configparser as ansible constructs it, ConfigParser(inline_comment_prefixes=
-// (';',)), since ansible.cfg is not TOML and we aim for drop-in fidelity with
-// how ansible itself reads it: values are not unquoted, and the only inline
-// comment is the one stripInlineComment removes, so a '#' after a value stays
-// part of it.
+// parseAnsibleConfig reads the keys this tool uses from an ansible.cfg,
+// mirroring ansible's ConfigParser(inline_comment_prefixes=(';',)) for
+// drop-in fidelity: a value keeps its quotes and any '#' that follows it.
 func parseAnsibleConfig(r io.Reader) (ansibleConfig, error) {
 	cfg := ansibleConfig{}
 	section := ""
@@ -104,12 +83,9 @@ func parseAnsibleConfig(r io.Reader) (ansibleConfig, error) {
 		if key, value, ok := splitKeyValue(t); ok {
 			assignAnsibleValue(&cfg, section, key, value)
 		} else if strings.HasPrefix(t, "[") {
-			// A line that opens like a header yet is neither a header nor a key
-			// line - one never closed, or one whose ';' comment cut off its ']'
-			// - is a line configparser refuses. Keeping the section it followed
-			// would file every key below it there, so a url written for one
-			// [galaxy_server.<id>] would land in another and be sent that
-			// server's token. Closing the section leaves those keys under none.
+			// A broken header closes the section, or a url written for one
+			// [galaxy_server.<id>] would land in the section above it and be
+			// sent that server's token.
 			section = ""
 		}
 	}
@@ -125,17 +101,9 @@ func isCommentLine(t string) bool {
 	return strings.HasPrefix(t, "#") || strings.HasPrefix(t, ";")
 }
 
-// stripInlineComment removes an inline comment from t, the way configparser
-// applies inline_comment_prefixes=(';',) to every line, section headers
-// included: the comment is the first ';' that follows whitespace, and it runs
-// to the end of the line, taking the whitespace before it along. A ';' glued
-// to the text before it is not a comment, so "token = abc;def" keeps its whole
-// value, exactly as ansible reads it.
-//
-// t must be a trimmed line isCommentLine does not match, which is what
-// parseAnsibleConfig passes: a ';' opening the line, configparser's other
-// inline case, is then a full-line comment already skipped, and the result is
-// never empty, since t's first rune is not whitespace.
+// stripInlineComment cuts t at the first ';' that follows whitespace, as
+// configparser does on every line, headers included; a glued ';' stays, so
+// "token = abc;def" keeps its value. t must be trimmed and not a comment line.
 func stripInlineComment(t string) string {
 	for i, r := range t {
 		if r != ';' || i == 0 {
@@ -148,24 +116,16 @@ func stripInlineComment(t string) string {
 	return t
 }
 
-// isINISpace reports whether r is whitespace as configparser judges it, where
-// both str.strip and the \s of its comment pattern follow Python's
-// str.isspace. That is unicode.IsSpace plus the four information separators
-// U+001C through U+001F, which Python counts as whitespace and Go does not;
-// using one predicate for trimming and for recognizing a comment keeps the
-// two in step, as they are in configparser.
+// isINISpace reports whether r is whitespace to Python's str.isspace, which
+// configparser uses both to trim and to find a ';' comment: unicode.IsSpace
+// plus the information separators U+001C through U+001F.
 func isINISpace(r rune) bool {
 	return unicode.IsSpace(r) || (r >= '\x1c' && r <= '\x1f')
 }
 
-// sectionName reports whether t is a section header and, if so, returns its
-// name, reading it the way configparser's SECTCRE, `\[(?P<header>.+)\]` applied
-// with re.match, does: t opens with '[', the name runs to the LAST ']' on the
-// line and holds at least one character, and whatever follows that ']' is
-// ignored, so "[galaxy] # note" is the [galaxy] section. The name is taken as
-// written, neither trimmed nor case-folded, so "[ galaxy ]" names a section
-// called " galaxy ", which ansible does not read as [galaxy] and neither does
-// this parser.
+// sectionName reports whether t is a section header, as configparser's SECTCRE
+// matches one, and returns its name: it runs to the last ']' and is taken as
+// written, neither trimmed nor case-folded; text after that ']' is ignored.
 func sectionName(t string) (string, bool) {
 	if !strings.HasPrefix(t, "[") {
 		return "", false
@@ -177,10 +137,8 @@ func sectionName(t string) (string, bool) {
 	return t[1:end], true
 }
 
-// splitKeyValue splits t on the first '=' or ':' delimiter, whichever
-// appears first in the line, into a (key, value, ok) triple. This matters
-// for values that themselves contain a colon, e.g. "server = https://x"
-// must split on '=', not on the colon inside the URL.
+// splitKeyValue splits t at whichever of '=' or ':' comes first, so the
+// colon inside "server = https://x" stays in the value; the key is lowercased.
 func splitKeyValue(t string) (string, string, bool) {
 	eq := strings.IndexByte(t, '=')
 	colon := strings.IndexByte(t, ':')
@@ -206,13 +164,9 @@ func splitKeyValue(t string) (string, string, bool) {
 // it is the server's id.
 const galaxyServerSectionPrefix = "galaxy_server."
 
-// assignAnsibleValue stores value into cfg for the known (section, key)
-// pairs this tool consumes; anything else, including keys seen before any
-// section header, is ignored. Later occurrences win over earlier ones. A
-// section matching "galaxy_server.<id>" is captured in full via
-// assignGalaxyServerValue rather than a fixed key whitelist, since the set
-// of keys to recognize (and which ones are errors vs. warnings) is a
-// concern of the config resolver, not this parser.
+// assignAnsibleValue stores the (section, key) pairs this tool reads, last
+// occurrence winning. A [galaxy_server.<id>] section is kept whole, since
+// which of its keys are errors or warnings is the server resolver's decision.
 func assignAnsibleValue(cfg *ansibleConfig, section, key, value string) {
 	switch section {
 	case "defaults":
@@ -237,16 +191,9 @@ func assignAnsibleValue(cfg *ansibleConfig, section, key, value string) {
 	}
 }
 
-// recordSignatureKey records that the [galaxy] section named one of ansible's
-// signature keys, so a later warning can say which. The VALUE is not a
-// parameter here, which is what makes "no ansible.cfg-sourced signature value
-// enters Config" a property of this function's signature rather than of its
-// body.
-//
-// A file carrying none of them - the overwhelmingly common case - pays four
-// string comparisons per unrecognized [galaxy] key and allocates nothing, since
-// the slice stays nil. The dedupe is a linear scan because the slice can hold
-// at most four elements, so a repeated key costs a scan of at most three.
+// recordSignatureKey records, once, that [galaxy] named a signature key. It
+// takes no value parameter, so no ansible.cfg signature value can reach
+// Config through it.
 func recordSignatureKey(cfg *ansibleConfig, key string) {
 	if !slices.Contains(signatureKeyNames[:], key) {
 		return
@@ -257,10 +204,8 @@ func recordSignatureKey(cfg *ansibleConfig, key string) {
 	cfg.Galaxy.SignatureKeys = append(cfg.Galaxy.SignatureKeys, key)
 }
 
-// assignGalaxyServerValue stores key/value into the per-id map for a
-// "[galaxy_server.<id>]" section, allocating the outer and inner maps
-// lazily. Later occurrences of the same key within the same id win, same
-// as every other key this parser tracks.
+// assignGalaxyServerValue stores key/value for a [galaxy_server.<id>]
+// section, allocating both maps lazily; a later occurrence wins.
 func assignGalaxyServerValue(cfg *ansibleConfig, id, key, value string) {
 	if cfg.GalaxyServers == nil {
 		cfg.GalaxyServers = make(map[string]map[string]string)

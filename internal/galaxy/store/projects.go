@@ -10,24 +10,16 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// ProjectRecord describes a project and its last run metadata.
-//
-// The registry JSON carries no schema version and is decoded by
-// encoding/json, which ignores a field it does not know, so a binary
-// predating a field reads a registry that carries it without complaint.
-// The cost runs the other way: that older binary re-recording the same
-// project writes the record without the field, and the field's reader must
-// treat its absence as the conservative answer.
+// ProjectRecord is one project's registry entry. The registry has no schema
+// version and an older binary re-recording a project drops fields it does not
+// know, so a field's reader must take its absence as the conservative answer.
 type ProjectRecord struct {
 	LastRun          time.Time `json:"last_run"`
 	RequirementsFile string    `json:"requirements_file"`
 	CollectionsPath  string    `json:"collections_path"`
-	// RolesPath is the absolute directory the project's roles install into,
-	// or "" when the run configured none. omitempty keeps a collections-only
-	// record byte-identical to what every earlier binary wrote. An older
-	// binary re-recording this project drops the field, which cleanup reads
-	// as "no roles path recorded, do not scan it" - the direction that can
-	// only make a destructive pass do less, never more.
+	// RolesPath is the absolute roles directory, or "" when none was
+	// configured; omitempty keeps a collections-only record unchanged, and
+	// cleanup reads an absent path as "do not scan", never as a guess.
 	RolesPath string `json:"roles_path,omitempty"`
 }
 
@@ -47,23 +39,16 @@ func RecordProject(cacheDir, requirementsFile, downloadPath, rolesPath string) e
 	if err != nil {
 		return err
 	}
-	// Defensive only and unreachable today: LoadProjectRegistry initializes
-	// Projects on every successful exit, so the write below already has a map
-	// to write into. It is kept so this function stands on its own rather than
-	// resting on that postcondition holding forever.
+	// LoadProjectRegistry already returns a non-nil map; this keeps the write
+	// safe without resting on that postcondition.
 	registry.Projects = ensureMap(registry.Projects)
 	registry.Projects[projectPath] = record
 	return saveProjectRegistry(cacheDir, registry)
 }
 
-// NewProjectRecord builds the registry entry a run records, stamped with the
-// current time, and returns it with the project path it is keyed by: the
-// directory of the absolute requirements file. The collections and roles
-// paths are resolved against that directory by one rule (see
-// resolveProjectPath), so the two cannot drift. Both backends build their
-// record through this function rather than each assembling its own, which
-// is what keeps the local registry file and the S3 registry object the same
-// shape.
+// NewProjectRecord builds a run's registry entry, keyed by the directory of the
+// absolute requirements file, with both paths resolved against it by one rule.
+// Both backends build records here, so their registries keep one shape.
 func NewProjectRecord(requirementsFile, downloadPath, rolesPath string) (string, ProjectRecord) {
 	absReq, err := filepath.Abs(requirementsFile)
 	if err != nil {
@@ -78,17 +63,9 @@ func NewProjectRecord(requirementsFile, downloadPath, rolesPath string) (string,
 	}
 }
 
-// LoadProjectRegistry loads the project registry from cacheDir. A missing
-// file is treated as an empty, freshly-initialized registry, but a file
-// that exists and fails to decode is reported as an error rather than
-// silently replaced by an empty registry: cleanup relies on the registry to
-// compute which installed collections are still reachable, so an empty
-// registry would make it believe nothing is reachable and delete
-// everything.
-//
-// On every successful return Projects is non-nil, whether the file was
-// absent, decoded into entries, or decoded a projects key that was an
-// explicit JSON null.
+// LoadProjectRegistry loads cacheDir's registry with Projects never nil. A
+// missing file is empty, but one that fails to decode is an error: cleanup
+// computes reachability from it, and reading it as empty would delete everything.
 func LoadProjectRegistry(cacheDir string) (*ProjectRegistry, error) {
 	path := projectRegistryPath(cacheDir)
 	//nolint:gosec // path is derived from cacheDir and is intended for project registry IO.
@@ -143,11 +120,8 @@ func projectRegistryPath(cacheDir string) string {
 	return filepath.Join(cacheDir, helpers.StoreDBProjects)
 }
 
-// resolveProjectPath returns p as an absolute path for a project: an
-// absolute p is returned as is, a relative one is joined under projectPath,
-// and an empty one stays empty so "not configured" survives the round trip
-// rather than turning into the project directory itself. The collections
-// path and the roles path both go through it.
+// resolveProjectPath joins a relative p under projectPath; an empty p stays
+// empty, so "not configured" survives rather than becoming the project directory.
 func resolveProjectPath(projectPath, p string) string {
 	if p == "" {
 		return ""

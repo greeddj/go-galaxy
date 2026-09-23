@@ -4,34 +4,22 @@ import (
 	"fmt"
 )
 
-// resolveConflict resolves the conflict represented by the incompatibility
-// stored at startIdx, backtracking the partial solution and returning
-// (index, incompatibility) of the incompatibility that is now guaranteed to
-// be almost satisfied - the "root cause" unit propagation continues from.
-// If no solution can exist, it returns a *ConflictError.
-//
-// Satisfier-finding and merge arithmetic operate on signed exact terms
-// (term.go), the same representation the partial solution's accumulations
-// and relation() use, so a satisfier always exists for a genuinely
-// satisfied incompatibility: nothing is ever vacuously true against the
-// N({}) seed, and every judgment here is exact without any provider call.
+// resolveConflict resolves the conflict in the incompatibility at startIdx,
+// backtracks, and returns the (index, incompatibility) unit propagation
+// continues from, or a *ConflictError when no solution can exist.
 func (s *solveState) resolveConflict(startIdx int) (int, *incompatibility, error) {
 	inc := s.store.all[startIdx]
 	curIdx := startIdx
 
-	// conflictCount is bumped once per resolveConflict entry, for every
-	// package named in the ORIGINAL conflicting incompatibility - not on
-	// every iteration of the loop below, which works with increasingly
-	// general derived incompatibilities.
+	// Counted once per call, for the packages of the original conflicting
+	// incompatibility only, not for the derived ones the loop generalizes to.
 	for _, t := range inc.Terms {
 		s.conflictCounts[t.Package]++
 	}
 
 	incChanged := false
-	// A defensive iteration cap: each iteration strictly generalizes inc via
-	// resolution, which terminates by construction once it reaches root or a
-	// backjump point, so exceeding this bound signals a defect rather than a
-	// large input - mirroring the main solve loop's own fuel guard.
+	// A defensive cap: resolution terminates by construction once it reaches
+	// root or a backjump point, so correct input never comes near this bound.
 	for guard := range 10_000 {
 		_ = guard
 		if inc.isTerminal() {
@@ -40,13 +28,9 @@ func (s *solveState) resolveConflict(startIdx int) (int, *incompatibility, error
 
 		satisfier, term := s.earliestSatisfier(inc)
 		if satisfier == nil {
-			// The reference algorithm guarantees a satisfier exists for a
-			// genuinely satisfied incompatibility, and signed exact terms
-			// uphold that: no term is satisfied by the empty prefix (a
-			// positive term needs a positive assignment, and tautological
-			// negative terms never enter the store). Reaching this means the
-			// assumption broke - a defect, not a legitimate proof - so fail
-			// loudly instead of guessing.
+			// Signed exact terms guarantee a satisfier for a genuinely
+			// satisfied incompatibility (the empty prefix satisfies no term),
+			// so its absence is a defect, not a proof.
 			return 0, nil, fmt.Errorf("no satisfier found for a satisfied incompatibility: %w", errSolverBug)
 		}
 		prevLevel := s.prevSatisfierLevel(inc, satisfier)
@@ -61,24 +45,16 @@ func (s *solveState) resolveConflict(startIdx int) (int, *incompatibility, error
 	return 0, nil, s.buildConflictError(inc)
 }
 
-// shouldBackjump decides resolveConflict's terminate-vs-resolve step: the
-// reference rule verbatim, backjumping when the satisfier is a decision or
-// comes from a different level than its own previous satisfier. No
-// exception for no-versions/unknown-package leaves is needed under signed
-// exact terms: after a plain backjump on such a leaf, propagation derives
-// the leaf term's negation, the parent's dependency incompatibility then
-// relates SATISFIED through the negative-negative entailment, and the
-// ordinary propagate-resolve cycle merges through to "not parent@version" -
-// the attribution the retired exception used to force inside a single
-// resolveConflict call.
+// shouldBackjump is the reference PubGrub rule: backjump when the satisfier
+// is a decision or sits at a different level than its previous satisfier.
+// Signed exact terms need no special case for no-versions leaves.
 func shouldBackjump(satisfier *assignment, prevLevel int) bool {
 	return satisfier.isDecision() || prevLevel != satisfier.DecisionLevel
 }
 
 // prevSatisfierLevel returns the decision level of the earliest assignment
-// strictly before satisfier that, together with satisfier pinned in, still
-// satisfies inc - or 0 if satisfier alone (with nothing before it) already
-// suffices for every term.
+// before satisfier that, with satisfier pinned in, still satisfies inc, or 0
+// when satisfier alone suffices.
 func (s *solveState) prevSatisfierLevel(inc *incompatibility, satisfier *assignment) int {
 	prevSatisfier := s.earliestSatisfierBefore(inc, satisfier)
 	if prevSatisfier == nil {
@@ -87,12 +63,9 @@ func (s *solveState) prevSatisfierLevel(inc *incompatibility, satisfier *assignm
 	return prevSatisfier.DecisionLevel
 }
 
-// backjump implements resolveConflict's termination condition: the satisfier
-// is itself a decision, or comes from a strictly different decision level
-// than its own previous satisfier. It stores inc (only if this call's loop
-// actually changed it from the original startIdx entry), backtracks the
-// partial solution to prevLevel, and returns the (index, incompatibility)
-// pair unit propagation continues from.
+// backjump stores inc when this resolveConflict call derived it, backtracks
+// to prevLevel, and returns the (index, incompatibility) pair unit
+// propagation continues from.
 func (s *solveState) backjump(inc *incompatibility, curIdx int, incChanged bool, prevLevel int) (int, *incompatibility, error) {
 	if incChanged {
 		idx, _ := s.store.add(inc)
@@ -104,11 +77,9 @@ func (s *solveState) backjump(inc *incompatibility, curIdx int, incChanged bool,
 	return curIdx, inc, nil
 }
 
-// mergeWithSatisfierCause performs one step of conflict resolution's
-// generalized resolution rule: merges inc with the satisfier's own cause
-// (excluding the satisfier's package), adding a partial-satisfier correction
-// term when the satisfier's assignment does not, on its own, satisfy inc's
-// term for that package (satisfierTerm).
+// mergeWithSatisfierCause is one generalized-resolution step: it merges inc
+// with the satisfier's cause minus the satisfier's package, adding the
+// partial-satisfier correction term when the satisfier alone falls short.
 func (s *solveState) mergeWithSatisfierCause(inc *incompatibility, satisfier *assignment, satisfierTerm term) *incompatibility {
 	cause := s.store.all[satisfier.CauseIndex]
 	prior := mergeTermsExcluding(inc, cause, satisfier.term.Package)
@@ -122,10 +93,9 @@ func (s *solveState) mergeWithSatisfierCause(inc *incompatibility, satisfier *as
 	}
 }
 
-// mergeTermsExcluding collects the terms of a and b except any naming
-// exclude, ready for normalizeTerms to merge duplicate packages (via signed
-// term intersection) and drop redundant positive root terms. This is the
-// "priorCause" step of conflict resolution's generalized resolution rule.
+// mergeTermsExcluding collects the terms of a and b except those naming
+// exclude: the "priorCause" step of generalized resolution, left for
+// normalizeTerms to merge duplicate packages and drop redundant root terms.
 func mergeTermsExcluding(a, b *incompatibility, exclude string) []term {
 	collected := make([]term, 0, len(a.Terms)+len(b.Terms))
 	for _, t := range a.Terms {
@@ -141,29 +111,16 @@ func mergeTermsExcluding(a, b *incompatibility, exclude string) []term {
 	return collected
 }
 
-// negatedDifferenceTerm returns "not (satisfierTerm minus incTerm)": the
-// partial-satisfier correction term added to the prior cause when the
-// satisfier's assignment does not, on its own, satisfy the incompatibility's
-// term for its package. The subtraction is the signed conjunction of the
-// satisfier's term with the incompatibility term's negation.
+// negatedDifferenceTerm returns "not (satisfierTerm minus incTerm)", the
+// partial-satisfier correction term, computed as the negated signed
+// conjunction of satisfierTerm with incTerm's negation.
 func negatedDifferenceTerm(satisfierTerm, incTerm term) term {
 	return termIntersect(satisfierTerm, incTerm.Negate()).Negate()
 }
 
-// computeFirstSatisfied scans assignments[0:limit] forward, maintaining a
-// per-package signed accumulation (seeded with seed's contribution for its
-// own package, if seed is non-nil - representing a satisfier pinned in
-// regardless of prefix length), and returns, for every package named in
-// inc, the index of the first assignment after which that package's
-// accumulation satisfies inc's term for it. When seed is non-nil (the
-// previousSatisfier computation), a package already satisfied by the seed
-// alone - before any prefix assignment is scanned - maps to the -1 sentinel
-// directly: the seed is a real assignment, so "satisfied by the seed alone"
-// is the legitimate no-earlier-satisfier answer. When seed is nil, nothing
-// is satisfied before a real assignment is folded in: the N({}) seed never
-// entails a positive term, and tautological negative terms never enter the
-// store. A package never satisfied within the scanned prefix is absent from
-// the result.
+// computeFirstSatisfied maps each package of inc to the first index below
+// limit whose prefix accumulation satisfies inc's term for it; -1 means the
+// non-nil seed alone satisfies it, and an unsatisfied package is absent.
 func (s *solveState) computeFirstSatisfied(inc *incompatibility, seed *term, limit int) map[string]int {
 	firstIdx := make(map[string]int, len(inc.Terms))
 	done := make(map[string]bool, len(inc.Terms))
@@ -220,10 +177,9 @@ func (s *solveState) earliestSatisfier(inc *incompatibility) (*assignment, term)
 	return &s.ps.assignments[maxIdx], term
 }
 
-// earliestSatisfierBefore finds the earliest assignment strictly before
-// satisfier such that the partial solution up to and including it, plus
-// satisfier itself pinned in, satisfies inc. It returns nil if satisfier
-// alone (with nothing before it) already suffices for every term.
+// earliestSatisfierBefore finds the earliest assignment before satisfier
+// whose prefix, with satisfier pinned in, satisfies inc, or nil when
+// satisfier alone suffices.
 func (s *solveState) earliestSatisfierBefore(inc *incompatibility, satisfier *assignment) *assignment {
 	if satisfier == nil {
 		return nil

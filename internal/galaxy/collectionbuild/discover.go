@@ -10,23 +10,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/safeout"
 )
 
-// Discover locates the collection directories under subdir of src, applying
-// ansible's dir classification at that level: a directory listing a
-// MANIFEST.json or a galaxy.yml is itself the one candidate, both at once
-// is a refusal, and otherwise every immediate child directory listing one of
-// the two is a candidate, in the tree's order, dot-directories excluded as a
-// glob would exclude them. A grandchild is never found, matching the one
-// level ansible scans. Two candidates declaring one namespace.name are a
-// refusal rather than a first-wins, since the pin that comes out of a build
-// has to name exactly one directory. The metadata file has to be a regular
-// file: a galaxy.yml or MANIFEST.json that is itself a symlink does not mark
-// its directory, where ansible's isfile would follow the link - following it
-// would mean reading a blob the build's own symlink rules may later skip.
-//
-// subdir is "/"-joined and relative to the repository root, "" being the
-// root; each component must exist and be a directory. The warnings are the
-// parsers' - unknown galaxy.yml keys - prefixed with the directory they came
-// from.
+// Discover finds the collection directories under subdir by ansible's dir
+// classification, one level deep. Only a regular galaxy.yml or MANIFEST.json
+// marks a directory; two candidates naming one namespace.name are refused.
 func Discover(src Source, subdir string) ([]Candidate, []string, error) {
 	base, entries, err := resolveSubdir(src, subdir)
 	if err != nil {

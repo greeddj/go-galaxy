@@ -12,16 +12,9 @@ import (
 // enough that a single corpus entry never dominates the fuzzing budget.
 const fuzzMaxPackages = 6
 
-// fuzzDecodeGraph decodes data into a small acyclic dependency graph, reusing
-// sharpVersionPool/sharpConstraintPool (the same alphabet generateGraph
-// draws from) so a fuzz input exercises the same sharp-edge constraint forms
-// the property/oracle suites do. It is a pure function of data: every size
-// derived from a byte is clamped or taken modulo into the bounded range the
-// generator itself uses, and reading past the end of data wraps back to the
-// start (or yields a fixed 0 for an empty input) rather than panicking, so
-// no byte slice - including nil or empty - can ever crash the decoder
-// itself. Dependencies only ever point from a lower package index to a
-// higher one, keeping the graph acyclic exactly as generateGraph does.
+// fuzzDecodeGraph decodes data into a small acyclic graph over the sharp
+// version and constraint pools generateGraph uses. It is total: reads wrap
+// around data, so no byte slice, nil included, can crash the decoder.
 func fuzzDecodeGraph(data []byte) generatedGraph {
 	pos := 0
 	next := func() byte {
@@ -75,27 +68,14 @@ func fuzzDecodeGraph(data []byte) generatedGraph {
 	return g
 }
 
-// fuzzOracleCap bounds the assignment space (the product over packages of
-// versions+1) a fuzz iteration is willing to brute-force for the oracle
-// check below: fuzzMaxPackages=6 with up to 8 versions each can reach 9^6
-// assignments, and enumerating that unconditionally would starve the
-// fuzzing budget, so only decoded graphs under this cap get the full
-// membership check.
+// fuzzOracleCap bounds the assignment space a fuzz iteration brute-forces:
+// the worst case of 9^6 would starve the fuzzing budget, so only smaller
+// decoded graphs get the oracle check.
 const fuzzOracleCap = 4096
 
-// FuzzSolve checks the same universal properties TestPropertyResolutionSatisfiesConstraints
-// does, but over the fuzzer's own adversarial corpus rather than a fixed seed
-// sweep: Solve must never panic (enforced by the fuzzing framework itself
-// around this function), a successful resolution must satisfy every
-// constraint that names a resolved package (checked independently via
-// propCheck, never the resolver's own set algebra), and a failure must
-// always be a *ConflictError - never errSolverBug, which would mean the
-// fuzzed input tripped a genuine internal invariant violation. On decoded
-// graphs whose assignment space fits under fuzzOracleCap, the brute-force
-// oracle additionally gates completeness and membership: a ConflictError on
-// a graph the oracle can solve, or a resolution outside the oracle's valid
-// set, fails the fuzz - the exact signed-set algebra claims completeness,
-// so a false rejection is a bug here exactly as it is in oracle_test.go.
+// FuzzSolve pins over the fuzzer's corpus that a resolution satisfies every
+// constraint (checked by propCheck), a failure is a *ConflictError and never
+// errSolverBug, and under fuzzOracleCap the oracle agrees in both directions.
 func FuzzSolve(f *testing.F) {
 	for _, seed := range fuzzSeedCorpus() {
 		f.Add(seed)
@@ -119,10 +99,9 @@ func FuzzSolve(f *testing.F) {
 	})
 }
 
-// checkFuzzConflict asserts a failed solve's error shape (a clean
-// *ConflictError, never errSolverBug) and, when the graph's assignment
-// space fits under fuzzOracleCap, its completeness (the oracle must agree
-// nothing was solvable).
+// checkFuzzConflict asserts a failed solve is a *ConflictError, never
+// errSolverBug, and, under fuzzOracleCap, that the oracle finds nothing
+// solvable either.
 func checkFuzzConflict(t *testing.T, g generatedGraph, err error) {
 	t.Helper()
 	if errors.Is(err, errSolverBug) {
@@ -139,10 +118,8 @@ func checkFuzzConflict(t *testing.T, g generatedGraph, err error) {
 	}
 }
 
-// enumerationSpace returns the size of g's brute-force assignment space:
-// the product over packages of (published versions + 1 for absence). The
-// bounded multiply cannot overflow at fuzz scale (at most 9^6), so no
-// saturation guard is needed beyond the cap comparison itself.
+// enumerationSpace returns the size of g's brute-force assignment space,
+// the product over packages of (published versions + 1 for absence).
 func (g generatedGraph) enumerationSpace() int {
 	space := 1
 	for _, pkg := range g.pkgs {
@@ -151,18 +128,9 @@ func (g generatedGraph) enumerationSpace() int {
 	return space
 }
 
-// fuzzSeedCorpus returns the curated starting points FuzzSolve registers via
-// f.Add: a couple of degenerate inputs (empty and a single zero byte, so the
-// decoder's wraparound/default path is exercised directly), plus three
-// hand-verified byte sequences whose decoded graphs reproduce the sharp
-// structural shapes past solver defects were found on - a plain diamond
-// (two independent paths converging on a shared dependency), a transitively
-// unsatisfiable higher root version that must force a backtrack to a lower
-// one, and a wildcard ("*") dependency term that must stay a visible
-// contributor even though it constrains nothing by itself. Each
-// decoded shape was confirmed once by hand against fuzzDecodeGraph's own
-// output before being pinned here; the byte values themselves have no
-// meaning beyond what they decode to.
+// fuzzSeedCorpus returns FuzzSolve's seeds: empty and zero-byte inputs for
+// the decoder's wraparound path, plus byte sequences decoding to a diamond,
+// a forced transitive backtrack, and a wildcard term that must stay visible.
 func fuzzSeedCorpus() [][]byte {
 	return [][]byte{
 		{},
@@ -170,18 +138,12 @@ func fuzzSeedCorpus() [][]byte {
 		// Diamond: gen.p0 depends on both gen.p1 and gen.p2, which both
 		// depend on gen.p3 - two independent paths converging on one target.
 		{3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 2, 0, 0, 0, 4, 0},
-		// Transitive backtrack: gen.p0's higher version (1.2.0) depends on
-		// gen.p1 via a constraint gen.p1's only version cannot satisfy; its
-		// lower version (1.0.0) depends on gen.p2, satisfiably. The solver
-		// must learn "not gen.p0@1.2.0" and backtrack to gen.p0@1.0.0.
+		// Transitive backtrack: gen.p0@1.2.0 needs a gen.p1 version that is
+		// not published, so the solver must learn "not gen.p0@1.2.0".
 		{2, 1, 1, 4, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 2, 0},
-		// Wildcard invisibility: gen.p0's higher version (1.5.0) depends on
-		// gen.p1 via "*" (an always-true, full-extended-universe term),
-		// which in turn depends on gen.p2 via a constraint gen.p2's only
-		// version cannot satisfy; gen.p0's lower version (1.2.0) depends on
-		// gen.p2 directly via "*", satisfiably. The wildcard term must stay
-		// visible so the solver backtracks to gen.p0@1.2.0 instead of
-		// falsely rejecting the whole graph.
+		// Wildcard invisibility: gen.p0@1.5.0 reaches an unsatisfiable
+		// gen.p2 through a "*" dependency on gen.p1; that term must stay
+		// visible so the solver backtracks to gen.p0@1.2.0 instead of failing.
 		{3, 1, 1, 5, 1, 0, 0, 1, 0, 0, 1, 1, 0, 4, 0, 5, 1, 0, 2, 1, 0, 0, 0},
 	}
 }

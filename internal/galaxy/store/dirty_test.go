@@ -6,14 +6,9 @@ import (
 	"time"
 )
 
-// TestDirtyIsFalseAfterEveryLoadPath proves Dirty starts false on every path
-// that hands a caller a *Store without this process having written into it
-// through a mutator: a fresh New(), a real local Save-then-Load round trip,
-// and a json.Unmarshal of MarshalSnapshot's own output - the shape the S3
-// backend's LoadStore produces on a successful fetch. Each fixture also
-// carries the mandatory positive control: a single SetGraph call on that same
-// store flips Dirty to true, proving the false result above is a real
-// observation rather than a predicate that can never fire.
+// TestDirtyIsFalseAfterEveryLoadPath pins that Dirty starts false after New, a
+// local Save-then-Load and an unmarshal of MarshalSnapshot (the S3 load shape),
+// and that one SetGraph on the same store then flips it.
 func TestDirtyIsFalseAfterEveryLoadPath(t *testing.T) {
 	t.Parallel()
 
@@ -72,11 +67,9 @@ type dirtyMutatorCase struct {
 	name string
 }
 
-// dirtyMutatorCases lists every one of Store's 19 write-locked mutators, one
-// row each, so a fresh call to each is proven to flip Dirty to true. This is
-// the closed table dirty_audit_test.go's AST gate cross-checks structurally;
-// keeping the two in sync is manual, which is exactly why that gate exists as
-// a backstop.
+// dirtyMutatorCases lists every write-locked Store mutator, one row each, kept
+// in sync by hand; TestEveryWriteLockedStoreMethodMarksDirty is its structural
+// backstop for the mutators in snapshot.go.
 func dirtyMutatorCases() []dirtyMutatorCase {
 	return []dirtyMutatorCase{
 		{name: "SetInstalled", call: func(st *Store) {
@@ -140,12 +133,9 @@ func dirtyMutatorCases() []dirtyMutatorCase {
 	}
 }
 
-// TestEveryMutatorMarksDirty proves each of Store's 19 write-locked mutators
-// sets Dirty to true, on a fresh store, from a single call - including
-// DeleteInstalled, DeleteGraph, DeleteInstalledRole and DeleteRolePin
-// deleting a key that was never present,
-// which pins that the flag is set unconditionally rather than only when the
-// value actually changed.
+// TestEveryMutatorMarksDirty pins that one call to each write-locked mutator on
+// a fresh store sets Dirty, even a delete of an absent key: the flag is set
+// unconditionally, not only when a value changed.
 func TestEveryMutatorMarksDirty(t *testing.T) {
 	t.Parallel()
 

@@ -20,17 +20,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// capturingPrinter is an output.Printer stub that records Printf,
-// PersistentPrintf, Warnf, and Debugf calls into separate slices, one per
-// method, so a test can assert a best-effort failure (Printf, suppressed in
-// quiet mode), a user-facing result announcement (PersistentPrintf, always
-// emitted to stdout), a security-relevant warning (Warnf, always emitted to
-// stderr - PersistentPrintf and Warnf both route through Progress.persist and
-// are both always-emitted, differing only in which stream they write to, per
-// the stdout-purity rule), or a debug-only signal (Debugf, verbose mode only)
-// surfaced on the expected channel rather than being silently swallowed or
-// emitted on the wrong one. It embeds noopPrinter (defined in
-// lock_pin_test.go) for the other Printer methods.
+// capturingPrinter is an output.Printer stub recording each output tier in its
+// own slice, so a test can assert a line landed on the expected tier rather
+// than being swallowed or emitted on the wrong one.
 type capturingPrinter struct {
 	noopPrinter
 
@@ -59,20 +51,16 @@ func (p *capturingPrinter) Okf(format string, args ...any) {
 	p.oks = append(p.oks, fmt.Sprintf(format, args...))
 }
 
-// OkVersionf records a success-tier line into the same slice Okf does, since
-// the two differ only in whether the line names the version it settled on -
-// which keeps a test asserting "no line landed on the success tier" honest
-// whichever of the two a code path chose.
+// OkVersionf records a success-tier line into the same slice Okf does, so an
+// assertion that nothing reached the success tier covers both methods.
 func (p *capturingPrinter) OkVersionf(version, format string, args ...any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.oks = append(p.oks, renderVersionLine(version, "", format, args...))
 }
 
-// Updatef records a line on the third verdict tier, the one that says the
-// subject is intact and something newer exists. It gets its own slice rather
-// than joining oks: a test asserting a report said "up to date" must not be
-// satisfied by a line that said the opposite.
+// Updatef records an update-tier line (intact, but something newer exists) in
+// its own slice, so an "up to date" assertion never matches its opposite.
 func (p *capturingPrinter) Updatef(format string, args ...any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -212,18 +200,14 @@ func (p *capturingPrinter) okLines() []string {
 	return out
 }
 
-// TestSweepDeadRunTempsIsBestEffort proves sweepDeadRunTemps never panics or
-// aborts the install when a backend's SweepTemp fails: the failure is logged
-// as a warning-tier Printf line and the call returns normally, mirroring
-// initInstall's own best-effort handling of a RecordProject failure. A nil
-// extracted store (the "caching disabled" case) must not panic either.
+// TestSweepDeadRunTempsIsBestEffort pins that a failing SweepTemp is logged as
+// a warning and never aborts the install, and that a nil extracted store does
+// not panic.
 func TestSweepDeadRunTempsIsBestEffort(t *testing.T) {
 	t.Parallel()
 
-	// A regular file (not a directory) used as cacheDir makes the backend's
-	// SweepTemp -> store.SweepDownloadTemps -> os.ReadDir call fail with a
-	// real (non-not-exist) error, exercising the failure path without a
-	// dedicated failing Backend stub.
+	// A regular file as cacheDir makes SweepTemp's directory read fail with a
+	// real, non-not-exist error.
 	notADir := filepath.Join(t.TempDir(), "not-a-dir")
 	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
 		t.Fatalf("write file: %v", err)
@@ -240,10 +224,9 @@ func TestSweepDeadRunTempsIsBestEffort(t *testing.T) {
 	}
 }
 
-// callLogBackend is a cacheManager.Backend that records nothing but its Close
-// call. The embedded interface is nil on purpose: unwindBackend must touch
-// Close and nothing else, so any other method it grew a call to would panic
-// on a nil interface rather than pass unnoticed.
+// callLogBackend is a cacheManager.Backend recording only its Close call. The
+// embedded interface is nil on purpose: any other method unwindBackend grew a
+// call to would panic rather than pass unnoticed.
 type callLogBackend struct {
 	cacheManager.Backend
 
@@ -264,10 +247,8 @@ type unwindCase struct {
 	granted   bool
 }
 
-// unwindCases covers both shapes initInstall can hand the unwind. The granted
-// row is the ordering assertion; the ungranted row is the arm where
-// backend.Lock itself failed, which must still close the backend while
-// calling nothing in place of the closure it never received.
+// unwindCases covers a granted lock (release, then close) and a failed Lock,
+// which must still close the backend and call no release closure.
 func unwindCases() []unwindCase {
 	return []unwindCase{
 		{name: "lock granted", granted: true, wantCalls: []string{"release", "close"}},
@@ -275,13 +256,9 @@ func unwindCases() []unwindCase {
 	}
 }
 
-// TestUnwindBackendReleasesBeforeClose pins the order initInstall gives back
-// what it took, directly rather than through a run: the lock first, the
-// backend second. Nothing observable depends on that order on either backend
-// shipped today - the S3 backend's Close returns nil without doing anything,
-// and the local backend's closes Bolt files the lock release never touches -
-// so it is pinned here because it is the order the code this replaced used,
-// and changing it is a decision to make deliberately rather than by accident.
+// TestUnwindBackendReleasesBeforeClose pins that unwindBackend releases the
+// lock before closing the backend; no backend depends on the order today, so
+// changing it must be deliberate.
 func TestUnwindBackendReleasesBeforeClose(t *testing.T) {
 	t.Parallel()
 
@@ -307,12 +284,9 @@ func TestUnwindBackendReleasesBeforeClose(t *testing.T) {
 	}
 }
 
-// newLockContentionFixture builds a config over a fresh cache directory whose
-// exclusive lock is already held, and returns the closure that gives it back.
-// flock(2) conflicts between file descriptions rather than processes, so
-// taking it here, in the test's own process, is enough to make initInstall's
-// own acquisition fail - no subprocess, no goroutine, no timing dependency,
-// the same fixture shape cleanup's TestInitCleanupLockFailure uses.
+// newLockContentionFixture returns a config whose cache lock is already held,
+// and its release. flock(2) conflicts between file descriptions, not
+// processes, so holding it in-process makes initInstall's acquisition fail.
 func newLockContentionFixture(t *testing.T) (*config.Config, func() error) {
 	t.Helper()
 	root := t.TempDir()
@@ -335,30 +309,9 @@ func newLockContentionFixture(t *testing.T) (*config.Config, func() error) {
 	}, release
 }
 
-// TestInitInstallLockFailureUnwindsWithNothingToRelease pins the one arm of
-// initInstall's unwind that has no lock to give back: backend.Lock itself
-// failing, which leaves the release closure nil while the backend is already
-// open. That arm must still close the backend, must return no holder context
-// at all, and must not call the nil closure on its way out.
-//
-// The holder context is the assertion that no error-shaped check can make:
-// this arm never held the lock, so there is nothing to judge the run against,
-// and cacheManager.LockLostError leaves an error untouched when the context
-// it is handed is nil. An arm that started handing back a non-nil context
-// here would be judging a run against a lock it never had.
-//
-// KILLING MUTATION, run through go test -overlay so the tree stayed
-// untouched: dropping the nil check from that unwind's release branch makes
-// this arm call a closure Lock never handed back, and no assertion below is
-// reached at all - the run dies at the initInstall call itself:
-//
-//	--- FAIL: TestInitInstallLockFailureUnwindsWithNothingToRelease (0.00s)
-//	panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
-//
-// The positive control releases the held lock and re-runs initInstall against
-// the identical cache directory: it must then succeed, which is what proves
-// the refusal above is this fixture's held lock specifically rather than some
-// other property of the directory.
+// TestInitInstallLockFailureUnwindsWithNothingToRelease pins that a failed
+// Lock returns ErrAnotherInstanceIsRunning with no state and no holder context,
+// and that the same directory succeeds once the lock is free.
 func TestInitInstallLockFailureUnwindsWithNothingToRelease(t *testing.T) {
 	t.Parallel()
 	cfg, release := newLockContentionFixture(t)
@@ -384,11 +337,9 @@ func TestInitInstallLockFailureUnwindsWithNothingToRelease(t *testing.T) {
 	assertInitInstallSucceedsOnFreeLock(t, cfg, runtime)
 }
 
-// assertInitInstallSucceedsOnFreeLock is the positive control for
-// TestInitInstallLockFailureUnwindsWithNothingToRelease: with the contending
-// lock given back, the same cache directory must let initInstall through. It
-// reads t.Context() itself rather than taking one, so *testing.T stays the
-// first parameter without tripping revive's context-as-argument rule.
+// assertInitInstallSucceedsOnFreeLock checks initInstall succeeds with a holder
+// context. It reads t.Context() rather than taking a ctx, which keeps revive's
+// context-as-argument rule satisfied.
 func assertInitInstallSucceedsOnFreeLock(t *testing.T, cfg *config.Config, runtime *infra.Infra) {
 	t.Helper()
 	lockCtx, state, err := initInstall(t.Context(), cfg, runtime)

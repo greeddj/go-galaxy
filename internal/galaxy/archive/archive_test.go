@@ -112,11 +112,9 @@ func buildTestArchive(t *testing.T, entries []testArchiveEntry) []byte {
 	return buf.Bytes()
 }
 
-// TestExtractMemoizedDeepTreeExtractsCorrectly extracts many files that all
-// share one deep parent chain - the shape ensureNoSymlinkParents' memo
-// targets - and asserts every file lands at the right path with the right
-// content. The memo must be purely an optimization: it changes nothing
-// about what gets extracted.
+// TestExtractMemoizedDeepTreeExtractsCorrectly pins that the
+// ensureNoSymlinkParents memo is purely an optimization: many files sharing
+// one deep parent chain all land at the right path with the right content.
 func TestExtractMemoizedDeepTreeExtractsCorrectly(t *testing.T) {
 	t.Parallel()
 
@@ -157,15 +155,9 @@ func TestExtractMemoizedDeepTreeExtractsCorrectly(t *testing.T) {
 	}
 }
 
-// TestExtractSymlinkParentRejectedDespiteMemoizedAncestors is the
-// load-bearing security test for the memo. p/m/sub/keep.txt creates p/m/sub;
-// p/m/other.txt is a second entry under p/m, which is what actually Lstats
-// and memoizes p and m as confirmed directories. p/m/link is then a
-// symlink (confined to sub, so safeSymlinkTarget accepts it and it gets
-// created). p/m/link/escape.txt must still be rejected: the memo skips
-// re-Lstatting p and m, but link itself was never memoized (only real
-// directories are), so it is freshly Lstat'd and correctly found to be a
-// symlink.
+// TestExtractSymlinkParentRejectedDespiteMemoizedAncestors pins that the memo
+// holds only real directories: a symlink created under memoized parents is
+// still Lstat'd fresh, so an entry beneath it is refused.
 func TestExtractSymlinkParentRejectedDespiteMemoizedAncestors(t *testing.T) {
 	t.Parallel()
 
@@ -202,12 +194,9 @@ func TestExtractSymlinkParentRejectedDespiteMemoizedAncestors(t *testing.T) {
 	}
 }
 
-// TestExtractSymlinkCannotReplaceMemoizedDir extracts two files under p/m
-// (which memoizes p and m as confirmed directories), then a symlink entry
-// named exactly p/m. The extraction must fail because os.Symlink returns
-// EEXIST for an existing directory target - a defense that lives in the
-// extractor's no-overwrite behavior, not in ensureNoSymlinkParents, so this
-// outcome is identical whether or not p and m happen to be memoized.
+// TestExtractSymlinkCannotReplaceMemoizedDir pins that a symlink entry named
+// like an already extracted directory fails, since os.Symlink returns EEXIST,
+// and leaves the directory in place, memoized or not.
 func TestExtractSymlinkCannotReplaceMemoizedDir(t *testing.T) {
 	t.Parallel()
 
@@ -233,11 +222,8 @@ func TestExtractSymlinkCannotReplaceMemoizedDir(t *testing.T) {
 	}
 }
 
-// TestExtractHardlinkWithMemoizedParentChain smoke-tests that the memo
-// threads correctly into extractHardlink: p/q/a.txt and p/q/target.txt
-// memoize p and q, then p/q/link.txt hardlinks to p/q/target.txt, whose own
-// parent-chain check (inside extractHardlink) must reuse that memo and
-// still extract correctly.
+// TestExtractHardlinkWithMemoizedParentChain pins that extractHardlink's own
+// parent-chain check reuses the memo and still links the target correctly.
 func TestExtractHardlinkWithMemoizedParentChain(t *testing.T) {
 	t.Parallel()
 
@@ -263,11 +249,9 @@ func TestExtractHardlinkWithMemoizedParentChain(t *testing.T) {
 	}
 }
 
-// buildEntriesArchive builds n flat tar entries of the given typeflag, named
-// entry0, entry1, ..., entry<n-1>. tar.TypeDir entries get a trailing slash
-// and zero size, per tar convention. This drives extractTarEntries' entry-
-// count cap directly, with a tiny injected cap, instead of needing a real
-// 100,001-entry archive to exercise the boundary.
+// buildEntriesArchive builds n flat entries of one typeflag named entry0 to
+// entry<n-1>; a tar.TypeDir entry gets a trailing slash and zero size. It lets
+// the entry-count tests use a tiny injected cap instead of 100,001 entries.
 func buildEntriesArchive(tb testing.TB, n int, typeflag byte) []byte {
 	tb.Helper()
 
@@ -388,11 +372,9 @@ func TestExtractEntryCountOverCapFailsClosed(t *testing.T) {
 	}
 }
 
-// TestExtractEntryCountCountsNonRegularEntries proves the entry-count cap
-// counts every typeflag, not just regular files: four zero-byte directory
-// entries against a cap of three must be rejected, even though a zero-byte
-// directory charges nothing against either byte cap. This is the defense
-// against an empty-directory (or hardlink) inode-exhaustion tarbomb.
+// TestExtractEntryCountCountsNonRegularEntries pins that the entry-count cap
+// counts every typeflag: zero-byte directories, which charge no byte budget,
+// still trip it, the defense against an inode-exhaustion tarbomb.
 func TestExtractEntryCountCountsNonRegularEntries(t *testing.T) {
 	t.Parallel()
 
@@ -406,11 +388,9 @@ func TestExtractEntryCountCountsNonRegularEntries(t *testing.T) {
 	}
 }
 
-// TestExtractEntryCountCountsHardlinkEntries is the hardlink variant of the
-// non-regular-entry coverage above: a regular target file plus hardlinks to
-// it are each counted, so the fourth entry (also a hardlink) trips the cap
-// before it is linked. The first three entries must extract successfully
-// (proving the cap does not fire early), and only the fourth is rejected.
+// TestExtractEntryCountCountsHardlinkEntries pins that hardlink entries count
+// against the cap too: the first three entries extract and the fourth, a
+// hardlink over a cap of three, is refused before it is linked.
 func TestExtractEntryCountCountsHardlinkEntries(t *testing.T) {
 	t.Parallel()
 
@@ -445,10 +425,9 @@ func TestExtractEntryCountCountsHardlinkEntries(t *testing.T) {
 	}
 }
 
-// TestExtractLegitMultiFileArchiveStillExtracts proves the cap causes no
-// false positive on an ordinary collection-sized archive: a flat 50-file
-// archive extracted through the public ExtractTarGzStream API, using the
-// real ArchiveMaxEntryCount rather than an injected cap, must still succeed.
+// TestExtractLegitMultiFileArchiveStillExtracts pins that the real
+// ArchiveMaxEntryCount raises no false positive on an ordinary 50-file archive
+// extracted through ExtractTarGzStream.
 func TestExtractLegitMultiFileArchiveStillExtracts(t *testing.T) {
 	t.Parallel()
 
@@ -468,12 +447,9 @@ func TestExtractLegitMultiFileArchiveStillExtracts(t *testing.T) {
 	}
 }
 
-// TestExtractOverlongPathComponentFailsClosed drives
-// checkPathComponentNotSymlink's non-ErrNotExist Lstat error arm: a tar
-// entry whose path has a component exceeding the filesystem's name limit
-// makes os.Lstat fail with ENAMETOOLONG rather than os.ErrNotExist, so
-// extraction must fail closed with a wrapped stat error instead of silently
-// treating the component as absent and proceeding.
+// TestExtractOverlongPathComponentFailsClosed pins that an Lstat failure other
+// than ErrNotExist (here ENAMETOOLONG) in checkPathComponentNotSymlink fails
+// extraction instead of treating the component as absent.
 func TestExtractOverlongPathComponentFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -515,11 +491,9 @@ func assertExtractedFileModes(t *testing.T, dst string, want map[string]os.FileM
 	}
 }
 
-// TestExtractStripsWriteBits proves extraction masks every write bit off a
-// regular file at open time regardless of the tar header's own mode, leaves
-// directories at helpers.DirMod, and never touches a symlink's own mode
-// (which os.Chmod would resolve through to the symlink's target instead of
-// the link itself).
+// TestExtractStripsWriteBits pins that a regular file loses every write bit at
+// open time whatever its header mode, a directory stays at helpers.DirMod, and
+// a symlink is never chmod'ed (os.Chmod would follow it to its target).
 func TestExtractStripsWriteBits(t *testing.T) {
 	t.Parallel()
 
@@ -573,11 +547,9 @@ func TestExtractStripsWriteBits(t *testing.T) {
 	}
 }
 
-// TestExtractRejectsDuplicateEntries proves a tarball with two regular-file
-// entries at the same path fails with helpers.ErrArchiveDuplicateEntry
-// naming the offending path, rather than the bare, undebuggable permission
-// error the second entry's OpenFile now hits against the first entry's
-// already-read-only file.
+// TestExtractRejectsDuplicateEntries pins that two regular-file entries at one
+// path fail with helpers.ErrArchiveDuplicateEntry naming the path, rather than
+// the bare permission error the read-only first copy would otherwise produce.
 func TestExtractRejectsDuplicateEntries(t *testing.T) {
 	t.Parallel()
 
@@ -597,11 +569,9 @@ func TestExtractRejectsDuplicateEntries(t *testing.T) {
 	}
 }
 
-// TestExtractAcceptsDotSlashPrefixedNames guards against the write-bit and
-// duplicate-entry changes above false-positiving on a perfectly ordinary
-// tarball whose entries are named with a "./" prefix (a common tar output
-// convention): sanitizeArchivePath already normalizes it away, and this
-// pins that normal single-entry extraction still succeeds.
+// TestExtractAcceptsDotSlashPrefixedNames pins that entries named with the
+// common "./" prefix are normalized by sanitizeArchivePath and extract
+// normally, so neither the write-bit nor the duplicate check misfires on them.
 func TestExtractAcceptsDotSlashPrefixedNames(t *testing.T) {
 	t.Parallel()
 
@@ -634,21 +604,9 @@ func TestExtractAcceptsDotSlashPrefixedNames(t *testing.T) {
 	}
 }
 
-// buildHeaderOnlyArchive renders exactly one tar header, declaring size bytes,
-// into an in-memory tar.gz and writes no body for it at all. A declared size
-// that no body backs is what makes "charged before the typeflag is dispatched"
-// observable: for a typeflag that owes a body, the charge is then the first
-// thing that can fail, and the omitted body the second.
-//
-// tw.Close()'s error is deliberately ignored, and both of its outcomes here
-// are expected. For a typeflag archive/tar does not treat as header-only,
-// Close reports `archive/tar: missed writing N bytes` - precisely because this
-// fixture declares a body it intentionally omits - and stops short of the two
-// zero trailer blocks; the header itself is already in the stream, which is
-// all these tests read. For a header-only typeflag the writer owes no body, so
-// Close returns nil and writes the trailer normally. gz.Close() is checked as
-// usual, since a gzip-layer failure would mean the fixture itself is broken
-// rather than deliberately truncated.
+// buildHeaderOnlyArchive renders one tar header declaring size bytes and writes
+// no body, so a charge made before dispatch is the first thing that can fail.
+// tw.Close's error is ignored: it reports the deliberately omitted body.
 func buildHeaderOnlyArchive(t *testing.T, typeflag byte, name string, size int64) []byte {
 	t.Helper()
 
@@ -677,50 +635,23 @@ func buildHeaderOnlyArchive(t *testing.T, typeflag byte, name string, size int64
 	return buf.Bytes()
 }
 
-// TestExtractUnknownTypeflagEntryIsSizeCapped drives the byte budget through
-// an entry the dispatch switch's default arm skips: '9' is not one of the four
-// typeflags extraction handles, so nothing about this entry reaches the disk -
-// yet its declared size is exactly what tar.Reader.Next has to read past to
-// reach the following header. It must meet the same per-entry cap a regular
-// file meets.
+// TestExtractUnknownTypeflagEntryIsSizeCapped pins that an entry of a typeflag
+// the dispatch skips ('9') is still charged against the per-entry cap, before
+// its body is read past.
 func TestExtractUnknownTypeflagEntryIsSizeCapped(t *testing.T) {
 	t.Parallel()
 
 	archiveBytes := buildHeaderOnlyArchive(t, '9', "bomb", helpers.ArchiveMaxEntrySize+1)
 
 	err := ExtractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), t.TempDir())
-	// Killing mutation: delete the chargeEntrySize call from
-	// extractTarEntries, together with the `declared` half of that function's
-	// `var declared, entries int64` - the call is its only use, so deleting the
-	// call by itself does not compile ("declared and not used: declared").
-	// This assertion then fails with
-	//
-	//	archive_test.go:704: expected archive entry is too large, got error reading tar archive: unexpected EOF
-	//
-	// which is also what proves the charge runs BEFORE the body is read:
-	// uncharged, the entry is skipped and the first failure the extractor can
-	// report is the truncated body this fixture deliberately omits.
 	if !errors.Is(err, helpers.ErrArchiveEntryIsTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveEntryIsTooLarge, err)
 	}
 }
 
 // TestExtractUnknownTypeflagUnderCapIsSkipped is the positive control for
-// TestExtractUnknownTypeflagEntryIsSizeCapped: a '9'-typeflag entry with a
-// declared size the budget accepts must still be skipped silently while the
-// rest of the archive extracts. Without it, "the extractor refused" would be
-// indistinguishable from "the extractor never accepted this shape at all".
-//
-// It is deliberately not the same fixture, and the difference is worth stating
-// rather than glossing. The refusal above uses buildHeaderOnlyArchive, whose
-// single entry declares a body it never writes; measured, that builder yields
-// a '9' archive this extractor accepts only at declared size 0, failing with
-// `unexpected EOF` at any nonzero size under the cap (which is the output the
-// refusal's own killing mutation quotes). So the only same-fixture control
-// available would declare 0 - and that cannot distinguish "the budget accepted
-// this size" from "there was no size to charge at all". A body-backed
-// buildTestArchive entry can declare a real, nonzero size and be accepted,
-// which is the property a control has to demonstrate.
+// TestExtractUnknownTypeflagEntryIsSizeCapped: a body-backed '9' entry under the
+// cap is skipped and the rest extracts (a body-less one fails at any size > 0).
 func TestExtractUnknownTypeflagUnderCapIsSkipped(t *testing.T) {
 	t.Parallel()
 
@@ -748,38 +679,23 @@ func TestExtractUnknownTypeflagUnderCapIsSkipped(t *testing.T) {
 	}
 }
 
-// TestExtractDotNamedEntryIsSizeCapped closes the second path that reached a
-// tar header without charging it: an entry named "." normalizes to an empty
-// relative path, so handleTarEntry returns before it dispatches on anything at
-// all. The declared size still has to be read past.
+// TestExtractDotNamedEntryIsSizeCapped pins that an entry named ".", which
+// handleTarEntry returns on before any dispatch, is still charged against the
+// per-entry cap.
 func TestExtractDotNamedEntryIsSizeCapped(t *testing.T) {
 	t.Parallel()
 
 	archiveBytes := buildHeaderOnlyArchive(t, tar.TypeReg, ".", helpers.ArchiveMaxEntrySize+1)
 
 	err := ExtractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), t.TempDir())
-	// Killing mutation: the same one the default-arm test above describes -
-	// delete the chargeEntrySize call from extractTarEntries and the `declared`
-	// half of its `var declared, entries int64`, without which the mutant does
-	// not compile. This assertion then fails with
-	//
-	//	archive_test.go:772: expected archive entry is too large, got error reading tar archive: unexpected EOF
-	//
-	// the same output the default-arm test above reports, for the same reason:
-	// the sanitize-to-empty return hands the entry back to tar.Reader.Next
-	// uncharged.
 	if !errors.Is(err, helpers.ErrArchiveEntryIsTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveEntryIsTooLarge, err)
 	}
 }
 
-// TestExtractDotEntryUnderCapIsSkipped is the positive control for
-// TestExtractDotNamedEntryIsSizeCapped: a regular-file entry named "." with a
-// declared size the budget accepts must still be normalized away and skipped,
-// leaving the rest of the archive to extract. It is body-backed rather than
-// header-only, so it is not the refusal's own fixture - see
-// TestExtractUnknownTypeflagUnderCapIsSkipped for why the header-only builder
-// cannot supply a control that proves anything here.
+// TestExtractDotEntryUnderCapIsSkipped is the body-backed positive control for
+// TestExtractDotNamedEntryIsSizeCapped: an accepted "." entry is normalized
+// away and skipped while the rest of the archive extracts.
 func TestExtractDotEntryUnderCapIsSkipped(t *testing.T) {
 	t.Parallel()
 
@@ -804,41 +720,23 @@ func TestExtractDotEntryUnderCapIsSkipped(t *testing.T) {
 	}
 }
 
-// TestExtractHeaderOnlyEntryWithDeclaredSizeIsCharged pins the one shape this
-// budget deliberately narrows. A directory entry declaring a nonzero size is
-// otherwise a valid, extractable archive: the writer emits no body for a
-// header-only typeflag and closes cleanly, and the reader hands back the
-// declared size and parses the following entry normally - see
-// TestExtractHeaderOnlyEntryUnderCapIsAccepted, the same fixture under the
-// cap. Charging every header regardless of typeflag is what turns a
-// header-only entry declaring more than the per-entry cap into a refusal.
+// TestExtractHeaderOnlyEntryWithDeclaredSizeIsCharged pins that a header-only
+// directory entry is charged its declared size like any other typeflag, so
+// one declaring more than the per-entry cap is refused.
 func TestExtractHeaderOnlyEntryWithDeclaredSizeIsCharged(t *testing.T) {
 	t.Parallel()
 
 	archiveBytes := buildHeaderOnlyArchive(t, tar.TypeDir, "d/", helpers.ArchiveMaxEntrySize+1)
 
 	err := ExtractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), t.TempDir())
-	// Killing mutation: add `if header.Typeflag != tar.TypeReg { return nil }`
-	// at the top of chargeEntrySize - the narrowest way to put the budget back
-	// where it was, charging only the typeflag that writes bytes. This
-	// assertion then fails with
-	//
-	//	archive_test.go:833: expected archive entry is too large, got <nil>
-	//
-	// a bare nil rather than a read failure, because a header-only entry
-	// carries no body to trip over afterwards. That is what this fixture adds
-	// over the two above: it separates "never charged" from "charged, and then
-	// the body was read".
 	if !errors.Is(err, helpers.ErrArchiveEntryIsTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveEntryIsTooLarge, err)
 	}
 }
 
 // TestExtractHeaderOnlyEntryUnderCapIsAccepted is the positive control for
-// TestExtractHeaderOnlyEntryWithDeclaredSizeIsCharged: the same fixture and
-// the same header-only typeflag, differing only in the declared size, must
-// extract the directory normally - so that test's refusal is a verdict on the
-// size, not on the shape.
+// TestExtractHeaderOnlyEntryWithDeclaredSizeIsCharged: the same fixture under
+// the cap extracts, so that refusal is about the size and not the shape.
 func TestExtractHeaderOnlyEntryUnderCapIsAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -861,11 +759,9 @@ func TestExtractHeaderOnlyEntryUnderCapIsAccepted(t *testing.T) {
 // tarBlockSize is the size of one tar header block, and of one data block.
 const tarBlockSize = 512
 
-// sparseFixturePhysical and sparseFixtureLogical are the two independent sizes
-// the sparse fixture below declares: the bytes really present in the stream,
-// which archive/tar reads past, and the logical file size, which is all
-// chargeEntrySize ever sees. A megabyte against a single byte is a ratio wide
-// enough that no nonzero declared-size budget could refuse the entry.
+// sparseFixturePhysical and sparseFixtureLogical are the sparse fixture's bytes
+// in the stream and its logical size, the only one chargeEntrySize sees; the
+// ratio is wide enough that no nonzero declared-size budget refuses the entry.
 const (
 	sparseFixturePhysical = int64(1 << 20)
 	sparseFixtureLogical  = int64(1)
@@ -879,22 +775,9 @@ func putTarOctal(field []byte, v int64) {
 	field[len(field)-1] = 0x00
 }
 
-// buildOldGNUSparseArchive renders exactly one old-GNU sparse entry ('S') into
-// an in-memory tar.gz: physical bytes in the header's size field, logical
-// bytes in both its realsize field and its single sparse-map fragment, and a
-// body of physical zero bytes. physical must be a whole number of tar blocks,
-// so the entry needs no trailing padding.
-//
-// The 512-byte block is assembled by hand, at the offsets archive/tar's reader
-// parses them from, because tar.Header has no realsize or sparse-map field for
-// tar.Writer to encode: measured, it writes 'S' with both left as NUL bytes.
-//
-// The two sizes are the whole point of the fixture. archive/tar sizes the
-// entry's body reader from the physical one and then overwrites Header.Size
-// with the logical one, so an entry that costs the extractor `physical` bytes
-// to read past is charged `logical` against the declared-size budgets. A body
-// of zeros is also what keeps the fixture tiny: a megabyte of them compresses
-// to roughly a kilobyte.
+// buildOldGNUSparseArchive hand-assembles one old-GNU sparse ('S') entry, as
+// tar.Writer cannot encode realsize or a sparse map: physical zero bytes in the
+// stream, and logical bytes in realsize, which Header.Size then reports.
 func buildOldGNUSparseArchive(t *testing.T, name string, physical, logical int64) []byte {
 	t.Helper()
 
@@ -943,19 +826,9 @@ func buildOldGNUSparseArchive(t *testing.T, name string, physical, logical int64
 	return buf.Bytes()
 }
 
-// TestExtractSparseEntryTripsDecompressedCap is the load-bearing test for the
-// decompressed-stream cap, and for why that cap exists at all: this entry
-// declares one byte and costs a megabyte to read past. The declared-size
-// budgets charge 1 and could not refuse it at any nonzero setting, so the
-// sentinel this asserts on is also the assertion that the refusal came from
-// the stream cap rather than from either of them.
-//
-// The cap is injected rather than left at helpers.ArchiveMaxDecompressedSize
-// deliberately. Driving the production ceiling needs a 4 GiB decompressed
-// stream, which is affordable plain and much less so under -race, which is how
-// CI runs this suite; a 64 KiB cap against a fixture of about a kilobyte
-// exercises the identical code path in milliseconds. This is the same
-// injection the entry-count tests above already use for the same reason.
+// TestExtractSparseEntryTripsDecompressedCap pins that only the decompressed
+// stream cap refuses an entry declaring one byte and costing a megabyte. The
+// cap is injected because the 4 GiB production ceiling is too slow under -race.
 func TestExtractSparseEntryTripsDecompressedCap(t *testing.T) {
 	t.Parallel()
 
@@ -965,28 +838,14 @@ func TestExtractSparseEntryTripsDecompressedCap(t *testing.T) {
 	archiveBytes := buildOldGNUSparseArchive(t, "sparse.bin", sparseFixturePhysical, sparseFixtureLogical)
 
 	err := extractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), t.TempDir(), refuseCap)
-	// Killing mutation: unwrap the decompressor in extractTarGzStream - delete
-	// the `limited := &decompressedLimitReader{...}` line and hand
-	// uncompressedStream straight to tar.NewReader (deleting only the wrap
-	// leaves `limited` unused, which does not compile). This assertion then
-	// fails with
-	//
-	//	archive_test.go:979: expected archive decompressed stream exceeds maximum size, got <nil>
-	//
-	// a bare nil, not a smaller refusal: with the stream uncounted there is no
-	// rule left that this entry breaks.
 	if !errors.Is(err, helpers.ErrArchiveDecompressedTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveDecompressedTooLarge, err)
 	}
 }
 
-// TestExtractSparseEntryUnderDecompressedCapIsAccepted is the positive control
-// for TestExtractSparseEntryTripsDecompressedCap, and a true same-fixture one:
-// the identical archive through the identical call, differing only in the
-// injected cap. Without it, "the extractor refused" would be indistinguishable
-// from "this hand-built sparse header is unreadable here". It also pins what
-// the entry does on the accepting path - 'S' reaches handleTarEntry's default
-// arm, so a megabyte of stream leaves nothing at all on disk.
+// TestExtractSparseEntryUnderDecompressedCapIsAccepted is the same-fixture
+// positive control under a larger cap; the 'S' entry reaches handleTarEntry's
+// default arm, so a megabyte of stream leaves nothing on disk.
 func TestExtractSparseEntryUnderDecompressedCapIsAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -1004,26 +863,9 @@ func TestExtractSparseEntryUnderDecompressedCapIsAccepted(t *testing.T) {
 	}
 }
 
-// buildGNUHeaderOnlyArchive renders exactly one header-only tar entry, pinned
-// to the GNU format, and writes no body for it.
-//
-// Naming the format is what keeps the negative-size fixture below down to a
-// single header. buildHeaderOnlyArchive sets no Format, and for a size octal
-// cannot encode archive/tar falls back to PAX rather than failing: measured,
-// that builder does produce a readable archive carrying the same negative
-// Header.Size, but it carries it in a PAX record and emits an 'x' meta header
-// ahead of the entry - 160 bytes against this builder's 94. That 'x' header is
-// one of the three typeflags chargeEntrySize structurally never sees, so a
-// test about what gets charged is better off with no such header in its
-// fixture at all. GNU's base-256 encoding puts the negative number in the
-// entry's own size field instead, which is also the shape a hostile archive
-// would reach for.
-//
-// tw.Close()'s error is checked here, unlike in buildHeaderOnlyArchive, and
-// the difference is not an oversight either way: this builder is for
-// header-only typeflags, for which the writer owes no body, so Close must
-// succeed and emit the trailer - a failure would mean the fixture itself is
-// broken rather than deliberately truncated.
+// buildGNUHeaderOnlyArchive renders one body-less header-only entry in GNU
+// format, whose base-256 size field carries a negative size in the entry's own
+// header; the default format would move it into a PAX 'x' record instead.
 func buildGNUHeaderOnlyArchive(t *testing.T, typeflag byte, name string, size int64) []byte {
 	t.Helper()
 
@@ -1055,48 +897,27 @@ func buildGNUHeaderOnlyArchive(t *testing.T, typeflag byte, name string, size in
 	return buf.Bytes()
 }
 
-// negativeDeclaredSize is a size no legitimate archive declares, chosen large
-// in magnitude so that the mutation below is unmistakable: added to the
-// running total it puts that total nowhere near the per-archive ceiling again,
-// for any number of entries that follow.
+// negativeDeclaredSize is a size no legitimate archive declares, large enough
+// that adding it would pull the running total far below the per-archive cap.
 const negativeDeclaredSize = -(int64(1) << 62)
 
-// TestExtractNegativeDeclaredSizeFailsClosed drives chargeEntrySize's negative
-// branch, which nothing else in this repository's suite reaches. The branch is
-// not a guard against a value archive/tar could never produce: archive/tar
-// parses a GNU base-256 size field as a signed number and forces the body
-// reader to zero for a header-only typeflag, so the negative size arrives
-// intact on an archive that is otherwise completely well-formed - one header,
-// one trailer, no truncation.
-//
-// It is load-bearing because the per-archive budget is a running sum: a
-// negative charge DECREASES that sum, so a single such entry buys everything
-// after it an effectively unlimited declared size.
+// TestExtractNegativeDeclaredSizeFailsClosed pins chargeEntrySize's negative
+// branch: archive/tar delivers a GNU base-256 negative size intact on a
+// header-only entry, and charging it would lower the per-archive running sum.
 func TestExtractNegativeDeclaredSizeFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	archiveBytes := buildGNUHeaderOnlyArchive(t, tar.TypeDir, "d/", negativeDeclaredSize)
 
 	err := ExtractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), t.TempDir())
-	// Killing mutation: delete chargeEntrySize's `if header.Size < 0` branch.
-	// This assertion then fails with
-	//
-	//	archive_test.go:1091: expected archive entry has negative size, got <nil>
-	//
-	// a bare nil rather than one of the two size sentinels below it in that
-	// function: a negative size is under the per-entry cap and drags the
-	// running total further under the per-archive one, so with this branch
-	// gone nothing downstream has anything to object to.
 	if !errors.Is(err, helpers.ErrArchiveEntryHasNegativeSize) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveEntryHasNegativeSize, err)
 	}
 }
 
-// TestExtractGNUFormatHeaderOnlyEntryIsAccepted is the positive control for
-// TestExtractNegativeDeclaredSizeFailsClosed, and a true same-fixture one: the
-// same builder, typeflag and name, differing only in the sign of the declared
-// size. Without it, "the extractor refused" would be indistinguishable from "a
-// GNU-format header-only archive is unreadable here".
+// TestExtractGNUFormatHeaderOnlyEntryIsAccepted is the same-fixture positive
+// control for TestExtractNegativeDeclaredSizeFailsClosed: the same entry with
+// a positive declared size extracts.
 func TestExtractGNUFormatHeaderOnlyEntryIsAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -1116,19 +937,14 @@ func TestExtractGNUFormatHeaderOnlyEntryIsAccepted(t *testing.T) {
 	}
 }
 
-// atCapDirCount is how many entries each declaring helpers.ArchiveMaxEntrySize
-// fit exactly inside helpers.ArchiveMaxTotalSize. It is derived rather than
-// written down, so the boundary the two tests below pin follows a change to
-// either constant instead of quietly stopping at the boundary.
+// atCapDirCount is how many entries declaring helpers.ArchiveMaxEntrySize fit
+// exactly in helpers.ArchiveMaxTotalSize, derived so the boundary tests follow
+// either constant.
 const atCapDirCount = int(helpers.ArchiveMaxTotalSize / helpers.ArchiveMaxEntrySize)
 
-// buildDeclaredSizeDirArchive renders count header-only directory entries,
-// named d0/ through d<count-1>/, each declaring size bytes it does not carry.
-// tar.TypeDir is what makes that expressible at all: archive/tar forces a
-// header-only typeflag's body reader to zero while still handing Header.Size
-// back verbatim, so every entry costs 512 bytes to read, charges size against
-// the budgets, and leaves the following header exactly where it is expected -
-// the archive round-trips as an ordinary, complete tar.gz.
+// buildDeclaredSizeDirArchive renders count directory entries d0/ onward, each
+// declaring size bytes it does not carry: archive/tar reads no body for a
+// header-only typeflag but reports Header.Size verbatim.
 func buildDeclaredSizeDirArchive(t *testing.T, count int, size int64) []byte {
 	t.Helper()
 
@@ -1162,13 +978,9 @@ func buildDeclaredSizeDirArchive(t *testing.T, count int, size int64) []byte {
 	return buf.Bytes()
 }
 
-// TestExtractCumulativeDeclaredSizeOverCapFailsClosed drives chargeEntrySize's
-// per-archive branch, the other one nothing else in this suite reached. Every
-// entry here is individually legal - each declares exactly
-// helpers.ArchiveMaxEntrySize, which the per-entry check accepts - so the
-// running total is the only rule that can refuse this archive, and it has to
-// refuse it at the entry that crosses the ceiling rather than at any earlier
-// one.
+// TestExtractCumulativeDeclaredSizeOverCapFailsClosed pins chargeEntrySize's
+// per-archive branch: entries each legal on their own are refused at the one
+// that crosses helpers.ArchiveMaxTotalSize, and not earlier.
 func TestExtractCumulativeDeclaredSizeOverCapFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -1176,15 +988,6 @@ func TestExtractCumulativeDeclaredSizeOverCapFailsClosed(t *testing.T) {
 
 	dst := t.TempDir()
 	err := ExtractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), dst)
-	// Killing mutation: delete chargeEntrySize's
-	// `if *declared+header.Size > helpers.ArchiveMaxTotalSize` branch, keeping
-	// the `*declared += header.Size` below it. This assertion then fails with
-	//
-	//	archive_test.go:1189: expected archive exceeds maximum total size, got <nil>
-	//
-	// a bare nil: with the running total no longer consulted, every one of
-	// these entries passes the per-entry cap on its own and the archive
-	// extracts clean.
 	if !errors.Is(err, helpers.ErrArchiveExceedsMaxSize) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveExceedsMaxSize, err)
 	}
@@ -1203,25 +1006,15 @@ func TestExtractCumulativeDeclaredSizeOverCapFailsClosed(t *testing.T) {
 	}
 }
 
-// TestExtractCumulativeDeclaredSizeAtCapIsAccepted is the positive control for
-// the test above, and it pins the boundary the same way TestExtractEntryCountAtCap
-// pins the entry-count one: a running total landing exactly on
-// helpers.ArchiveMaxTotalSize must be accepted, because the check is
-// `*declared+header.Size > cap` rather than `>=`.
+// TestExtractCumulativeDeclaredSizeAtCapIsAccepted pins the boundary: a running
+// total landing exactly on helpers.ArchiveMaxTotalSize is accepted, since the
+// check is > rather than >=.
 func TestExtractCumulativeDeclaredSizeAtCapIsAccepted(t *testing.T) {
 	t.Parallel()
 
 	archiveBytes := buildDeclaredSizeDirArchive(t, atCapDirCount, helpers.ArchiveMaxEntrySize)
 
 	dst := t.TempDir()
-	// Killing mutation: change chargeEntrySize's per-archive comparison from
-	// `>` to `>=`. This assertion then fails with
-	//
-	//	archive_test.go:1226: unexpected error: archive exceeds maximum total size: 4294967296 bytes
-	//
-	// on the entry that brings the total to exactly the cap. This control pins
-	// that boundary directly: the refusal test above reports the same sentinel
-	// either way, and catches the shift only incidentally, in its placement loop.
 	if err := ExtractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), dst); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1246,23 +1039,9 @@ func sealTarBlock(blk []byte) {
 	copy(blk[148:156], fmt.Sprintf("%06o\x00 ", sum))
 }
 
-// buildMetaHeaderChainArchive renders count zero-size GNU long-link ('K')
-// headers into an in-memory tar.gz, followed by the two zero blocks that
-// terminate a tar stream.
-//
-// The block is assembled by hand because tar.Writer refuses this typeflag
-// outright ("cannot manually encode TypeXHeader, TypeGNULongName, or
-// TypeGNULongLink headers"): 'K' is a meta header archive/tar produces and
-// consumes inside Next() on its own, and never hands a caller a header for.
-// Declaring size 0 is what makes the chain cost nothing but its framing - the
-// reader's own 1 MiB cap on a meta-header body never comes into it.
-//
-// The trailer is not decoration; without it the fixture cannot exercise the
-// rule it exists for. Measured: with the trailer omitted the stream simply
-// runs out, the last io.ReadFull of a header block comes up short of its
-// minimum, and a short read keeps its error instead of discarding it - so the
-// extractor reports the cap whatever the reader below it returned, and the
-// test passes without the rule under test doing any work.
+// buildMetaHeaderChainArchive hand-assembles count zero-size GNU long-link
+// ('K') headers, which tar.Writer refuses to encode, then the tar trailer,
+// without which a short final read keeps the error and the test is vacuous.
 func buildMetaHeaderChainArchive(t *testing.T, count int) []byte {
 	t.Helper()
 
@@ -1298,16 +1077,9 @@ func buildMetaHeaderChainArchive(t *testing.T, count int) []byte {
 	return buf.Bytes()
 }
 
-// TestExtractMetaHeaderChainTripsDecompressedCap drives the stream cap with
-// the shape that has no other rule to meet. tar.Reader.Next consumes a 'K'
-// header and continues its own loop without returning anything, so
-// extractTarEntries' entry counter never counts one and chargeEntrySize never
-// charges one: the sentinel asserted here is therefore also an assertion
-// about which rule fired, because no other rule can see this archive at all.
-//
-// The cap is injected rather than left at helpers.ArchiveMaxDecompressedSize
-// for the reason the sparse test above gives: a few hundred 512-byte headers
-// against a 4 KiB cap exercise the identical code path in microseconds.
+// TestExtractMetaHeaderChainTripsDecompressedCap pins the stream cap against
+// 'K' headers, which Next consumes without returning, so neither the entry
+// counter nor chargeEntrySize can see them. The cap is injected for speed.
 func TestExtractMetaHeaderChainTripsDecompressedCap(t *testing.T) {
 	t.Parallel()
 
@@ -1318,29 +1090,14 @@ func TestExtractMetaHeaderChainTripsDecompressedCap(t *testing.T) {
 	archiveBytes := buildMetaHeaderChainArchive(t, headers)
 
 	err := extractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), t.TempDir(), refuseCap)
-	// Killing mutation: strip decompressedLimitReader.Read back to a plain
-	// pass-through - delete its sticky-error block and its clamp block, and
-	// return the crossing read's bytes alongside the refusal (`return n,
-	// fmt.Errorf(...)` instead of storing the error and returning zero). This
-	// assertion then fails with
-	//
-	//	archive_test.go:1333: expected archive decompressed stream exceeds maximum size, got <nil>
-	//
-	// a bare nil: every one of those refusals is raised into an io.ReadFull
-	// that had its 512 bytes and threw the error away, and the extractor reads
-	// the chain to its end and reports success.
 	if !errors.Is(err, helpers.ErrArchiveDecompressedTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveDecompressedTooLarge, err)
 	}
 }
 
-// TestExtractMetaHeaderChainUnderDecompressedCapIsAccepted is the positive
-// control for the test above, and a true same-fixture one: the identical
-// archive through the identical call, differing only in the injected cap.
-// Without it, "the extractor refused" would be indistinguishable from "this
-// hand-built meta header is unreadable here". It also pins what the chain
-// does on the accepting path - a header Next never returns extracts nothing,
-// so the whole destination stays empty.
+// TestExtractMetaHeaderChainUnderDecompressedCapIsAccepted is the same-fixture
+// positive control under a larger cap: a chain of headers Next never returns
+// extracts nothing, so the destination stays empty.
 func TestExtractMetaHeaderChainUnderDecompressedCapIsAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -1364,13 +1121,9 @@ func TestExtractMetaHeaderChainUnderDecompressedCapIsAccepted(t *testing.T) {
 	}
 }
 
-// TestExtractHeaderOnlyEntriesTripDecompressedCap drives the same refusal
-// through the shape the entry counter CAN see, which is what separates it
-// from the meta-header chain above: ordinary tar.Writer-built directory
-// entries, each one returned by Next and counted. They declare size 0, so
-// both byte budgets charge nothing, and the entry cap is left at its
-// production value, so the only rule this archive can break is the stream
-// cap - which it breaks on framing alone, at 512 bytes per header.
+// TestExtractHeaderOnlyEntriesTripDecompressedCap pins the stream cap on
+// counted size-0 directory entries, which break no other rule at the
+// production entry cap: framing alone, 512 bytes per header, trips it.
 func TestExtractHeaderOnlyEntriesTripDecompressedCap(t *testing.T) {
 	t.Parallel()
 
@@ -1381,26 +1134,14 @@ func TestExtractHeaderOnlyEntriesTripDecompressedCap(t *testing.T) {
 	archiveBytes := buildDeclaredSizeDirArchive(t, dirs, 0)
 
 	err := extractTarGzStream(context.Background(), bytes.NewReader(archiveBytes), t.TempDir(), refuseCap)
-	// Killing mutation: the same one the meta-header test above describes -
-	// strip decompressedLimitReader.Read back to a plain pass-through that
-	// returns the crossing read's bytes alongside the refusal. This assertion
-	// then fails with
-	//
-	//	archive_test.go:1395: expected archive decompressed stream exceeds maximum size, got <nil>
-	//
-	// for the identical reason, on a shape every other rule in the extractor
-	// does see: the entry counter counts all twenty of these headers and the
-	// byte budgets charge all twenty, and neither has anything to object to.
 	if !errors.Is(err, helpers.ErrArchiveDecompressedTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveDecompressedTooLarge, err)
 	}
 }
 
 // TestExtractHeaderOnlyEntriesUnderDecompressedCapAreAccepted is the positive
-// control for the test above: the same fixture through the same call under a
-// cap its whole stream fits in, extracting every directory. Without it, "the
-// extractor refused" would be indistinguishable from "a size-0 directory
-// entry is unreadable here".
+// control for TestExtractHeaderOnlyEntriesTripDecompressedCap: the same
+// fixture under a cap its stream fits in extracts every directory.
 func TestExtractHeaderOnlyEntriesUnderDecompressedCapAreAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -1436,17 +1177,9 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// TestDecompressedLimitReaderRefusesThroughReadFull pins the zero return
-// against io.ReadAtLeast, which is what archive/tar's readHeader reads every
-// 512-byte header block with: its `if n >= min { err = nil }` throws away a
-// non-nil error whenever the request was satisfied in full, so a limiter
-// handing back the crossing read's bytes has its refusal discarded here.
-//
-// max is exactly one below the request on purpose, and rounding it off would
-// silently un-pin the test: the clamp shortens the crossing read to
-// remaining+1 bytes, so at any lower max io.ReadFull comes up short of its
-// minimum, keeps the error for that reason alone, and stops distinguishing a
-// limiter that returns zero from one that does not.
+// TestDecompressedLimitReaderRefusesThroughReadFull pins the crossing read's
+// zero return, since io.ReadAtLeast drops an error once its request is filled;
+// max is one below the request, as a lower one keeps the error regardless.
 func TestDecompressedLimitReaderRefusesThroughReadFull(t *testing.T) {
 	t.Parallel()
 
@@ -1457,33 +1190,14 @@ func TestDecompressedLimitReaderRefusesThroughReadFull(t *testing.T) {
 	lim := &decompressedLimitReader{r: bytes.NewReader(make([]byte, 4<<10)), over: helpers.ErrArchiveDecompressedTooLarge, max: limit}
 
 	_, err := io.ReadFull(lim, make([]byte, request))
-	// Killing mutation: return the crossing read's bytes alongside the
-	// refusal - `return n, r.err` in place of `return 0, r.err` - keeping the
-	// sticky error and the clamp. This assertion then fails with
-	//
-	//	archive_test.go:1473: expected archive decompressed stream exceeds maximum size, got <nil>
-	//
-	// a bare nil: io.ReadFull got its 512 bytes, so io.ReadAtLeast nils the
-	// error out. Measured, both archive-level tests above pass under that same
-	// mutation, which is why the zero return has to be pinned here rather than
-	// up there: a swallow needs the crossing read to deliver exactly the
-	// number of bytes io.ReadFull still wants, and only a max one byte below
-	// the request makes that certain.
 	if !errors.Is(err, helpers.ErrArchiveDecompressedTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveDecompressedTooLarge, err)
 	}
 }
 
-// TestDecompressedLimitReaderRefusesThroughCopyN pins the zero return against
-// io.CopyN, the second discarding shape: its `if written == n { return n, nil }`
-// reports success whenever the requested count was delivered. archive/tar's
-// discard reaches it reading past a skipped entry body, and this package's own
-// extractRegularFile reaches it writing one to disk.
-//
-// The requested count is exactly remaining+1 for the same reason max is
-// exactly one below the request above: any larger request leaves io.CopyN
-// short of what it asked for, which keeps the error regardless of what the
-// limiter returned.
+// TestDecompressedLimitReaderRefusesThroughCopyN pins the same zero return
+// against io.CopyN, which archive/tar's discard and extractRegularFile use; it
+// requests exactly max+1, so returning the crossing bytes would be swallowed.
 func TestDecompressedLimitReaderRefusesThroughCopyN(t *testing.T) {
 	t.Parallel()
 
@@ -1491,30 +1205,14 @@ func TestDecompressedLimitReaderRefusesThroughCopyN(t *testing.T) {
 	lim := &decompressedLimitReader{r: bytes.NewReader(make([]byte, 4<<10)), over: helpers.ErrArchiveDecompressedTooLarge, max: limit}
 
 	_, err := io.CopyN(io.Discard, lim, limit+1)
-	// Killing mutation: the same one the io.ReadFull test above describes -
-	// `return n, r.err` in place of `return 0, r.err`. This assertion then
-	// fails with
-	//
-	//	archive_test.go:1503: expected archive decompressed stream exceeds maximum size, got <nil>
-	//
-	// a bare nil: io.CopyN was handed all 11 bytes it asked for, so it reports
-	// success and drops the error.
 	if !errors.Is(err, helpers.ErrArchiveDecompressedTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveDecompressedTooLarge, err)
 	}
 }
 
-// TestDecompressedLimitReaderRefusalIsSticky pins retention rather than
-// reporting. A caller that keeps reading after the refusal - archive/tar does
-// not, but nothing in io.Reader's contract stops one - must not be able to
-// drain the decompressor one clamped byte per call.
-//
-// Of the two assertions below only the second is pinned, and the difference is
-// the point of the test. Without the sticky error every post-refusal read
-// still returns (0, sentinel), because the cumulative count is already past
-// max and the clamp shortens each of those reads to a single byte; what
-// changes is that each one pulls that byte through. The first assertion is
-// documentary - it states the shape the caller sees, which holds either way.
+// TestDecompressedLimitReaderRefusalIsSticky pins that reads after the refusal
+// pull nothing more from the underlying reader; without the sticky error each
+// still fails, but only after the clamp has pulled one more byte through.
 func TestDecompressedLimitReaderRefusalIsSticky(t *testing.T) {
 	t.Parallel()
 
@@ -1538,25 +1236,14 @@ func TestDecompressedLimitReaderRefusalIsSticky(t *testing.T) {
 		}
 	}
 
-	// Killing mutation: delete Read's `if r.err != nil` block. This assertion
-	// then fails with
-	//
-	//	archive_test.go:1550: underlying reader advanced by 5 bytes after the refusal
-	//
-	// one byte per post-refusal read, which is the clamp doing its job on a
-	// cumulative count that is already over: the refusal is re-raised every
-	// time and every time a byte has already been pulled to raise it.
 	if counter.read != atRefusal {
 		t.Fatalf("underlying reader advanced by %d bytes after the refusal", counter.read-atRefusal)
 	}
 }
 
-// TestDecompressedLimitReaderClampsOverrunToOneByte pins the clamp, the one
-// of this reader's three properties that is about accounting rather than
-// about refusing. A 32 KiB request one kilobyte from the ceiling must pull a
-// single byte past it rather than a whole buffer past it, which is what makes
-// the byte count in the reported error the exact number of bytes this reader
-// let through.
+// TestDecompressedLimitReaderClampsOverrunToOneByte pins the clamp: a large
+// request near the ceiling pulls one byte past it rather than a whole buffer,
+// which keeps the byte count in the reported error exact.
 func TestDecompressedLimitReaderClampsOverrunToOneByte(t *testing.T) {
 	t.Parallel()
 
@@ -1569,29 +1256,14 @@ func TestDecompressedLimitReaderClampsOverrunToOneByte(t *testing.T) {
 	if _, err := lim.Read(make([]byte, request)); !errors.Is(err, helpers.ErrArchiveDecompressedTooLarge) {
 		t.Fatalf("expected %v, got %v", helpers.ErrArchiveDecompressedTooLarge, err)
 	}
-	// Killing mutation: delete Read's clamp block, leaving p at whatever
-	// length the caller passed, together with the `remaining :=` line above it
-	// - the clamp is its only use, so deleting the block by itself does not
-	// compile ("declared and not used: remaining"). This assertion then fails
-	// with
-	//
-	//	archive_test.go:1585: read 31744 bytes past a 1024-byte ceiling, want exactly one
-	//
-	// the whole 32 KiB request landing past a 1 KiB ceiling. The refusal above
-	// still fires - which is why it is not the assertion that catches this -
-	// but the count it reports is the buffer size the caller happened to
-	// choose rather than the ceiling this reader enforces.
 	if lim.n != limit+1 {
 		t.Fatalf("read %d bytes past a %d-byte ceiling, want exactly one", lim.n-limit, limit)
 	}
 }
 
-// TestDecompressedLimitReaderClampSurvivesExtremeMax covers the two values of
-// max whose arithmetic the clamp has to survive rather than act on: one where
-// remaining+1 overflows, and one where remaining is negative enough for the
-// reslice to index below zero. Neither is reachable from this package's own
-// call site, which passes helpers.ArchiveMaxDecompressedSize; both are
-// reachable from the injected-cap seam these tests themselves use.
+// TestDecompressedLimitReaderClampSurvivesExtremeMax covers a max at which
+// remaining+1 overflows and one negative enough to reslice below zero, both
+// reachable through the injected-cap seam.
 func TestDecompressedLimitReaderClampSurvivesExtremeMax(t *testing.T) {
 	t.Parallel()
 
@@ -1600,17 +1272,8 @@ func TestDecompressedLimitReaderClampSurvivesExtremeMax(t *testing.T) {
 
 		const payload = "hello"
 		lim := &decompressedLimitReader{r: bytes.NewReader([]byte(payload)), over: helpers.ErrArchiveDecompressedTooLarge, max: math.MaxInt64}
-		// Killing mutation: write the clamp as `if int64(len(p)) > remaining+1`
-		// instead of `if remaining < int64(len(p))`. The two pick out the same
-		// reslices - the single case they disagree on is the one where
-		// p[:remaining+1] is p itself - but they are not the same in int64
-		// arithmetic: at this max, remaining+1 overflows to the smallest
-		// negative value, so the comparison holds for any buffer at all and the
-		// read below panics with
-		//
-		//	panic: runtime error: slice bounds out of range [:-9223372036854775808]
-		//
-		// rather than failing an assertion.
+		// remaining+1 overflows at this max, so a clamp compared against
+		// remaining+1 rather than remaining would reslice below zero and panic.
 		n, err := lim.Read(make([]byte, 16))
 		if n != len(payload) || err != nil {
 			t.Fatalf("read = (%d, %v), want (%d, <nil>)", n, err, len(payload))
@@ -1622,16 +1285,8 @@ func TestDecompressedLimitReaderClampSurvivesExtremeMax(t *testing.T) {
 
 		const limit = int64(-1024)
 		lim := &decompressedLimitReader{r: bytes.NewReader(make([]byte, 64)), over: helpers.ErrArchiveDecompressedTooLarge, max: limit}
-		// Killing mutation: drop Read's clamp to zero, computing remaining as
-		// `r.max - r.n` instead of `max(r.max-r.n, 0)`. remaining is then this
-		// max itself, the clamp below reslices p to remaining+1, and the read
-		// below panics with
-		//
-		//	panic: runtime error: slice bounds out of range [:-1023]
-		//
-		// rather than failing an assertion. A max of -1 would not do: it
-		// reslices to p[:0], which is legal, so it takes -2 or lower to reach
-		// the panic this case exists for.
+		// Without clamping remaining at zero the reslice to remaining+1 panics; a
+		// max of -1 would reslice to p[:0], so the case needs -2 or lower.
 		n, err := lim.Read(make([]byte, 64))
 		if n != 0 || !errors.Is(err, helpers.ErrArchiveDecompressedTooLarge) {
 			t.Fatalf("read = (%d, %v), want (0, %v)", n, err, helpers.ErrArchiveDecompressedTooLarge)
@@ -1639,11 +1294,9 @@ func TestDecompressedLimitReaderClampSurvivesExtremeMax(t *testing.T) {
 	})
 }
 
-// TestDecompressedLimitReaderClampAcceptsEmptyInputs covers the other two
-// boundary shapes: a zero-length destination buffer, and a zero max over a
-// stream with nothing in it. Both must pass through untouched - a reader that
-// has delivered nothing has not exceeded anything, whatever max says - and
-// neither may be turned into a refusal or a panic by the clamp's reslice.
+// TestDecompressedLimitReaderClampAcceptsEmptyInputs pins that a zero-length
+// buffer and a zero max over an empty stream pass through untouched: a reader
+// that delivered nothing has exceeded nothing.
 func TestDecompressedLimitReaderClampAcceptsEmptyInputs(t *testing.T) {
 	t.Parallel()
 
@@ -1681,12 +1334,9 @@ type probeTarGzCase struct {
 	wantAnyErr bool
 }
 
-// probeTarGzCases enumerates what ProbeTarGz accepts - a real archive, an
-// archive whose content outgrows everything the probe's own reader can hold,
-// and an archive that is well-formed but holds no entries - alongside the
-// three ways the outer shape can be wrong (not gzip at all, gzip wrapping
-// something that is not a tar, and a copy cut short of its own first tar
-// header) and the one failure that is about the file rather than its content.
+// probeTarGzCases enumerates what ProbeTarGz accepts (a real archive, one
+// larger than its buffer, an empty one), the outer shapes it refuses (not gzip,
+// gzip over non-tar, cut before the first header) and an unreadable path.
 func probeTarGzCases() []probeTarGzCase {
 	notAnArchive := []byte("<html>404</html>")
 	return []probeTarGzCase{
@@ -1698,34 +1348,9 @@ func probeTarGzCases() []probeTarGzCase {
 			},
 		},
 		{
-			// An acceptance test rather than a positive control: nothing on
-			// this fixture is refused, so there is no refusal here for a
-			// control to stand beside. What it asserts is that an archive far
-			// larger than everything the probe's reader buffers -
-			// probeGzipBlocks blocks of probeGzipBlockSize, 64 KiB today -
-			// still passes, its first entry alone being four times that:
-			// 262,144 raw bytes rendering to a 262,446-byte archive, since
-			// incompressibleBytes leaves deflate nothing to work with. The
-			// second entry is never parsed at all, since ProbeTarGz calls Next
-			// exactly once; it is here so the fixture is an ordinary
-			// multi-entry archive rather than a one-entry special case.
-			//
-			// The 262,144 is hand-spelled rather than computed from the two
-			// constants on purpose. Derived, the fixture would follow whatever
-			// those constants became - probeGzipBlockSize = 512 would shrink it
-			// to 2 KiB - so it would shrink out from under the very question it
-			// exists to ask.
-			//
-			// Neither constant is pinned by this row even so, and both were run
-			// against it. probeGzipBlocks = 4 leaves it passing, because the
-			// probe stops at the first header inside the first block and never
-			// asks for another; probeGzipBlockSize = 512 leaves it passing too,
-			// because pgzip.NewReaderN coerces any value that small back to its
-			// own 1 MiB default, which this fixture is still smaller than. So
-			// the row is documentary for both constants - what bounds them is
-			// probe_decompressor_test.go's own sizing gate - and what this one
-			// pins is the acceptance: whatever the probe buffers, an archive
-			// far larger than that still passes.
+			// Accepted though its first entry alone is four times the probe's
+			// buffer; hand-spelled so it cannot shrink with the sizing constants,
+			// which TestProbeGzipSizingStaysWithinItsBudget bounds instead.
 			name: "archive larger than the probe's whole buffer accepted",
 			build: func(t *testing.T) []byte {
 				t.Helper()
@@ -1736,23 +1361,9 @@ func probeTarGzCases() []probeTarGzCase {
 			},
 		},
 		{
-			// The row above, untruncated, is this one's positive control: the
-			// same bytes whole are accepted, so the refusal here is the
-			// truncation and not the fixture.
-			//
-			// What it pins is narrow. These 20 bytes cannot produce the
-			// first 512-byte tar header, so tar.Reader.Next reports
-			// "unexpected EOF" and the probe refuses them - past the gzip
-			// header parse, which they still satisfy, all 10 of that header's
-			// bytes being present. A copy long enough to yield that header is
-			// caught by nothing at all, however much of the archive is
-			// missing behind it, at this sizing and the extractor's alike,
-			// because pgzip turns a truncated read that still produced bytes
-			// into a short block carrying no error. Measured on these same
-			// 262,446 bytes: the shortest copy that passes is 123 bytes at
-			// either sizing - the first header block being mostly zeros, and
-			// so cheap to deflate - and copies of the first 200, 1,024,
-			// 65,536, 131,072 and 262,445 pass too.
+			// The row above is its positive control. 20 bytes cannot yield the
+			// first tar header; a longer truncated copy that does is not refused,
+			// since pgzip returns a truncated read as a short block with no error.
 			name: "download truncated before its first tar header refused",
 			build: func(t *testing.T) []byte {
 				t.Helper()
@@ -1873,12 +1484,9 @@ func (c *cancelAfterReads) Read(p []byte) (int, error) {
 // cancelReadChunk is the per-read cap cancelAfterReads applies.
 const cancelReadChunk = 512
 
-// incompressibleBytes fills n bytes from a fixed-seed xorshift, so the
-// archive below does not collapse to a few hundred compressed bytes the way a
-// repeated pattern would - the test needs the decompressor to make many reads,
-// not one. A hand-rolled generator rather than math/rand: it is three lines,
-// needs no seeding ceremony, and does not trip the "no weak randomness" lint
-// on a value that is not random for any security purpose.
+// incompressibleBytes fills n bytes from a fixed-seed xorshift, so the archive
+// does not deflate away and the decompressor has to make many reads; math/rand
+// is avoided because the weak-randomness lint flags it.
 func incompressibleBytes(n int) []byte {
 	out := make([]byte, n)
 	state := uint32(0x9E3779B9)
@@ -1905,34 +1513,9 @@ func multiEntryArchive(t *testing.T) []byte {
 	return buildTestArchive(t, entries)
 }
 
-// TestExtractTarGzStreamHonorsCancellation proves an unpack stops when the
-// caller cancels, rather than running to the end of the archive, and that the
-// error keeps context.Canceled reachable - which is what makes the run exit as
-// interrupted rather than as a failed install. The partial tree it leaves
-// behind is never mistaken for a finished one: on the install side an extract
-// marker is written only after a successful unpack, and in the extracted store
-// the temp tree is removed on this very error before anything is promoted.
-//
-// It asserts on the error and on the tree being short of the archive, and no
-// longer that anything at all was written. Cancellation is observed on the
-// compressed side too now (internal/gzipstream), and canceling this early
-// lands before pgzip has filled its first block, so nothing has reached the
-// tar walk yet and an empty destination is the correct outcome rather than the
-// broken fixture the guard this test used to carry would have called it.
-//
-// TestExtractTarGzStreamExtractsFullyWithoutCancellation is the positive
-// control on the same archive: without it, "the tree is short" could just as
-// well mean the fixture never extracts anything under any circumstances.
-//
-// What it does NOT pin is which of the two readers stopped the unpack, and
-// deliberately: either one satisfies the claim above, and
-// TestExtractTarGzStreamStopsOnTheDecompressedSideAlone below is what pins the
-// decompressed-side one on its own. Killing mutation, run: deleting BOTH
-// checks - handing the tar reader the limit reader directly and dropping
-// gzipstream's own contextReader from the source it hands pgzip - fails this
-// test with
-//
-//	archive_test.go:1951: ExtractTarGzStream under a canceled context = <nil>, want errors.Is context.Canceled
+// TestExtractTarGzStreamHonorsCancellation pins that a canceled unpack stops
+// short of the archive's end with context.Canceled reachable, so the run exits
+// as interrupted. Either side's context check may be the one that stops it.
 func TestExtractTarGzStreamHonorsCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -1975,28 +1558,9 @@ func (c *cancelOnSourceDrained) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// TestExtractTarGzStreamStopsOnTheDecompressedSideAlone pins the extractor's
-// own contextReader, the one wrapping the decompressed stream, by canceling
-// where nothing else can fire: the source's final read. Past that point the
-// compressed side is never asked for another byte - the member's own trailer
-// is already inside pgzip's buffer, and the walk ends at the tar trailer
-// without ever reaching the member boundary where gzipstream would take its
-// next read - so the only check left that can stop this unpack is the one this
-// test exists for.
-//
-// The ordering is a property of the fixture rather than a race. pgzip fills a
-// whole block before delivering it, and its default block is 1 MiB against
-// this archive's ~145 KiB of decompressed stream, so the readahead goroutine
-// has to consume the entire compressed source before the tar walk receives its
-// first byte - which means the cancellation above has always fired by then.
-//
-// TestExtractTarGzStreamExtractsFullyWithoutCancellation is this test's
-// positive control too: the same archive, uncanceled, extracts all 32 entries.
-//
-// Killing mutation, run: handing the tar reader the limit reader directly
-// instead of wrapping it in a contextReader fails this test with
-//
-//	archive_test.go:2012: ExtractTarGzStream canceled on the source's final read = <nil>, want errors.Is context.Canceled
+// TestExtractTarGzStreamStopsOnTheDecompressedSideAlone pins the contextReader
+// on the decompressed side: it cancels on the source's last read, when pgzip's
+// 1 MiB block already holds the whole archive and no compressed read remains.
 func TestExtractTarGzStreamStopsOnTheDecompressedSideAlone(t *testing.T) {
 	t.Parallel()
 
@@ -2034,19 +1598,9 @@ func TestExtractTarGzStreamExtractsFullyWithoutCancellation(t *testing.T) {
 	}
 }
 
-// buildProbePaxPrologueArchive renders count PAX extended ('x') headers, each
-// carrying record as its body, followed by one ordinary regular-file entry and
-// the two zero blocks that end a tar stream. A nil record leaves every header
-// zero-body, so a chain of them costs nothing but its own 512-byte framing and
-// archive/tar's 1 MiB ceiling on a meta-header body never comes into it.
-//
-// The 'x' block is assembled by hand for the reason buildMetaHeaderChainArchive
-// above gives for its 'K' block: tar.Writer refuses this typeflag outright
-// ("cannot manually encode TypeXHeader, TypeGNULongName, or TypeGNULongLink
-// headers"), 'x' being a meta header archive/tar produces and consumes inside
-// Next() on its own. The trailing entry goes through tar.Writer into the same
-// gzip stream, so what the probe finally reaches - or fails to reach - is an
-// ordinary header rather than a second hand-built one.
+// buildProbePaxPrologueArchive hand-assembles count PAX 'x' headers carrying
+// record (nil for zero-body headers), which tar.Writer refuses to encode, then
+// one ordinary entry through tar.Writer and the tar trailer.
 func buildProbePaxPrologueArchive(t *testing.T, count int, record []byte) []byte {
 	t.Helper()
 
@@ -2107,72 +1661,28 @@ func probeArchiveBytes(t *testing.T, archiveBytes []byte) error {
 	return ProbeTarGz(t.Context(), path)
 }
 
-// TestProbeTarGzRefusesAnUnboundedMetaHeaderChain drives the probe's scan
-// bound with the shape that made "one tar.Reader.Next call" bound nothing:
-// 'x' headers, which Next consumes and continues past without ever returning
-// one, so the walk ahead of the first ordinary header runs as far as the
-// archive chooses. Nothing else in this package can see such an archive - the
-// entry counter never counts one of these and chargeEntrySize never charges
-// one - so the sentinel asserted here is also an assertion about which rule
-// refused it.
-//
-// 10,240 is hand-spelled rather than computed from
-// helpers.ArchiveProbeMaxBytes. Derived, the chain would follow that constant
-// wherever it went and could never fail the test it exists for, a doubled cap
-// simply doubling the fixture. Spelled out, it is 5,243,392 bytes of framing
-// against a 5,242,880-byte bound, and a cap that moves leaves it behind. It is
-// also the shortest chain the bound refuses, so this row and its positive
-// control below straddle the edge with nothing in between.
-//
-// TestProbeTarGzAcceptsAChainInsideTheBound is the positive control, built by
-// the identical builder: without it, "the probe refused" would be
-// indistinguishable from "this hand-built 'x' block is unreadable here".
+// TestProbeTarGzRefusesAnUnboundedMetaHeaderChain pins the probe's scan bound
+// against 'x' headers Next never returns. 10,240 is the shortest chain refused,
+// hand-spelled so moving helpers.ArchiveProbeMaxBytes fails this or its control.
 func TestProbeTarGzRefusesAnUnboundedMetaHeaderChain(t *testing.T) {
 	t.Parallel()
 
 	const chainHeaders = 10240
 
 	err := probeArchiveBytes(t, buildProbePaxPrologueArchive(t, chainHeaders, nil))
-	// Killing mutation: unwrap the decompressor in ProbeTarGz - delete the
-	// `limited := &decompressedLimitReader{...}` line and hand gz straight to
-	// tar.NewReader (deleting only the wrap leaves `limited` unused, which
-	// does not compile). This assertion then fails with
-	//
-	//	archive_test.go:2146: 10240-header chain: ProbeTarGz = <nil>, want artifact presents no tar header within the shape probe's scan bound
-	//
-	// a bare nil: with the walk uncounted the probe reads the whole chain and
-	// reports the ordinary header waiting behind it.
 	if !errors.Is(err, helpers.ErrArtifactTarHeaderNotFound) {
 		t.Fatalf("%d-header chain: ProbeTarGz = %v, want %v", chainHeaders, err, helpers.ErrArtifactTarHeaderNotFound)
 	}
-	// Killing mutation: delete ProbeTarGz's own `errors.Is` arm for this
-	// sentinel, letting a crossing fall through to the ErrArtifactNotTarGz
-	// wrap below it. The assertion above still passes, the sentinel remaining
-	// reachable underneath that wrap; this one then fails with
-	//
-	//	archive_test.go:2159: 10240-header chain: the refusal also reads as downloaded artifact is not a gzip-compressed tar archive
-	//
-	// which is the dishonest headline this arm exists to keep off the wire: an
-	// operator told the bytes are not a tar.gz goes looking for an error page
-	// inside an artifact that holds a tar stream.
+	// The crossing must not also read as ErrArtifactNotTarGz: the stream is a
+	// tar, and that headline would send an operator looking for an error page.
 	if errors.Is(err, helpers.ErrArtifactNotTarGz) {
 		t.Fatalf("%d-header chain: the refusal also reads as %v", chainHeaders, helpers.ErrArtifactNotTarGz)
 	}
 }
 
-// TestProbeTarGzAcceptsAChainInsideTheBound is the positive control named on
-// the refusal above: the same builder and the same hand-built block, one
-// header shorter, accepted.
-//
-// 10,239 is the longest chain that fits, and the arithmetic is worth spelling
-// out because it lands one below what the bound divided by a block suggests:
-// the walk reads all 10,239 meta headers AND the ordinary header it finally
-// returns, so it pulls 10,240 blocks - exactly helpers.ArchiveProbeMaxBytes -
-// out of the decompressor. Measured against this builder, 10,239 is accepted
-// and 10,240 refused. It is hand-spelled for the reason given above, and this
-// row is deliberately at the edge rather than comfortably inside it: a
-// positive control one header from the refusal is also what pins that
-// off-by-one.
+// TestProbeTarGzAcceptsAChainInsideTheBound is the positive control: 10,239
+// headers plus the ordinary one pull exactly helpers.ArchiveProbeMaxBytes, so
+// it sits at the edge and also pins the off-by-one.
 func TestProbeTarGzAcceptsAChainInsideTheBound(t *testing.T) {
 	t.Parallel()
 
@@ -2183,22 +1693,9 @@ func TestProbeTarGzAcceptsAChainInsideTheBound(t *testing.T) {
 	}
 }
 
-// TestProbeTarGzAcceptsARealPaxPrologue guards the direction a scan bound is
-// easiest to get wrong in: the refusal above says nothing about whether an
-// ordinary PAX artifact still passes. One 'x' header carrying a 1,024-byte
-// path record, then the ordinary header that record renames: a 1,536-byte
-// prologue, and 2,048 bytes for the probe to walk once it pulls that header.
-// Python 3.14.6's tarfile at its default PAX format brackets that prologue
-// rather than matching it - 1,024 bytes for an ordinary entry, 2,048 for one
-// whose name runs to helpers.ArchiveMaxEntryNameLen, whose 1,063-byte body
-// spends 1,035 on the path record and 28 on an mtime one. Those figures are
-// measured against that writer and attributed to it; `ansible-galaxy
-// collection build` was not itself measured.
-//
-// The record is spelled at the length a PAX record really takes on the wire -
-// "<total> path=<name>\n", the total counting its own digits - rather than
-// assembled from a name of some convenient length, so the fixture is what a
-// writer emits rather than something only this test would produce.
+// TestProbeTarGzAcceptsARealPaxPrologue pins that an ordinary PAX artifact
+// still passes the scan bound: one 'x' header with a 1,024-byte path record,
+// spelled as a writer emits it, then the entry it renames.
 func TestProbeTarGzAcceptsARealPaxPrologue(t *testing.T) {
 	t.Parallel()
 
@@ -2218,33 +1715,9 @@ func TestProbeTarGzAcceptsARealPaxPrologue(t *testing.T) {
 	}
 }
 
-// TestProbeTarGzReportsCancellationAsItself pins notTarGzError's one exception:
-// a probe stopped by the caller's own cancellation is reported as that
-// cancellation and not as a verdict on the artifact's shape.
-//
-// It reaches the exception through the constructor arm, which is where a
-// pre-canceled probe fails now that the context reaches the decompressor:
-// gzipstream observes ctx on the compressed side, so the gzip header parse is
-// the first read to see it. The walk arm shares the same function, so covering
-// either covers the rule.
-//
-// The first probe is the positive control, on the very same file: an empty tar
-// is a shape this probe accepts, so a refusal on the second probe is the
-// cancellation rather than the fixture.
-//
-// Killing mutations, both run. Deleting the exception from notTarGzError - so
-// every failure is wrapped as a shape verdict - leaves the first assertion
-// passing, the cancellation staying reachable underneath a %w wrap, and fails
-// the second with
-//
-//	archive_test.go:2268: ProbeTarGz under a canceled context also reads as downloaded artifact is not a gzip-compressed tar archive
-//
-// Deleting the contextReader from gzipstream.NewReaderN alone - NewReader's
-// own left in place, which is what keeps internal/gzipstream itself green -
-// leaves the probe with nothing watching its compressed source, so it reads
-// the whole fixture and fails the first assertion with
-//
-//	archive_test.go:2265: ProbeTarGz under a canceled context = <nil>, want errors.Is context.Canceled
+// TestProbeTarGzReportsCancellationAsItself pins notTarGzError's exception: a
+// probe stopped by the caller's cancellation reports context.Canceled, not
+// ErrArtifactNotTarGz. The first probe is the same-file positive control.
 func TestProbeTarGzReportsCancellationAsItself(t *testing.T) {
 	t.Parallel()
 

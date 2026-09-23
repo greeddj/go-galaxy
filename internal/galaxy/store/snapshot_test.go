@@ -70,23 +70,14 @@ func buildTestStore(fixed time.Time) *Store {
 	return populateTestStore(New(), fixed)
 }
 
-// populateTestStore writes a fixed, known fixture into every one of Store's
-// twelve map buckets via their normal mutators (SetAPICache, SetDepsCache,
-// SetInstalled, SetGraph, SetRequirements, SetResolvedAll, SetVersionsCache,
-// SetWarmed, SetGitPin, SetInstalledRole, SetRolePin, SetURLPin). It is
-// factored out of buildTestStore so a test can also apply
-// this same fixture to a store obtained some other way (e.g. one just
-// decoded from JSON), then reuse the assert* helpers below to verify it
-// without duplicating the fixture values.
+// populateTestStore writes a known fixture into every one of Store's twelve
+// map buckets through their normal mutators, so a store obtained another way
+// (e.g. decoded from JSON) can take the same fixture and the assert* helpers.
 func populateTestStore(st *Store, fixed time.Time) *Store {
 	st.SetMetaRequirements("req-hash", "https://example.com")
 	st.SetAPICache("api", APICacheEntry{
-		// FetchedAt uses the current time rather than the fixed fixture
-		// clock: APICache is now subject to CacheEntryMaxAge pruning at
-		// persist time, and fixed predates the retention window relative to
-		// the current wall clock, which would make this entry vanish on
-		// every Save/MarshalSnapshot round trip regardless of the behavior
-		// under test.
+		// FetchedAt is the wall clock, not fixed: APICache is pruned by
+		// CacheEntryMaxAge at persist time and fixed predates that window.
 		FetchedAt: time.Now().UTC(),
 		URL:       "https://example.com/api",
 		ETag:      "etag",
@@ -318,21 +309,16 @@ func assertWarmed(t *testing.T, loaded *Store) {
 	}
 }
 
-// TestSaveRollsBackWholeTransactionOnMidSaveFailure proves that Save writes
-// the meta bucket and all twelve data buckets inside a single Bolt
-// transaction: a failure partway through (here, an oversized key in the
-// installed bucket, which the fixed save order writes after api_cache)
-// must roll back the entire attempt, leaving the previously committed
-// snapshot exactly as it was rather than a mix of old and new data.
+// TestSaveRollsBackWholeTransactionOnMidSaveFailure pins that Save writes
+// every bucket in one Bolt transaction: a failure in a later bucket rolls back
+// the whole attempt and leaves the previous snapshot intact, never a mix.
 func TestSaveRollsBackWholeTransactionOnMidSaveFailure(t *testing.T) {
 	t.Parallel()
 	dbs := openTestDBs(t)
 
 	st := New()
-	// FetchedAt must be within the retention window, since api_cache is now
-	// subject to CacheEntryMaxAge pruning at persist time: a zero-value
-	// FetchedAt would make this entry vanish on every Save regardless of the
-	// rollback behavior under test.
+	// FetchedAt must lie within the CacheEntryMaxAge window, or persist-time
+	// pruning drops the entry whatever the rollback does.
 	st.SetAPICache("api", APICacheEntry{URL: "v1", FetchedAt: time.Now().UTC()})
 	st.SetInstalled("normal.key", InstalledEntry{Source: "v1"})
 	mustSave(t, dbs, st)
@@ -365,11 +351,9 @@ func TestSaveRollsBackWholeTransactionOnMidSaveFailure(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsNewerSchemaAndDropsOlderSchema exercises ValidateSchema
-// through Load: a newer-than-current schema version is reported as an
-// error (this binary cannot safely interpret it), while an older-than
-// -current version causes Load to drop the snapshot and return a fresh
-// empty Store with a nil error rather than partially trusting stale data.
+// TestLoadRejectsNewerSchemaAndDropsOlderSchema pins Load's schema policy: a
+// newer schema version is ErrUnsupportedSchemaVersion, an older one is dropped
+// for a fresh empty Store with a nil error.
 func TestLoadRejectsNewerSchemaAndDropsOlderSchema(t *testing.T) {
 	t.Parallel()
 	dbs := openTestDBs(t)
@@ -415,9 +399,8 @@ func stampSchemaVersion(t *testing.T, dbs *DBs, version int) {
 	}
 }
 
-// TestWasPersistedFalseForFreshStore proves a brand-new store built via New()
-// - never saved to or loaded from any backend - reports no persisted
-// snapshot, since New() leaves Meta.LastSnapshot at its zero value.
+// TestWasPersistedFalseForFreshStore pins that a store from New(), never saved
+// or loaded, reports no persisted snapshot.
 func TestWasPersistedFalseForFreshStore(t *testing.T) {
 	t.Parallel()
 	if New().WasPersisted() {
@@ -425,10 +408,8 @@ func TestWasPersistedFalseForFreshStore(t *testing.T) {
 	}
 }
 
-// TestWasPersistedFalseForNilStore proves WasPersisted follows the package's
-// nil-receiver convention (and is the conservative answer here): a nil
-// *Store carries no evidence of anything, so it must never be read as "yes,
-// a snapshot was persisted".
+// TestWasPersistedFalseForNilStore pins the conservative nil-receiver answer:
+// a nil *Store is no evidence that a snapshot was persisted.
 func TestWasPersistedFalseForNilStore(t *testing.T) {
 	t.Parallel()
 	var st *Store
@@ -453,10 +434,9 @@ func TestWasPersistedTrueAfterLocalSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
-// TestWasPersistedTrueAfterMarshalSnapshotUnmarshal pins the S3 wire path:
-// MarshalSnapshot stamps Meta.LastSnapshot exactly as Save does, so a store
-// decoded from its JSON output - the shape the S3 backend's LoadStore
-// produces on a successful fetch - must also report a persisted snapshot.
+// TestWasPersistedTrueAfterMarshalSnapshotUnmarshal pins the S3 wire path: a
+// store decoded from MarshalSnapshot's JSON, as the S3 backend's LoadStore
+// produces it, reports a persisted snapshot.
 func TestWasPersistedTrueAfterMarshalSnapshotUnmarshal(t *testing.T) {
 	t.Parallel()
 	fixed := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -476,15 +456,9 @@ func TestWasPersistedTrueAfterMarshalSnapshotUnmarshal(t *testing.T) {
 	}
 }
 
-// TestWasPersistedFalseAfterOutdatedSchemaLoad is the exact post-schema-bump
-// scenario: a Bolt DB was genuinely saved by an older binary (so its meta
-// bucket carries a real, non-zero last_snapshot), but its schema_version is
-// then downgraded below the current one - simulating a snapshot schema bump
-// landing on a cache directory a previous binary version already wrote to.
-// Load drops it and returns a fresh store (New()) rather than partially
-// trusting it, so WasPersisted must report false even though the underlying
-// Bolt bytes do contain a non-zero last_snapshot value - that stale value
-// belongs to the dropped store, not to the one Load actually returned.
+// TestWasPersistedFalseAfterOutdatedSchemaLoad pins the post-schema-bump case:
+// a snapshot with a real last_snapshot but an older schema is dropped by Load,
+// so the fresh store it returns reports WasPersisted false.
 func TestWasPersistedFalseAfterOutdatedSchemaLoad(t *testing.T) {
 	t.Parallel()
 	dbs := openTestDBs(t)
@@ -501,11 +475,9 @@ func TestWasPersistedFalseAfterOutdatedSchemaLoad(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsCorruptResolvedEntry proves Load reports an error
-// instead of silently coercing a genuinely corrupt resolved value into a
-// garbage version string. Every current-schema value is written as valid
-// JSON by saveJSONBucket, so an unmarshal failure here can only mean the
-// stored bytes are corrupt.
+// TestLoadRejectsCorruptResolvedEntry pins that Load reports a corrupt
+// resolved value as an error naming its key, never coercing it into a garbage
+// version string.
 func TestLoadRejectsCorruptResolvedEntry(t *testing.T) {
 	t.Parallel()
 	dbs := openTestDBs(t)
@@ -535,19 +507,15 @@ func TestLoadRejectsCorruptResolvedEntry(t *testing.T) {
 	}
 }
 
-// TestLoadNamesBucketAndKeyOfCorruptEntry proves the error Load reports for a
-// corrupt entry names both the bucket the value came from and the key it was
-// stored under. The bucket is api_cache rather than resolved, so the two tests
-// together cover a wrapper shared across buckets instead of one loader whose
-// message happens to be special-cased to a single bucket.
+// TestLoadNamesBucketAndKeyOfCorruptEntry pins that Load's error for a corrupt
+// entry names both its bucket and its key; using api_cache rather than resolved
+// shows the wrapper is shared across buckets.
 func TestLoadNamesBucketAndKeyOfCorruptEntry(t *testing.T) {
 	t.Parallel()
 	dbs := openTestDBs(t)
 	st := New()
-	// FetchedAt is sampled fresh rather than left zero: SetAPICache does not
-	// stamp it, and snapshotData prunes api_cache against CacheEntryMaxAge, so
-	// a zero stamp drops the entry at save time and the corruption below would
-	// have no stored value to land on.
+	// FetchedAt is sampled fresh: SetAPICache does not stamp it, and a zero
+	// stamp is pruned at save time, leaving the corruption nothing to land on.
 	st.SetAPICache("a.b", APICacheEntry{
 		URL:       "https://example.com/api",
 		FetchedAt: time.Now().UTC(),
@@ -574,46 +542,28 @@ func TestLoadNamesBucketAndKeyOfCorruptEntry(t *testing.T) {
 	}
 
 	_, err = Load(dbs)
-	// This guard is documentary rather than pinned: it exists so the two
-	// assertions below can call err.Error() at all. Neither dropping the
-	// bucket nor dropping the key from loadJSONBucket's format string reaches
-	// it, since both still return an error - the runs quoted below stop lower.
+	// This guard only makes the err.Error() calls below safe.
 	if err == nil {
 		t.Fatal("expected Load to reject a corrupt api_cache entry")
 	}
-	// Replacing loadJSONBucket's wrapped return with a bare `return err` stops
-	// here, and fails TestLoadRejectsCorruptResolvedEntry as well:
-	// expected error to name the bucket, got invalid character 'n' looking for beginning of object key string
-	//
-	// Dropping the bucket from that format string ("invalid entry %q: %w")
-	// stops here too, while TestLoadRejectsCorruptResolvedEntry keeps passing,
-	// since its own assertion is on the key alone:
-	// expected error to name the bucket, got invalid entry "a.b": invalid character 'n' looking for beginning of object key string
+	// Only this test asserts the bucket name;
+	// TestLoadRejectsCorruptResolvedEntry asserts the key alone.
 	if !strings.Contains(err.Error(), helpers.StoreBucketAPICache) {
 		t.Fatalf("expected error to name the bucket, got %v", err)
 	}
-	// Dropping the key from that format string ("invalid %s entry: %w") leaves
-	// both assertions above satisfied and stops here, and it fails
-	// TestLoadRejectsCorruptResolvedEntry, whose sole assertion is the key:
-	// expected error to name the corrupt key, got invalid api_cache entry: invalid character 'n' looking for beginning of object key string
 	if !strings.Contains(err.Error(), "a.b") {
 		t.Fatalf("expected error to name the corrupt key, got %v", err)
 	}
 }
 
-// TestSnapshotV4RoundTripLocal proves the schema-4 wire shape - APICache,
-// DepsCache, and Versions each carrying a FetchedAt stamp - round-trips
-// through Save/Load intact. The wire shape has carried forward unchanged
-// through later schema bumps (a bump gates key-format changes, not this
-// struct shape), so the assertion compares against the live
-// helpers.StoreSnapshotSchemaVersion rather than a stale literal.
+// TestSnapshotV4RoundTripLocal pins that the schema-4 wire shape, APICache,
+// DepsCache and Versions each with a FetchedAt stamp, round-trips through
+// Save/Load under the current helpers.StoreSnapshotSchemaVersion.
 func TestSnapshotV4RoundTripLocal(t *testing.T) {
 	t.Parallel()
 	dbs := openTestDBs(t)
-	// recent, not a fixed historical date: APICache is now subject to
-	// CacheEntryMaxAge pruning at persist time, so a stamp must fall within
-	// the retention window for the entry to survive the round trip this
-	// test exercises.
+	// recent, not a fixed date: persist-time CacheEntryMaxAge pruning drops an
+	// APICache stamp outside the retention window.
 	recent := time.Now().UTC().Add(-time.Hour)
 
 	st := New()
@@ -661,13 +611,9 @@ func assertV4VersionsEntry(t *testing.T, loaded *Store) {
 	}
 }
 
-// TestSnapshotV4RoundTripJSON proves MarshalSnapshot's schema-4 wire shape
-// round-trips through a plain json.Unmarshal, and that the raw JSON encodes
-// versions_cache and deps_cache values as objects (fetched_at plus the
-// payload), not the bare arrays/maps of the pre-v4 shape. As with
-// TestSnapshotV4RoundTripLocal, this shape is unchanged by later schema
-// bumps, so the version assertion compares against the live
-// helpers.StoreSnapshotSchemaVersion.
+// TestSnapshotV4RoundTripJSON pins that MarshalSnapshot round-trips through
+// json.Unmarshal and encodes versions_cache and deps_cache values as objects
+// with fetched_at, not the bare arrays and maps of the pre-v4 shape.
 func TestSnapshotV4RoundTripJSON(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -725,14 +671,9 @@ func assertObjectShape(t *testing.T, payload []byte, bucket, key, firstField, se
 	}
 }
 
-// TestSnapshotPrunesStaleAndFutureAcrossAllBuckets proves entries outside
-// their retention window - both a stale entry last written before the window
-// and a future entry stamped ahead of the sampling instant - are dropped
-// from the persisted snapshot in all four age-eviction buckets (APICache,
-// DepsCache, and Versions against CacheEntryMaxAge; Warmed against its own
-// separate helpers.WarmedEntryMaxAge window), while entries within the
-// window survive, across both persist paths (local Bolt Save/Load and
-// MarshalSnapshot/json.Unmarshal).
+// TestSnapshotPrunesStaleAndFutureAcrossAllBuckets pins that both persist
+// paths drop stale and future-stamped entries from all four age-eviction
+// buckets, Warmed under its own WarmedEntryMaxAge, and keep fresh ones.
 func TestSnapshotPrunesStaleAndFutureAcrossAllBuckets(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
@@ -778,10 +719,9 @@ func TestSnapshotPrunesStaleAndFutureAcrossAllBuckets(t *testing.T) {
 	})
 }
 
-// bucketHasKey reports whether key is present in m. It is generic purely so
-// assertStalePruned can drive one loop over all four differently-typed
-// buckets instead of repeating the same three-way presence check per bucket,
-// which would push that function over its cyclomatic complexity budget.
+// bucketHasKey reports whether key is present in m; generic so
+// assertStalePruned loops over four differently typed buckets within its
+// cyclomatic complexity budget.
 func bucketHasKey[T any](m map[string]T, key string) bool {
 	_, ok := m[key]
 	return ok
@@ -826,10 +766,9 @@ func assertStalePruned(t *testing.T, loaded *Store) {
 	}
 }
 
-// assertBucketRetention fails (via Error, not Fatal) unless a single bucket's
-// stale entry was pruned, its fresh entry survived, and its future entry was
-// pruned. It never stops early, so a single call to assertStalePruned reports
-// every failing bucket in one test run instead of only the first.
+// assertBucketRetention fails, via Error so every failing bucket is reported,
+// unless the bucket's stale and future entries were pruned and its fresh one
+// survived.
 func assertBucketRetention(t *testing.T, bucket string, hasStale, hasFresh, hasFuture bool) {
 	t.Helper()
 	if hasStale {
@@ -843,19 +782,9 @@ func assertBucketRetention(t *testing.T, bucket string, hasStale, hasFresh, hasF
 	}
 }
 
-// TestSnapshotBoundaryEntryIsKept proves retentionWindow.isStale's
-// exact-equality boundary on both ends of the closed [oldest, newest]
-// interval: an entry stamped exactly at oldest is kept (strict Before is
-// false at equality), an entry one nanosecond before oldest is pruned, an
-// entry stamped exactly at newest is kept (strict After is false at
-// equality), and an entry one nanosecond after newest - the future case - is
-// pruned. This tests the comparison directly against a constructed window
-// rather than through a full Save/MarshalSnapshot round trip, since the real
-// window is sampled from the wall clock at persist time and cannot be
-// predicted precisely enough from a test goroutine to hit either boundary
-// deterministically. The zero time.Time needs no separate rule: it is
-// already stale via the oldest bound, since it falls before any window built
-// from time.Now().
+// TestSnapshotBoundaryEntryIsKept pins that retentionWindow.isStale keeps a
+// stamp exactly at either bound of [oldest, newest] and prunes one a nanosecond
+// outside; the window is built directly since persist samples the wall clock.
 func TestSnapshotBoundaryEntryIsKept(t *testing.T) {
 	t.Parallel()
 	now := time.Now().UTC()
@@ -875,11 +804,9 @@ func TestSnapshotBoundaryEntryIsKept(t *testing.T) {
 	}
 }
 
-// TestLoadDropsV3BoltAndRebuilds proves Load's schema check happens before
-// any data bucket is decoded: a v3-stamped snapshot whose versions_cache and
-// deps_cache buckets still hold the pre-schema-4 bare shapes (JSON arrays
-// and plain maps, without a fetched_at wrapper) is dropped and rebuilt
-// rather than failing to decode into the current wrapper structs.
+// TestLoadDropsV3BoltAndRebuilds pins that Load checks the schema before
+// decoding any bucket: a v3 snapshot holding pre-v4 bare shapes is dropped for
+// a fresh store rather than failing to decode.
 func TestLoadDropsV3BoltAndRebuilds(t *testing.T) {
 	t.Parallel()
 	dbs := openTestDBs(t)
@@ -920,15 +847,9 @@ func TestLoadDropsV3BoltAndRebuilds(t *testing.T) {
 	}
 }
 
-// TestLoadToleratesLegacyRootsBucket proves Load tolerates a leftover "roots"
-// Bolt bucket from before the field was removed from Store: a current-schema
-// snapshot with real installed data, plus a legacy roots bucket planted
-// directly (bypassing Save, which never writes one), must still load
-// successfully with the installed entry intact, and a subsequent Save must
-// still succeed. This deliberately does not assert that the roots bucket
-// still exists after Load/Save: whether a future sweep drops that leftover
-// bucket is an incidental detail this test is not pinning down, only that its
-// mere presence does not break loading or saving.
+// TestLoadToleratesLegacyRootsBucket pins that a leftover legacy "roots" Bolt
+// bucket breaks neither Load nor a following Save; whether the bucket survives
+// is deliberately not asserted.
 func TestLoadToleratesLegacyRootsBucket(t *testing.T) {
 	t.Parallel()
 	dbs := openTestDBs(t)
@@ -938,9 +859,7 @@ func TestLoadToleratesLegacyRootsBucket(t *testing.T) {
 	mustSave(t, dbs, st)
 
 	err := dbs.db.Update(func(tx *bolt.Tx) error {
-		// "roots" is the literal legacy bucket name, spelled out here
-		// because Store carries no roots field and therefore no named
-		// constant for it.
+		// "roots" is spelled out: Store has no roots field, so no constant.
 		rootsBucket, err := tx.CreateBucketIfNotExists([]byte("roots"))
 		if err != nil {
 			return err
@@ -962,10 +881,8 @@ func TestLoadToleratesLegacyRootsBucket(t *testing.T) {
 	}
 }
 
-// TestSetWarmedIgnoresEmptyKeyOrSHA proves SetWarmed can never persist an
-// entry that would protect nothing: an empty key or an empty artifact sha is
-// silently ignored rather than stored, since a key or sha string that no
-// caller can ever look up again would just be dead weight in the snapshot.
+// TestSetWarmedIgnoresEmptyKeyOrSHA pins that SetWarmed silently ignores an
+// empty key or an empty artifact sha, an entry that could protect nothing.
 func TestSetWarmedIgnoresEmptyKeyOrSHA(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -978,10 +895,9 @@ func TestSetWarmedIgnoresEmptyKeyOrSHA(t *testing.T) {
 	}
 }
 
-// TestWarmedArtifactSHAByKeyExcludesStaleEntry proves WarmedArtifactSHAByKey
-// applies the same WarmedEntryMaxAge retention window SetWarmed's persisted
-// data is later pruned against, rather than returning every entry ever
-// written regardless of age.
+// TestWarmedArtifactSHAByKeyExcludesStaleEntry pins that
+// WarmedArtifactSHAByKey applies the WarmedEntryMaxAge window persist prunes
+// against, rather than returning every entry regardless of age.
 func TestWarmedArtifactSHAByKeyExcludesStaleEntry(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -1002,11 +918,9 @@ func TestWarmedArtifactSHAByKeyExcludesStaleEntry(t *testing.T) {
 	}
 }
 
-// TestWarmedArtifactSHAByKeyExcludesFutureEntry proves WarmedArtifactSHAByKey
-// treats a warmed entry stamped ahead of the current window's sampling
-// instant as stale too, mirroring TestWarmedArtifactSHAByKeyExcludesStaleEntry
-// for the opposite (future) edge: a keep-set built from a corrupt or
-// clock-skewed future stamp must not protect its extracted tree forever.
+// TestWarmedArtifactSHAByKeyExcludesFutureEntry pins that a future-stamped
+// warmed entry is excluded too, so a corrupt or clock-skewed stamp cannot keep
+// its extracted tree forever.
 func TestWarmedArtifactSHAByKeyExcludesFutureEntry(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -1027,10 +941,8 @@ func TestWarmedArtifactSHAByKeyExcludesFutureEntry(t *testing.T) {
 	}
 }
 
-// TestWarmedArtifactSHAByKeyReturnsIndependentMap proves the map
-// WarmedArtifactSHAByKey returns is a fresh copy: mutating it must never
-// corrupt the store's own Warmed state, mirroring the same guarantee
-// InstalledArtifactSHAByKey already provides.
+// TestWarmedArtifactSHAByKeyReturnsIndependentMap pins that the returned map
+// is a fresh copy whose mutation never reaches the store's Warmed state.
 func TestWarmedArtifactSHAByKeyReturnsIndependentMap(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -1049,11 +961,9 @@ func TestWarmedArtifactSHAByKeyReturnsIndependentMap(t *testing.T) {
 	}
 }
 
-// assertStoreMapsNonNil fails (via Error, not Fatal) for every one of
-// Store's twelve map fields that is still nil. It never stops early: the
-// caller relies on every field being checked even if an earlier one already
-// failed, since the point of the test calling this is to then go on and
-// exercise the mutators regardless.
+// assertStoreMapsNonNil fails, via Error so every field is checked and the
+// caller still goes on to the mutators, for each of Store's twelve map fields
+// that is still nil.
 func assertStoreMapsNonNil(t *testing.T, st *Store) {
 	t.Helper()
 	fields := []struct {
@@ -1080,16 +990,9 @@ func assertStoreMapsNonNil(t *testing.T, st *Store) {
 	}
 }
 
-// TestUnmarshalJSONRestoresEveryNilMap proves that decoding a payload where
-// every one of Store's twelve map fields is an explicit JSON null still
-// leaves every field writable afterward. It reuses populateTestStore - the
-// exact same mutator calls (SetAPICache, SetDepsCache, SetInstalled,
-// SetGraph, SetVersionsCache, SetWarmed, plus the two wholesale replacers
-// SetRequirements and SetResolvedAll) TestSaveLoadRoundTrip exercises against
-// a freshly constructed Store - against the just-decoded one instead, then
-// reads every value back through the matching assert* helpers. Without
-// Store.ensureMaps running after the decode, populateTestStore's first
-// map-indexing call panics with "assignment to entry in nil map".
+// TestUnmarshalJSONRestoresEveryNilMap pins that a payload with every map
+// bucket an explicit JSON null decodes into a Store whose mutators still work,
+// which only Store.ensureMaps running after the decode makes true.
 func TestUnmarshalJSONRestoresEveryNilMap(t *testing.T) {
 	t.Parallel()
 	fixed := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -1131,14 +1034,9 @@ func TestUnmarshalJSONRestoresEveryNilMap(t *testing.T) {
 	assertURLPin(t, st)
 }
 
-// TestUnmarshalJSONKeepsDecodedData proves ensureMaps only fills in a field a
-// decode actually nilled: a bucket with real decoded entries must survive
-// untouched, and Meta must come from the payload rather than being reset to
-// New()'s defaults, while the one nulled bucket (warmed) ends up non-nil and
-// empty rather than losing the rest of the payload. The payload mirrors
-// populateTestStore's fixture values exactly, so this reuses the same
-// assertMeta/assertAPICache/... helpers TestSaveLoadRoundTrip uses to verify
-// a Bolt round trip, here verifying a JSON decode instead.
+// TestUnmarshalJSONKeepsDecodedData pins that ensureMaps fills only a bucket
+// the decode nilled: decoded buckets and Meta survive untouched and the null
+// warmed bucket ends non-nil and empty.
 func TestUnmarshalJSONKeepsDecodedData(t *testing.T) {
 	t.Parallel()
 	payload := fmt.Sprintf(`{
@@ -1180,14 +1078,9 @@ func TestUnmarshalJSONKeepsDecodedData(t *testing.T) {
 	}
 }
 
-// TestUnmarshalJSONPropagatesDecodeError proves UnmarshalJSON does not
-// swallow a genuine decode failure: ensureMaps must never mask bad input
-// into a silently-empty, well-formed Store.
-//
-// The payload must be syntactically valid but type-invalid. encoding/json
-// validates the whole document before it dispatches to an Unmarshaler, so a
-// malformed payload is rejected without this method ever being entered, and
-// the test would then pass no matter what the method did with the error.
+// TestUnmarshalJSONPropagatesDecodeError pins that UnmarshalJSON returns a
+// decode failure; the payload is type-invalid, not malformed, since
+// encoding/json rejects malformed input before calling the Unmarshaler.
 func TestUnmarshalJSONPropagatesDecodeError(t *testing.T) {
 	t.Parallel()
 	st := New()

@@ -1,13 +1,8 @@
 package collections
 
-// This file drives the symlink hardening at the whole-run level (Start),
-// where two properties become observable that no single write-site test can
-// show on its own: that a symlinked ansible_collections aborts the entire run
-// with exactly one operator-facing failure, before any collection is even
-// dispatched to a worker, rather than one failure per collection in the
-// level; and that install --dry-run against an absent DownloadPath never
-// creates it while still classifying every collection, exactly as it would
-// against a real one.
+// Whole-run symlink hardening through Start: an escaping ansible_collections
+// fails the run once, before resolution, and a dry run never creates an absent
+// DownloadPath.
 
 import (
 	"context"
@@ -22,25 +17,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestSymlinkedAnsibleCollectionsFailsWholeRunWithoutDestroyingOutsideTree
-// runs a real install against a DownloadPath whose ansible_collections is a
-// symlink to a directory holding real, pre-existing content, and must fail with
-// helpers.ErrCollectionsPathEscape, and that pre-existing content must
-// survive byte-identical - the containment guarantee that an escaping
-// ansible_collections symlink must never let a run RemoveAll what it points
-// at, observed at the same entry point (Start) a real CI job would call.
-// t.Errorf, not t.Fatalf, on the sentinel check: the filesystem assertions
-// below are what actually discriminate a real fix, so they must still run
-// even if the error class itself regresses.
-//
-// Both symlinkForm values are exercised, matching
-// TestExtractCollectionSymlinkedPrefixLeavesOutsideTreeIntact's own reasoning:
-// a relative "ansible_collections -> ../outside" target is what a hostile
-// checkout actually ships (it survives a repository clone; an absolute host
-// path could not), so a suite that only ever plants an absolute target could
-// be passing for the coarser, wrong reason ("any absolute symlink is
-// refused") rather than the one this test exists to prove ("an escaping
-// target is refused").
+// TestSymlinkedAnsibleCollectionsFailsWholeRunWithoutDestroyingOutsideTree pins
+// that an escaping ansible_collections symlink, absolute or relative, fails
+// Start with ErrCollectionsPathEscape, no request, and the outside tree intact.
 func TestSymlinkedAnsibleCollectionsFailsWholeRunWithoutDestroyingOutsideTree(t *testing.T) {
 	t.Parallel()
 	for _, form := range []symlinkForm{symlinkAbsolute, symlinkRelative} {
@@ -97,17 +76,9 @@ func TestSymlinkedAnsibleCollectionsFailsWholeRunWithoutDestroyingOutsideTree(t 
 	}
 }
 
-// TestSymlinkedAnsibleCollectionsProducesOneFailureNotOnePerCollection checks
-// that a requirements.yml resolving to two collections (acme.app depending on
-// acme.lib) must still surface exactly one operator-facing failure, not one
-// per collection, when ansible_collections is symlinked. This is what
-// installWithState opening the collections root once, before requirements
-// are even loaded (see its own doc comment), buys over opening it once per
-// collection: the escape aborts the run during initialization, so
-// installLevels - and its per-collection "Failed: ..." Errorf line - is never
-// reached for either collection. The fake server's zero request count is the
-// strongest proof: resolution itself never started, so neither collection was
-// ever considered individually.
+// TestSymlinkedAnsibleCollectionsProducesOneFailureNotOnePerCollection pins
+// that a symlinked ansible_collections fails a two-collection run once, before
+// resolution, with no per-collection "Failed:" line.
 func TestSymlinkedAnsibleCollectionsProducesOneFailureNotOnePerCollection(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -141,12 +112,8 @@ func TestSymlinkedAnsibleCollectionsProducesOneFailureNotOnePerCollection(t *tes
 	if !errors.Is(err, helpers.ErrCollectionsPathEscape) {
 		t.Fatalf("Start error = %v, want errors.Is helpers.ErrCollectionsPathEscape", err)
 	}
-	// This package prints no top-level failure line of its own: the run's
-	// terminal error is printed once, by cmd/go-galaxy/main.go, after the
-	// printer is closed. So the count that matters here is zero, and any line
-	// at all would be a per-collection "Failed: acme.<name> error: ..." -
-	// which is the regression this test exists to catch, since the escape is
-	// detected once for the whole run rather than once per collection.
+	// main prints the run's terminal error, so any Errorf line here would be
+	// a per-collection failure.
 	if len(printer.errs) != 0 {
 		t.Errorf("printer recorded %d Errorf lines, want none (the run failure is printed by main), got %v", len(printer.errs), printer.errs)
 	}
@@ -158,14 +125,9 @@ func TestSymlinkedAnsibleCollectionsProducesOneFailureNotOnePerCollection(t *tes
 	}
 }
 
-// TestDryRunInstallLeavesAbsentDownloadPathAbsentAndStillClassifies checks that
-// install --dry-run against a DownloadPath that does not exist yet must never
-// create it (openCollectionsRoot's own create=false contract: a dry run must
-// never create the directory it is only describing), while still reporting
-// every collection's would-install verdict exactly as it would against a real
-// one - the nil root openCollectionsRoot returns for an absent DownloadPath
-// on a dry run only ever makes installDryRunProbe treat every collection as
-// "not settled", never as unclassifiable.
+// TestDryRunInstallLeavesAbsentDownloadPathAbsentAndStillClassifies pins that
+// install --dry-run never creates an absent DownloadPath and still reports each
+// collection as would-install.
 func TestDryRunInstallLeavesAbsentDownloadPathAbsentAndStillClassifies(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -1,9 +1,7 @@
 package collections_test
 
-// This file (continued from e2e_test.go) covers end-to-end retry behavior
-// for the Galaxy API GET and the artifact download, exercised against the
-// fake Galaxy server's scripted fault injection (fakegalaxy.Fault) rather
-// than against the internal predicates directly.
+// End-to-end retry behavior of the Galaxy API GET and the artifact download,
+// driven by fakegalaxy.Fault injection rather than the internal predicates.
 
 import (
 	"context"
@@ -20,20 +18,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// newRetryFixture registers a single acme.<name> collection (version "*",
-// no dependencies) on a fresh fake server and returns a matching cold-cache
-// config/runtime pair. When noCache is true, the background prefetcher (see
-// prefetch.go's startPrefetcher) and the local artifact/API cache are
-// disabled, so the artifact download has exactly one call site with its own
-// internal retry loop; without it, a persistent download failure would be
-// attempted once by the prefetcher and then again by installCollection's
-// own fallback fetch, making an exact EndpointArtifact request count
-// ambiguous. Metadata fixtures instead need caching enabled: dependency
-// resolution (resolveCollectionsInternal) fetches each candidate's version
-// metadata to build the graph, and installCollection fetches the same URL
-// again afterward - with the API cache enabled, that second fetch is served
-// from the snapshot populated by the first, keeping the EndpointVersionDetail
-// count from this fixture's single fault to a single retry cycle.
+// newRetryFixture registers acme.<name> 1.0.0 on a fresh fake server. noCache
+// disables the prefetcher, so artifact requests have one call site to count;
+// metadata tests keep the API cache, which serves the install's second fetch.
 func newRetryFixture(t *testing.T, name string, noCache bool) (*config.Config, *infra.Infra, *fakegalaxy.Server) {
 	t.Helper()
 	root := t.TempDir()
@@ -55,10 +42,8 @@ func newRetryFixture(t *testing.T, name string, noCache bool) (*config.Config, *
 	return cfg, infra.New(noopPrinter{}, s.Client()), s
 }
 
-// TestMetadataFetchRetriesTransientFailureThenSucceeds asserts that a Galaxy
-// API GET (here, the version-detail fetch) transparently recovers from a
-// bounded run of transient 503s, completing the install after exactly three
-// requests to the faulted endpoint (two failures plus the succeeding one).
+// TestMetadataFetchRetriesTransientFailureThenSucceeds pins that a version
+// detail GET recovers from two 503s in exactly three requests.
 func TestMetadataFetchRetriesTransientFailureThenSucceeds(t *testing.T) {
 	t.Parallel()
 	cfg, runtime, s := newRetryFixture(t, "metaretry", false)
@@ -90,17 +75,9 @@ func TestArtifactDownloadRetriesTransientFailureThenSucceeds(t *testing.T) {
 	}
 }
 
-// TestArtifactDownloadRetrySuccessCountsOneMissNotOnePerAttempt pins "one
-// miss per acquisition, not per attempt": downloadCollectionToCache retries
-// the whole establish+stream+verify attempt inside attemptDownloadToCache up
-// to helpers.FetchRetryMaxAttempts times, but AddCacheMiss is called exactly
-// once, outside that retry loop, only after the whole retry-bounded
-// acquisition finally succeeds. The EndpointArtifact-count-of-3-vs-
-// CacheMisses-of-1 relationship asserted below is the whole point of this
-// test: it proves the increment lives in downloadCollectionToCache, not in
-// attemptDownloadToCache - if AddCacheMiss were moved into
-// attemptDownloadToCache (incrementing once per HTTP attempt instead of once
-// per successful acquisition), this run would report CacheMisses == 3, not 1.
+// TestArtifactDownloadRetrySuccessCountsOneMissNotOnePerAttempt pins that a
+// download taking three attempts counts one cache miss: the miss is counted
+// in downloadCollectionToCache after the retry loop, not per attempt.
 func TestArtifactDownloadRetrySuccessCountsOneMissNotOnePerAttempt(t *testing.T) {
 	t.Parallel()
 	cfg, runtime, s := newRetryFixture(t, "artretry", true)
@@ -122,20 +99,9 @@ func TestArtifactDownloadRetrySuccessCountsOneMissNotOnePerAttempt(t *testing.T)
 	}
 }
 
-// TestMetadataFetchExhaustsRetriesAndFails asserts that an indefinitely
-// failing Galaxy API GET is attempted exactly helpers.FetchRetryMaxAttempts
-// times before the run fails closed. The fault is armed with a negative
-// Count so it fires on every attempt, including the last: a bounded Count
-// would be consumed by the retries themselves and could let a later attempt
-// succeed, masking the exhaustion this test means to exercise.
-//
-// Unlike an artifact download (which always fails inside installLevels,
-// surfacing as helpers.ErrInstallationFailed), a persistently failing
-// metadata GET aborts during dependency resolution - resolveCollectionsInternal
-// must fetch each candidate's version metadata to build the graph before
-// installLevels ever runs - so the run fails with the underlying
-// *cacheManager.HTTPStatusError still reachable via errors.As, wrapped only
-// in "failed to resolve dependencies", never helpers.ErrInstallationFailed.
+// TestMetadataFetchExhaustsRetriesAndFails pins that an always-failing
+// metadata GET makes FetchRetryMaxAttempts requests and fails during
+// resolution with the HTTPStatusError reachable, not ErrInstallationFailed.
 func TestMetadataFetchExhaustsRetriesAndFails(t *testing.T) {
 	t.Parallel()
 	cfg, runtime, s := newRetryFixture(t, "metafail", false)

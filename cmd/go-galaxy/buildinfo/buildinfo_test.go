@@ -77,12 +77,9 @@ func TestVersion(t *testing.T) {
 	}
 }
 
-// TestVersionDevBuildFallback checks the ldflags-less (dev build) path: all
-// four inputs empty. The exact version string is environment-dependent (it
-// depends on runtime/debug.ReadBuildInfo, which varies with how the test
-// binary itself was built), so this only asserts the invariants that matter:
-// the result is never empty, it still reports the Go runtime version, and -
-// crucially - it never reintroduces the deleted GitHub network fetch.
+// TestVersionDevBuildFallback pins the ldflags-less path, whose exact output
+// depends on how the test binary was built: never empty, still names the Go
+// runtime, and carries no URL, since no network fetch may be made for it.
 func TestVersionDevBuildFallback(t *testing.T) {
 	t.Parallel()
 	got := Version("", "", "", "")

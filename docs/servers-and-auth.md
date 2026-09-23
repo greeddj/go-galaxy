@@ -42,10 +42,19 @@ the token export above resolve at all.
 Every collection is resolved independently against `automation_hub` first, falling
 back to `release_galaxy` only if the private hub doesn't have it - so one install
 can legitimately draw some collections from the private hub and the rest from the
-public Galaxy. go-galaxy also auto-discovers the API root under `url`, trying
-`/api/v3` (galaxy.ansible.com's shape) and then the bare `/v3` a Galaxy NG /
-Automation Hub deployment mounts directly under its own base path, so the same
-`url` works for either shape without an extra option.
+public Galaxy.
+
+go-galaxy also auto-discovers the API root under `url`. It tries `/api/v3`
+(galaxy.ansible.com's shape) and then the bare `/v3` a Galaxy NG / Automation
+Hub deployment mounts directly under its own base path, so the same `url` works
+for either shape without an extra option, and after those `/api/v2`, `/v2` and
+a bare `/api`. Each root is tried with and without a trailing slash, and a
+later root only when every earlier one answered 404. A `url` that already ends
+in `/api/v3`, `/api/v2`, `/v3` or `/v2` is used as is, never doubled, and one
+ending in `/api` gets `/api/v3`, `/api/v2` and `/api` itself. Once a root has
+answered for one collection, later collections against the same server URL
+probe only that root; a 404 never rules a root out, since it means only that
+one collection is absent there.
 
 `[galaxy_server.<id>]` keys, and what go-galaxy does with them:
 
@@ -71,7 +80,18 @@ written `myHub` from `ANSIBLE_GALAXY_SERVER_MYHUB_URL`. That is ansible's own
 rule, which composes the same name from the id upper-cased. An id with no
 `[galaxy_server.<id>]` section at all builds purely from its env overrides,
 which is the common shape in containerized CI where you'd rather not template
-an ansible.cfg for a secret.
+an ansible.cfg for a secret. An override wins whenever it is exported, even as
+an empty string: an empty `_TOKEN` clears the section's token, an empty
+`_VALIDATE_CERTS` restores certificate verification, and an empty `_URL` leaves
+the server with no URL at all, which is a configuration error.
+
+A server URL is read the same way whichever channel supplies it - `--server`,
+`GO_GALAXY_SERVER`, `ANSIBLE_GALAXY_SERVER`, `[galaxy] server`, a section's
+`url` or its `_URL` override: surrounding whitespace is trimmed, one pair of
+surrounding double quotes is dropped (an exception to the ansible.cfg rule
+that [a quoted value keeps its quotes](configuration.md#what-go-galaxy-reads)),
+and trailing slashes are cut. What remains must be an absolute URL with a
+scheme and a host.
 
 ## --token
 
@@ -153,11 +173,13 @@ Highest wins:
 1. An explicit `--server` (or `$GO_GALAXY_SERVER`) collapses everything to one
    server: if its value matches a configured `server_list` id exactly, that
    server's own token and `validate_certs` apply; otherwise the value is used
-   verbatim as an anonymous URL, and `server_list` plays no further part - not
+   as an anonymous URL, and `server_list` plays no further part - not
    even to validate it.
 2. Otherwise a non-empty `server_list` wins, in list order.
 3. Otherwise `[galaxy] server` from ansible.cfg, or `$ANSIBLE_GALAXY_SERVER`,
-   which outranks that key whenever it is set but nothing above it.
+   which outranks that key whenever it is exported, even as an empty string:
+   an exported but empty `ANSIBLE_GALAXY_SERVER` hides the key, and the run
+   falls through to the built-in default below, not to the file's value.
 4. Otherwise the `--server` flag's built-in default.
 
 ## Server selection at resolve time
@@ -186,7 +208,31 @@ A `requirements.yml` collection's `source:` pins it to one server for the whole
 run: an exact `server_list` id match, or a URL matching a configured server's
 network origin (so `source: https://hub.example.internal/content/published/`
 still gets that server's own token and TLS policy, even though the path differs
-from the configured `url`).
+from the configured `url`). The server URL a collection resolved against is
+what the lockfile, the cache and the installed record name as its source, and
+the server the install asks for the collection's download URL. A `source:`
+naming a `server_list` id is recorded as that server's URL, never as the id,
+and one matched by origin is recorded as its own URL, path included, not as
+the configured `url`. A `source:` that matches no configured server is not
+refused: it is requested anyway, with a warning naming it, and since a token
+and a relaxed TLS policy follow a configured server's origin, that request
+carries neither.
+
+A `source:` pins only the collection that carries it. Its dependencies inherit
+nothing from it and walk the whole server list, first match wins, like any
+unpinned collection, so a dependency of a collection pinned to a private hub
+comes from the first server that has it, which may be a public one listed
+earlier. To keep a dependency on the hub, list it as a root with a `source:`
+of its own, or put the hub first in `server_list`.
+
+A network origin, here and throughout this document, is a URL's scheme, host
+and port alone: scheme and host compare case-insensitively, a missing port is
+the scheme's default (443 for https, 80 for http), and path, query and
+fragment play no part. `https://H:443/` and `https://h` are therefore one
+origin, while `https://h:8443` and `http://h` are two others. The same
+comparison decides which configured server's token and TLS policy a request
+carries, whether two configured servers share an origin, and which url
+credential binding a request can match.
 
 ## Roles and the v1 role API
 
@@ -316,6 +362,22 @@ plaintext server is. An unknown `GO_GALAXY_GIT_<ID>_*` variable for a
 declared id is warned about and ignored; variables for an id that is not
 listed are ignored silently.
 
+This surface and the url one [below](#url-sources-and-credentials) read their
+variables by the same rules. A variable exported with an empty value counts
+as unset. The non-secret values - `_URL`, `_USERNAME`, `_SSH_KEY_FILE` - are
+trimmed of surrounding whitespace, so the trailing newline a CI secret store
+may append cannot change them, while `_PASSWORD`, `_SSH_KEY`,
+`_SSH_KEY_PASSPHRASE` and a url `_TOKEN` are taken verbatim, since a secret
+may legitimately end in whitespace. Two ids are bound to one URL when their
+`_URL` values agree once canonicalized - scheme and host lower-cased, a
+default port dropped, trailing slashes cut - so `https://h/org` and
+`HTTPS://H:443/org/` collide; that refusal is what keeps the longest-prefix
+match from ever facing a tie. Problems are reported one at a time in a fixed
+order - the id list, then each id in list order with its `_URL` first, then
+two ids on one URL - and git bindings are checked before url bindings, so a
+configuration broken in both reports the git failure first. A refusal names
+the variable or id at fault and never echoes a secret.
+
 An ssh repository with no bound key is reached through the agent
 `SSH_AUTH_SOCK` names, and an ssh repository with neither a bound key nor an
 agent is a configuration error, not a network one. The host key is checked
@@ -396,7 +458,14 @@ These are refused before any request is made, exiting with the usage exit code
 
 - A server URL, or a `requirements.yml` `source:`, with embedded userinfo
   (`https://user:pass@hub/`).
+- A server URL that is not absolute (no scheme or no host), or a `server_list`
+  entry left with no URL, including one whose `ANSIBLE_GALAXY_SERVER_<ID>_URL`
+  is exported empty.
 - A token configured for a plaintext (`http://`) origin that isn't loopback.
+  Loopback is judged from the URL as written, here and for the git and url
+  bindings below: the name `localhost` or a loopback IP literal
+  (`127.0.0.0/8`, `::1`). DNS is never consulted, so a name that resolves to
+  loopback through `/etc/hosts` is refused.
 - Two configured servers that share a network origin but disagree on their
   token or their `validate_certs`.
 - A `server_list` id outside `^[A-Za-z0-9_-]+$`, or two ids that are equal or

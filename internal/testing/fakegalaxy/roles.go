@@ -15,10 +15,9 @@ type RoleVersion struct {
 	CommitSHA string
 }
 
-// fakeRole is the registry entry for one owner.name role: the GitHub
-// repository it points at, its default branch, and its versions in the
-// order registered, which is the order the v1 API lists them in (not
-// sorted; galaxy.ansible.com lists oldest first).
+// fakeRole is the registry entry for one owner.name role: its GitHub
+// repository, default branch, and versions listed unsorted in registration
+// order, as galaxy.ansible.com lists oldest first.
 type fakeRole struct {
 	owner    string
 	name     string
@@ -29,17 +28,13 @@ type fakeRole struct {
 	id       int64
 }
 
-// rolePageSize is what the v1 versions route returns per page when the
-// request carries no page_size; a request's own page_size wins, so a client
-// asking for 50 exercises pagination only past 50 versions, exactly as on
-// galaxy.ansible.com.
+// rolePageSize is the v1 versions page size when a request names no
+// page_size; a request's own page_size wins, as on galaxy.ansible.com.
 const rolePageSize = 10
 
-// AddRole registers a Galaxy role as the v1 API would list it: owner.name
-// imported from https://github.com/<user>/<repo> with the given default
-// branch and versions. It returns the role's id, which the versions route is
-// keyed by. Registering the first role is what makes the server answer the
-// v1 routes at all.
+// AddRole registers owner.name as imported from github.com/<user>/<repo> and
+// returns the id the versions route is keyed by; until the first AddRole the
+// server answers no v1 route at all.
 func (s *Server) AddRole(owner, name, user, repo, branch string, versions []RoleVersion) int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -55,10 +50,9 @@ func (s *Server) AddRole(owner, name, user, repo, branch string, versions []Role
 	return role.id
 }
 
-// roleRouteSegments reports whether segments name a v1 role route under this
-// server's base path - "api/v1/roles/..." for a galaxy.ansible.com shaped
-// server, "v1/roles/..." for one mounted at an API base path - and returns
-// what follows "roles". A server with no role registered serves no v1 route.
+// roleRouteSegments returns what follows "api/v1/roles" (galaxy shape) or
+// "v1/roles" (hub shape) under the base path, reporting false while no role
+// is registered.
 func (s *Server) roleRouteSegments(segments []string) ([]string, bool) {
 	s.mu.Lock()
 	hasRoles := len(s.roles) > 0

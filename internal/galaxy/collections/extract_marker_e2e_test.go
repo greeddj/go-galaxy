@@ -15,10 +15,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// installedTally is the count a tree tally compares - entries, directories
-// and the entries' total size - taken over an installed collection
-// directory from outside the package, so a test can establish that two
-// versions are ones the tally cannot tell apart.
+// installedTally is the extract marker's tally (entries, directories, total
+// size) measured from outside the package, so a test can show two versions
+// are ones the tally cannot tell apart.
 type installedTally struct {
 	entries, dirs, bytes int64
 }
@@ -48,11 +47,9 @@ func tallyInstalledTree(t *testing.T, dir string) installedTally {
 	return tally
 }
 
-// assertMarkerOnlyBesideVersion fails unless the collection directory
-// carries no extract marker - `ansible-galaxy collection verify` reports any
-// file its FILES.json does not list and exits 1 - and the one marker there is
-// sits in the .info directory of the version installed, with no other
-// version's .info directory left beside it.
+// assertMarkerOnlyBesideVersion fails unless the one extract marker sits in the
+// installed version's .info directory: none in the collection directory, which
+// ansible-galaxy collection verify rejects, and no other version's .info left.
 func assertMarkerOnlyBesideVersion(t *testing.T, downloadPath, version string) {
 	t.Helper()
 	entries, err := os.ReadDir(installPathFor(downloadPath, "lib"))
@@ -78,15 +75,9 @@ func assertMarkerOnlyBesideVersion(t *testing.T, downloadPath, version string) {
 	}
 }
 
-// TestInstallBackToAnEarlierVersionReextractsIt pins why an install removes
-// every other version's .info directory. The extract marker lives in .info,
-// which is scoped to a version while the tree is not, so a marker left beside
-// an earlier version would outlive the tree it counted. Installing that
-// version again finds its store record, its GALAXY.yml and that marker all
-// still in place, and the tally is the only check left - one a same-length
-// patch release passes, since only file contents differ. The two versions
-// here are exactly that: the precondition below measures their trees equal
-// before the downgrade is trusted to prove anything.
+// TestInstallBackToAnEarlierVersionReextractsIt pins that an install sweeps
+// other versions' .info directories, so a downgrade between two versions of
+// equal tally re-extracts rather than trusting a stale marker.
 func TestInstallBackToAnEarlierVersionReextractsIt(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

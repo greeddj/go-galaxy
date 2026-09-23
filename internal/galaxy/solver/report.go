@@ -32,9 +32,8 @@ func (e *ConflictError) Error() string {
 	return b.String()
 }
 
-// Is reports that a ConflictError is a version-resolution failure, so
-// callers can errors.Is-check against the shared sentinel exactly as the
-// pre-existing collections conflict error does.
+// Is reports that a ConflictError is a version-resolution failure, so it
+// matches helpers.ErrNoVersionSatisfiesConstraints under errors.Is.
 func (e *ConflictError) Is(target error) bool {
 	return target == helpers.ErrNoVersionSatisfiesConstraints
 }
@@ -97,10 +96,8 @@ func splitOneDerived(cc causeConflict) (*incompatibility, *incompatibility, bool
 	}
 }
 
-// countOutgoing walks inc's derivation graph once (memoized via visited)
-// and records, for every incompatibility, how many distinct parents cause
-// it - the pre-pass the numbered rendering algorithm requires so it knows
-// up front which nodes will need to be referred back to.
+// countOutgoing records, for every node of inc's derivation graph, how many
+// parents cause it, so rendering knows up front which nodes need a number.
 func countOutgoing(inc *incompatibility, outgoing map[*incompatibility]int, visited map[*incompatibility]bool) {
 	if visited[inc] {
 		return
@@ -116,20 +113,9 @@ func countOutgoing(inc *incompatibility, outgoing map[*incompatibility]int, visi
 	countOutgoing(cc.Right, outgoing, visited)
 }
 
-// reportBuilder accumulates the numbered proof as it walks a derivation
-// graph. lineOf holds the line number assigned to a node that has one (a
-// node referenced by two or more parents always earns one; the partial-
-// satisfier merge case can also force one early to allow a back-reference).
-//
-// The bug field holds the first invariant-violation error renderNode
-// recorded: a non-derived incompatibility reached where the walk requires
-// one already established as derived. Recording one does not abort the
-// walk, and that is safe because the node that records it is a leaf - a
-// non-causeConflict cause has no cc.Left/cc.Right for renderNode to recurse
-// into, and renderNode returns before marking that node rendered, so a
-// later ensureRendered on it re-enters renderNode, costs O(1), and recurses
-// nowhere. outcome is the field's only reader, and it runs once the walk
-// has finished.
+// reportBuilder accumulates the numbered proof. bug holds the first invariant
+// violation renderNode recorded; the walk goes on safely because that node is
+// a leaf, and outcome reads bug only once the walk has finished.
 type reportBuilder struct {
 	lineOf   map[*incompatibility]int
 	rendered map[*incompatibility]bool
@@ -139,9 +125,8 @@ type reportBuilder struct {
 	nextLine int
 }
 
-// newReportBuilder returns a reportBuilder whose three lookup maps are
-// initialized. They are the only fields a walk writes that a zero value
-// leaves unusable, so this is the whole of what construction has to do.
+// newReportBuilder returns a reportBuilder with its three lookup maps
+// initialized, the only fields a zero value leaves unusable.
 func newReportBuilder() *reportBuilder {
 	return &reportBuilder{
 		lineOf:   make(map[*incompatibility]int),
@@ -156,22 +141,17 @@ func (b *reportBuilder) hasLine(inc *incompatibility) bool {
 	return ok
 }
 
-// ensureRendered renders inc if it has not been rendered yet (a node
-// referenced by only one parent is rendered exactly once, at its sole
-// reference point). Every call site only needs this side effect - inc being
-// rendered and, if applicable, assigned a line number - never a reference
-// text, so this returns nothing.
+// ensureRendered renders inc unless it already was, so a node referenced by
+// one parent is rendered exactly once, at its sole reference point.
 func (b *reportBuilder) ensureRendered(s *solveState, inc *incompatibility) {
 	if !b.rendered[inc] {
 		b.renderNode(s, inc, false)
 	}
 }
 
-// forceLineNumber assigns inc the next line number if it does not already
-// have one, retrofitting the number onto the last line written (which, by
-// the invariant this is only ever called right after ensureRendered(inc)
-// for a first-time, single-parent node, is guaranteed to be inc's own
-// concluding line).
+// forceLineNumber assigns inc the next line number if it has none, appending
+// it to the last line written; callers invoke it only right after
+// ensureRendered(inc) on a first-time node, so that line is inc's own.
 func (b *reportBuilder) forceLineNumber(inc *incompatibility) int {
 	if ln, ok := b.lineOf[inc]; ok {
 		return ln
@@ -192,24 +172,15 @@ func (b *reportBuilder) recordBug(err error) {
 	}
 }
 
-// renderNode renders inc's own explanatory line (recursing into its causes
-// as the numbered algorithm requires), appends it to b.lines, and assigns it
-// a line number if it is referenced by two or more parents. final marks the
-// single outermost call (the terminal incompatibility itself), which
-// rewrites the line's leading connective to "So," and its trailing
-// description to "version solving failed".
+// renderNode appends inc's explanatory line, recursing into its causes, and
+// numbers it when two or more parents reference it. final marks the terminal
+// incompatibility, whose line finalizeLine rewrites.
 func (b *reportBuilder) renderNode(s *solveState, inc *incompatibility, final bool) {
 	cc, ok := inc.Cause.(causeConflict)
 	if !ok {
-		// A non-causeConflict cause here means the walk reached this function
-		// on a node nothing established as derived. buildConflictError gates
-		// its own call on isDerivedInc; ensureRendered gates only on the
-		// rendered cache, so what keeps this branch unreachable is its call
-		// sites - the ext1/ext2 dispatch below, splitOneDerived and pickSimple
-		// each hand it a node already classified as derived. The return is
-		// required, not stylistic: on this branch cc is the zero causeConflict,
-		// so the very next statement's isDerivedInc(cc.Left) would dereference
-		// a nil *incompatibility.
+		// Unreachable while every call site passes a derived node. The return
+		// is required: cc is the zero causeConflict here, so the next statement
+		// would dereference a nil *incompatibility.
 		b.recordBug(fmt.Errorf("renderNode called on a non-derived incompatibility (cause %T): %w", inc.Cause, errSolverBug))
 		return
 	}
@@ -241,14 +212,9 @@ func (b *reportBuilder) renderNode(s *solveState, inc *incompatibility, final bo
 	}
 }
 
-// renderBothExternal renders inc's line when both of cc's causes are
-// external: the ordinary two-cause conjunction, or - when cc.Left and
-// cc.Right are the very same incompatibility (a degenerate self-resolution,
-// e.g. an unknown-package leaf whose own derived negation re-conflicts with
-// it) - the single cause once, instead of "<X> and <X>". This relies on
-// incompatStore's content dedup making two content-identical
-// incompatibilities the same pointer, so the equality check is exact
-// pointer identity, never describe-string equality.
+// renderBothExternal renders inc's line when both causes are external, naming
+// a self-resolved cause once. Pointer identity is exact here because
+// incompatStore dedups content-identical incompatibilities to one pointer.
 func renderBothExternal(s *solveState, cc causeConflict, inc *incompatibility) string {
 	if cc.Left == cc.Right {
 		return fmt.Sprintf("Because %s, %s.", s.describe(cc.Left), s.describe(inc))
@@ -321,12 +287,9 @@ func finalizeLine(line, desc string) string {
 	return line
 }
 
-// buildConflictError renders the full proof for inc (the terminal
-// incompatibility resolveConflict produced) and returns either the
-// ConflictError built from it or the invariant-violation error the render
-// walk recorded, via outcome. It runs while every package universe fetched
-// during the solve is still live, since the hint conditions inspect
-// universes.
+// buildConflictError renders the proof for the terminal incompatibility inc.
+// It must run while the solve's fetched universes are live, since hints and
+// labels inspect them.
 func (s *solveState) buildConflictError(inc *incompatibility) error {
 	b := newReportBuilder()
 	countOutgoing(inc, b.outgoing, make(map[*incompatibility]bool))
@@ -340,14 +303,9 @@ func (s *solveState) buildConflictError(inc *incompatibility) error {
 	return b.outcome(s, inc)
 }
 
-// outcome returns the recorded bug in preference to the built proof,
-// discarding the partially built lines: renderNode may have recorded an
-// invariant-violation error partway through the walk, in which case the
-// lines collected up to that point describe an incomplete, unusable proof.
-// Otherwise it returns the ConflictError assembled from b.lines and inc's
-// hints. Both arms return a non-nil value, so no typed-nil interface is
-// ever constructible from this method. Named outcome, not result, to stay
-// clear of the exported Result type.
+// outcome returns the recorded invariant violation in preference to the
+// proof, whose lines are then incomplete, else the ConflictError with hints.
+// Both arms are non-nil, so no typed-nil error can escape.
 func (b *reportBuilder) outcome(s *solveState, inc *incompatibility) error {
 	if b.bug != nil {
 		return b.bug
@@ -359,8 +317,8 @@ func (b *reportBuilder) outcome(s *solveState, inc *incompatibility) error {
 }
 
 // collectHints walks inc's derivation graph for causeNoVersions leaves and
-// renders the deterministic, conditional hints of section 10.4 for each
-// distinct package, ordered by package name ascending.
+// renders the conditional prerelease hint once per distinct package, ordered
+// by package name.
 func (s *solveState) collectHints(inc *incompatibility) []string {
 	type entry struct{ pkg, text string }
 	var entries []entry
@@ -398,8 +356,8 @@ func (s *solveState) collectHints(inc *incompatibility) []string {
 	return out
 }
 
-// prereleaseHint implements the two prerelease-related hint conditions of
-// section 10.4 for pkg's fetched universe.
+// prereleaseHint returns the hint for pkg's fetched universe when all, or
+// only some, of its published versions are prereleases.
 func (s *solveState) prereleaseHint(pkg string) (string, bool) {
 	u := s.uniFor(pkg)
 	if len(u.versions) == 0 {
@@ -466,11 +424,9 @@ func (s *solveState) describeDependency(c causeDependency) string {
 // one negative term for the forbidden dependency range).
 const dependencyPairTermCount = 2
 
-// describeGeneric renders a root or conflict-resolution-derived
-// incompatibility's terms generically: a single negative term reads
-// "{X} is forbidden", a positive/negative pair reads "{depender} requires
-// {dependency}", and the (rare, success-path-only) general case joins every
-// term's own single-term phrasing.
+// describeGeneric renders a root or derived incompatibility: a negative term
+// reads "X is forbidden", a positive/negative pair "A requires B", and any
+// other shape joins each term's single-term phrasing.
 func (s *solveState) describeGeneric(inc *incompatibility) string {
 	switch len(inc.Terms) {
 	case 0:
@@ -507,12 +463,9 @@ func (s *solveState) describeTwoTerm(a, b term) string {
 	return fmt.Sprintf("%s requires %s", s.termLabel(pos.Package, pos.Set), s.termLabel(neg.Package, neg.Set))
 }
 
-// termLabel renders a human label for a (package, set) pair: "root" for the
-// synthetic root (its single version is never shown), "X <version>" for a
-// singleton-built set, "every version of X" for the full set or one that
-// covers the package's whole fetched universe (a cosmetic consultation of
-// the universe - display never feeds a logic decision), and the set's own
-// rendering otherwise.
+// termLabel renders (pkg, set) as "root", "X <version>" for a singleton,
+// "every version of X" when set covers the fetched universe, or the set's
+// display label. The universe is consulted for display only, never logic.
 func (s *solveState) termLabel(pkg string, set verSet) string {
 	if pkg == rootPkg {
 		return "root"
@@ -529,10 +482,8 @@ func (s *solveState) termLabel(pkg string, set verSet) string {
 	return pkg
 }
 
-// coversFetchedUniverse reports whether set admits every published version
-// of pkg's already-fetched universe - the friendlier "every version of X"
-// phrasing for a range that spans everything actually published without
-// being the full version space.
+// coversFetchedUniverse reports whether set admits every version of pkg's
+// already-fetched universe, for the "every version of X" phrasing.
 func (s *solveState) coversFetchedUniverse(pkg string, set verSet) bool {
 	u := s.uniFor(pkg)
 	if !u.fetched || len(u.versions) == 0 {

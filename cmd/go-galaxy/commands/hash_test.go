@@ -154,11 +154,9 @@ func checkAnyError(t *testing.T, got string, err error) {
 	}
 }
 
-// TestComputeHash covers the four lockfile/requirements combinations
-// computeHash must handle: a valid lockfile (preferred), no lockfile (falls
-// back to hashing requirements.yml), a corrupt/unsupported lockfile (must
-// surface the error rather than silently falling back), and neither file
-// present (must error).
+// TestComputeHash covers computeHash's cases: a valid lockfile is preferred, a
+// missing one falls back to the requirements file, a corrupt or unsupported one
+// surfaces its error, and neither file present is an error.
 func TestComputeHash(t *testing.T) {
 	t.Parallel()
 	tests := []hashTestCase{

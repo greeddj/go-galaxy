@@ -11,25 +11,16 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// serverCandidate is one server a collection's root-metadata fetch may try,
-// in the order serverCandidates returns. base is the normalized (no
-// trailing slash) URL to fetch against; id is the matching entry's
-// server_list id when one was found, or "" for the implicit single server,
-// an anonymous ad-hoc base, or a source: value that matched no configured
-// server. id exists purely for operator-facing error attribution (label);
-// the credential and TLS policy always follow base's actual origin via
-// internal/galaxy/fetch's own origin-keyed dispatch, regardless of whether
-// id is set.
+// serverCandidate is one server a root-metadata fetch may try: base is the
+// normalized URL, id the server_list id or "". id only labels errors; token
+// and TLS policy follow base's origin through internal/galaxy/fetch.
 type serverCandidate struct {
 	base string
 	id   string
 }
 
-// label names the server for an operator-facing error: its configured
-// server_list id when it has one, else its base URL - so a run aborting on
-// an auth failure or an exhausted retry budget always names something an
-// operator can recognize, even for the implicit single server (id "") or an
-// anonymous source: pin.
+// label names the server for an operator-facing error: its server_list id
+// when it has one, else its base URL, so an aborted run always names it.
 func (s serverCandidate) label() string {
 	if s.id != "" {
 		return s.id
@@ -37,27 +28,15 @@ func (s serverCandidate) label() string {
 	return s.base
 }
 
-// serverCandidates returns the ordered list of servers col's root-metadata
-// fetch may try.
-//
-// A pinned collection (col.Source non-empty) always yields exactly one
-// candidate - a source: value pins its fqdn to one server for the whole
-// run, and the list is never consulted for it - resolved by
-// pinnedServerCandidate.
-//
-// An unpinned collection (col.Source empty) yields every cfg.Servers entry
-// in list order, deduplicated by normalized base: the "walk the configured
-// list, first match wins" behavior this unit exists to deliver.
-//
-// cfg == nil never happens in production (BuildCollectionConfig always
-// returns a non-nil *Config) but is handled defensively, yielding nil.
+// serverCandidates returns the servers col's root-metadata fetch may try: the
+// one server a source: pins it to, else every configured server in list
+// order for the first-match-wins walk. A git or url collection yields none.
 func serverCandidates(deps collectionDeps, col collection) []serverCandidate {
 	if deps.cfg == nil {
 		return nil
 	}
-	// A git or url locator is not a server and matches none; it must never
-	// be probed with the Galaxy API root suffixes as an unmatched source:
-	// would be.
+	// A git or url locator is not a server and must never be probed with the
+	// Galaxy API root suffixes as an unmatched source: would be.
 	if col.isGit() || col.isURL() {
 		return nil
 	}
@@ -71,37 +50,9 @@ func serverCandidates(deps collectionDeps, col collection) []serverCandidate {
 	return unpinnedServerCandidates(deps.cfg)
 }
 
-// warnUnmatchedSource reports a collection whose source: resolves to no
-// configured server. The run continues and the request is made, mirroring
-// warnIfOffServerDownloadHost rather than blocking: a source: is
-// operator-authored in the ordinary case, and refusing one would break a
-// working setup over a naming mismatch.
-//
-// Both this warning and the download path's match by normalized origin, so
-// what separates them is what each one asserts, not how carefully it looks. A
-// source: naming a repo-scoped path under a configured host matches here and
-// stays silent; reaching this function means an origin the operator
-// configured nowhere at all. The download path's warning says something
-// narrower - the artifact is arriving from a different origin than the server
-// that resolved the collection, which a legitimate content host does too. The
-// request is still made either way, and here it costs up to several probes
-// per collection as the API-root candidates are tried, against a host a
-// lockfile named.
-//
-// No credential reaches that host and no TLS policy follows it there:
-// internal/galaxy/fetch dispatches both by normalized origin, so an origin
-// that matched nothing gets neither. That is why this is a warning about
-// where a request went rather than about what went with it.
-//
-// It fires once per distinct unmatched source per phase. A lockfile pinning
-// fifty collections to one unconfigured host is one misconfiguration, not
-// fifty, and fifty identical lines would bury it.
-//
-// A strict opt-in mode that refused instead was considered and not built: the
-// flag surface would have to say what it applies to (this check alone, or
-// every host mismatch including the download path), and nothing yet asks for
-// one. The warning is what makes the situation visible, which is the
-// precondition for anyone wanting more.
+// warnUnmatchedSource warns, once per distinct base per phase, that a source:
+// matches no configured server; the request is still made, and carries no
+// token or TLS policy since fetch dispatches both by origin.
 func warnUnmatchedSource(deps collectionDeps, col collection, base string) {
 	if base == "" || deps.runtime == nil || !deps.unmatchedSources.first(base) {
 		return
@@ -112,26 +63,9 @@ func warnUnmatchedSource(deps collectionDeps, col collection, base string) {
 	)
 }
 
-// pinnedServerCandidate resolves col.Source (already known non-empty) to a
-// single serverCandidate:
-//
-//  1. An exact, case-sensitive match against a configured server's
-//     server_list id wins outright, using that server's own URL as the base.
-//  2. Otherwise the value is normalized and compared by network origin
-//     (helpers.Origin) against every configured server's URL. A match
-//     KEEPS the given (normalized) URL as the base - a source: may
-//     legitimately name a repo-scoped path under the same origin, e.g.
-//     "<server>/content/published/" - but adopts that server's id for error
-//     attribution. The credential and TLS policy still follow automatically,
-//     since internal/galaxy/fetch dispatches by origin, not by the exact
-//     configured URL: this is the origin-keying design paying off here.
-//  3. A source matching neither is an anonymous, unmatched base (id "").
-//
-// The second return value reports whether the source matched a configured
-// server at all. It is not derivable from the returned id: a server
-// configured through --server alone carries no id, so an origin match against
-// it also yields id "", and reading that as "unmatched" would warn about the
-// commonest setup there is.
+// pinnedServerCandidate resolves a source: by exact server_list id, else by
+// origin while keeping its own path as base. matched is separate from id since
+// a --server-only server has no id and must not read as unmatched.
 func pinnedServerCandidate(cfg *config.Config, source string) (serverCandidate, bool) {
 	for _, srv := range cfg.Servers {
 		if srv.ID != "" && srv.ID == source {
@@ -150,10 +84,8 @@ func pinnedServerCandidate(cfg *config.Config, source string) (serverCandidate, 
 	return serverCandidate{base: normalized}, false
 }
 
-// unmatchedSourceMemo remembers which unmatched sources a phase has already
-// warned about. Scoped to one collectionDeps, exactly like apiRootMemo beside
-// it, and nil-tolerant for the same reason: a collectionDeps built by hand in
-// a test carries none, and a warning is not worth a panic.
+// unmatchedSourceMemo remembers which unmatched sources one collectionDeps has
+// warned about; nil-tolerant, as a hand-built collectionDeps carries none.
 type unmatchedSourceMemo struct {
 	seen map[string]bool
 	mu   sync.Mutex
@@ -181,12 +113,8 @@ func (m *unmatchedSourceMemo) first(base string) bool {
 	return true
 }
 
-// unpinnedServerCandidates returns every cfg.Servers entry as a candidate,
-// in list order, deduplicated by normalized base. When cfg.Servers is empty
-// - the shape every hand-built *config.Config in this package's tests still
-// uses, and the shape any caller that predates multi-server support still
-// has - it falls back to the single candidate {base: cfg.Server}, exactly
-// the effective server every such caller already had.
+// unpinnedServerCandidates returns every cfg.Servers entry in list order,
+// deduplicated by normalized base, or cfg.Server alone when the list is empty.
 func unpinnedServerCandidates(cfg *config.Config) []serverCandidate {
 	if len(cfg.Servers) == 0 {
 		return []serverCandidate{{base: normalizeServerBase(cfg.Server)}}
@@ -205,15 +133,9 @@ func unpinnedServerCandidates(cfg *config.Config) []serverCandidate {
 	return out
 }
 
-// normalizeServerBase trims surrounding whitespace, then strips exactly one
-// surrounding double-quote pair - only when the whitespace-trimmed value both
-// starts and ends with a double quote (an ansible.cfg value quirk) - and
-// finally removes any run of trailing slashes. Whitespace is trimmed before
-// the quotes are inspected, so a value quoted inside surrounding whitespace
-// still loses its quotes; an unbalanced quote (only one end quoted) is kept
-// as-is, and whatever the stripped pair enclosed is preserved untouched. It
-// is the same normalization apiRootCandidates applies before deriving API
-// root variants.
+// normalizeServerBase trims whitespace, strips one balanced pair of
+// surrounding double quotes and removes trailing slashes; an unbalanced quote
+// is kept.
 func normalizeServerBase(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if inner, ok := strings.CutPrefix(trimmed, "\""); ok {
@@ -224,10 +146,8 @@ func normalizeServerBase(value string) string {
 	return strings.TrimRight(trimmed, "/")
 }
 
-// parsedOrigin parses value as an absolute URL and returns its
-// helpers.Origin. It reports ("", false) for anything that fails to parse
-// or lacks a scheme/host, which pinnedServerCandidate then never treats as
-// matching anything.
+// parsedOrigin returns value's helpers.Origin, or ("", false) when it is not
+// an absolute URL with a scheme and host, which then matches nothing.
 func parsedOrigin(value string) (string, bool) {
 	u, err := url.Parse(value)
 	if err != nil || u.Scheme == "" || u.Host == "" {
@@ -236,27 +156,17 @@ func parsedOrigin(value string) (string, bool) {
 	return helpers.Origin(u), true
 }
 
-// rootMetaCandidate is a single root-metadata URL candidate together with
-// the server base and API root it was derived from. tryServerRootMetadata
-// uses the (base, apiRoot) pair to record the winning apiRoot in the memo
-// once a candidate's fetch succeeds.
+// rootMetaCandidate is one root-metadata URL with the base and API root it
+// came from, which tryServerRootMetadata memoizes once its fetch succeeds.
 type rootMetaCandidate struct {
 	url     string
 	base    string
 	apiRoot string
 }
 
-// rootMetadataURLCandidates builds candidate root metadata URLs for one
-// server base.
-//
-// If memo already knows the winning apiRoot for base (a prior collection
-// resolved it against this same server in this same phase), only that
-// apiRoot's two trailing-slash variants are emitted, skipping the losing
-// variants entirely. Otherwise every apiRoot variant apiRootCandidates
-// derives for base is emitted, in apiRootCandidates' own priority order - so
-// an empty memo always probes /api/v3 first, matching the common case's
-// shape, and only reaches the Galaxy NG / Automation Hub shaped /v3 and /v2
-// fallbacks (and the legacy bare /api) if that first probe 404s.
+// rootMetadataURLCandidates builds root metadata URLs for one server base:
+// only the memoized winning API root's two trailing-slash variants when known,
+// else every apiRootCandidates root in priority order.
 func rootMetadataURLCandidates(base string, col collection, memo *apiRootMemo) []rootMetaCandidate {
 	seen := make(map[string]bool)
 	var out []rootMetaCandidate
@@ -299,39 +209,9 @@ func joinCandidateURLs(candidates []rootMetaCandidate) string {
 	return b.String()
 }
 
-// apiRootCandidates derives API root candidates from a base URL, in priority
-// order: /api/v3, /v3, /api/v2, /v2, /api. The bare /v3 and /v2 candidates
-// exist for a Galaxy NG / Automation Hub shaped deployment, which mounts the
-// v3 API directly under its own base path (e.g.
-// "https://console.redhat.com/api/automation-hub" serves v3 collections at
-// "<base>/v3/collections/...", not "<base>/api/v3/collections/..."). /api/v3
-// stays first since it is galaxy.ansible.com's shape and therefore the
-// overwhelmingly common case: the fallback candidates only cost anything
-// when the first probe 404s.
-//
-// A base carrying a query string is not cut here, unlike the values
-// helpers.WithoutQuery protects elsewhere in this program - it is
-// neutralized by an accident of string concatenation instead, not by a
-// designed refusal. add(trimmed + "/api/v3") turns
-// "https://hub.example.com/api/automation-hub?tok=SECRET" into
-// "https://hub.example.com/api/automation-hub?tok=SECRET/api/v3", and once
-// that string becomes a request URL its "?" starts the query component, so
-// the appended API-root-plus-collection suffix lands entirely inside the
-// query string rather than the path: net/url parses that value to path
-// "/api/automation-hub", query "tok=SECRET/api/v3" - a real endpoint on a
-// real server, just not the API root this function meant to name, and
-// reached with the capability riding along inside the request's own query
-// string. Only a base whose own path is empty or "/" collapses every
-// candidate to a request for the bare path "/" instead. Either way, no
-// candidate this function derives for a query-bearing base names the API
-// root it was built to name, so the walk exhausts every candidate exactly
-// as if none had ever matched. That is a property of how this function
-// joins strings today, not a guarantee: a future change to URL construction
-// here - building with net/url instead of fmt.Sprintf, say - could make a
-// query-bearing source: a viable configuration, and the capability inside
-// it would then reach the requirements, resolved and installed snapshot
-// buckets, the committed lockfile, and warnUnmatchedSource's own warning
-// line, with nothing cutting it at any of those sinks.
+// apiRootCandidates derives API roots from base in priority order: /api/v3,
+// /v3 (Galaxy NG, Automation Hub), /api/v2, /v2, /api. The plain concatenation
+// is deliberate: it keeps a query-bearing base from ever naming an API root.
 func apiRootCandidates(base string) []string {
 	trimmed := normalizeServerBase(base)
 	if trimmed == "" {
@@ -347,9 +227,8 @@ func apiRootCandidates(base string) []string {
 		out = append(out, value)
 	}
 
-	// A base already ending in one of these suffixes names its own API root
-	// unambiguously, so it is used as-is rather than appended to - appending
-	// would otherwise double up the suffix (e.g. ".../api/v3/api/v3").
+	// A base already ending in an API root suffix is used as-is, so the
+	// suffix is never doubled (".../api/v3/api/v3").
 	switch {
 	case strings.HasSuffix(trimmed, "/api/v3"):
 		add(trimmed)

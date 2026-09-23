@@ -17,13 +17,8 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// ansibleSourceInfoKeys and ansibleSignatureKeys are the closed schema
-// ansible-core validates an installed collection's GALAXY.yml against
-// (_validate_v1_source_info_schema in
-// ansible/galaxy/dependency_resolution/dataclasses.py). They are spelled out
-// here rather than derived from GalaxyYAML's tags, since a test deriving its
-// expectation from the type under test would agree with any key that type
-// grew.
+// ansibleSourceInfoKeys and ansibleSignatureKeys are ansible-core's closed
+// GALAXY.yml schema, spelled out rather than derived from GalaxyYAML's tags.
 //
 //nolint:gochecknoglobals // fixed expectation tables, never mutated.
 var (
@@ -49,10 +44,9 @@ func schemaURLCollection() collection {
 	}
 }
 
-// assertAnsibleSourceInfo fails unless data is a GALAXY.yml ansible accepts
-// and can use: exactly the schema's keys, a signatures value that is a list
-// and not null, and every entry in it holding only the schema's keys and the
-// signature text ansible indexes it by.
+// assertAnsibleSourceInfo fails unless data holds exactly the schema's keys,
+// a non-null signatures list, and entries with only schema keys and the
+// signature text ansible indexes them by.
 func assertAnsibleSourceInfo(t *testing.T, data []byte) {
 	t.Helper()
 	var doc map[string]any
@@ -102,24 +96,9 @@ func readInfoFile(t *testing.T, cfg *config.Config, target installTarget, name s
 	return data, true
 }
 
-// TestWriteGalaxyInfoConformsToAnsibleSchema pins the bug this schema is
-// held for: ansible-core rejects a GALAXY.yml carrying any key outside its
-// eight - with a warning naming the key on every command that reads the
-// installed tree, and by discarding the document - and a null signatures
-// value, which its validation lets through, makes `ansible-galaxy collection
-// verify --offline` fail with a TypeError. Earlier releases wrote both: a git
-// or url install's provenance as extra keys, and `signatures: null` on the
-// cache-hit fast path.
-//
-// Each source's row also pins where its provenance went instead, since
-// outdated tells a git or url install from a Galaxy one by it: a
-// provenanceFileName holding the one key for that source, and no such file
-// at all for a Galaxy install.
-//
-// The Galaxy row feeds signatures in the shapes a server can send beyond the
-// standard one - an extra key, an entry that is not an object, an entry with
-// no signature text - so the conformance is a property of the writer rather
-// than of a well-behaved server.
+// TestWriteGalaxyInfoConformsToAnsibleSchema pins that every source writes a
+// GALAXY.yml in ansible's schema, even from odd server signatures, with git or
+// url provenance in provenanceFileName and none for a Galaxy install.
 func TestWriteGalaxyInfoConformsToAnsibleSchema(t *testing.T) {
 	t.Parallel()
 
@@ -180,12 +159,9 @@ func TestWriteGalaxyInfoConformsToAnsibleSchema(t *testing.T) {
 	}
 }
 
-// TestGalaxySignaturesDecodeNeverFailsTheDocument pins that an odd
-// signatures value costs the signatures and never the sidecar. The sidecar is
-// what the install-skip check and outdated read to prove an install and find
-// its server, and neither needs the signatures - so a document failing to
-// parse over them would reinstall a valid collection, or drop it from
-// outdated's report, for a field neither reads.
+// TestGalaxySignaturesDecodeNeverFailsTheDocument pins that an odd signatures
+// value costs the signatures, never the sidecar the skip check and outdated
+// read, and re-renders in ansible's schema.
 func TestGalaxySignaturesDecodeNeverFailsTheDocument(t *testing.T) {
 	t.Parallel()
 
@@ -240,14 +216,9 @@ func legacySidecar(col collection, provenanceKey string) []byte {
 		provenanceKey + "\n")
 }
 
-// TestReconcileGalaxyInfoRepairsASidecarAnEarlierReleaseWrote pins the repair
-// of a sidecar in the shape an earlier release wrote, found beside an install
-// this release made - restored from an older copy of the tree, say: the next
-// install that skips the collection rewrites GALAXY.yml into ansible's schema
-// and moves the provenance into its own file, and outdated still tells the
-// install's kind afterwards. A second
-// skip then writes nothing, so the repair is a one-time cost rather than a
-// write on every run.
+// TestReconcileGalaxyInfoRepairsASidecarAnEarlierReleaseWrote pins that a skip
+// repairs a legacy sidecar into the schema, moving provenance to its own file,
+// and that a second skip writes nothing.
 func TestReconcileGalaxyInfoRepairsASidecarAnEarlierReleaseWrote(t *testing.T) {
 	t.Parallel()
 
@@ -299,10 +270,8 @@ func TestReconcileGalaxyInfoRepairsASidecarAnEarlierReleaseWrote(t *testing.T) {
 }
 
 // TestScanInstalledTreeReadsProvenanceFromAnEarlierReleasesGalaxyYAML pins
-// the fallback for a tree no install has run over since the provenance moved
-// out of GALAXY.yml: without it, outdated would take such a git or url
-// install for a Galaxy one and send its repository or tarball URL a Galaxy
-// API lookup.
+// that outdated still reads a git or url kind from provenance keys left inside
+// a legacy GALAXY.yml, rather than asking a Galaxy API about it.
 func TestScanInstalledTreeReadsProvenanceFromAnEarlierReleasesGalaxyYAML(t *testing.T) {
 	t.Parallel()
 
@@ -328,12 +297,9 @@ func TestScanInstalledTreeReadsProvenanceFromAnEarlierReleasesGalaxyYAML(t *test
 	}
 }
 
-// TestReconcileGalaxyInfoKeepsTheOnlyProvenanceCopy pins the order the repair
-// runs in. A GALAXY.yml an earlier release wrote can hold the only copy of a
-// git install's provenance on disk, so when the provenance file cannot be
-// written, GALAXY.yml has to be left exactly as it was: rewriting it first
-// would erase the one record outdated tells the install's kind by, in
-// exchange for a cleaner document.
+// TestReconcileGalaxyInfoKeepsTheOnlyProvenanceCopy pins that when the
+// provenance file cannot be written, a legacy GALAXY.yml holding the only copy
+// of the provenance is left untouched.
 func TestReconcileGalaxyInfoKeepsTheOnlyProvenanceCopy(t *testing.T) {
 	t.Parallel()
 	col := schemaGitCollection()

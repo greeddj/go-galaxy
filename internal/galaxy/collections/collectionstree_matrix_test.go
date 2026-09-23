@@ -1,21 +1,8 @@
 package collections
 
-// This file is the collections-tree dry-run/real-run agreement matrix: for
-// every on-disk shape ansible_collections (and, separately, the acme
-// namespace directory beneath it) can take, install --dry-run and a real
-// install must agree on whether the run succeeds and, when it fails, on
-// exitcode.FromError - proving install --dry-run aborts on exactly the
-// conditions a real install would certainly fail on, not merely that both
-// happen to return an error.
-//
-// Every shape's own setup is run through Start twice - once with
-// cfg.DryRun=false, once with cfg.DryRun=true - each against its own fresh
-// temp directory and fake server, so neither run can leak state into the
-// other. The accepted shapes (absent, real directory, an in-root relative
-// symlink to a directory, and - namespace-only - a dangling symlink) are the
-// positive controls this matrix needs: without them, a refused shape proves
-// nothing about whether the fixture could ever be accepted in the first
-// place.
+// This matrix pins that install --dry-run and a real install agree, per
+// on-disk shape of ansible_collections and of a namespace directory, on
+// success and on exitcode.FromError; accepted shapes are the positive controls.
 
 import (
 	"context"
@@ -42,18 +29,9 @@ type collectionsTreeShape struct {
 	accepted bool
 }
 
-// ansibleCollectionsShapes is the seven-shape table for ansible_collections
-// itself, matching probeAnsibleCollectionsUsable's own doc comment table,
-// which states the same real-run/probe agreement for both openCollectionsRoot
-// branches; that table merges the two escaping forms into one row, which this
-// table splits: absent, a real directory, an in-root relative symlink to a
-// directory, an escaping symlink in each of its two forms (relative and
-// absolute - both are refused, but a hostile checkout can only ever plant the
-// relative one, which is why installroot.go's own doc comments single it out
-// as the shape that matters), a dangling symlink, and a regular file. Each
-// shape's setup is its own named function - see setupAnsibleCollectionsX
-// below - rather than an inline closure, purely to keep this table-building
-// function itself short.
+// ansibleCollectionsShapes lists the shapes ansible_collections itself can
+// take, with the escaping symlink in both its relative form (the one a hostile
+// checkout can plant) and its absolute form.
 func ansibleCollectionsShapes() []collectionsTreeShape {
 	return []collectionsTreeShape{
 		{name: "absent", accepted: true, setup: setupAnsibleCollectionsAbsent},
@@ -116,21 +94,9 @@ func setupAnsibleCollectionsRegularFile(t *testing.T, downloadPath, _ string) {
 	mustWriteFile(t, filepath.Join(downloadPath, "ansible_collections"), []byte("not a directory"))
 }
 
-// namespaceShapes is the six-shape table for the acme namespace directory
-// (ansible_collections/acme) - deliberately not the identical seven-shape
-// table ansibleCollectionsShapes uses, because a dangling namespace symlink
-// is ACCEPTED here (extractCollection reaches it through RemoveAll, which
-// resolves a dangling symlink to nothing and succeeds, then MkdirAll creates
-// it fresh) while a dangling ansible_collections symlink is refused (it is
-// reached through a bare MkdirAll with no preceding RemoveAll, which has no
-// existing valid directory to no-op against) - see
-// probeAnsibleCollectionsUsable's and dryRunNamespaceProbe's own doc comments
-// for the full reasoning. The escaping shape is exercised only in its
-// relative form here: a hostile checkout can only ever plant that one (an
-// absolute host path does not survive a clone), and
-// ansibleCollectionsShapes above already covers both forms once. Each
-// shape's setup is its own named function, mirroring
-// ansibleCollectionsShapes's own reasoning for doing so.
+// namespaceShapes lists the shapes of ansible_collections/acme. A dangling
+// symlink is accepted here, since extraction removes it and creates the
+// directory fresh, while a dangling ansible_collections is refused.
 func namespaceShapes() []collectionsTreeShape {
 	return []collectionsTreeShape{
 		{name: "absent", accepted: true, setup: setupNamespaceAbsent},
@@ -187,11 +153,9 @@ func setupNamespaceRegularFile(t *testing.T, downloadPath, _ string) {
 	mustWriteFile(t, filepath.Join(acDir, "acme"), []byte("not a directory"))
 }
 
-// runCollectionsTreeShape runs Start against shape's on-disk arrangement,
-// under dryRun, in a fresh fixture: a fresh temp directory, a fresh fake
-// server with one collection (acme.app, no dependencies) registered, and one
-// requirements.yml requiring it. It returns the fake server's total request
-// count and the run's error.
+// runCollectionsTreeShape runs Start over shape, under dryRun, with a fresh
+// temp tree and fake server requiring acme.app, and returns the server's
+// request count and the run's error.
 func runCollectionsTreeShape(t *testing.T, shape collectionsTreeShape, dryRun bool) (int, error) {
 	t.Helper()
 	root := t.TempDir()
@@ -220,19 +184,9 @@ func runCollectionsTreeShape(t *testing.T, shape collectionsTreeShape, dryRun bo
 	return srv.Total(), err
 }
 
-// assertPreviewAgreesWithRealRun runs shape through runCollectionsTreeShape
-// for both a real run and a dry run, and asserts: the real run's own
-// error-ness matches shape.accepted (the fixture sanity check every positive
-// and negative case here depends on); the dry run's error-ness matches the
-// real run's; and, when both fail, exitcode.FromError agrees between them.
-// For a refused ansible_collections-level shape it additionally asserts both
-// runs made zero requests to the fake server - the proof that the preview
-// aborts at the identical point in the pipeline as the real run (before
-// resolution ever starts), not merely with the same error. That request-count
-// assertion does not apply to a namespace-level shape: reaching the
-// namespace write at all requires a real run to have already resolved and
-// downloaded the artifact, so a nonzero request count there is expected on
-// the real run, not a discriminator between the two.
+// assertPreviewAgreesWithRealRun asserts the real run matches shape.accepted
+// and the dry run matches it in error-ness and exit code; checkZeroRequests
+// also requires a refused shape to stop both runs before any request.
 func assertPreviewAgreesWithRealRun(t *testing.T, shape collectionsTreeShape, checkZeroRequests bool) {
 	t.Helper()
 	realRequests, realErr := runCollectionsTreeShape(t, shape, false)

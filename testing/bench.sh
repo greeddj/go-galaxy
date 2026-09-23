@@ -1,54 +1,7 @@
 #!/usr/bin/env bash
-#
-# bench.sh - measure ansible-galaxy vs go-galaxy across requirements-{1,10,100}.yml.
-#
-# Local cache backend, ansible-galaxy vs go-galaxy:
-#   cold      - caches and the install dir wiped before each run
-#   warm      - caches primed once, only the install dir wiped between runs
-#   frozen    - go-galaxy only: warm + lockfile + --frozen --offline
-#
-# S3 cache backend, go-galaxy only (ansible-galaxy has no equivalent):
-#   s3-cold   - a fresh key prefix per run, so the bucket has nothing to serve
-#   s3-warm   - bucket primed once, LOCAL cache dir wiped before each run: a
-#               fresh CI runner against a warm shared bucket, which is the
-#               shape the S3 backend exists for. The extracted-tree store is
-#               always local, so a warm bucket alone still costs an extract.
-#   s3-frozen - the same, plus the lockfile. Deliberately NOT --offline:
-#               reaching the bucket is a network call, so --offline refuses
-#               the S3 backend outright, at its opening bucket HEAD.
-#
-# Roles, local cache backend, ansible-galaxy vs go-galaxy over
-# requirements-roles.yml (ten Galaxy roles, no dependencies between them):
-#   roles-cold - caches and the roles dir wiped before each run
-#   roles-warm - caches primed once, only the roles dir wiped between runs.
-#               ansible-galaxy caches nothing for a role (it downloads the
-#               GitHub archive every time); go-galaxy caches the artifact it
-#               built from the tag and the extracted tree.
-#
-# Wall time comes from hyperfine. Peak RSS and bytes downloaded do not - so a
-# separate single-run pass per scenario records those, reading bytes from
-# go-galaxy's own --metrics-file and RSS from /usr/bin/time. ansible-galaxy
-# has no metrics report, so its byte column reads n/a.
-#
-# Output:
-#   dist/bench/<scenario>-{N}.md   hyperfine export, one per scenario and size
-#   dist/bench/resources-{N}.md    peak RSS and bytes downloaded
-#   dist/bench/summary.md          concatenation, suitable for README inclusion
-#
-# Caches and the install target live under $TMPDIR, never in $HOME and never
-# inside the repository; see the comment on WORK below for both reasons.
-#
-# Env knobs:
-#   RUNS=5         number of measured runs per command (hyperfine --runs)
-#   WARMUP=1       hyperfine warmup runs for warm/frozen scenarios
-#   SIZES="1 10 100"  which requirements files to bench (space-separated)
-#   SCENARIOS="cold warm frozen s3-cold s3-warm s3-frozen roles-cold roles-warm"
-#   S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY
-#
-# The S3 scenarios need a bucket to talk to; the repo ships one:
-#   docker compose -f testing/docker-compose.yaml up -d minio-svc
-# They are skipped with a warning when the endpoint does not answer, so the
-# local scenarios still run on a machine with no container runtime.
+# bench.sh - measure ansible-galaxy vs go-galaxy over testing/requirements-*.yml
+# in the cold, warm, frozen, s3-* and roles-* scenarios. Knobs, outputs and
+# prerequisites: docs/development.md, "The benchmark harness".
 
 set -euo pipefail
 
@@ -59,11 +12,9 @@ GG="$ROOT/dist/go-galaxy"
 AG="$ROOT/.venv/bin/ansible-galaxy"
 OUT="$ROOT/dist/bench"
 
-# Caches and the install target live outside the repository, and neither is in
-# $HOME. Outside the repository because both fill with extracted third-party
-# collections, which are Go source often enough that a tree-walking linter
-# picks them up as if they were this module's. Not in $HOME because a
-# benchmark that wipes the caches it measures must not wipe the ones you use.
+# Caches and the install target live under $TMPDIR: not in the repository,
+# where extracted collections' Go files would reach a tree-walking linter, and
+# not in $HOME, so wiping the measured caches never wipes the ones you use.
 WORK="${TMPDIR:-/tmp}/go-galaxy-bench"
 TARGET="$WORK/target"
 GG_CACHE="$WORK/cache/go-galaxy"
@@ -134,10 +85,8 @@ lock_dir() {
   local n="$1" req="$2" prefix="${3:-}" dir="$WORK/lock-${n}${prefix:+-s3}"
   mkdir -p "$dir"
   cp "$req" "$dir/requirements.yml"
-  # --no-deps, like every measured command here: the point of comparison is
-  # fetch plus extract over one flat set, and resolving the transitive graph
-  # instead would both measure something else and drag in the constraint
-  # conflicts requirements-100.yml deliberately carries.
+  # --no-deps, like every measured command here: what is compared is fetch
+  # plus extract over one flat set, not two resolution algorithms.
   env $(gg_env "$prefix") "$GG" lock --no-deps -r "$dir/requirements.yml" >/dev/null 2>&1
   echo "$dir"
 }

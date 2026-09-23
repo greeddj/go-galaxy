@@ -1,12 +1,7 @@
 package collections
 
-// This file drives resolveCollectionsInternal directly under cfg.NoDeps -
-// the --no-deps fast path, which goes through the version solver's
-// NewNoDepsProvider wrapping rather than a no-deps path of its own -
-// proving the same two guarantees at the production entry point: an
-// unpinned root resolves to a concrete version rather than keeping the
-// literal "*" constraint, and an exactly pinned root resolves with zero
-// HTTP requests.
+// Tests of resolveCollectionsInternal under cfg.NoDeps, which resolves through
+// the solver wrapped in NewNoDepsProvider rather than a path of its own.
 
 import (
 	"context"
@@ -18,11 +13,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestNoDepsUnpinnedRootResolvesConcreteVersion asserts that an unpinned
-// (version "*") root resolved through resolveCollectionsInternal under
-// cfg.NoDeps lands on a concrete version - the highest registered - instead
-// of keeping "*" as its Version, which would otherwise flow verbatim into
-// the artifact cache key and lockfile entry.
+// TestNoDepsUnpinnedRootResolvesConcreteVersion pins that a "*" root under
+// NoDeps resolves to the highest version, so "*" never reaches the artifact
+// cache key or the lockfile.
 func TestNoDepsUnpinnedRootResolvesConcreteVersion(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -51,12 +44,9 @@ func TestNoDepsUnpinnedRootResolvesConcreteVersion(t *testing.T) {
 	}
 }
 
-// TestNoDepsPinnedRootSkipsMetadataFetch asserts that a root pinned to an
-// exact version resolves with zero HTTP requests: the common --no-deps case
-// (a pinned requirements.yml entry) must stay network-free. This exercises
-// both the solver's own Highest-probe/exact-pin fast path and
-// NewNoDepsProvider's guarantee that Dependencies never contributes an
-// edge (and therefore never triggers a metadata fetch of its own).
+// TestNoDepsPinnedRootSkipsMetadataFetch pins that an exactly pinned root
+// resolves under NoDeps with zero HTTP requests: the solver's exact-pin path
+// asks nothing and NewNoDepsProvider never fetches dependencies.
 func TestNoDepsPinnedRootSkipsMetadataFetch(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)

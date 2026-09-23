@@ -49,12 +49,9 @@ func TestCountersAddBytesDownloadedIgnoresNonPositive(t *testing.T) {
 	}
 }
 
-// TestCountersConcurrentAdds drives N goroutines each performing M adds of
-// every kind against one shared Counters, and asserts the final totals are
-// exactly N*M - proving the atomic counters serialize correctly under
-// concurrent use with no lost updates. Run with -race, matching the
-// per-level install pool, prefetch workers, and warm pool that share one
-// Counters through one Infra in production.
+// TestCountersConcurrentAdds pins that concurrent adds from many goroutines
+// lose no update, as the install, prefetch and warm pools sharing one Counters
+// require; it is meaningful under -race.
 func TestCountersConcurrentAdds(t *testing.T) {
 	t.Parallel()
 	const goroutines = 50
@@ -84,12 +81,9 @@ func TestCountersConcurrentAdds(t *testing.T) {
 	}
 }
 
-// TestReportJSONIncludesZeroCounters proves cache_hits, cache_misses, and
-// bytes_downloaded are always present in a marshaled Report, with an
-// explicit 0 rather than being omitted, even for an entirely zero-valued
-// Report - the three fields deliberately carry no `omitempty` so a consumer
-// can tell "zero hits" apart from "field absent" (an older report predating
-// these counters).
+// TestReportJSONIncludesZeroCounters pins that cache_hits, cache_misses and
+// bytes_downloaded marshal as an explicit 0, never omitted, so a consumer can
+// tell zero apart from a report that predates them.
 func TestReportJSONIncludesZeroCounters(t *testing.T) {
 	t.Parallel()
 	data, err := json.Marshal(Report{})

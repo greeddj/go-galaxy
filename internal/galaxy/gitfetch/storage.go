@@ -36,10 +36,9 @@ type objectStore struct {
 	dir     string
 }
 
-// newObjectStore creates a private directory under tempDir and a go-git
-// filesystem storage over it, wrapped so that every byte written is counted
-// against maxBytes. The filesystem is bound (not merely chrooted) so no path
-// go-git computes can leave the directory through a symlink.
+// newObjectStore creates a private directory under tempDir and a go-git storage
+// over it counting every write against maxBytes; the filesystem is bound, not
+// merely chrooted, so no path go-git computes can leave it through a symlink.
 func newObjectStore(tempDir string, maxBytes int64) (*objectStore, error) {
 	dir, err := os.MkdirTemp(tempDir, storageDirPattern)
 	if err != nil {
@@ -74,11 +73,9 @@ func (s *objectStore) bytes() int64 {
 	return s.counter.written.Load()
 }
 
-// byteCounter is the shared tally behind one storage tree: every file go-git
-// opens through the counting filesystem adds its writes here, and the first
-// write that crosses max fails. The cap is enforced on writes rather than on
-// the wire because the ssh transport exposes no reader to wrap; disk is the
-// one place both transports converge.
+// byteCounter is one storage tree's shared write tally; the first write past
+// max fails. The cap sits on disk, not the wire, because the ssh transport
+// exposes no reader to wrap and disk is where both transports converge.
 type byteCounter struct {
 	written atomic.Int64
 	max     int64
@@ -91,10 +88,9 @@ func (c *byteCounter) add(n int) error {
 	return nil
 }
 
-// countingFS is a billy.Filesystem whose files count their writes. Only the
-// constructors that can yield a writable file are wrapped; Chroot returns
-// another countingFS sharing the same counter, because go-git's dotgit layer
-// chroots into subdirectories for some of its files.
+// countingFS is a billy.Filesystem whose writable files count their writes;
+// Chroot returns a countingFS sharing the counter, because go-git's dotgit
+// layer chroots into subdirectories for some of its files.
 type countingFS struct {
 	billy.Filesystem
 

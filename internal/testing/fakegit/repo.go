@@ -20,12 +20,9 @@ import (
 	"github.com/go-git/go-git/v5/storage/memory"
 )
 
-// Names and values the collection fixture AddCollection and the role fixture
-// AddRole write. They are spelled here as plain literals rather than imported
-// from internal/galaxy/collectionbuild or internal/galaxy/rolebuild, for the
-// reason fakegalaxy gives for its own MANIFEST.json literals: a double that
-// took its shape from the code under test could not catch that code drifting
-// from what a real repository holds.
+// Names and values the AddCollection and AddRole fixtures write, spelled as
+// literals rather than imported from collectionbuild or rolebuild, so the
+// double cannot inherit a drift of the code under test.
 const (
 	galaxyFileName       = "galaxy.yml"
 	readmeFileName       = "README.md"
@@ -45,9 +42,8 @@ const (
 	fixtureDirMode os.FileMode = 0o755
 )
 
-// fixedTime is the one instant every object this package writes is stamped
-// with, so a fixture's commit hash is the same on every run and every
-// machine. It is a var because time.Date is not a constant expression.
+// fixedTime stamps every object this package writes, so a fixture's commit
+// hash is the same on every run and every machine.
 //
 //nolint:gochecknoglobals // fixed, not runtime-mutable, state.
 var fixedTime = time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
@@ -59,18 +55,9 @@ func FixedTime() time.Time {
 	return fixedTime
 }
 
-// Repo is an in-memory git repository a Server serves: a memory.Storage
-// holding the objects and references, with a memfs worktree the WriteFile,
-// Symlink and Commit builders go through so a fixture is built the way a
-// real working copy is. RawTreeCommit bypasses the worktree to write trees a
-// worktree could never produce - a submodule entry, a name like ".." or
-// "a/b", a duplicate - since those are exactly the shapes the code under
-// test must refuse and no honest builder would emit them.
-//
-// Every method that fails does so through the testing.TB NewRepo was given:
-// a builder error is a defect in the calling test's fixture, not a condition
-// the test is exercising. mu serializes the builders against a Server that
-// may be reading the storage to answer a request on another goroutine.
+// Repo is an in-memory git repository a Server serves, built through a memfs
+// worktree; RawTreeCommit writes hostile trees no worktree can. Builders fail
+// via tb, and mu serializes them against the Server reading the storage.
 type Repo struct {
 	tb   testing.TB
 	repo *git.Repository
@@ -79,10 +66,8 @@ type Repo struct {
 	mu   sync.Mutex
 }
 
-// NewRepo creates an empty repository over memory storage with a memfs
-// worktree. HEAD is the symbolic reference go-git initializes, refs/heads/
-// master; SetHEAD moves it. Taking testing.TB, like New, keeps the builder
-// unreachable from production code.
+// NewRepo creates an empty repository with HEAD on refs/heads/master. Taking
+// testing.TB, like New, keeps the builder unreachable from production code.
 func NewRepo(tb testing.TB) *Repo {
 	tb.Helper()
 	st := memory.NewStorage()
@@ -130,11 +115,9 @@ func (r *Repo) Symlink(target, p string) {
 	r.stage(p)
 }
 
-// Commit records the staged index as a commit on the branch HEAD names,
-// authored and committed by the fixed fakegit signature at FixedTime, and
-// returns its hash. Both signatures are always set so go-git never consults
-// the user's gitconfig, and an empty commit is allowed so two fixtures that
-// differ only by message still yield two distinct commits.
+// Commit records the staged index on the branch HEAD names and returns its
+// hash. Both signatures are fixed so go-git never reads the user's gitconfig;
+// empty commits are allowed so a message alone yields a distinct commit.
 func (r *Repo) Commit(msg string) plumbing.Hash {
 	r.tb.Helper()
 	r.mu.Lock()
@@ -178,10 +161,8 @@ func (r *Repo) Tag(name string, at plumbing.Hash) {
 	r.setRef(plumbing.NewHashReference(plumbing.NewTagReferenceName(name), at))
 }
 
-// AnnotatedTag creates a tag object named name whose target is at, with the
-// fixed signature as tagger and name as message, points refs/tags/name at
-// the tag object and returns the tag object's hash - the hash the
-// advertisement lists for the reference, with at as its peeled value.
+// AnnotatedTag creates a tag object name targeting at, points refs/tags/name
+// at it and returns the tag object's hash, which the advertisement peels to at.
 func (r *Repo) AnnotatedTag(name string, at plumbing.Hash) plumbing.Hash {
 	r.tb.Helper()
 	r.mu.Lock()
@@ -232,15 +213,9 @@ func (r *Repo) Blob(content []byte) plumbing.Hash {
 	return h
 }
 
-// RawTreeCommit encodes entries as one tree object by hand, then a commit on
-// that tree with no parent, and returns the commit's hash. The caller then
-// names it with Branch or Tag. Entries are sorted the way git orders a tree
-// before encoding, since go-git refuses an unsorted tree; beyond that the
-// encoder rejects only a NUL byte in a name, so "..", ".git", "a/b", an empty
-// name, a duplicate, or a filemode.Submodule entry all encode, which is the
-// point: these are the trees the code under test must refuse, and no honest
-// builder writes them. An entry's hash is not checked against the storage,
-// so a submodule entry may name any commit.
+// RawTreeCommit encodes entries as one git-sorted tree and a parentless commit
+// on it, returning the commit hash. "..", ".git", "a/b", duplicates and
+// submodules all encode: they are the trees the code under test must refuse.
 func (r *Repo) RawTreeCommit(entries []object.TreeEntry) plumbing.Hash {
 	r.tb.Helper()
 	r.mu.Lock()
@@ -278,12 +253,9 @@ func (r *Repo) RawTreeCommit(entries []object.TreeEntry) plumbing.Hash {
 	return commitHash
 }
 
-// AddCollection writes a minimal but complete collection source tree under
-// dir ("" for the repository root) and stages it: galaxy.yml naming
-// namespace, name and version with readme README.md, authors [fakegit], the
-// given dependencies and build_ignore patterns, plus README.md, one module
-// under plugins/modules and meta/runtime.yml. It does not commit, so a
-// caller can add several collections, or extra files, before one Commit.
+// AddCollection stages a minimal collection source tree under dir ("" for the
+// root): galaxy.yml with deps and buildIgnore, README.md, one module and
+// meta/runtime.yml. It does not commit, so several can share one Commit.
 func (r *Repo) AddCollection(dir, namespace, name, version string, deps map[string]string, buildIgnore []string) {
 	r.tb.Helper()
 	join := func(p string) string {
@@ -298,13 +270,9 @@ func (r *Repo) AddCollection(dir, namespace, name, version string, deps map[stri
 	r.WriteFile(join(runtimeFileName), fixtureFileMode, []byte("---\nrequires_ansible: '>=2.15.0'\n"))
 }
 
-// AddRole writes a minimal role tree at the repository root and stages it:
-// meta/main.yml with galaxy_info naming the fixture author and, when roleName
-// is not empty, role_name, plus the dependencies as plain strings in the
-// order given; tasks/main.yml with one debug task; and an empty
-// defaults/main.yml. It does not commit, so a caller can add files before one
-// Commit. A role lives at the root alone, which is why there is no dir
-// parameter.
+// AddRole stages a minimal role tree at the repository root, the only place a
+// role lives: meta/main.yml with deps and an optional role_name, tasks/main.yml
+// and defaults/main.yml. It does not commit.
 func (r *Repo) AddRole(deps []string, roleName string) {
 	r.tb.Helper()
 	r.WriteFile(roleMetaFileName, fixtureFileMode, roleMetaYML(deps, roleName))
@@ -341,9 +309,8 @@ func fixedSignature() object.Signature {
 }
 
 // galaxyYML renders the galaxy.yml AddCollection writes. Dependencies are
-// emitted in sorted key order so the file, and the tree hash over it, is
-// deterministic. Values are quoted, since a version constraint such as
-// ">=1.0.0" is not a bare YAML scalar.
+// sorted so the tree hash is deterministic, and values are quoted since a
+// constraint such as ">=1.0.0" is not a bare YAML scalar.
 func galaxyYML(namespace, name, version string, deps map[string]string, buildIgnore []string) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "namespace: %s\nname: %s\nversion: %q\nreadme: %s\nauthors:\n  - %s\n",

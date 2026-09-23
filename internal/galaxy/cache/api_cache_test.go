@@ -135,13 +135,9 @@ func TestFetchJSONWithCachePolicyRevalidate(t *testing.T) {
 	}
 }
 
-// TestFetchJSONWithCachePolicyFutureStampIsRevalidated mirrors
-// TestFetchJSONWithCachePolicyRevalidate but seeds a FetchedAt ahead of now
-// instead of behind it. time.Since is negative for a future stamp, which
-// would otherwise pass the TTL test forever and pin the entry as permanently
-// fresh; tryServeFromCache must instead treat it as expired and revalidate,
-// so this must observe the same 2 hits and If-None-Match as the
-// behind-now case.
+// TestFetchJSONWithCachePolicyFutureStampIsRevalidated pins that an entry
+// stamped in the future is treated as expired and revalidated, not served as
+// permanently fresh.
 func TestFetchJSONWithCachePolicyFutureStampIsRevalidated(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32
@@ -200,11 +196,8 @@ func TestFetchJSONWithCachePolicyFutureStampIsRevalidated(t *testing.T) {
 	}
 }
 
-// TestFetchJSONWithCachePolicyCorruptBodyRefetchesUnconditional asserts that
-// a cached entry whose body fails to decode - fresh or not - is treated as a
-// corrupt cache miss: the fetch is unconditional (no validators sent), and
-// the entry heals in place so a subsequent call serves it straight from the
-// cache without another round trip.
+// TestFetchJSONWithCachePolicyCorruptBodyRefetchesUnconditional pins that an
+// undecodable cached body is refetched without validators and healed in place.
 func TestFetchJSONWithCachePolicyCorruptBodyRefetchesUnconditional(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32
@@ -263,12 +256,9 @@ func TestFetchJSONWithCachePolicyCorruptBodyRefetchesUnconditional(t *testing.T)
 	}
 }
 
-// TestFetchJSONWithCachePolicyCorruptExpiredBodyDoesNotRide304 covers an
-// entry that is both expired AND corrupt: it must not be revalidated
-// conditionally, since a server that still has the same
-// ETag/Last-Modified on file would reply 304 and hand back the exact same
-// unusable bytes forever. The corrupt body is instead treated as a miss and
-// refetched unconditionally, healing the entry.
+// TestFetchJSONWithCachePolicyCorruptExpiredBodyDoesNotRide304 pins that an
+// expired, corrupt entry is refetched unconditionally, never revalidated into a
+// 304 that would keep its unusable bytes.
 func TestFetchJSONWithCachePolicyCorruptExpiredBodyDoesNotRide304(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32

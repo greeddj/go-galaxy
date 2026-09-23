@@ -1,13 +1,8 @@
 package collections
 
-// This file pins runInstallLevel's ErrMissingCollection early-return
-// behavior: that guard must join every worker already dispatched for
-// earlier keys in the same level before returning, rather than leaking them
-// (they still hold a sem slot, mutate the shared Store, and can outlive
-// runInstall's backend-lock release) or racing the non-atomic failures read
-// against a worker's atomic.AddInt32. Both tests drive installLevels
-// directly, since the guard and the join it waits for are both internal to
-// it.
+// Tests for runInstallLevel's ErrMissingCollection return, driven through
+// installLevels: it must join every worker already dispatched in the level
+// rather than leak it past runInstall's lock release.
 
 import (
 	"context"
@@ -24,12 +19,9 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
-// TestInstallLevelsMissingCollectionSurfaces proves installLevels still
-// surfaces helpers.ErrMissingCollection after the runInstallLevel extraction:
-// a single-key level whose key is absent from the collections map must still
-// fail the run. The missing key is the level's only key, so no worker is ever
-// dispatched - this pins the error-propagation path itself, independent of
-// the join fix covered by TestInstallLevelsJoinsInFlightWorkerOnMissingCollection.
+// TestInstallLevelsMissingCollectionSurfaces pins that a level key absent from
+// the collections map fails installLevels with helpers.ErrMissingCollection,
+// here with no worker dispatched at all.
 func TestInstallLevelsMissingCollectionSurfaces(t *testing.T) {
 	t.Parallel()
 
@@ -56,24 +48,8 @@ func TestInstallLevelsMissingCollectionSurfaces(t *testing.T) {
 	}
 }
 
-// TestInstallLevelsJoinsInFlightWorkerOnMissingCollection is the load-bearing
-// proof for the leak/race fix. The level has two keys: key1 (present in
-// collections, dispatched first) and a missing key (absent, trips the guard
-// second). key1's worker is parked in prefetch.Wait(key1) on a hand-built
-// prefetcher whose done channel for key1 is left open, so it cannot complete
-// until the test releases it.
-//
-// runInstallLevel registers `defer wg.Wait()` before its dispatch loop, so
-// the guard's return statement cannot hand control back to installLevels
-// until every dispatched worker in the level - including the still-parked
-// key1 - has finished. The first select below asserts exactly that:
-// installLevels must time out here, still blocked inside the deferred
-// wg.Wait(); receiving from done instead would mean the guard returned
-// without joining key1's worker.
-// newBlockedPrefetcher builds a prefetcher by hand with key registered and its
-// done channel left open, so prefetch.Wait(key) blocks until the caller calls
-// finish(key, ...) to close it. Built directly rather than through
-// startPrefetcher because the point is to hold a worker mid-flight, which a
+// newBlockedPrefetcher builds a prefetcher whose Wait(key) blocks until
+// finish(key, ...) closes its done channel, holding a worker mid-flight as a
 // real prefetcher would not do on demand.
 func newBlockedPrefetcher(key string) *prefetcher {
 	return &prefetcher{
@@ -84,6 +60,9 @@ func newBlockedPrefetcher(key string) *prefetcher {
 	}
 }
 
+// TestInstallLevelsJoinsInFlightWorkerOnMissingCollection pins that the
+// ErrMissingCollection guard does not return until the level's already
+// dispatched worker, parked in prefetch.Wait, has finished.
 func TestInstallLevelsJoinsInFlightWorkerOnMissingCollection(t *testing.T) {
 	t.Parallel()
 
@@ -116,12 +95,9 @@ func TestInstallLevelsJoinsInFlightWorkerOnMissingCollection(t *testing.T) {
 		done <- err
 	}()
 
-	// release unblocks key1's worker. Wrapped in sync.OnceFunc and registered
-	// via t.Cleanup so it still fires (and the goroutine above still
-	// terminates) even if an assertion below fails first. Once unblocked,
-	// key1's installCollection reaches fetchArtifact with cacheHit false and
-	// cfg.Offline true, so it fails fast on helpers.ErrOfflineMode without
-	// touching the network - the worker completes quickly either way.
+	// release unblocks key1's worker and also runs on cleanup, so the
+	// goroutine ends even if an assertion fails; the worker then fails fast
+	// on helpers.ErrOfflineMode without touching the network.
 	release := sync.OnceFunc(func() {
 		p.finish(key1, &types.GalaxyCollectionVersionInfo{}, downloadResult{}, nil)
 	})

@@ -56,10 +56,9 @@ func TestAPIRootMemoRecordWinnerOverwrites(t *testing.T) {
 	}
 }
 
-// TestAPIRootMemoNilReceiverIsSafe asserts that a nil *apiRootMemo behaves
-// like an empty memo for winner (no panic, no winner) and that recordWinner
-// on a nil receiver is a safe no-op. Some tests build a collectionDeps
-// literal without setting apiRoots, so the metadata path must tolerate nil.
+// TestAPIRootMemoNilReceiverIsSafe asserts that a nil *apiRootMemo reports
+// no winner and ignores recordWinner without panicking, since a collectionDeps
+// literal may leave apiRoots unset.
 func TestAPIRootMemoNilReceiverIsSafe(t *testing.T) {
 	t.Parallel()
 	var memo *apiRootMemo
@@ -70,10 +69,9 @@ func TestAPIRootMemoNilReceiverIsSafe(t *testing.T) {
 	memo.recordWinner("https://galaxy.example.com", "https://galaxy.example.com/api/v3")
 }
 
-// TestAPIRootMemoConcurrentAccess exercises recordWinner and winner from many
-// goroutines concurrently across a handful of bases, matching how the memo
-// is actually used: shared by value-copy across an install/resolve/prefetch
-// worker pool. Run with -race to confirm the RWMutex actually guards access.
+// TestAPIRootMemoConcurrentAccess drives recordWinner and winner from many
+// goroutines across several bases, as the shared worker pools do; under
+// -race it proves the RWMutex guards every access.
 func TestAPIRootMemoConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	memo := newAPIRootMemo()

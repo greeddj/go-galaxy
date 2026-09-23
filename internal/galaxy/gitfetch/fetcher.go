@@ -105,10 +105,9 @@ type fetchSpec struct {
 	auth   gitsource.Credential
 }
 
-// fetched is one commit brought to disk: the tree to build from, the commit
-// and the ref name the request resolved to, the advertisement's warnings,
-// and the object store the tree reads from, which the caller closes once its
-// build is done.
+// fetched is one commit brought to disk: its tree, commit, resolved ref name
+// and warnings, and the object store the tree reads from, which the caller
+// closes once its build is done.
 type fetched struct {
 	src      *treeSource
 	store    *objectStore
@@ -175,11 +174,9 @@ func (f *Fetcher) AcquireRole(ctx context.Context, req gitsource.RoleRequest) (g
 	}, nil
 }
 
-// fetch does the acquisition up to the tree: one advertisement, the target
-// decided from it, an object store created, the commit fetched into it and
-// its root tree read. The session is closed before it returns; the tree is
-// read from the store, not the wire. On success the store is the caller's
-// to close.
+// fetch runs one advertisement, fetches the chosen commit into a new object
+// store and reads its root tree from the store, not the wire; on success the
+// store is the caller's to close.
 func (f *Fetcher) fetch(ctx context.Context, spec fetchSpec) (*fetched, error) {
 	display := spec.url.String()
 	sess, adv, err := f.openAndAdvertise(ctx, spec.url, spec.auth)
@@ -259,11 +256,9 @@ func newAdvertisement(ar *packp.AdvRefs) *advertisement {
 	return adv
 }
 
-// advertised reports whether h is a ref's own hash - the set of hashes every
-// upload-pack serves as a want without allow-*-sha1-in-want. A peeled commit
-// (the "^{}" line of an annotated tag) is deliberately not in that set: git
-// marks only the ref hashes themselves as its own, and answers a want for a
-// peeled commit with "not our ref" unless that commit is also a ref's tip.
+// advertised reports whether h is a ref's own hash, which every upload-pack
+// serves as a want; a peeled annotated-tag commit is not, since git answers a
+// want for it with "not our ref" unless it is also a ref's tip.
 func (a *advertisement) advertised(h plumbing.Hash) bool {
 	for _, v := range a.refs {
 		if v == h {
@@ -273,10 +268,9 @@ func (a *advertisement) advertised(h plumbing.Hash) bool {
 	return false
 }
 
-// wantFor returns the hash to put on the wire for target: target itself when
-// it is a ref's own hash, else the tag object whose peeled commit it is (the
-// pack for a tag want carries the tag object, the commit and its tree), else
-// target unchanged for the sha-in-want path.
+// wantFor returns target when it is a ref's own hash, else the tag object
+// that peels to it (its pack carries the commit and tree too), else target
+// unchanged for the sha-in-want path.
 func (a *advertisement) wantFor(target plumbing.Hash) plumbing.Hash {
 	if a.advertised(target) {
 		return target
@@ -306,12 +300,9 @@ func (a *advertisement) tips() []plumbing.Hash {
 	return out
 }
 
-// resolve maps ref onto the commit the advertisement names for it and the
-// full ref name it went through. An unqualified name is a branch first and a
-// tag second; when both exist the branch wins and the warning says so, the
-// same choice `git checkout <name>` makes. A tag resolves to its peeled
-// commit when the remote advertised one (an annotated tag) and to the ref's
-// own hash otherwise (a lightweight tag).
+// resolve maps ref onto its advertised commit and full ref name; an unqualified
+// name takes the branch over a same-named tag with a warning, as git checkout
+// does, and a tag resolves to its peeled commit when one is advertised.
 func resolve(adv *advertisement, ref gitsource.Ref, display string) (plumbing.Hash, string, []string, error) {
 	switch ref.Kind {
 	case gitsource.RefHEAD:
@@ -384,14 +375,9 @@ func chooseTarget(adv *advertisement, spec fetchSpec, display string) (plumbing.
 	return resolve(adv, spec.ref, display)
 }
 
-// fetchCommit brings target into store by the cheapest route the remote
-// allows and returns it as a commit object. The decision table: an
-// advertised tip is wanted directly, shallow when the remote allows it; a
-// commit the remote serves by hash is wanted directly too; otherwise the tip
-// of the ref the commit is known to have come from is fetched in full and
-// searched, and failing that every advertised tip is. A target still missing
-// after all that is helpers.ErrGitCommitNotFound when the remote never
-// advertised it and helpers.ErrGitCommitMismatch when it did.
+// fetchCommit wants target directly, shallow when allowed, if it is an
+// advertised tip or the remote serves it by hash, else searches; one still
+// missing is ErrGitCommitNotFound if never advertised, else ErrGitCommitMismatch.
 func (f *Fetcher) fetchCommit(ctx context.Context, sess transport.UploadPackSession, adv *advertisement,
 	store *objectStore, target plumbing.Hash, spec fetchSpec, display string,
 ) (*object.Commit, error) {
@@ -414,16 +400,9 @@ func (f *Fetcher) fetchCommit(ctx context.Context, sess transport.UploadPackSess
 	return commit, nil
 }
 
-// fetchBySearch is the route for a target the remote neither advertises nor
-// serves by hash: the full history of the ref the commit is known to have
-// come from first, then every advertised tip when that did not reach it.
-//
-// The second exchange runs on a fresh session. Over http a session is a
-// sequence of independent requests, but over ssh go-git's session is one
-// upload-pack command whose channel is closed when the first pack's reader
-// is closed, so a second UploadPack on it would write into a closed stream.
-// Opening again costs one more advertisement on a path that is already the
-// expensive fallback.
+// fetchBySearch fetches the hinted ref's full history and, if that missed,
+// every tip on a fresh session: over ssh go-git closes the channel with the
+// first pack's reader, so a second UploadPack would hit a closed stream.
 func (f *Fetcher) fetchBySearch(ctx context.Context, sess transport.UploadPackSession, adv *advertisement,
 	store *objectStore, target plumbing.Hash, spec fetchSpec, display string,
 ) error {

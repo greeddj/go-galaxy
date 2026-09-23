@@ -12,17 +12,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// TestLoadProjectRegistryRejectsCorruptFile confirms a project registry
-// file that fails to decode is reported as an error rather than silently
-// replaced by an empty registry, since cleanup uses the registry to decide
-// what is still reachable and an empty registry would make it delete
-// everything.
-//
-// cleanup.Start never gets a chance to act on a bad registry in the first
-// place: initCleanup (internal/galaxy/cleanup/cleanup.go) calls
-// backend.LoadProjectRegistry and returns any error immediately, before
-// buildReachable or removeUnused run, so a corrupt registry aborts cleanup
-// before any reachability computation or deletion is attempted.
+// TestLoadProjectRegistryRejectsCorruptFile pins that an undecodable registry is
+// ErrCorruptProjectRegistry rather than an empty registry, which would make
+// cleanup see nothing as reachable and delete everything.
 func TestLoadProjectRegistryRejectsCorruptFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -66,22 +58,9 @@ func TestLoadProjectRegistryMissingFileReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestLoadProjectRegistryRestoresANullProjectsMap pins the loader's own
-// postcondition - on a successful return, Projects is never nil - against a
-// shape the missing-file branch never reaches: the file exists, decodes
-// cleanly, and carries an explicit JSON null under the projects key. Callers
-// read that map straight back from the load, cleanup's reachability pass
-// among them.
-//
-// Deleting the registry.Projects = ensureMap(registry.Projects) line from
-// LoadProjectRegistry fails the null subtest with:
-//
-//	expected an initialized registry, got &store.ProjectRegistry{Projects:map[string]store.ProjectRecord(nil)}
-//
-// The populated subtest keeps passing under that same mutation, and that is
-// its job: it proves the fixture reaches the decode at all rather than
-// tripping the missing-file branch TestLoadProjectRegistryMissingFileReturnsEmpty
-// already covers.
+// TestLoadProjectRegistryRestoresANullProjectsMap pins that a registry holding
+// an explicit JSON null under projects still loads with a non-nil map; the
+// populated subtest is the control that the fixture reaches the decode at all.
 func TestLoadProjectRegistryRestoresANullProjectsMap(t *testing.T) {
 	t.Parallel()
 
@@ -132,11 +111,9 @@ func writeRegistryFile(t *testing.T, dir string, data []byte) {
 	}
 }
 
-// TestLoadProjectRegistryWithoutRolesPathDecodesEmpty proves a registry an
-// older binary wrote - no roles_path key at all - decodes with RolesPath "",
-// the value cleanup reads as "no roles path recorded, do not scan". The
-// registry is unversioned, so this absent-key shape is the only migration
-// path there is, and it must stay the conservative one.
+// TestLoadProjectRegistryWithoutRolesPathDecodesEmpty pins that a record with
+// no roles_path key decodes with RolesPath "", which cleanup reads as "do not
+// scan": the unversioned registry's only migration path, and a conservative one.
 func TestLoadProjectRegistryWithoutRolesPathDecodesEmpty(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -199,10 +176,8 @@ func TestRecordProjectWritesRolesPath(t *testing.T) {
 	})
 }
 
-// TestRecordProjectWithoutRolesPathStaysLegacyShape proves omitempty holds: a
-// collections-only record marshals byte for byte as it did before RolesPath
-// existed, so a registry no run ever gave a roles path is indistinguishable
-// from one an older binary wrote.
+// TestRecordProjectWithoutRolesPathStaysLegacyShape pins that omitempty keeps a
+// collections-only record byte-identical to the shape older binaries wrote.
 func TestRecordProjectWithoutRolesPathStaysLegacyShape(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()

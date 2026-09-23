@@ -8,11 +8,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// fetchJSONWithCachePolicy fetches JSON using cache policy and context,
-// binding the request to runtime.MetadataDeadline() so no collections call
-// site can pass a wrong (or missing) metadata fetch budget - the budget is
-// derived from runtime here rather than accepted as a caller-supplied
-// parameter.
+// fetchJSONWithCachePolicy fetches JSON under the cache policy, always bound to
+// runtime.MetadataDeadline() rather than a caller-supplied budget, so no call
+// site can pass a wrong or missing one.
 func fetchJSONWithCachePolicy(
 	ctx context.Context,
 	runtime *infra.Infra,

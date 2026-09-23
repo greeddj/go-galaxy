@@ -15,8 +15,7 @@ import (
 )
 
 // installRolesDryRunVerbs is the wording `install --dry-run` reports roles
-// with: the collection verbs with the kind named, so a mixed report reads
-// unambiguously line by line.
+// with: the collection verbs with the kind named, for a mixed report.
 //
 //nolint:gochecknoglobals // a fixed, immutable wording table, not mutable shared state.
 var installRolesDryRunVerbs = dryRunVerbs{
@@ -40,11 +39,9 @@ var warmRolesDryRunVerbs = dryRunVerbs{
 // anything; see dryRunProbe.
 type roleDryRunProbe func(ctx context.Context, r resolvedRole) dryRunClassification
 
-// classifyRolesDryRun is classifyDryRun for the resolved roles: probes run
-// on the Workers-bounded pool, the report is rendered in discovery order
-// through the same reportDryRunResults pass, and the summary line is printed
-// only when the run has roles, so a collections-only dry run reads as it
-// always did.
+// classifyRolesDryRun is classifyDryRun for the resolved roles, reported in
+// discovery order; it prints its summary line only when the run has roles,
+// so a collections-only dry run is unchanged.
 func classifyRolesDryRun(
 	ctx context.Context,
 	runtime *infra.Infra,
@@ -82,10 +79,8 @@ func classifyRolesDryRun(
 }
 
 // installRoleDryRunProbe returns install's dry-run verdict for a role: settled
-// when the record, the marker and the tally all agree; otherwise whether the
-// artifact is cached, with a refusal for a role whose directory this tool
-// would not replace - the same question a real install asks before it
-// fetches anything - or whose name the roots root would not take.
+// when record and marker agree, else cached or not, refusing a foreign
+// directory or unsafe name exactly as a real install would before fetching.
 func installRoleDryRunProbe(cfg *config.Config, st *store.Store, artifacts cacheManager.ArtifactStore, root *os.Root) roleDryRunProbe {
 	return func(ctx context.Context, r resolvedRole) dryRunClassification {
 		target, ok := newRoleTarget(root, cfg, r)

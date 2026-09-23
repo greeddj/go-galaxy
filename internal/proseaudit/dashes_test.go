@@ -12,11 +12,8 @@ import (
 	"testing"
 )
 
-// The UTF-8 encodings of the two banned characters share a two-byte prefix;
-// the third byte separates them. They are spelled as bytes rather than as
-// rune literals so that this file is not itself an offender, which is the
-// same trick cmd/go-galaxy/commands/explain_test.go uses for its assertion
-// about em dashes in rendered output.
+// The two banned dashes' UTF-8 encodings, which share a two-byte prefix,
+// spelled as bytes so that this file is not itself an offender.
 const (
 	dashPrefixFirst  = 0xE2
 	dashPrefixSecond = 0x80
@@ -24,22 +21,9 @@ const (
 	emDashFinal      = 0x94
 )
 
-// TestCommittedTextUsesHyphenMinus is the gate for the repository's
-// hyphen-minus-only rule: no committed file may carry U+2014 or U+2013.
-//
-// It enumerates through `git ls-files` rather than walking the filesystem,
-// because the rule is about committed text. Walking would sweep in working
-// files that are deliberately outside it and, worse, would silently stop
-// covering the tracked prose under dot-directories the moment a walk learned
-// to skip them - which is where four of this rule's five surviving violations
-// were found.
-//
-// Run against the state before the sweep that introduced it, this failed with
-//
-//	forbidden dashes in committed text (use hyphen-minus):
-//	    .claude/skills/go-galaxy-build/SKILL.md:3: U+2014 (em dash)
-//
-// as the first of 29 lines, one per occurrence, across five files.
+// TestCommittedTextUsesHyphenMinus fails on any U+2014 or U+2013 in a tracked
+// file. It enumerates through git ls-files, not a walk, so tracked prose under
+// dot-directories stays covered and untracked working files stay out.
 func TestCommittedTextUsesHyphenMinus(t *testing.T) {
 	t.Parallel()
 
@@ -129,13 +113,9 @@ func dashHits(name string, data []byte) []string {
 	return hits
 }
 
-// trackedFiles returns every path git has under root, as slash paths.
-//
-// A tree git cannot enumerate skips the gate rather than failing it: the rule
-// is about committed text, and a module extracted from a tarball into the
-// build cache has none to check. That is a real way `go test` runs on this
-// package and the only one where git is absent, so the skip cannot hide a
-// violation in a repository where the rule applies.
+// trackedFiles returns every path git has under root, as slash paths. It skips
+// the calling gate when git cannot list the tree: a module extracted into the
+// build cache has no committed text to check.
 func trackedFiles(t *testing.T, root string) []string {
 	t.Helper()
 

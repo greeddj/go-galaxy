@@ -1,20 +1,8 @@
 package solver
 
-// term is a statement about a package that may be true or false for a given
-// selection of versions: "Package in Set" (Positive) or "not (Package in
-// Set)" (!Positive). Sets are exact verSet values (verset.go), so every
-// judgment about terms below is universe-independent: it never needs to
-// know which versions of the package are published, and it is exact from
-// the first assignment on - the reference algorithm's term arithmetic, not
-// an approximation of it.
-//
-// The signed algebra matters as much as set exactness: a package's
-// accumulated state is a signed term, and the sign is what distinguishes
-// "required to lie in a" (Positive) from "merely known not to lie in a"
-// (Negative). A negative accumulation never satisfies a positive term and
-// never contradicts a negative one - the two asymmetries that make a
-// package with only negative assignments correctly read as still
-// undetermined rather than as vacuously settled.
+// Terms are signed statements over exact verSet values, so their arithmetic
+// is exact and never needs the published universe. The sign matters: a
+// negative-only accumulation leaves a package undetermined, not settled.
 
 import (
 	"slices"
@@ -41,17 +29,9 @@ func accumSeed(pkg string) term {
 	return term{Package: pkg, Set: emptyVerSet(), Positive: false}
 }
 
-// termIntersect returns the conjunction of two statements about the same
-// package, per the reference term arithmetic:
-//
-//	P(a) and P(b) = P(a intersect b)
-//	P(a) and N(b) = P(a minus b)
-//	N(a) and P(b) = P(b minus a)
-//	N(a) and N(b) = N(a union b)
-//
-// The identity operand N({}) returns the other term verbatim, which both
-// avoids an allocation and preserves the cosmetic carriers (a singleton's
-// decided version, a constraint's display) through the seed fold.
+// termIntersect returns the conjunction of two terms on one package: P&P is
+// P(a&b), P&N is P(a-b), N&P is P(b-a), N&N is N(a|b). The identity N({})
+// returns the other term verbatim, keeping its display carriers.
 func termIntersect(a, b term) term {
 	if !a.Positive && a.Set.isEmpty() {
 		return b
@@ -71,13 +51,9 @@ func termIntersect(a, b term) term {
 	}
 }
 
-// termSubset reports whether a on its own entails b (every selection
-// satisfying a satisfies b):
-//
-//	P(a) entails P(b) iff a is a subset of b
-//	P(a) entails N(b) iff a and b are disjoint
-//	N(a) entails P(b): never - a negative statement cannot assert selection
-//	N(a) entails N(b) iff b is a subset of a
+// termSubset reports whether a entails b: P(a) entails P(b) iff a is a subset
+// of b, P(a) entails N(b) iff they are disjoint, N(a) entails N(b) iff b is a
+// subset of a, and a negative term never entails a positive one.
 func termSubset(a, b term) bool {
 	switch {
 	case a.Positive && b.Positive:
@@ -91,13 +67,9 @@ func termSubset(a, b term) bool {
 	}
 }
 
-// relateAccum relates one term to a package's accumulated signed state:
-// satisfied when the accumulation entails the term, contradicted when their
-// conjunction is the unsatisfiable P({}), inconclusive otherwise. A
-// negative-negative conjunction is never P({}), so a negative accumulation
-// never contradicts a negative term - the asymmetry that keeps a
-// dependency's "not (dep in C)" term derivable (as "dep in C") for a
-// package that so far carries only negative facts.
+// relateAccum reports whether accum satisfies t, contradicts it (their
+// conjunction is P({})) or is inconclusive. A negative accumulation never
+// contradicts a negative term, which keeps dependency terms derivable.
 func relateAccum(accum, t term) termRelation {
 	if termSubset(accum, t) {
 		return termSatisfied
@@ -113,10 +85,8 @@ func termPermits(t term, v Version) bool {
 	return t.Set.contains(v) == t.Positive
 }
 
-// termIsTautological reports whether t is true for every selection: exactly
-// N({}), the negation of an unsatisfiable positive statement. A positive
-// term is never tautological - even P(full) asserts that the package is
-// selected at all, which is real information.
+// termIsTautological reports whether t is exactly N({}). A positive term never
+// is: even P(full) asserts that the package is selected at all.
 func termIsTautological(t term) bool {
 	return !t.Positive && t.Set.isEmpty()
 }
@@ -134,14 +104,9 @@ func sameTerm(a, b term) bool {
 	return a.Package == b.Package && a.Positive == b.Positive && sameVersionSet(a.Set, b.Set)
 }
 
-// compareVersionsDescending implements the universe total order: semver
-// precedence descending, tie-broken by the original string descending
-// (byte-wise). This is stricter than a single-level precedence comparator
-// (which is not a total order for strings of equal precedence, e.g.
-// "1.0.0" vs "1.0.0+build") and is what makes "the highest version" and
-// "index 0" unambiguous. Sets cannot separate equal-precedence versions
-// (membership ignores build metadata, exactly as Check does), so this
-// order matters only for choosing among members, never for set identity.
+// compareVersionsDescending is the universe total order: semver precedence
+// descending, then original string descending, so "the highest version" is
+// unambiguous between equal-precedence spellings such as "1.0.0+build".
 func compareVersionsDescending(a, b Version) int {
 	if c := b.sv().Compare(a.sv()); c != 0 {
 		return c
@@ -172,11 +137,9 @@ func buildUniverse(versions []Version) []Version {
 	return out
 }
 
-// packageUniverse holds one package's published version list, once fetched
-// from the provider. With exact sets it plays no part in relating terms or
-// resolving conflicts - decision making consults it to pick a concrete
-// published candidate, and error reporting consults it for cosmetic
-// phrasing and prerelease hints; nothing else needs it.
+// packageUniverse holds one package's published version list once fetched.
+// It plays no part in relating terms or resolving conflicts; only decision
+// making and error reporting read it.
 type packageUniverse struct {
 	versions []Version
 	fetched  bool

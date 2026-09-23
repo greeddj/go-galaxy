@@ -1,14 +1,7 @@
 package collections
 
-// FuzzCheckManifestAttribution is this change's one fuzz target, and it sits on
-// the one piece of genuinely new decision logic here that reads an
-// attacker-chosen document: the identity a signed MANIFEST.json declares.
-//
-// Everything else this commit added either judges bytes some other package
-// already bounds (the signature and chain checks), or judges values a boundary
-// validated on the way in (a requirements file's sources). This function is the
-// exception: it walks whatever JSON an artifact carries and decides who the
-// artifact is about.
+// Fuzzing checkManifestAttribution, which walks attacker-chosen JSON from a
+// signed MANIFEST.json and decides which collection the artifact is about.
 
 import (
 	"errors"
@@ -19,20 +12,14 @@ import (
 )
 
 // fuzzAttributionIdentity is the collection every fuzzed document is judged
-// against. It is spelled out rather than taken from testSignedCollection so a
-// change to that fixture cannot quietly change what this target asserts.
+// against, spelled out so a change to testSignedCollection cannot move it.
 //
 //nolint:gochecknoglobals // a fixed fixture identity, not mutable shared state.
 var fuzzAttributionIdentity = collection{Namespace: "acme", Name: "app", Version: "1.0.0"}
 
-// fuzzAttributionSeeds are the starting points f.Add registers: every document
-// shape this package refuses on purpose, the one it accepts, and a handful of
-// degenerate shapes that are cheap to state and exercise the decode's own error
-// arms rather than its comparison.
-//
-// The refusal shapes are the folding bypasses foldingBypassShapes carries,
-// closed into complete documents - that table's own entries are unterminated,
-// since buildArtifactWithManifest appends the chain pointer to them.
+// fuzzAttributionSeeds returns the accepted document, degenerate shapes for the
+// decode's error arms, and foldingBypassShapes closed into whole documents (the
+// table leaves them open for buildArtifactWithManifest's chain pointer).
 func fuzzAttributionSeeds() []string {
 	degenerate := []string{
 		`{"collection_info":{"namespace":"acme","name":"app","version":"1.0.0"}}`,
@@ -55,22 +42,9 @@ func fuzzAttributionSeeds() []string {
 	return seeds
 }
 
-// FuzzCheckManifestAttribution states three invariants, each about what the
-// function decides rather than how it decides it, so a rewrite of the decode
-// keeps them meaningful:
-//
-//   - it never panics on any input, which the fuzzing framework enforces around
-//     this function. That is not a formality here: the last target this project
-//     added found both of its defects exactly that way.
-//   - an ACCEPT is only ever an exact agreement. The check is independent of the
-//     implementation rather than a second copy of it: a document this function
-//     accepts for one identity must be refused for every identity differing in
-//     any single component, which can only hold if what it read was byte-for-byte
-//     what it was handed. A decode that folded, coerced or normalized anything
-//     would accept at least one perturbation too.
-//   - a REFUSAL always carries helpers.ErrSignatureAttributionMismatch, so no
-//     input escapes into an unclassified error that
-//     cmd/go-galaxy/exitcode would report as the generic failure.
+// FuzzCheckManifestAttribution pins that checkManifestAttribution never panics,
+// that a document it accepts is refused for an identity differing in any one
+// component, and that every refusal wraps helpers.ErrSignatureAttributionMismatch.
 func FuzzCheckManifestAttribution(f *testing.F) {
 	for _, seed := range fuzzAttributionSeeds() {
 		f.Add([]byte(seed))

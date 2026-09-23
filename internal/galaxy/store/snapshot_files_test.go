@@ -44,16 +44,9 @@ func TestOpenDBsReturnsCacheBusyOnTimeout(t *testing.T) {
 	}
 }
 
-// TestOpenBoltClassifiesGarbageAsCorruptButNotAPermissionFailure proves
-// openBolt's corruption arm matches a closed set of bbolt sentinels rather
-// than acting as a catch-all for any bolt.Open failure: garbage bytes at
-// the DB path fail one of bbolt's own corruption checks and classify as
-// helpers.ErrCorruptSnapshotStore, while a permission failure on a
-// genuinely valid Bolt file at the identical path does not. Without the
-// second half, the exclusion openBolt's own doc comment describes (an
-// OS-level failure like this one staying unclassified) would be
-// documentary only - nothing would prove openBolt actually discriminates
-// rather than simply wrapping every non-timeout error.
+// TestOpenBoltClassifiesGarbageAsCorruptButNotAPermissionFailure pins that
+// openBolt's corruption arm is a closed set of bbolt sentinels: garbage bytes
+// are ErrCorruptSnapshotStore, a permission failure on a valid file is not.
 func TestOpenBoltClassifiesGarbageAsCorruptButNotAPermissionFailure(t *testing.T) {
 	t.Parallel()
 
@@ -82,10 +75,8 @@ func TestOpenBoltClassifiesGarbageAsCorruptButNotAPermissionFailure(t *testing.T
 		dir := t.TempDir()
 		dbPath := filepath.Join(dir, helpers.StoreDBLocal)
 
-		// Seed a genuinely valid, empty Bolt database first, then strip every
-		// permission bit: a garbage-bytes file would itself trip the
-		// corruption arm this subtest must not exercise, so only the file's
-		// permission bit - never its bytes - may force the failure.
+		// Seed a valid, empty Bolt database, then strip every permission bit:
+		// garbage bytes would trip the corruption arm this subtest must avoid.
 		seed, err := bolt.Open(dbPath, helpers.FileMod, nil)
 		if err != nil {
 			t.Fatalf("failed to seed a valid bolt database: %v", err)

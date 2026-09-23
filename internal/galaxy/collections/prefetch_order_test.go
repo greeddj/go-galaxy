@@ -1,10 +1,8 @@
 package collections
 
-// This file proves the prefetch download queue is ordered by install level:
-// sortTasksByLevel/buildLevelIndex in isolation (Test 1), and the wiring
-// through startPrefetcher end to end, where a single worker's FIFO drain of
-// the task channel makes the resulting Commit order directly observable
-// (Test 2).
+// Tests that the prefetch queue is ordered by install level, both in
+// sortTasksByLevel alone and through startPrefetcher, where one worker's FIFO
+// drain makes the Commit order observable.
 
 import (
 	"context"
@@ -14,11 +12,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestSortTasksByLevelOrdersByLevelThenKey proves sortTasksByLevel orders a
-// scrambled task list by ascending install level, breaking ties within a
-// level by collection key, and that a key absent from levelIndex (which
-// cannot happen in practice, since collections and levels always derive from
-// the same graph) defaults to level 0 rather than sorting arbitrarily.
+// TestSortTasksByLevelOrdersByLevelThenKey pins ascending level with a key
+// tie-break, and that a key absent from levelIndex sorts at level 0 rather
+// than arbitrarily.
 func TestSortTasksByLevelOrdersByLevelThenKey(t *testing.T) {
 	t.Parallel()
 	base := collection{Namespace: "acme", Name: "base", Version: "1.0.0"}
@@ -67,14 +63,9 @@ func TestSortTasksByLevelOrdersByLevelThenKey(t *testing.T) {
 	}
 }
 
-// waitAll blocks until every key in keys has a completed prefetch result,
-// mirroring how installLevels drains the prefetcher via Wait(col.key()) for
-// each collection it installs. Waiting here (rather than calling Close
-// immediately) is required for a deterministic read of the commit order:
-// Close cancels the prefetcher's context before joining its workers, so
-// calling it before every task has actually finished races the in-flight
-// downloads and can abort them with a canceled-context error instead of
-// letting them complete.
+// waitAll blocks until every key's prefetch completes, as installLevels does
+// through Wait. It must precede Close, whose cancel would otherwise abort
+// in-flight downloads and make the commit order nondeterministic.
 func waitAll(t *testing.T, prefetch *prefetcher, keys []string) {
 	t.Helper()
 	for _, key := range keys {
@@ -86,13 +77,9 @@ func waitAll(t *testing.T, prefetch *prefetcher, keys []string) {
 	}
 }
 
-// TestPrefetchQueueOrderedByLevel proves the wiring end to end: with a single
-// prefetch worker (Workers: 1), the task channel is drained strictly FIFO, so
-// the order artifacts are committed to the cache reveals the exact order the
-// tasks were enqueued in. A three-level dependency chain (app -> lib -> base)
-// must therefore commit leaf-first: base, then lib, then app - proving the
-// prefetch queue tracks the level-ordered install consumer rather than racing
-// in map order.
+// TestPrefetchQueueOrderedByLevel pins that with one prefetch worker the
+// chain app -> lib -> base commits leaf-first, so the queue follows install
+// level rather than map order.
 func TestPrefetchQueueOrderedByLevel(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -126,10 +113,7 @@ func TestPrefetchQueueOrderedByLevel(t *testing.T) {
 		collections,
 		levels,
 	)
-	// Wait for every task to actually finish before Close: Close cancels the
-	// prefetcher's context, and canceling before completion would race the
-	// still-downloading tasks instead of deterministically observing them all
-	// committed.
+	// Wait before Close, whose cancel would race the downloads still running.
 	waitAll(t, prefetch, []string{base.key(), lib.key(), app.key()})
 	prefetch.Close()
 

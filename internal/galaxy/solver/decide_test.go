@@ -35,10 +35,9 @@ func TestMakeDecisionProbeSatisfiesZeroUniverseCalls(t *testing.T) {
 	}
 }
 
-// TestMakeDecisionProbeUnavailableFallsBackToMaterialize pins the other
-// probe-fail path: when the provider reports the probe itself unavailable
-// (ok == false), decision making falls back to fetching the package universe
-// exactly as it would for a candidate that failed to satisfy.
+// TestMakeDecisionProbeUnavailableFallsBackToMaterialize pins that a probe
+// the provider reports unavailable (ok == false) falls back to fetching the
+// universe, as a probe candidate that fails the accumulation does.
 func TestMakeDecisionProbeUnavailableFallsBackToMaterialize(t *testing.T) {
 	t.Parallel()
 	p := newFakeProvider().withVersions(testPkgFoo, testVersion100, "2.0.0").withNoHighest(testPkgFoo)
@@ -64,10 +63,9 @@ func TestMakeDecisionProbeUnavailableFallsBackToMaterialize(t *testing.T) {
 	}
 }
 
-// TestMakeDecisionProbeFailsFallsBackToMaterialize pins the fallback: when
-// the probe's candidate does not satisfy the accumulated constraints, the
-// package universe is fetched (a real Universe call) and the highest ALLOWED
-// version is chosen instead.
+// TestMakeDecisionProbeFailsFallsBackToMaterialize pins that a probe
+// candidate failing the accumulated constraints makes decision making fetch
+// the universe and decide the highest allowed version instead.
 func TestMakeDecisionProbeFailsFallsBackToMaterialize(t *testing.T) {
 	t.Parallel()
 	p := newFakeProvider().withVersions(testPkgFoo, testVersion100, "1.5.0", "2.0.0")
@@ -152,11 +150,9 @@ func TestMakeDecisionUnknownPackageProducesCauseUnknownPackage(t *testing.T) {
 	}
 }
 
-// TestMakeDecisionConservativeCheckDefersConflict is the 12.2/9.2 "Avoiding
-// Conflict During Decision Making" mechanic in isolation: deciding foo would
-// immediately relate its OWN new dependency incompatibility as satisfied
-// (bar is already decided incompatibly), so decision making must decline to
-// decide foo, leaving it to the next propagation round.
+// TestMakeDecisionConservativeCheckDefersConflict pins PubGrub's "Avoiding
+// Conflict During Decision Making": foo is not decided when its own new
+// dependency incompatibility would relate satisfied against decided bar.
 func TestMakeDecisionConservativeCheckDefersConflict(t *testing.T) {
 	t.Parallel()
 	p := newFakeProvider().

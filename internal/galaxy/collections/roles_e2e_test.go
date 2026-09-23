@@ -26,10 +26,9 @@ const (
 	roleV1Ref   = "refs/tags/v1.0.0"
 )
 
-// roleFixture is the git fixture with two role repositories added: app,
-// whose meta depends on base (by git pointer) and on a local role ansible
-// would never look up, and base, with no dependencies. Roles install under
-// a roles path beside the collections path.
+// roleFixture is the git fixture plus two role repositories: app, depending
+// on base by git pointer and on a local role ansible never looks up, and
+// base, with no dependencies.
 type roleFixture struct {
 	*gitFixture
 
@@ -86,11 +85,9 @@ func assertFileContains(t *testing.T, path, want string) {
 	}
 }
 
-// TestRoleInstallFromRepository proves the whole role pipeline for one git
-// role: the repository is fetched once, the role and its git dependency
-// install under roles_path with ansible's install record, the local
-// dependency is left alone, the record and the artifact carry the locator,
-// and a rerun replays the pin without touching the remote.
+// TestRoleInstallFromRepository pins the git role pipeline: one fetch, the
+// role and its git dependency installed with ansible's install record, the
+// local dependency skipped, and a rerun replaying the pin offline.
 func TestRoleInstallFromRepository(t *testing.T) {
 	t.Parallel()
 	f := newRoleFixture(t)
@@ -311,10 +308,9 @@ func TestRoleWithoutMetaIsRefused(t *testing.T) {
 	}
 }
 
-// TestRoleTokenNeverReachesGit proves the Galaxy token configured for the
-// server is not what the git client is handed for a role's repository: the
-// credential it sees is the empty one, since no GO_GALAXY_GIT_* binding
-// covers the host.
+// TestRoleTokenNeverReachesGit pins that a Galaxy role's repository fetch
+// gets the empty credential, not the server's Galaxy token, when no
+// GO_GALAXY_GIT_* binding covers the host.
 func TestRoleTokenNeverReachesGit(t *testing.T) {
 	t.Parallel()
 	f := newRoleFixture(t)
@@ -384,10 +380,9 @@ func newGalaxyRoleFixture(t *testing.T) *roleFixture {
 	return f
 }
 
-// TestGalaxyRoleInstallsHighestTag proves a Galaxy role name is mapped
-// through the v1 API to its repository and highest tag, fetched by git, and
-// installed under the Galaxy name; the record carries the Galaxy name, and a
-// rerun needs neither the v1 API nor the remote.
+// TestGalaxyRoleInstallsHighestTag pins that a Galaxy role maps through the
+// v1 API to its highest tag, installs by git under the Galaxy name, and
+// reruns with neither the v1 API nor the remote.
 func TestGalaxyRoleInstallsHighestTag(t *testing.T) {
 	t.Parallel()
 	f := newGalaxyRoleFixture(t)
@@ -725,11 +720,9 @@ func roleArtifactPath(f *roleFixture, locator, name, version string) string {
 	return filepath.Join(f.cacheDir, helpers.ArtifactKey(locator, helpers.RoleArtifactFilename(name, version)))
 }
 
-// TestRoleCleanup proves cleanup keeps every role the requirements reach -
-// directly and through a recorded dependency - removes one that fell out of
-// the requirements along with its artifact and record, never touches a
-// directory under roles_path this tool did not install, and leaves the
-// extracted store's entries for kept roles in place.
+// TestRoleCleanup pins that cleanup keeps every reachable role and its
+// extracted tree, removes an unreachable one with its artifact and record,
+// and never touches a directory this tool did not install.
 func TestRoleCleanup(t *testing.T) {
 	t.Parallel()
 	f := newRoleFixture(t)
@@ -806,10 +799,9 @@ func TestRoleCleanupDryRunAndLegacyProject(t *testing.T) {
 	assertPathAbsent(t, f.rolePath("base"))
 }
 
-// TestRoleCleanupWithoutRecordsKeepsDependencies proves reachability through
-// a role's dependencies survives a dropped snapshot: with no installed-role
-// record at all, the dependency named by an installed role's own meta is
-// still kept, and only a role nothing names is removed.
+// TestRoleCleanupWithoutRecordsKeepsDependencies pins that with no
+// installed-role records a dependency named by an installed role's own meta
+// is still kept, and only a role nothing names is removed.
 func TestRoleCleanupWithoutRecordsKeepsDependencies(t *testing.T) {
 	t.Parallel()
 	f := newRoleFixture(t)
@@ -849,10 +841,9 @@ func TestGalaxyRoleLockRecordsTheAnsweringServer(t *testing.T) {
 	}
 }
 
-// TestRoleRepositoryShippingInstallInfo proves a repository that committed
-// ansible-galaxy's own meta/.galaxy_install_info installs cleanly, twice,
-// with this tool's record in place of the committed one and the extracted
-// store's tree untouched.
+// TestRoleRepositoryShippingInstallInfo pins that a committed
+// meta/.galaxy_install_info installs cleanly twice, replaced by this tool's
+// record while the extracted store's tree stays untouched.
 func TestRoleRepositoryShippingInstallInfo(t *testing.T) {
 	t.Parallel()
 	f := newRoleFixture(t)
@@ -874,10 +865,9 @@ func TestRoleRepositoryShippingInstallInfo(t *testing.T) {
 	assertPathAbsent(t, stored)
 }
 
-// TestRoleCleanupToleratesAnUnreadableRolesList proves a project whose
-// requirements carry a roles list this tool refuses still has its
-// collections judged and every one of its roles kept, instead of aborting
-// every cleanup against the cache.
+// TestRoleCleanupToleratesAnUnreadableRolesList pins that a refused roles
+// list keeps every role of that project and still judges its collections,
+// instead of aborting every cleanup against the cache.
 func TestRoleCleanupToleratesAnUnreadableRolesList(t *testing.T) {
 	t.Parallel()
 	f := newRoleFixture(t)
@@ -933,12 +923,9 @@ func TestGalaxyRolePoisonedPinIsRefused(t *testing.T) {
 	}
 }
 
-// TestRoleInstallLineNamesTheVersion proves the success line an operator
-// reads names the version the role actually settled on, for a role pinned by
-// tag, one taken at HEAD, and one reached only as a dependency - the three
-// ways a role gets its version, which is what makes this more than a
-// rendering check: the line is built from resolvedRole.Version, so a version
-// that never made it out of resolution would leave the line silent about it.
+// TestRoleInstallLineNamesTheVersion pins that the success line names the
+// version each role settled on, whether pinned by tag, taken at HEAD, or
+// reached only as a dependency.
 func TestRoleInstallLineNamesTheVersion(t *testing.T) {
 	t.Parallel()
 	f := newRoleFixture(t)

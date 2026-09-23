@@ -13,11 +13,9 @@ func ignoreDirNames() map[string]struct{} {
 	}
 }
 
-// newIgnoreRules is the build's exclusion list: ansible's defaults, then
-// build_ignore in the order written, each matched with treearchive.Fnmatch
-// against the "/"-joined path relative to the collection root - so
-// "galaxy.yml" and "tests/output" match at the root only - plus the basename
-// prune list that applies to directories alone.
+// newIgnoreRules is ansible's default exclusions, then build_ignore in order,
+// each fnmatched against the path relative to the collection root, so
+// "tests/output" matches at the root only; DirNames prunes at every depth.
 func newIgnoreRules(namespace, name string, buildIgnore []string) treearchive.Rules {
 	patterns := make([]string, 0, defaultPatternCount+len(buildIgnore))
 	patterns = append(patterns,

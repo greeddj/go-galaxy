@@ -7,15 +7,9 @@ import (
 	"testing"
 )
 
-// TestRenderNodeRecordsNonDerivedIncompatibilityAsSolverBug covers
-// renderNode's two branches on one shared pair of external incompatibilities,
-// extA and extB. A causeConflict of the two - the ordinary derived shape
-// renderNode is meant to walk - renders one proof line and leaves b.bug nil,
-// which is also the positive control: it shows extA reaching the walk and
-// being accepted into a rendered line. extA handed to renderNode directly -
-// the shape it never expects, since every real caller only reaches it through
-// an already-established derived node - is refused as an invariant violation
-// instead.
+// TestRenderNodeRecordsNonDerivedIncompatibilityAsSolverBug pins that a
+// derived node renders one line with no bug, while an external node handed to
+// renderNode directly is recorded as an errSolverBug invariant violation.
 func TestRenderNodeRecordsNonDerivedIncompatibilityAsSolverBug(t *testing.T) {
 	t.Parallel()
 	tm := term{Package: "foo", Set: mustSet(t, ">=1.0.0"), Positive: true}
@@ -48,29 +42,13 @@ func TestRenderNodeRecordsNonDerivedIncompatibilityAsSolverBug(t *testing.T) {
 			b.renderNode(s, tc.inc, false)
 
 			if tc.wantBug {
-				// Mutation: make recordBug a no-op (drop `if b.bug == nil { b.bug =
-				// err }`, leaving its body empty) so renderNode's call never sets
-				// b.bug - fails with:
-				//
-				//	report_test.go:57: renderNode on a non-derived incompatibility left b.bug nil
 				if b.bug == nil {
 					t.Fatalf("renderNode on a non-derived incompatibility left b.bug nil")
 				}
-				// Mutation: drop the errSolverBug wrap from the error renderNode
-				// constructs (fmt.Errorf without the trailing `: %w", errSolverBug`
-				// operand) - b.bug is still set but no longer wraps errSolverBug -
-				// fails with, one output line wrapped here for width:
-				//
-				//	report_test.go:68: b.bug = renderNode called on a non-derived
-				//	incompatibility (cause solver.causeNoVersions), want an error
-				//	wrapping errSolverBug
 				if !errors.Is(b.bug, errSolverBug) {
 					t.Fatalf("b.bug = %v, want an error wrapping errSolverBug", b.bug)
 				}
-				// Documentary, not pinned: in the branch that sets b.bug,
-				// renderNode returns before any statement that appends to
-				// b.lines, so no state satisfying the two assertions above
-				// can also leave a line in b.lines.
+				// A recorded bug must not leave a partial proof line behind.
 				if len(b.lines) != 0 {
 					t.Fatalf("b.lines = %v, want empty", b.lines)
 				}
@@ -87,11 +65,9 @@ func TestRenderNodeRecordsNonDerivedIncompatibilityAsSolverBug(t *testing.T) {
 	}
 }
 
-// TestReportBuilderOutcomePrefersRecordedBug covers outcome's own dispatch:
-// with no recorded bug it returns the ConflictError built from b.lines (the
-// positive control proving the fixture can reach that arm at all), and with
-// one recorded it returns that error instead, discarding the built proof
-// entirely - never both.
+// TestReportBuilderOutcomePrefersRecordedBug pins outcome's dispatch: the
+// built ConflictError when no bug is recorded, otherwise the recorded bug
+// alone, with the partial proof discarded.
 func TestReportBuilderOutcomePrefersRecordedBug(t *testing.T) {
 	t.Parallel()
 	tm := term{Package: "foo", Set: mustSet(t, ">=1.0.0"), Positive: true}
@@ -123,11 +99,6 @@ func TestReportBuilderOutcomePrefersRecordedBug(t *testing.T) {
 
 		err := b.outcome(s, inc)
 
-		// Mutation: delete `if b.bug != nil { return b.bug }` from outcome, so
-		// it always returns the built *ConflictError even when b.bug is set -
-		// fails with:
-		//
-		//	report_test.go:132: outcome() = line, want an error wrapping errSolverBug
 		if !errors.Is(err, errSolverBug) {
 			t.Fatalf("outcome() = %v, want an error wrapping errSolverBug", err)
 		}

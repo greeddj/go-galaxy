@@ -1,10 +1,8 @@
 package collections_test
 
-// This file (continued from e2e_test.go) covers the non-pinned cache-hit
-// path's use of the local artifact cache's sha256 sidecar: a warm reinstall
-// must serve entirely from the extracted-tree cache and record the sidecar's
-// original digest, never a hash of tarball bytes that have since been
-// corrupted on disk.
+// These e2e tests cover a non-pinned cache hit: a warm reinstall is served
+// from the extracted tree and records the sidecar's digest, never a hash of
+// the tarball bytes on disk.
 
 import (
 	"context"
@@ -22,27 +20,20 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// corruptedTarballContent replaces a cached tarball on disk in this file's
-// tests: deliberately not a valid gzip+tar stream, so any code path that
-// still tried to read it as an artifact (a re-hash, or a direct extraction)
-// would fail loudly rather than silently producing different bytes.
+// corruptedTarballContent overwrites a cached tarball. It is not a gzip
+// stream, so extracting it fails and re-hashing it records a different digest.
 const corruptedTarballContent = "this is not a valid tar.gz artifact - the cached tarball was corrupted on disk"
 
-// acmeArtifactFilename returns the on-disk cache filename for one "acme"
-// collection version's tarball (every e2e fixture's namespace). It mirrors the collections package's own
-// unexported artifactKey (filename plus url.QueryEscape) so this external
-// test package can locate - and deliberately corrupt - the cached artifact
-// file directly.
+// acmeArtifactFilename returns the cache filename of an "acme" collection
+// tarball, mirroring the unexported artifactKey so this external package can
+// reach the cached file.
 func acmeArtifactFilename(name, version string) string {
 	return url.QueryEscape(fmt.Sprintf("acme-%s-%s.tar.gz", name, version))
 }
 
-// loadInstalledEntry opens cfg's cache backend, loads its persisted
-// snapshot, and returns the installed entry recorded for key, failing the
-// test if the entry is absent. It always closes the backend before
-// returning, so it never holds the backend's lock past this call - safe to
-// use only after any collections.Start run that touched the same cache
-// directory has already completed and released its own lock.
+// loadInstalledEntry returns the installed entry the persisted snapshot
+// records for key. It takes and releases the backend lock, so call it only
+// after every collections.Start on that cache has returned.
 func loadInstalledEntry(t *testing.T, cfg *config.Config, runtime *infra.Infra, key string) store.InstalledEntry {
 	t.Helper()
 	ctx := context.Background()
@@ -67,18 +58,9 @@ func loadInstalledEntry(t *testing.T, cfg *config.Config, runtime *infra.Infra, 
 	return entry
 }
 
-// TestWarmInstallCacheHitDoesNotRehashCorruptedTarball is the load-bearing
-// proof that a non-pinned cache hit trusts the sha256 sidecar written next
-// to a cached tarball instead of re-hashing the whole file: it corrupts the
-// cached tarball's bytes on disk while leaving the sidecar and the extracted
-// store's warm tree untouched, wipes the install workspace (and with it the
-// .extract-done marker) to force a fresh extraction, and reinstalls without
-// any lockfile pin. The reinstall must succeed - served entirely from the
-// warm extracted tree, never reading the corrupted tarball bytes - and must
-// record the ORIGINAL sidecar sha256. If the code re-hashed the corrupted
-// tarball instead of trusting the sidecar, it would either fail outright (the
-// corrupted bytes are not a valid gzip stream) or record a different sha256,
-// either of which this test catches.
+// TestWarmInstallCacheHitDoesNotRehashCorruptedTarball proves an unpinned
+// reinstall over a corrupted cached tarball succeeds from the warm extracted
+// tree, with no network, and records the original sidecar sha256.
 func TestWarmInstallCacheHitDoesNotRehashCorruptedTarball(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)

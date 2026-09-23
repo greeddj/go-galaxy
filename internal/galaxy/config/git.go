@@ -11,9 +11,8 @@ import (
 )
 
 // GitCredentialKind tells a Basic (http(s)) binding from an ssh key binding.
-// It is derived from the variables an id carries and is checked against the
-// binding URL's scheme at load time, so a consumer never has to decide which
-// of the two field groups applies.
+// It is checked against the binding URL's scheme at load time, so a consumer
+// never has to decide which of the two field groups applies.
 type GitCredentialKind uint8
 
 const (
@@ -25,11 +24,9 @@ const (
 	GitCredentialSSHKey
 )
 
-// GitCredential is one host-bound git credential as this package holds it:
-// the id it was declared under, the binding URL (a gitsource.ParsePrefix
-// result), and the Secret-wrapped fields of exactly one kind. The Secret
-// fields of the other kind are zero. The plaintext leaves this form in one
-// place only, the command wiring that builds a gitsource.Credential from it.
+// GitCredential is one host-bound git credential: its id, the binding URL
+// and the Secret fields of exactly one Kind. The plaintext leaves this form
+// only in the command wiring that builds a gitsource.Credential from it.
 type GitCredential struct {
 	ID            string
 	Username      string
@@ -44,10 +41,8 @@ const (
 	// gitCredentialsListEnv lists the declared credential ids; nothing else
 	// under the prefix is read for an id that is not listed here.
 	gitCredentialsListEnv = "GO_GALAXY_GIT_CREDENTIALS" //nolint:gosec // an environment variable name, not a credential
-	// gitCredentialEnvPrefix is the common prefix of every per-id variable,
-	// GO_GALAXY_GIT_<ID>_<KEY>, with <ID> upper-cased exactly as envOrIni
-	// upper-cases a server id - which is why two ids differing only in case
-	// are refused: they fold onto one variable prefix.
+	// gitCredentialEnvPrefix prefixes every GO_GALAXY_GIT_<ID>_<KEY> variable;
+	// <ID> is upper-cased, so ids differing only in case are refused.
 	gitCredentialEnvPrefix = "GO_GALAXY_GIT_" //nolint:gosec // an environment variable name prefix, not a credential
 
 	gitKeyURL              = "URL"
@@ -81,29 +76,9 @@ type gitCredentialEnv struct {
 	passphrase string
 }
 
-// loadGitCredentials fills cfg.GitCredentials from the environment. The
-// surface is GO_GALAXY_GIT_CREDENTIALS, a comma-separated list of ids, and
-// for each id the GO_GALAXY_GIT_<ID>_{URL,USERNAME,PASSWORD,SSH_KEY,
-// SSH_KEY_FILE,SSH_KEY_PASSPHRASE} variables. An unset or empty list means
-// no credentials and is not an error. A variable whose value is empty counts
-// as unset everywhere below, so an exported-but-blank secret never produces
-// a half-configured binding.
-//
-// Checks run in a fixed order so the first failure a broken configuration
-// reports is stable: the id list's grammar, then per id in list order the
-// URL, then the kind rules, then duplicates across ids. Every refusal is
-// helpers.ErrGitCredentialInvalid and names a VARIABLE, never a value: the
-// value of any of these variables is, or sits beside, a credential. The one
-// exception in sentinel is a Basic credential bound to plaintext http on a
-// non-loopback host, which is helpers.ErrInsecureTokenTransport for the same
-// reason checkTokenTransport refuses a Galaxy token there: nothing about a
-// git remote makes a password on the wire safer than a token.
-//
-// An ssh key named by file is read here, at configuration time, into a
-// Secret: an unreadable path fails the run before any network is touched,
-// and the fetcher never handles a path. A GO_GALAXY_GIT_<ID>_* variable for
-// a declared id that is not one of the six keys is queued on cfg.Warnings
-// and ignored, the way an unknown [galaxy_server.<id>] key is.
+// loadGitCredentials fills cfg.GitCredentials from GO_GALAXY_GIT_CREDENTIALS
+// and each id's GO_GALAXY_GIT_<ID>_* variables; an empty value counts as unset.
+// Refusals name the offending variable and never echo a secret value.
 func loadGitCredentials(cfg *Config) error {
 	ids, err := gitCredentialIDs(os.Getenv(gitCredentialsListEnv))
 	if err != nil {
@@ -140,10 +115,9 @@ func gitCredentialVar(id, key string) string {
 	return gitCredentialEnvPrefix + strings.ToUpper(id) + "_" + key
 }
 
-// readGitCredentialEnv snapshots the six variables of one id. The non-secret
-// values are trimmed so a trailing newline from a CI secret store does not
-// change a path or a URL; the secrets are taken verbatim, since a password
-// or a PEM may legitimately end in whitespace.
+// readGitCredentialEnv snapshots the six variables of one id, trimming the
+// non-secret values against a CI store's trailing newline and taking secrets
+// verbatim, since a password or a PEM may legitimately end in whitespace.
 func readGitCredentialEnv(id string) gitCredentialEnv {
 	return gitCredentialEnv{
 		id:         id,
@@ -202,10 +176,9 @@ func (env gitCredentialEnv) presentVars(keys ...string) []string {
 	return present
 }
 
-// buildGitBasicCredential requires both halves of a Basic pair: a username
-// alone authenticates nothing, and a password alone has no principal to be
-// checked against, so either shape is a configuration that was meant to be
-// the other and is refused rather than sent.
+// buildGitBasicCredential requires both halves of a Basic pair, since either
+// alone is a misconfiguration, and refuses plaintext http off loopback with
+// helpers.ErrInsecureTokenTransport, as a Galaxy token is refused there.
 func buildGitBasicCredential(env gitCredentialEnv, parsed gitsource.URL) (GitCredential, error) {
 	userVar := gitCredentialVar(env.id, gitKeyUsername)
 	passVar := gitCredentialVar(env.id, gitKeyPassword)
@@ -269,9 +242,8 @@ func buildGitSSHCredential(env gitCredentialEnv, parsed gitsource.URL) (GitCrede
 }
 
 // checkGitCredentialURLConflicts refuses two ids bound to one canonical URL:
-// gitsource.MatchCredential picks the longest path prefix and relies on this
-// check to make a tie impossible, so a second binding to the same URL would
-// otherwise be silently ignored or silently preferred by list order.
+// gitsource.MatchCredential's longest-prefix match relies on it to make a tie
+// impossible, which would otherwise be settled silently by list order.
 func checkGitCredentialURLConflicts(creds []GitCredential) error {
 	seen := make(map[string]string, len(creds))
 	for _, cred := range creds {

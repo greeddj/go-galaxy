@@ -27,13 +27,9 @@ func (s *stubTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
 }
 
-// TestAuthTransport_RoundTrip_OriginExactMatch drives authTransport
-// directly against a bare stub, with no TLS or real network involved at
-// all, proving the header is attached if and only if the request's
-// normalized origin exactly matches a configured one: a different host, a
-// different port, and an http-vs-https variant of the same host must all be
-// treated as a different origin, since a poisoned download_url need only
-// differ in one of those to be a different endpoint entirely.
+// TestAuthTransport_RoundTrip_OriginExactMatch pins that the token attaches
+// only on an exact normalized origin match: another host, another port or the
+// http variant of the same host is a different endpoint and gets nothing.
 func TestAuthTransport_RoundTrip_OriginExactMatch(t *testing.T) {
 	t.Parallel()
 
@@ -107,10 +103,9 @@ func TestAuthTransport_RoundTrip_DoesNotOverwriteExistingAuthorization(t *testin
 	}
 }
 
-// TestAuthTransport_RoundTrip_DoesNotMutateCallerRequest asserts the
-// caller's original *http.Request is left untouched, per
-// http.RoundTripper's contract: a caller (in particular http.Client across
-// a redirect) may still hold and reuse it after RoundTrip returns.
+// TestAuthTransport_RoundTrip_DoesNotMutateCallerRequest pins that RoundTrip
+// clones rather than mutates the caller's request, per http.RoundTripper's
+// contract: http.Client may reuse it across a redirect.
 func TestAuthTransport_RoundTrip_DoesNotMutateCallerRequest(t *testing.T) {
 	t.Parallel()
 
@@ -172,12 +167,9 @@ func TestAuthTransport_RoundTrip_MultipleServersDistinctTokens(t *testing.T) {
 	}
 }
 
-// TestAuthTransport_RoundTrip_CrossOriginRedirectDropsToken drives a real
-// redirect through http.Client rather than asserting the property in a
-// comment: http.Client builds a fresh request per hop and calls RoundTrip
-// again for it, so authTransport re-evaluates the origin match on every
-// hop independently instead of inheriting whatever it decided for the
-// first one.
+// TestAuthTransport_RoundTrip_CrossOriginRedirectDropsToken pins, through a
+// real http.Client redirect, that the origin match is re-decided on every hop,
+// so the token reaches the configured origin and not the redirect target.
 func TestAuthTransport_RoundTrip_CrossOriginRedirectDropsToken(t *testing.T) {
 	t.Parallel()
 
@@ -221,14 +213,9 @@ func TestAuthTransport_RoundTrip_CrossOriginRedirectDropsToken(t *testing.T) {
 	}
 }
 
-// stubDialTransport is a real *http.Transport whose DialContext never
-// actually reaches a peer: it only records that this pool was the one
-// chosen for a request, then hands back one end of an already-closed
-// net.Pipe so the RoundTrip that follows fails harmlessly instead of
-// hanging. This is the "distinguishable stub inner transport" used to prove
-// tlsDispatchTransport's routing decision without any real network or TLS
-// handshake, and without needing tlsDispatchTransport's fields to be an
-// interface (they are concrete *http.Transport, matching production).
+// stubDialTransport is a real *http.Transport whose dial only counts that this
+// pool was chosen, then returns a closed net.Pipe end so the RoundTrip fails
+// fast; it observes tlsDispatchTransport's routing with no network or TLS.
 type stubDialTransport struct {
 	*http.Transport
 
@@ -248,11 +235,9 @@ func newStubDialTransport() *stubDialTransport {
 	return s
 }
 
-// TestTLSDispatchTransport_RoutesByExactOrigin proves dispatch selection is
-// driven purely by helpers.Origin(req.URL): a configured insecure origin
-// (and only that exact origin) reaches the insecure pool, while a different
-// host, a different port, an http-vs-https variant of the same host, and an
-// off-server (e.g. S3-shaped) download host all reach the secure pool.
+// TestTLSDispatchTransport_RoutesByExactOrigin pins that only the exact
+// configured insecure origin reaches the insecure pool; another host, port or
+// scheme, or an off-server download host, reaches the secure pool.
 func TestTLSDispatchTransport_RoutesByExactOrigin(t *testing.T) {
 	t.Parallel()
 
@@ -324,10 +309,9 @@ func unwrapDispatch(t *testing.T, client *http.Client) tlsDispatchTransport {
 	return dispatch
 }
 
-// TestNewClient_NoInsecureServer_InsecureTransportIsNil is the default-path
-// regression this whole feature must never disturb: with every configured
-// server fully verified, the insecure pool is never even constructed, not
-// merely unused.
+// TestNewClient_NoInsecureServer_InsecureTransportIsNil pins that with every
+// configured server fully verified the insecure pool is never constructed,
+// not merely left unused.
 func TestNewClient_NoInsecureServer_InsecureTransportIsNil(t *testing.T) {
 	t.Parallel()
 
@@ -337,10 +321,9 @@ func TestNewClient_NoInsecureServer_InsecureTransportIsNil(t *testing.T) {
 	}
 }
 
-// TestNewClient_InsecureServer_BuildsInsecureTransportForItsOriginOnly
-// checks the companion case: one insecure server builds the insecure pool
-// and scopes insecureOrigins to exactly that server's origin, not to every
-// server in the list.
+// TestNewClient_InsecureServer_BuildsInsecureTransportForItsOriginOnly pins
+// that one insecure server builds the insecure pool and scopes insecureOrigins
+// to that server's origin alone.
 func TestNewClient_InsecureServer_BuildsInsecureTransportForItsOriginOnly(t *testing.T) {
 	t.Parallel()
 

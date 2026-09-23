@@ -31,21 +31,9 @@ type checkDownloadURLCase struct {
 	raw     string
 }
 
-// checkDownloadURLCases enumerates what checkDownloadURL accepts - an
-// absolute http or https URL naming a host and carrying no userinfo, whatever
-// the case of its scheme - and every shape it refuses: a scheme this pipeline
-// never speaks, a URL whose authority is empty, a relative reference carrying
-// no scheme at all, a string url.Parse rejects outright, and a URL embedding a
-// credential either as a user:password pair or as a bare username.
-//
-// Two rows carry the whole order argument between them. "ftp scheme refused
-// with userinfo" is an otherwise-unfetchable URL that also embeds a
-// credential, and it must report the scheme: the userinfo sentinel claims on
-// itself that it only ever names a URL that was otherwise perfectly fetchable,
-// and that claim is only true while the scheme and host are judged first.
-// "at sign in the path accepted" is the negative control for the other
-// direction: "@" in a path is ordinary, so a check written as "contains @"
-// rather than as url.Parse's own view of the authority would refuse it.
+// checkDownloadURLCases pins that only an absolute http(s) URL with a host and
+// no userinfo is accepted. The scheme is judged before userinfo, so the
+// userinfo sentinel only ever names an otherwise fetchable URL.
 func checkDownloadURLCases() []checkDownloadURLCase {
 	return []checkDownloadURLCase{
 		{name: "https accepted", raw: "https://h/a.tar.gz", wantErr: nil},
@@ -91,28 +79,9 @@ func TestCheckDownloadURL(t *testing.T) {
 	}
 }
 
-// TestCheckDownloadURLDoesNotEchoCredential proves the refusal names the
-// offending server without reproducing what the server smuggled into the URL.
-// The three negative checks and the positive one are independent t.Errorf
-// calls rather than a t.Fatalf chain on purpose: each has to be reachable on
-// its own, since a message that leaks the password and a message that names no
-// host at all are different defects with different repairs, and a chain would
-// only ever report whichever came first.
-//
-// The positive check is what keeps the three negative ones honest: a refusal
-// that rendered nothing at all would satisfy them and would be useless to an
-// operator, who needs to know which download URL was refused.
-//
-// Killing mutation, run: rendering raw instead of display in checkDownloadURL's
-// userinfo arm fails all four checks - the three negative ones on the value it
-// now renders, and the positive one because the whole raw value does not
-// contain the cut form that check looks for:
-//
-//	download_scheme_test.go:128: refusal message contains the password:
-//	collection download url must not contain userinfo:
-//	"https://u:sup3rsecret@h/a.tar.gz?X-Amz-Signature=deadbeef#frag"
-//
-// The other three lines label that same rendered value differently.
+// TestCheckDownloadURLDoesNotEchoCredential pins that the refusal names the
+// URL's origin and path without its userinfo or query; the checks are
+// independent Errorf calls so a leak and a missing name each surface.
 func TestCheckDownloadURLDoesNotEchoCredential(t *testing.T) {
 	t.Parallel()
 
@@ -147,48 +116,23 @@ func downloadInputsFixture(t *testing.T) (*config.Config, cacheManager.ArtifactS
 	return &config.Config{CacheDir: cacheDir}, local.NewArtifacts(cacheDir)
 }
 
-// TestValidateDownloadInputsRejectsNonHTTPScheme proves the refusal is raised
-// by validateDownloadInputs itself - once per artifact acquisition, before any
-// request is built - and carries helpers.ErrUnsupportedDownloadURLScheme so
-// cmd/go-galaxy/exitcode can classify it. TestValidateDownloadInputsAcceptsHTTPS
-// is the positive control on the identical fixture: without it, "it refused"
-// would be indistinguishable from a fixture incapable of acceptance.
+// TestValidateDownloadInputsRejectsNonHTTPScheme pins that
+// validateDownloadInputs itself refuses a non-http download URL, before any
+// request, with helpers.ErrUnsupportedDownloadURLScheme.
 func TestValidateDownloadInputsRejectsNonHTTPScheme(t *testing.T) {
 	t.Parallel()
 	cfg, artifacts := downloadInputsFixture(t)
 
 	err := validateDownloadInputs(cfg, artifacts, &types.GalaxyCollectionVersionInfo{DownloadURL: nonHTTPDownloadURL})
 
-	// Killing mutation, run: deleting the checkDownloadURL call from
-	// validateDownloadInputs leaves the file: URL accepted and fails this
-	// assertion with `validateDownloadInputs("file:///etc/passwd") = <nil>,
-	// want helpers.ErrUnsupportedDownloadURLScheme`. The positive control
-	// below keeps passing under that mutation, which is what it is for: it
-	// shows the fixture reaches an acceptance, so this refusal is the check's
-	// doing rather than the fixture's.
 	if !errors.Is(err, helpers.ErrUnsupportedDownloadURLScheme) {
 		t.Fatalf("validateDownloadInputs(%q) = %v, want helpers.ErrUnsupportedDownloadURLScheme", nonHTTPDownloadURL, err)
 	}
 }
 
-// TestValidateDownloadInputsRejectsUserinfo proves the userinfo half of the
-// same check is reached from validateDownloadInputs too, on the identical
-// fixture, and carries its own sentinel rather than the scheme one.
-//
-// The positive control is inline rather than borrowed from
-// TestValidateDownloadInputsAcceptsHTTPS below: it is the same URL with the
-// credential deleted and nothing else changed, so an acceptance there proves
-// the refusal above is about the userinfo and not about the host, the path or
-// the fixture.
-//
-// Killing mutation, run: deleting the checkDownloadURL call from
-// validateDownloadInputs fails this assertion with
-//
-//	download_scheme_test.go:198: validateDownloadInputs("https://u:p@h/a.tar.gz")
-//	= <nil>, want helpers.ErrDownloadURLUserinfo
-//
-// while the control below keeps passing, which is what shows the refusal is
-// the check's doing rather than the fixture's.
+// TestValidateDownloadInputsRejectsUserinfo pins that validateDownloadInputs
+// refuses a userinfo URL with helpers.ErrDownloadURLUserinfo, and accepts the
+// same URL with only the credential removed.
 func TestValidateDownloadInputsRejectsUserinfo(t *testing.T) {
 	t.Parallel()
 	cfg, artifacts := downloadInputsFixture(t)
@@ -204,10 +148,9 @@ func TestValidateDownloadInputsRejectsUserinfo(t *testing.T) {
 	}
 }
 
-// TestValidateDownloadInputsAcceptsHTTPS is the positive control described on
-// TestValidateDownloadInputsRejectsNonHTTPScheme: the same cfg, artifact store
-// and metadata shape, differing only in the download URL's scheme, must pass
-// validateDownloadInputs cleanly.
+// TestValidateDownloadInputsAcceptsHTTPS is the positive control for
+// TestValidateDownloadInputsRejectsNonHTTPScheme: the same fixture with an
+// https download URL passes.
 func TestValidateDownloadInputsAcceptsHTTPS(t *testing.T) {
 	t.Parallel()
 	cfg, artifacts := downloadInputsFixture(t)

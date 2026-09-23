@@ -7,11 +7,9 @@ import (
 	"time"
 )
 
-// lineCapturingPrinter records every line on every tier, so a test can
-// assert both on what a report said (the outdated lines) and on what no line
-// at all may contain (a git password), including the Debugf tier --verbose
-// turns on. It is safe for the concurrent use the download-worker pool makes
-// of it.
+// lineCapturingPrinter records every line on every tier, Debugf included, so
+// a test can assert what a report said and that no line contains a git
+// password. It is safe for the download-worker pool's concurrent use.
 type lineCapturingPrinter struct {
 	lines []string
 	mu    sync.Mutex
@@ -64,14 +62,9 @@ func (p *lineCapturingPrinter) hasLineContaining(substr string) bool {
 	return false
 }
 
-// renderVersionLine is what this double stores for an OkVersionf or
-// ErrorVersionf call: the same message, version tag and cause an operator
-// would read, minus the color internal/progress adds. Recording only the
-// format and its args would drop both the version and the cause, and the
-// assertions this printer exists for - that a line contains what a report
-// promised, and that no line contains a git password - would then be reading
-// half a line. The collections package's own internal test doubles carry an
-// identical helper, unreachable from this external test package.
+// renderVersionLine renders an OkVersionf or ErrorVersionf call as the line an
+// operator reads, version and cause included and color left out, so a leak
+// assertion never reads half a line.
 func renderVersionLine(version, cause, format string, args ...any) string {
 	line := fmt.Sprintf(format, args...)
 	if version != "" {

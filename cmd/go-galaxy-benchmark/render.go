@@ -19,11 +19,9 @@ const (
 	tablePadding  = 2
 )
 
-// Chart layout, in user units of the viewBox. Named rather than inlined so
-// the emitter carries no bare geometry and reshaping the chart is a change to
-// one block. Every drop is measured from the top of the thing it belongs to -
-// a bar, a legend swatch - rather than from the top of the document, so a
-// panel can be placed by its own origin alone.
+// Chart layout, in user units of the viewBox. Every drop is measured from the
+// top of the thing it belongs to (a bar, a legend swatch), not the document,
+// so a panel can be placed by its own origin alone.
 const (
 	canvasWidth   = 706
 	gutterX       = 4
@@ -54,22 +52,9 @@ const (
 	decadeStep    = 10
 )
 
-// chartInk is every glyph in the chart, and the rule under the bars.
-//
-// It is one color for every text tier rather than a bright one for emphasis
-// and a dim one for detail, because the drawing is embedded in a README that
-// is read on a white page and on a near-black one, and it has no background
-// of its own to sit against. A color legible on both must sit between them,
-// and the arithmetic is unforgiving: against #ffffff and GitHub dark's
-// #0d1117 the best contrast ratio any single color can reach is 4.35:1, at
-// this luminance. Two tiers would mean spending part of that on one of them,
-// and the cheaper tier is the small text that needs it most. The hierarchy is
-// carried by size and weight instead, which cost no contrast at all.
-//
-// chartInkFaint is the same ink for the decade rules. Opacity, unlike a
-// lighter color, is theme-neutral by construction: it composites against
-// whatever page is actually behind the drawing, so the rule stays a hairline
-// on both instead of turning into a near-black bar on the light one.
+// chartInk is the one color of every glyph: at 4.35:1 against both #ffffff and
+// GitHub dark's #0d1117 it is the best any single color reaches. chartInkFaint
+// is opacity rather than a lighter color, so the decade rules suit both themes.
 const (
 	chartInk      = "#6f7b81"
 	chartInkFaint = "0.5"
@@ -84,10 +69,9 @@ func barColor(index int) string {
 	return palette[index%len(palette)]
 }
 
-// Glyphs the chart draws that are not ASCII: a middle dot between the
-// caption's fields, a multiplication sign after every ratio, and an arrow
-// between the two means a ratio came from. Spelled as escapes so this file
-// stays ASCII, and named so a reader need not decode them.
+// Glyphs the chart draws that are not ASCII: the caption's middle dot, the
+// multiplication sign after a ratio, and the arrow between two means. Spelled
+// as escapes so this file stays ASCII.
 const (
 	glyphSeparator = "\u00b7"
 	glyphTimes     = "\u00d7"
@@ -225,14 +209,9 @@ type chartPanel struct {
 	rows  []chartRow
 }
 
-// writeSVG renders the report as a bar chart and writes it to path.
-//
-// The bars carry the ratio rather than the elapsed time. Seconds cannot share
-// one axis here: a warm run separates the two tools by three orders of
-// magnitude, and the faster bar would be narrower than a pixel. The absolute
-// pair moves into the row's text instead, where it is still readable. The
-// ratios themselves span the same three orders, so their axis is logarithmic
-// too - see logScale.
+// writeSVG renders the report as a bar chart and writes it to path. Bars carry
+// the ratio, since seconds three orders of magnitude apart cannot share an
+// axis; the absolute pair moves into the row's text.
 func writeSVG(report *Report, scenario, path string) error {
 	panels := buildPanels(report, scenario)
 	if len(panels) == 0 {
@@ -299,15 +278,9 @@ func chartDetail(report *Report, scenario string, size int) string {
 	return milliseconds(slow.stats().MeanMS) + " " + glyphArrow + " " + milliseconds(fast.stats().MeanMS)
 }
 
-// logScale is the chart's horizontal axis: how many user units one decade of
-// speedup spans. It is sized so the largest ratio in the whole chart ends
-// exactly at the bar column's right edge, and every panel is drawn against
-// this one scale - which is what makes a bar in one panel comparable with a
-// bar in another, and what lets a single set of gridlines serve both.
-//
-// The axis is logarithmic because the ratios are: a warm 100-collection run
-// and a cold single-collection one differ by two orders of magnitude, and on
-// a linear axis the smaller of them would be a sliver against the larger.
+// logScale is the chart's logarithmic horizontal axis: user units per decade
+// of speedup, sized so the largest ratio ends at the bar column's right edge.
+// Every panel shares it, which makes bars comparable across panels.
 type logScale struct {
 	unitsPerDecade float64
 	decades        float64
@@ -325,10 +298,8 @@ func newLogScale(panels []chartPanel) logScale {
 		}
 	}
 
-	// Nothing measured was faster than the tool it is measured against, so
-	// there is no decade for the axis to span. One decade keeps the axis
-	// drawable and leaves every bar at zero width, which is the honest
-	// picture rather than an invented one.
+	// Nothing measured was faster, so there is no decade to span: one decade
+	// keeps the axis drawable with every bar honestly at zero width.
 	decades := math.Log10(peak)
 	if decades <= 0 {
 		decades = 1
@@ -370,10 +341,8 @@ func (s logScale) gridlines() []gridline {
 	return out
 }
 
-// panelPlacement is where one panel sits once the stack has been laid out,
-// and in which color. The whole stack is placed before anything is drawn,
-// because the gridlines run its full height - from above the first bar of the
-// first panel to below the last bar of the last.
+// panelPlacement is where one panel sits, and in which color. The whole stack
+// is placed before anything is drawn, because the gridlines run its full height.
 type panelPlacement struct {
 	color   string
 	panel   chartPanel
@@ -426,9 +395,8 @@ func emitSVG(title, subtitle string, panels []chartPanel) string {
 }
 
 // writeSVGHead opens the document, declares the palette, and writes the two
-// heading lines. width and height are stated in pixels beside the viewBox, so
-// the chart keeps its designed size wherever it is embedded instead of
-// stretching to the width of whatever contains it.
+// heading lines. Pixel width and height beside the viewBox keep the chart at
+// its designed size instead of stretching to its container.
 func writeSVGHead(out *strings.Builder, title, subtitle string, height int) {
 	fmt.Fprintf(out, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d" role="img"`+
 		` font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">`+"\n",
@@ -493,10 +461,8 @@ func writeSVGPanel(out *strings.Builder, placement panelPlacement, scale logScal
 	}
 }
 
-// shortVersion reduces a --version line to what a caption can carry.
-// ansible-galaxy answers "ansible-galaxy [core 2.20.5]" and go-galaxy answers
-// a pseudo-version followed by build metadata: both belong in the report as
-// provenance and neither belongs in a chart subtitle at full length.
+// shortVersion reduces a --version line to what a caption can carry: the core
+// version from "ansible-galaxy [core 2.20.5]", or go-galaxy's first token.
 func shortVersion(line string) string {
 	if _, rest, found := strings.Cut(line, "[core "); found {
 		if version, _, closed := strings.Cut(rest, "]"); closed {

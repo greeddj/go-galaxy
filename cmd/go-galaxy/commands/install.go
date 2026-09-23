@@ -31,10 +31,8 @@ func Install() *cli.Command {
 	}
 }
 
-// newHTTPClient builds an HTTP client honoring offline mode, wiring each
-// configured server's token and TLS policy into the transport chain so a
-// request only ever carries a credential, or skips certificate verification,
-// for the exact origin that server was configured for.
+// newHTTPClient builds the Galaxy HTTP client, offline-aware, attaching each
+// server's token and relaxed TLS policy to that server's exact origin only.
 func newHTTPClient(cfg *config.Config) *http.Client {
 	if cfg != nil && cfg.Offline {
 		return fetch.NewOffline(cfg.Timeout)
@@ -42,25 +40,16 @@ func newHTTPClient(cfg *config.Config) *http.Client {
 	return fetch.New(cfg.Timeout, serverAuths(cfg.Servers))
 }
 
-// serverAuths converts cfg.Servers into fetch's own ServerAuth view. This is
-// the only call site of config.Secret.Reveal() for a Galaxy token: fetch
-// cannot import config (config is a layer above it) and so cannot hold a
-// Secret itself, only the plain token string handed to it once, here, at
-// client-construction time.
-//
-// It satisfies the rule every Reveal call site is bound by - the plaintext is
-// taken only where it is going onto the wire in that same statement, here an
-// Authorization header - which is a predicate rather than a headcount. The S3
-// cache client meets the same rule twice for its own credentials.
+// serverAuths converts cfg.Servers into fetch.ServerAuth. It is the only Reveal
+// call site for a Galaxy token (fetch sits below config and cannot hold a
+// Secret), and it reveals only to put the token on the wire.
 func serverAuths(servers []config.Server) []fetch.ServerAuth {
 	auths := make([]fetch.ServerAuth, 0, len(servers))
 	for _, s := range servers {
 		parsed, err := url.Parse(s.URL)
 		if err != nil {
-			// s.URL was already normalized and validated by config; an
-			// already-valid absolute URL string always reparses cleanly, so
-			// this only guards against a future change to that invariant
-			// rather than a case reachable today.
+			// config already normalized and validated s.URL, so this guards
+			// that invariant rather than a case reachable today.
 			continue
 		}
 		auths = append(auths, fetch.ServerAuth{
@@ -72,16 +61,9 @@ func serverAuths(servers []config.Server) []fetch.ServerAuth {
 	return auths
 }
 
-// gitCredentials converts cfg.GitCredentials into gitsource's plain
-// Credential view. This is the only call site of config.Secret.Reveal() for a
-// git credential: gitsource sits below config and cannot hold a Secret, so
-// the password, the key and its passphrase are handed over in the clear once,
-// here, and the fetcher offers them to the remote as they are.
-//
-// It satisfies the same rule serverAuths does - the plaintext is taken only
-// to build the value that goes onto the wire - and the result must never be
-// printed, logged or persisted; gitsource.Credential's own doc comment
-// states that nothing renders one.
+// gitCredentials converts cfg.GitCredentials into gitsource.Credential. It is
+// the only Reveal call site for a git credential, and its plaintext result
+// must never be printed, logged or persisted.
 func gitCredentials(cfg *config.Config) []gitsource.Credential {
 	if cfg == nil {
 		return nil
@@ -99,13 +81,9 @@ func gitCredentials(cfg *config.Config) []gitsource.Credential {
 	return creds
 }
 
-// urlBindings converts cfg.URLCredentials into fetch's URLBinding view. This
-// is the only call site of config.Secret.Reveal() for a url token, and it
-// satisfies the same rule serverAuths and gitCredentials do: the plaintext
-// is taken only to build the value the transport puts on the wire. The
-// binding's origin comes from urlsource.Prefix.Origin(), which renders it
-// exactly as helpers.Origin renders a request URL's, so the transport's
-// match is a byte comparison.
+// urlBindings converts cfg.URLCredentials into fetch.URLBinding, the only Reveal
+// call site for a url token. urlsource.Prefix.Origin must render an origin as
+// helpers.Origin does, since the transport matches the two byte for byte.
 func urlBindings(cfg *config.Config) []fetch.URLBinding {
 	if cfg == nil {
 		return nil

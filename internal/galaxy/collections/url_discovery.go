@@ -19,11 +19,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// expandSourceRoots runs both source-kind expansions - git first, then url -
-// and, when either actually expanded something, checks the fully expanded
-// list for a fqdn two roots both produce. The check waits until here because
-// an unexpanded root of the other kind has no identity yet: two url roots
-// judged during the git expansion would collide on the empty fqdn.
+// expandSourceRoots expands git roots, then url roots, and only after both
+// checks the result for a fqdn two roots produce: a root has no identity
+// before its own expansion, so an earlier check would see false duplicates.
 func expandSourceRoots(ctx context.Context, deps collectionDeps, roots []collection) ([]collection, error) {
 	expanding := anyUnpinnedGit(roots) || anyUnpinnedURL(roots)
 	roots, err := expandGitRoots(ctx, deps, roots)
@@ -40,12 +38,9 @@ func expandSourceRoots(ctx context.Context, deps collectionDeps, roots []collect
 	return roots, nil
 }
 
-// urlPin is what discovery learned about the collection a url requirement
-// serves, in the shape the solver and the install phase consume: the pinned
-// locator, the sha256 of the origin bytes, the exact version its
-// MANIFEST.json declares, its validated dependency map, and - under
-// --no-cache only - the downloaded artifact itself, handed to the install
-// phase so the URL is not fetched a second time.
+// urlPin is what discovery learned about a url requirement's collection:
+// locator, origin sha256, exact version, validated dependencies and, under
+// --no-cache only, the download itself, so install does not fetch it again.
 type urlPin struct {
 	prebuilt *downloadResult
 	deps     map[string]string
@@ -54,10 +49,8 @@ type urlPin struct {
 	version  string
 }
 
-// urlDiscoveryMemo is the run-wide table of discovered url collections,
-// keyed by fqdn: gitDiscoveryMemo's counterpart, created once per run
-// (initInstall) and shared by the resolve, prefetch and install phases for
-// the same reasons.
+// urlDiscoveryMemo is the run-wide table of discovered url collections by
+// fqdn, gitDiscoveryMemo's counterpart, shared by resolve, prefetch and install.
 type urlDiscoveryMemo struct {
 	pins map[string]urlPin
 	mu   sync.Mutex
@@ -125,33 +118,9 @@ func (m *urlDiscoveryMemo) cleanup() {
 	}
 }
 
-// expandURLRoots replaces every unpinned url root with the collection its
-// tarball holds, leaving every other root untouched and in place. It runs
-// immediately after expandGitRoots and is the only place a url origin is
-// contacted during resolution.
-//
-// Per url root, in order: the recorded pin for the URL is replayed when the
-// cache policy allows a read (the policy's TTL is deliberately ignored, as a
-// git pin's is - a pin is keyed by the URL itself, so editing it is a new
-// key, and it is invalidated by --refresh and --clear-cache, never by the
-// clock); a miss under --offline is helpers.ErrOfflineMode; otherwise the
-// tarball is downloaded, its identity and dependencies read out of its
-// MANIFEST.json, the artifact committed to the artifact store (or kept as a
-// temp file under --no-cache for the install phase, or discarded under
-// --dry-run, which downloads to learn the identity and writes nothing), and
-// the pin recorded when the policy allows a write. There is no cheaper
-// refresh probe than the download itself - a URL has no advertisement - so
-// --refresh simply re-downloads; unchanged bytes land on the same locator
-// and the same artifact key.
-//
-// A version: the requirements entry asserted is checked against the
-// manifest's on both the fresh and the replay path, so an edited assertion
-// is judged on every run rather than only on the run that downloads.
-//
-// Roots are processed on the download-worker pool and merged in input
-// order, so the expanded list is deterministic; the duplicate check over
-// the fully expanded list runs in expandSourceRoots, once both source kinds
-// have an identity.
+// expandURLRoots replaces each unpinned url root with the collection its
+// tarball holds; it is resolution's only contact with a url origin. Roots run
+// on the download pool and merge in input order, so the result is stable.
 func expandURLRoots(ctx context.Context, deps collectionDeps, roots []collection) ([]collection, error) {
 	if !anyUnpinnedURL(roots) {
 		return roots, nil
@@ -221,7 +190,9 @@ func newURLRootRequest(root collection) (urlRootRequest, error) {
 	}, nil
 }
 
-// expandURLRoot resolves one unpinned url root into its collection.
+// expandURLRoot resolves one unpinned url root into its collection. A pin is
+// keyed by its URL and replayed whenever the policy allows a read, TTL ignored:
+// it never ages out, and only --refresh or --clear-cache replaces it.
 func expandURLRoot(ctx context.Context, deps collectionDeps, root collection) ([]collection, error) {
 	req, err := newURLRootRequest(root)
 	if err != nil {
@@ -293,10 +264,8 @@ func acquireURLRoot(ctx context.Context, deps collectionDeps, req urlRootRequest
 	return []collection{col}, nil
 }
 
-// storeURLArtifact commits the downloaded artifact to the artifact store
-// under its locator-scoped key, or hands it to the pin under --no-cache, or
-// discards it under --dry-run - storeGitArtifacts' three-way switch for one
-// artifact.
+// storeURLArtifact commits the download under its locator-scoped key, hands
+// it to the pin under --no-cache, or discards it under --dry-run.
 func storeURLArtifact(ctx context.Context, deps collectionDeps, col collection, result downloadResult, pin *urlPin) error {
 	switch {
 	case deps.cfg != nil && deps.cfg.DryRun:
@@ -313,12 +282,9 @@ func storeURLArtifact(ctx context.Context, deps collectionDeps, col collection, 
 	return nil
 }
 
-// urlCollectionRoot validates the discovered collection's identity and
-// dependencies and returns it as an exact-pin root together with the pin the
-// solver will answer from. The identity came from the artifact's own
-// MANIFEST.json or from a cached pin, and both are judged by the same
-// predicates a Galaxy server's answer is; the version the requirements entry
-// asserted, when it made one, must be the version the artifact is built as.
+// urlCollectionRoot judges an identity and dependencies, read from a manifest
+// or replayed from a pin alike, and returns the exact-pin root and its solver
+// pin. A version the entry asserts must equal the built one on either path.
 func urlCollectionRoot(req urlRootRequest, sha, namespace, name, version string,
 	rawDeps map[string]string,
 ) (collection, urlPin, error) {
@@ -354,12 +320,9 @@ func urlCollectionRoot(req urlRootRequest, sha, namespace, name, version string,
 	}, pin, nil
 }
 
-// downloadURLToTemp downloads rawURL over the run's url client into a temp
-// file under the artifact store, hashing while streaming and probing the
-// result's tar.gz shape, with the retry policy and single
-// ArtifactDownloadDeadline budget downloadCollectionToCache applies to a
-// Galaxy download. It commits nothing: the caller decides what the bytes
-// become once their identity is known.
+// downloadURLToTemp downloads rawURL over the url client into a hashed,
+// shape-probed temp file under a Galaxy download's retry policy and single
+// ArtifactDownloadDeadline budget. It commits nothing.
 func downloadURLToTemp(ctx context.Context, deps collectionDeps, rawURL string) (downloadResult, error) {
 	if err := checkDownloadURL(rawURL); err != nil {
 		return downloadResult{}, err
@@ -391,12 +354,9 @@ func downloadURLToTemp(ctx context.Context, deps collectionDeps, rawURL string) 
 	return result, nil
 }
 
-// attemptURLDownload performs one full download attempt: a fresh GET over
-// the url client, streamed to a fresh temp file under the size cap with the
-// sha256 computed on the way, then the tar.gz shape probe. Every failure
-// path cleans up what it created, so a retried attempt never leaks a temp
-// file. The error shapes mirror downloadCollection's exactly, so
-// downloadRetryable and the exit classifier read both paths the same.
+// attemptURLDownload is one GET, capped and hashed into a temp file, then
+// probed as tar.gz; every failure cleans up. Its errors mirror
+// downloadCollection's so downloadRetryable and exit codes read both alike.
 func attemptURLDownload(ctx context.Context, deps collectionDeps, rawURL string) (downloadResult, error) {
 	runtime := deps.runtime
 	runtime.Output.Printf("Downloading %s", helpers.WithoutCredentials(rawURL))
@@ -432,10 +392,9 @@ func attemptURLDownload(ctx context.Context, deps collectionDeps, rawURL string)
 	return downloadResult{Path: tmpPath, SHA: sha, Cleanup: cleanup}, nil
 }
 
-// writeURLBodyToTemp is writeDownloadToTemp over the discovery-phase deps: a
-// temp file from gitTempFile (the artifact store's own TempFile when a store
-// is at hand), the download size cap, and the sha256 computed while
-// streaming.
+// writeURLBodyToTemp is writeDownloadToTemp over discovery-phase deps: it
+// streams body into a gitTempFile under the download size cap and returns the
+// sha256 computed on the way.
 func writeURLBodyToTemp(ctx context.Context, deps collectionDeps, body io.Reader) (string, func(), string, error) {
 	tmpFile, cleanup, err := gitTempFile(deps)(ctx)
 	if err != nil {

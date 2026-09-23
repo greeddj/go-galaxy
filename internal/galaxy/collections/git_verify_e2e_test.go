@@ -14,10 +14,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// writeGitVerifyKeyring writes an armored public keyring holding one fresh
-// EdDSA key and returns its path. Nothing in these tests is signed with it:
-// its only job is to turn verification on, so the git collection - which
-// carries no signature at all - meets the policy the test configures.
+// writeGitVerifyKeyring writes an armored public keyring with one fresh EdDSA
+// key and returns its path. Nothing is signed with it: it only turns
+// verification on, so the unsigned git collection meets the configured policy.
 func writeGitVerifyKeyring(t *testing.T) string {
 	t.Helper()
 	entity, err := openpgp.NewEntity("go-galaxy git fixture", "", "git-fixture@example.invalid",
@@ -43,11 +42,9 @@ func writeGitVerifyKeyring(t *testing.T) string {
 	return path
 }
 
-// TestGitInstallUnderSignatureVerification pins how a git-built collection
-// meets a verifying run: it carries no signature and has no Galaxy version
-// document to gather one from, so under the default required count it
-// installs with the vacuous-pass warning naming it, and under the strict
-// "+1" spelling the same install is refused with the signature sentinel.
+// TestGitInstallUnderSignatureVerification asserts an unsigned git collection
+// installs with the vacuous-pass warning under the default required count and
+// is refused with the signature sentinel under the strict "+1" spelling.
 func TestGitInstallUnderSignatureVerification(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)

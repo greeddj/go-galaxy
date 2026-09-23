@@ -35,11 +35,9 @@ func TestBackendOpenDoesNotOpenBolt(t *testing.T) {
 	}
 }
 
-// TestBackendOpenRejectsEmptyCacheDir confirms ensureDir's guard surfaces the
-// shared helpers.ErrCacheDirEmpty sentinel - not a package-private
-// duplicate - so cmd/go-galaxy/exitcode's isConfigUsageError check (which
-// matches on helpers.ErrCacheDirEmpty alone) still classifies an empty
-// cfg.CacheDir as a usage error for the local backend.
+// TestBackendOpenRejectsEmptyCacheDir pins that an empty cache dir fails with
+// the shared helpers.ErrCacheDirEmpty, which the exit-code mapping reads as a
+// usage error.
 func TestBackendOpenRejectsEmptyCacheDir(t *testing.T) {
 	t.Parallel()
 
@@ -49,16 +47,9 @@ func TestBackendOpenRejectsEmptyCacheDir(t *testing.T) {
 	}
 }
 
-// TestBackendClearFilesRejectsEmptyCacheDir confirms ClearFiles' own empty-
-// cacheDir guard, mirroring TestBackendOpenRejectsEmptyCacheDir above. This
-// is a uniformity guard across the Backend surface, not a path a real run
-// can reach: backend.Open already fails first via ensureDir for an empty
-// cfg.CacheDir, so no caller reaches ClearFiles with one in practice. What
-// it buys is specific: without it, store.ClearCacheFiles("") would reach
-// os.ReadDir(""), whose resulting ErrNotExist is swallowed by
-// ClearCacheFiles' own not-exist arm - so a Backend constructed directly
-// with an empty cacheDir (bypassing Open) would report silent success on a
-// destructive operation instead of failing loudly.
+// TestBackendClearFilesRejectsEmptyCacheDir pins ClearFiles' own guard:
+// without it store.ClearCacheFiles("") swallows os.ReadDir's ErrNotExist and
+// a Backend with no cache dir reports success on a destructive operation.
 func TestBackendClearFilesRejectsEmptyCacheDir(t *testing.T) {
 	t.Parallel()
 
@@ -227,27 +218,17 @@ func assertLockFailsFast(t *testing.T, b *Backend) {
 	}
 }
 
-// TestBackendClassifiesItsOwnFailures pins that this backend now speaks the
-// same cache-backend classes the S3 one does. Before it, a filesystem failure
-// came back bare and exited 1, while the S3 backend against a store it could
-// not reach exited 4 - one operator mistake, two exit codes, depending on a
-// backend choice a CI branching on the exit code does not know about.
-//
-// The rows are the two halves of the split and the two verdicts that must not
-// move. Contention is the sharpest of those: it is the one class this backend
-// always had, and a classifier that swallowed it would turn "another process
-// holds the cache" into "the cache is unusable", which is exactly the wrong
-// advice.
+// TestBackendClassifiesItsOwnFailures pins the local backend's cache classes:
+// a permission failure is unusable, any other failure unavailable, and an
+// empty cache dir and contention keep their own verdicts.
 func TestBackendClassifiesItsOwnFailures(t *testing.T) {
 	t.Parallel()
 
 	t.Run("permission failure is unusable", func(t *testing.T) {
 		t.Parallel()
 		dir := readOnlyDir(t)
-		// Lock, not Open: os.MkdirAll returns nil for a directory that already
-		// exists whatever its mode, so Open on a read-only cache directory
-		// succeeds and the permission failure lands where the lock file is
-		// created - which is exactly where a real run meets it.
+		// Lock, not Open: MkdirAll succeeds on an existing read-only directory,
+		// so the failure lands where the lock file is created, as in a real run.
 		_, _, err := New(dir).Lock(context.Background())
 		if !errors.Is(err, helpers.ErrCacheBackendUnusable) {
 			t.Fatalf("Lock on a read-only cache dir = %v, want errors.Is helpers.ErrCacheBackendUnusable", err)
@@ -283,11 +264,9 @@ func TestBackendClassifiesItsOwnFailures(t *testing.T) {
 	t.Run("contention keeps its own class", testContentionKeepsItsOwnClass)
 }
 
-// testContentionKeepsItsOwnClass is the row above, split out to keep its
-// parent within the cyclomatic-complexity budget. It is the sharpest of the
-// four: contention is the one class this backend always spoke, and a
-// classifier that swallowed it would turn "another process holds the cache"
-// into "the cache is unusable", which is the wrong advice entirely.
+// testContentionKeepsItsOwnClass pins that contention stays
+// ErrAnotherInstanceIsRunning: reclassified, "another process holds the
+// cache" would become "the cache is unusable", the wrong advice.
 func testContentionKeepsItsOwnClass(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -335,11 +314,9 @@ func readOnlyDir(t *testing.T) string {
 	return dir
 }
 
-// TestBackendRoundTripsRoleBucketsAndRolesPath drives the role state through
-// the local backend's public surface end to end: SaveStore then LoadStore
-// keeps an installed role and a role pin, and RecordProject then
-// LoadProjectRegistry keeps the roles path the run recorded, resolved against
-// the project directory as the collections path is.
+// TestBackendRoundTripsRoleBucketsAndRolesPath pins that SaveStore/LoadStore
+// keep an installed role and a role pin, and that RecordProject keeps a roles
+// path resolved against the project directory.
 func TestBackendRoundTripsRoleBucketsAndRolesPath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

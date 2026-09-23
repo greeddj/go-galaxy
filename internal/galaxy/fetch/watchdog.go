@@ -11,24 +11,17 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// watchdogTransport wraps a base http.RoundTripper so that every response
-// body read through it is guarded by a per-read inactivity timer: once idle
-// elapses between two body reads (or before the first one), the stuck read
-// is unblocked instead of hanging indefinitely. It stands in for a
-// whole-response http.Client.Timeout, which would bound total transfer time
-// rather than progress and so truncate large-but-healthy artifact downloads.
+// watchdogTransport fails a response body read that makes no progress for
+// idle. It replaces an http.Client.Timeout, which would cap total transfer time
+// and so truncate a large but healthy artifact download.
 type watchdogTransport struct {
 	base http.RoundTripper
 	idle time.Duration
 }
 
-// RoundTrip performs the request through the base transport on a
-// cancelable context derived from the request's own context, then - on
-// success - wraps the response body so every subsequent Read is guarded by
-// the watchdog. The round trip itself runs against the derived context
-// (not the caller's) because that is the context the watchdog timer
-// cancels to unblock a stalled Read; net/http's response body reads honor
-// the context the round trip was made with.
+// RoundTrip runs the request on a cancelable context derived from the
+// caller's and wraps the body: net/http body reads honor the round trip's
+// context, and canceling that one is how the watchdog unblocks a stalled Read.
 func (t watchdogTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	wctx, cancel := context.WithCancel(req.Context())
 	resp, err := t.base.RoundTrip(req.Clone(wctx))
@@ -40,28 +33,9 @@ func (t watchdogTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return resp, nil
 }
 
-// watchdogBody wraps a response body so that no single Read call - nor the
-// gap before the first one - may block for longer than idle without
-// making progress. It distinguishes a watchdog-triggered stall from a
-// cancellation of the caller's own (parent) context: only the former is
-// reported as helpers.ErrReadStalled, since a caller cancellation must
-// surface as context.Canceled for callers that branch on it. This is
-// stronger than it sounds: the stall error renders its cause with %v rather
-// than wrapping it with %w, so context.Canceled is reachable through
-// errors.Is on the returned error only when the caller genuinely canceled
-// its own context - never as a side effect of describing a watchdog stall.
-//
-// watchdogBody is not safe for concurrent use. Like a bare io.Reader, Read
-// must not be called concurrently with itself; and unlike a raw
-// http.Response.Body - which conventionally allows a Close from another
-// goroutine to abort a blocked Read - it must also not be Closed concurrently
-// with an in-flight Read, because both touch the lazily-armed timer without
-// synchronization. This is deliberate: a mutex on every read would tax the
-// download hot path to defend a pattern no caller uses. The fetch client's
-// callers read a body to completion and then Close it, aborting a stalled
-// transfer via context cancellation rather than a concurrent Close, so the
-// constraint holds; a stalled read is unblocked by the watchdog canceling the
-// request context, not by Close.
+// watchdogBody fails a Read that blocks for idle with no progress. Unlike a raw
+// response body it must not be Closed during a Read, as the timer is
+// unsynchronized: callers abort by canceling the context, never by Close.
 type watchdogBody struct {
 	body io.ReadCloser
 	//nolint:containedctx // parentCtx is the caller's original request
@@ -78,26 +52,15 @@ type watchdogBody struct {
 	fired atomic.Bool
 }
 
-// newWatchdogBody constructs a watchdogBody. The timer is armed lazily by
-// the first Read, not here, so a body that is never read - a HEAD response,
-// or a caller that discards the body outright - never pays for a timer it
-// does not need.
+// newWatchdogBody constructs a watchdogBody; the timer is armed lazily by the
+// first Read, so a body that is never read costs no timer.
 func newWatchdogBody(parentCtx context.Context, body io.ReadCloser, cancel context.CancelFunc, idle time.Duration) *watchdogBody {
 	return &watchdogBody{body: body, parentCtx: parentCtx, cancel: cancel, idle: idle}
 }
 
-// Read arms (or rearms) the inactivity timer, performs the underlying read
-// - which may block until data arrives, the timer fires, or the request
-// context ends - and then stops the timer before returning. A read that
-// fails while the watchdog has fired and the caller's own context is still
-// live is reported as helpers.ErrReadStalled, with the underlying error
-// (context.Canceled, raised by the watchdog canceling its own derived
-// context to unblock the stuck read) rendered into the message rather than
-// wrapped, so it stays diagnosable without being reachable through
-// errors.Is - see helpers.ErrReadStalled's doc comment for why. Any other
-// error, including one caused by the caller canceling its own context,
-// propagates unchanged. Read must not be called concurrently with itself or
-// with Close (see the watchdogBody type doc for the concurrency contract).
+// Read arms the idle timer around one underlying read. A failure after the
+// watchdog fired, with the caller's context live, becomes ErrReadStalled (cause
+// rendered by %v); any other error, a caller's own cancel included, passes as is.
 func (b *watchdogBody) Read(p []byte) (int, error) {
 	if b.timer == nil {
 		b.timer = time.AfterFunc(b.idle, b.onStall)
@@ -113,11 +76,8 @@ func (b *watchdogBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Close stops the timer, cancels the derived context, and closes the
-// underlying body. Both the cancel and the timer Stop are idempotent, so a
-// Close following an already-stalled or already-canceled body is safe. Close
-// must not be called concurrently with an in-flight Read (see the
-// watchdogBody type doc for the concurrency contract).
+// Close stops the timer, cancels the derived context and closes the body; it is
+// safe after a stall or cancel, but must not race an in-flight Read.
 func (b *watchdogBody) Close() error {
 	if b.timer != nil {
 		b.timer.Stop()
@@ -126,10 +86,8 @@ func (b *watchdogBody) Close() error {
 	return b.body.Close()
 }
 
-// onStall runs on the timer's own goroutine when idle elapses with no Read
-// progress. It records that the watchdog - rather than the caller - is
-// responsible for what happens next, then cancels the round trip's derived
-// context to unblock whatever Read is currently in flight.
+// onStall runs on the timer goroutine: it records that the watchdog, not the
+// caller, fired, then cancels the derived context to unblock the stuck Read.
 func (b *watchdogBody) onStall() {
 	b.fired.Store(true)
 	b.cancel()

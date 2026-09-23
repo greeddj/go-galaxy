@@ -6,14 +6,9 @@ import "testing"
 // prove the stored copy does not alias it.
 const mutatedMarker = "mutated"
 
-// These tests read back stored state via direct field access on the Store
-// (white-box, same package) rather than through a getter. Getters may
-// themselves alias on the way out (a separate concern tracked elsewhere),
-// which would make a getter-based read-back ambiguous about which side -
-// input or output - a passing or failing assertion actually proves. Reading
-// the internal field directly isolates the claim under test: that each
-// Set* clones the caller's slice/map on the way in, so mutating the
-// caller's original after the call cannot reach the stored copy.
+// These tests read stored state through the Store's fields, not its getters,
+// so each proves only that a Set* clones the caller's slice or map on the way
+// in; a getter that aliased on the way out cannot mask or fake the result.
 
 // TestSetGraphClonesInput proves SetGraph does not alias the caller's deps
 // slice.
@@ -71,10 +66,9 @@ func TestSetAPICacheClonesBody(t *testing.T) {
 	}
 }
 
-// TestSetRequirementsClonesSignatures proves SetRequirements does not alias
-// each RequirementSpec.Signatures slice: maps.Copy alone only shallow-copies
-// the map, leaving each entry's Signatures pointing at the caller's backing
-// array.
+// TestSetRequirementsClonesSignatures pins that SetRequirements deep-copies each
+// RequirementSpec.Signatures slice, which a shallow maps.Copy of the spec map
+// would leave aliased to the caller's backing array.
 func TestSetRequirementsClonesSignatures(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -114,11 +108,9 @@ func TestGetInstalledClonesDepsOnRead(t *testing.T) {
 	}
 }
 
-// TestInstalledArtifactSHAByKeyOmitsEmptySHA proves InstalledArtifactSHAByKey
-// omits any installed key whose ArtifactSHA256 is empty: an empty SHA is
-// not a real content-addressable identifier, so keeping it in the returned
-// map would make the extracted-store sweep treat "" as something to keep
-// forever.
+// TestInstalledArtifactSHAByKeyOmitsEmptySHA pins that an installed entry with
+// an empty ArtifactSHA256 is left out, so the extracted-store sweep never
+// treats "" as a digest to keep.
 func TestInstalledArtifactSHAByKeyOmitsEmptySHA(t *testing.T) {
 	t.Parallel()
 	st := New()

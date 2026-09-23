@@ -32,9 +32,8 @@ func loadRequirements(path, defaultSource string) ([]collection, requirements.Fi
 		}
 		if req.IsURL() {
 			// The locator carries no sha256 yet; expandURLRoots pins it.
-			// Constraint holds the version the entry asserted ("" for none)
-			// so the requirements signature and the lockfile check both see
-			// what the file asked for.
+			// Constraint holds the asserted version ("" for none) so the
+			// requirements signature and lockfile check see what was asked.
 			collections = append(collections, collection{
 				Source:     urlsource.Locator{URL: req.Source}.String(),
 				Constraint: req.Version,

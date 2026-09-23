@@ -15,10 +15,8 @@ const replacement = "\ufffd"
 // errors.New call at the assertion site (err113).
 var errUnderlyingWrite = errors.New("boom")
 
-// TestCleanTable pins Clean's exact output, codepoint by codepoint, for
-// every boundary this function draws. Every row also asserts
-// utf8.ValidString on the result, since Clean must never produce invalid
-// UTF-8 regardless of what it was given.
+// TestCleanTable pins Clean's output at every boundary it draws, and that the
+// result is always valid UTF-8 whatever the input.
 func TestCleanTable(t *testing.T) {
 	t.Parallel()
 
@@ -46,11 +44,8 @@ func TestCleanTable(t *testing.T) {
 		{"raw byte 0x80 (invalid UTF-8)", "a\x80b", "a" + replacement + "b"},
 		{"truncated 0xc2 lead byte at end of string", "a\xc2", "a" + replacement},
 		{"U+00A0 NBSP kept (just above the C1 boundary)", "a\u00a0b", "a\u00a0b"},
-		// U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR are replaced,
-		// not kept, despite sitting outside every control range above and
-		// resembling the bidi/format group Clean's own doc comment keeps: see
-		// that doc comment for why the directionality justification does not
-		// reach these two.
+		// U+2028 and U+2029 are replaced though they sit outside every control
+		// range, unlike the bidi controls Clean keeps: both terminate lines.
 		{"U+2028 LINE SEPARATOR replaced", "a\u2028b", "a" + replacement + "b"},
 		{"U+2029 PARAGRAPH SEPARATOR replaced", "a\u2029b", "a" + replacement + "b"},
 		{"legitimately encoded U+FFFD passes through unchanged", "a" + replacement + "b", "a" + replacement + "b"},
@@ -73,10 +68,8 @@ func TestCleanTable(t *testing.T) {
 	}
 }
 
-// TestIsControlTable pins isControl's exact boundary, independent of Clean:
-// every C0 character, DEL, and every C1 character report true, while a
-// character just outside each boundary (and the two Unicode line
-// terminators isLineTerminator covers instead) report false.
+// TestIsControlTable pins isControl's exact boundary: C0, DEL and C1 report
+// true, the rune just past each boundary and U+2028/U+2029 report false.
 func TestIsControlTable(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -164,17 +157,9 @@ func TestIsUnsafeRuneTable(t *testing.T) {
 	}
 }
 
-// TestCleanRawC1ByteVersusEncodedC1Rune documents why the table above
-// carries both a raw-byte C1 row and a validly-encoded C1 row for the
-// same codepoint, rather than treating one as redundant with the other: a
-// raw byte in the C1 range (e.g. 0x9b) is not valid UTF-8 on its own, so
-// strings.Map already replaces it with U+FFFD while normalizing invalid
-// input, independent of Clean's own C1 range check in sanitizeRune. Only
-// a legitimately UTF-8-encoded C1 character (U+009B, encoded as the two
-// bytes 0xC2 0x9B) reaches sanitizeRune as a valid, unchanged rune and
-// exercises the C1 range arm itself - the raw byte never does, so the two
-// rows are not redundant even though both produce the same replacement
-// character.
+// TestCleanRawC1ByteVersusEncodedC1Rune pins both C1 spellings: a raw 0x9b is
+// replaced by strings.Map as invalid UTF-8, and only the encoded U+009B reaches
+// sanitizeRune's C1 arm, so neither TestCleanTable row is redundant.
 func TestCleanRawC1ByteVersusEncodedC1Rune(t *testing.T) {
 	t.Parallel()
 	raw := Clean("\x9b")
@@ -184,12 +169,8 @@ func TestCleanRawC1ByteVersusEncodedC1Rune(t *testing.T) {
 	}
 }
 
-// TestCleanReturnsInputWhenNothingToRemove asserts Clean returns the input
-// value unchanged when nothing needs sanitizing. It claims only that much:
-// a Go string comparison compares contents, so a copy would satisfy it too.
-// The stronger property - that no copy is made at all - is not documented
-// by strings.Map and is pinned separately by
-// TestCleanDoesNotAllocateForCleanInput, which is why that test exists.
+// TestCleanReturnsInputWhenNothingToRemove pins that clean input comes back
+// equal; that no copy is made is TestCleanDoesNotAllocateForCleanInput's job.
 func TestCleanReturnsInputWhenNothingToRemove(t *testing.T) {
 	t.Parallel()
 	for _, in := range []string{"hello world", "", "\u2502\u251c", "line one\nline two\ttabbed"} {
@@ -199,20 +180,15 @@ func TestCleanReturnsInputWhenNothingToRemove(t *testing.T) {
 	}
 }
 
-// cleanSink prevents the compiler from eliding the Clean call inside
-// TestCleanDoesNotAllocateForCleanInput's testing.AllocsPerRun closure. It
-// must be a package-level variable for that elision-prevention to work.
+// cleanSink keeps the compiler from eliding the Clean call inside
+// TestCleanDoesNotAllocateForCleanInput.
 //
 //nolint:gochecknoglobals // required by testing.AllocsPerRun's own pattern: a local sink can be optimized away.
 var cleanSink Text
 
-// TestCleanDoesNotAllocateForCleanInput pins the zero-allocation budget
-// for input that needs no sanitizing: strings.Map's lazy builder must
-// never be triggered when every rune already maps to itself.
-//
-// testing.AllocsPerRun panics if called while the test tree is running in
-// parallel (it needs GOMAXPROCS pinned to 1 internally), so neither this
-// test nor its subtests call t.Parallel.
+// TestCleanDoesNotAllocateForCleanInput pins zero allocations for input that
+// needs no replacing. testing.AllocsPerRun panics in a parallel test, so
+// neither this test nor its subtests call t.Parallel.
 func TestCleanDoesNotAllocateForCleanInput(t *testing.T) {
 	inputs := []struct {
 		name string
@@ -238,10 +214,8 @@ func TestCleanDoesNotAllocateForCleanInput(t *testing.T) {
 	}
 }
 
-// TestNewWriterSanitizesEachWrite proves NewWriter sanitizes a hostile
-// payload before it reaches the underlying writer, and (as its positive
-// control on the same fixture shape) that a benign payload passes through
-// byte-for-byte.
+// TestNewWriterSanitizesEachWrite pins that a hostile payload is sanitized
+// before the underlying writer and a benign one passes through byte for byte.
 func TestNewWriterSanitizesEachWrite(t *testing.T) {
 	t.Parallel()
 
@@ -281,14 +255,9 @@ func TestNewWriterSanitizesEachWrite(t *testing.T) {
 	})
 }
 
-// TestNewWriterCannotSmuggleAControlAcrossWrites proves splitting a
-// legitimately-encoded C1 character's two bytes across two separate
-// Write calls cannot let the raw 0x9b byte reach the underlying writer:
-// each half independently decodes to an invalid sequence and is
-// replaced. Its positive control, on the identical two bytes, is the
-// single-Write case: one Write carrying both bytes together decodes the
-// character correctly and replaces it as one rune, proving the split
-// (not the bytes themselves) is what changes the shape of the output.
+// TestNewWriterCannotSmuggleAControlAcrossWrites pins that a C1 rune's two
+// bytes split across Writes become two U+FFFD and never a raw 0x9b, while the
+// same bytes in one Write become a single U+FFFD.
 func TestNewWriterCannotSmuggleAControlAcrossWrites(t *testing.T) {
 	t.Parallel()
 	leadByte := []byte{0xc2}

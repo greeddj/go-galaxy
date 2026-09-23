@@ -1,21 +1,8 @@
 package collections
 
-// This file covers the S3-specific arm of prepareWithRecovery's corruption
-// recovery: a cache-resident sha256 mismatch surfaced by prepareInstall
-// itself - which is how the S3 artifact store reports a corrupt object on
-// read, since it verifies sha256 at Fetch time, unlike the local store - is
-// recovered by evicting the cached artifact and refetching from the origin,
-// exactly once.
-//
-// Standing up the real S3 backend end-to-end would require duplicating the
-// fakeS3 HTTP test double that lives, unexported, in internal/cache/s3's own
-// _test.go files; those symbols are not part of that package's compiled
-// output, so they cannot be imported from here. Instead this test uses a
-// stub cacheManager.ArtifactStore that wraps a real local.Artifacts - so
-// Has/TempFile/Commit/Delete all behave exactly like a real cache - and
-// overrides only Fetch, to reproduce on its first call the wrapped
-// helpers.ErrSHA256Mismatch the S3 backend's verifyArtifactSHA returns on
-// a corrupt read.
+// The S3 store reports a corrupt object as a sha256 mismatch from Fetch, which
+// prepareWithRecovery evicts and refetches once. The S3 fake is unexported in
+// internal/cache/s3, so a stub store stands in for it here.
 
 import (
 	"context"
@@ -35,15 +22,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// fetchOnceMismatchArtifacts wraps a real local.Artifacts store, standing in
-// for the S3 backend's ArtifactStore: it delegates Has, TempFile, and Commit
-// straight to the real store (so a forced refetch after eviction downloads
-// and commits exactly like a real cache would), but its own Fetch fails with
-// a wrapped helpers.ErrSHA256Mismatch on its first call - reproducing the S3
-// backend's read-time sha256 check failing against a corrupt object -
-// regardless of what is actually on disk. Delete is counted (rather than
-// merely delegated) so a test can assert the recovery arm evicts exactly
-// once.
+// fetchOnceMismatchArtifacts wraps a real local.Artifacts as a stand-in for
+// the S3 store: its first Fetch fails with helpers.ErrSHA256Mismatch like a
+// corrupt read, and Delete is counted so a test can assert a single eviction.
 type fetchOnceMismatchArtifacts struct {
 	*local.Artifacts
 
@@ -68,11 +49,9 @@ func (a *fetchOnceMismatchArtifacts) Delete(ctx context.Context, key string) err
 	return a.Artifacts.Delete(ctx, key)
 }
 
-// TestInstallCollectionS3CacheFetchMismatchEvictsAndRefetches is the
-// load-bearing proof that prepareWithRecovery's prepare-error arm - added for
-// the S3 backend's read-time sha256 check - evicts a cache-resident artifact
-// that fails integrity verification on Fetch and refetches it from the origin
-// exactly once, healing the artifact cache and completing the install.
+// TestInstallCollectionS3CacheFetchMismatchEvictsAndRefetches pins that a
+// cache-resident artifact failing its sha256 check on Fetch is evicted and
+// refetched from the origin exactly once, healing the cache and the install.
 func TestInstallCollectionS3CacheFetchMismatchEvictsAndRefetches(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -124,15 +103,9 @@ func TestInstallCollectionS3CacheFetchMismatchEvictsAndRefetches(t *testing.T) {
 	assertFileContent(t, filepath.Join(installPathDir, "README.md"), "# acme.widgets\n")
 	assertFileSHA256(t, artifactPath, version.SHA256)
 
-	// This pins "a hit only when Fetch returns nil": the stubbed Fetch above
-	// fails on its very first call, before any bytes are ever served, so this
-	// acquisition must count zero hits and exactly the one miss from the
-	// forced refetch. This is the deliberate accounting asymmetry against
-	// TestInstallCollectionCacheHitExtractFailureCountsOneHitAndOneMiss: there,
-	// the cache-resident tarball is actually served (Fetch succeeds) and only
-	// fails later, at extraction, so that scenario counts 1 hit + 1 miss. Here,
-	// the read-time integrity failure means no bytes were ever served at all,
-	// so it counts 0 hits + 1 miss instead.
+	// A hit counts only when Fetch returns nil, so a read-time failure is 0 hits
+	// and 1 miss, unlike the extraction failure pinned by
+	// TestInstallCollectionCacheHitExtractFailureCountsOneHitAndOneMiss.
 	totals := runtime.Metrics.Totals()
 	if totals.CacheHits != 0 {
 		t.Errorf("CacheHits = %d, want 0 (Fetch failed before serving any bytes, so it can never register a hit)", totals.CacheHits)

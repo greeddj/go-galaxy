@@ -19,12 +19,9 @@ import (
 // budget like any other, which is why the plan reserves them.
 const documentsPerArchive = 2
 
-// Build turns one candidate into a tar.gz artifact written into the file
-// tempFile supplies. The tree is planned first - rows decided, every blob
-// hashed, the archive budgets charged - so FILES.json and MANIFEST.json can
-// lead the archive as every reader of these artifacts expects, then
-// written behind them. The result's Cleanup removes the file and is
-// idempotent; on any error the file is already gone.
+// Build writes one candidate as a tar.gz into the file tempFile supplies,
+// planning and hashing the tree first so MANIFEST.json and FILES.json lead the
+// archive. Built.Cleanup is idempotent; on any error the file is already gone.
 func Build(ctx context.Context, src Source, cand Candidate, tempFile TempFileFunc) (Built, error) {
 	if tempFile == nil {
 		return Built{}, fmt.Errorf("%w: no temp file supplier", helpers.ErrConfigIsNil)
@@ -43,10 +40,8 @@ func Build(ctx context.Context, src Source, cand Candidate, tempFile TempFileFun
 	if err != nil {
 		return Built{}, fmt.Errorf("encoding %s: %w", helpers.ManifestFileName, err)
 	}
-	// The chain check refuses a FILES.json over helpers.FilesManifestMaxBytes;
-	// measured here, before a byte is written, so a tree inside every
-	// per-entry cap but listing past this one fails as the budget it broke
-	// rather than as a self-check defect of the builder.
+	// Measured before writing so a listing past FilesManifestMaxBytes fails as
+	// the budget it broke rather than as a self-check defect of the builder.
 	if int64(len(filesJSON)) > helpers.FilesManifestMaxBytes {
 		return Built{}, fmt.Errorf("%w: %s is %d bytes, the limit is %d",
 			helpers.ErrArchiveEntryIsTooLarge, helpers.FilesManifestFileName, len(filesJSON), helpers.FilesManifestMaxBytes)
@@ -107,11 +102,9 @@ func listingRows(rows []treearchive.Row) []filesRow {
 	return out
 }
 
-// selfCheck reads the artifact back the way the pipeline will: the manifest
-// must be found and be the bytes just written, and the chain must verify.
-// Any failure is this package's defect. The cause is rendered with %v, not
-// %w, so a chain refusal never classifies as an integrity failure of the
-// remote's bytes - see helpers.ErrGitArtifactSelfCheck.
+// selfCheck reads the artifact back as the pipeline will and verifies the
+// chain. A failure is this package's defect, so the cause is %v, never %w:
+// it must not classify as an integrity failure of the remote's bytes.
 func selfCheck(ctx context.Context, artifactPath string, manifestJSON []byte) error {
 	readBack, err := manifest.ReadFromTarGz(ctx, artifactPath)
 	if err != nil {

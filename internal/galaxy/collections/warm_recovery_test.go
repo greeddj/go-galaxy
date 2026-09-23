@@ -1,11 +1,8 @@
 package collections
 
-// This file covers warmOne's corruption-recovery behavior: routing warm
-// through the same prepareWithRecovery helper the install path uses means a
-// cached tarball that has rotted or been tampered with - so its bytes no
-// longer hash to the sha its sidecar (or a lockfile pin) claims - is evicted
-// and refetched exactly once, and that an offline run instead surfaces the
-// mismatch without evicting the only local copy.
+// These tests pin warmOne's corruption recovery through prepareWithRecovery:
+// a cached tarball not matching its sidecar sha is evicted and refetched once,
+// and offline the mismatch surfaces without evicting the only local copy.
 
 import (
 	"context"
@@ -20,11 +17,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestWarmOneEvictsAndRefetchesCorruptCacheHit is the load-bearing proof that
-// warmOne, via prepareWithRecovery, evicts and refetches a cache-hit artifact
-// whose bytes do not hash to the sha its sidecar names - the CAS-poisoning
-// scenario Ensure's guard now rejects - exactly once, healing both the
-// artifact cache and the content-addressable extracted store.
+// TestWarmOneEvictsAndRefetchesCorruptCacheHit pins that a cache hit whose
+// bytes do not hash to its sidecar sha is refetched exactly once, healing
+// both the artifact cache and the extracted store.
 func TestWarmOneEvictsAndRefetchesCorruptCacheHit(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -39,9 +34,8 @@ func TestWarmOneEvictsAndRefetchesCorruptCacheHit(t *testing.T) {
 
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}
 	artifactPath := filepath.Join(cacheDir, artifactKey(col))
-	// Not the bytes that produced version.SHA256: this is what makes the
-	// cached tarball rotted/tampered even though its sidecar (below) still
-	// claims the real sha.
+	// Bytes that do not hash to version.SHA256, which the sidecar below still
+	// claims.
 	corruptBytes := []byte("not a gzip stream, despite what the sidecar claims")
 	mustWriteFile(t, artifactPath, corruptBytes)
 	sidecarPath := artifactPath + helpers.ArtifactSHASidecarSuffix
@@ -58,9 +52,7 @@ func TestWarmOneEvictsAndRefetchesCorruptCacheHit(t *testing.T) {
 	}
 	deps := newTestInstallDepsWithExtractStore(t, cfg)
 
-	// nil meta and a zero handoff: driving warmOne directly stands in for a
-	// key the run's prefetcher never scheduled, which is exactly this
-	// scenario's shape - a cache hit is never a prefetch task.
+	// No prefetch handoff: a cache hit is never a prefetch task.
 	if err := warmOne(context.Background(), deps, col, nil, downloadResult{}); err != nil {
 		t.Fatalf("expected the corrupt cache hit to recover via a single refetch, got %v", err)
 	}
@@ -73,11 +65,9 @@ func TestWarmOneEvictsAndRefetchesCorruptCacheHit(t *testing.T) {
 	assertFileContent(t, sidecarPath, version.SHA256)
 }
 
-// TestWarmOneOfflineCorruptSurfacesMismatch proves that offline, a cache-hit
-// artifact whose bytes do not hash to its sidecar's claimed sha - the same
-// poisoning scenario as above - surfaces a helpers.ErrSHA256Mismatch through
-// warmOne's guard classification without evicting the only local copy, since
-// there is no way to refetch it.
+// TestWarmOneOfflineCorruptSurfacesMismatch pins that offline, a corrupt
+// cache hit fails with helpers.ErrSHA256Mismatch and leaves the tarball and
+// its sidecar in place, since nothing could refetch them.
 func TestWarmOneOfflineCorruptSurfacesMismatch(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

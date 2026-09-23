@@ -9,10 +9,8 @@ import (
 )
 
 // constraintCase is one row driven through constraintSatisfied by
-// TestConstraintSemanticsV3. The case table is built by several small
-// per-topic functions rather than one large literal so that no single
-// function is long enough to trip funlen; TestConstraintSemanticsV3 itself
-// just concatenates them and runs the shared subtest loop.
+// TestConstraintSemanticsV3, whose table is split into per-topic functions to
+// stay under funlen.
 type constraintCase struct {
 	name       string
 	constraint string
@@ -128,10 +126,9 @@ func prereleaseCases() []constraintCase {
 	}
 }
 
-// exactMatchOperatorCases covers ansible's "==" exact-match operator, now
-// rewritten to v3's "=" by helpers.NormalizeConstraint, including a
-// clause-level rewrite proof (the "==" clause is not required to be first)
-// and a "==" prerelease.
+// exactMatchOperatorCases covers ansible's "==" operator, rewritten per clause
+// to v3's "=" by helpers.NormalizeConstraint, including a non-first "=="
+// clause and a "==" prerelease.
 func exactMatchOperatorCases() []constraintCase {
 	return []constraintCase{
 		{name: "== exact match", constraint: "==1.2.3", version: "1.2.3", wantMatch: true},
@@ -148,11 +145,9 @@ func exactMatchOperatorCases() []constraintCase {
 	}
 }
 
-// overNormalizationGuardCases covers the malformed forms that must remain
-// parse errors: "===" is not ansible's exact-match operator and must not be
-// coerced to "="; ">==" does not start with "==" at all, so it is never
-// touched by the rewrite and still fails as an unrecognized operator
-// combination.
+// overNormalizationGuardCases covers malformed forms that must stay parse
+// errors: "===" is not ansible's operator and must not be coerced to "=", and
+// ">==" is never touched by the rewrite.
 func overNormalizationGuardCases() []constraintCase {
 	return []constraintCase{
 		{name: "=== is not rewritten and stays a parse error", constraint: "===1.2.3", version: "1.2.3", wantErr: true},
@@ -160,11 +155,9 @@ func overNormalizationGuardCases() []constraintCase {
 	}
 }
 
-// TestConstraintSemanticsV3 pins constraintSatisfied's exact behavior on
-// Masterminds/semver v3, covering every operator form ansible-galaxy
-// requirement files can express. These rows are the ground truth for v3:
-// they were verified empirically against the vendored library before being
-// written here, not derived from v1 behavior or wishful thinking.
+// TestConstraintSemanticsV3 pins constraintSatisfied on Masterminds/semver v3
+// for every operator form a requirements file can express, as observed
+// against the vendored library.
 func TestConstraintSemanticsV3(t *testing.T) {
 	t.Parallel()
 	sections := [][]constraintCase{
@@ -207,11 +200,9 @@ func TestConstraintSemanticsV3(t *testing.T) {
 	}
 }
 
-// TestVersionOrderingV3 pins isNewerVersion's ordering behavior on
-// Masterminds/semver v3: numeric precedence, prerelease-before-release
-// ordering, prerelease identifier comparison, build metadata being ignored for
-// ordering purposes, and a parse failure being reported as an error rather
-// than a silent false.
+// TestVersionOrderingV3 pins isNewerVersion on Masterminds/semver v3: semver
+// precedence with prereleases before their release, build metadata ignored,
+// and an unparseable version reported as an error rather than false.
 func TestVersionOrderingV3(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -256,18 +247,9 @@ func TestVersionOrderingV3(t *testing.T) {
 	}
 }
 
-// TestExactVersionFromConstraints pins exactVersionFromConstraints's
-// exact-version detection, including the "==" -> "=" normalization's
-// interaction with the function's own single-"=" CutPrefix strip: bare,
-// "=", and "==" forms of the same version must all converge on the identical
-// exact string, a repeated identical "==" constraint is not a conflict, a
-// genuinely conflicting pair of exact versions surfaces
-// helpers.ErrConflictingExactVersions, a mixed exact-plus-exclusion
-// constraint is correctly reported as non-exact rather than mis-parsed, and
-// "===" (never rewritten) still fails as a malformed version/constraint. It
-// also covers the library-based classification's x-range and wildcard
-// handling ("1.x", "1.2.x", uppercase "1.X", and ">=1.0.0"), which a
-// hand-maintained character guard could not recognize as non-exact.
+// TestExactVersionFromConstraints pins exact-pin detection: bare, "=" and "=="
+// converge on one version, two different pins are ErrConflictingExactVersions,
+// and ranges, x-ranges and exact-plus-exclusion are non-exact.
 func TestExactVersionFromConstraints(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -330,17 +312,9 @@ func TestExactVersionFromConstraints(t *testing.T) {
 	}
 }
 
-// TestOverlongConstraintIsRejectedAsInvalid pins how this package classifies
-// a constraint string the semver library declines to parse at all: as an
-// invalid constraint that fails the call, never as a range that merely
-// contributes no exact pin. Where the library draws that line is the
-// library's own property and is deliberately not asserted here; what is
-// pinned is that exactVersionFromConstraints surfaces such a refusal as an
-// error instead of swallowing it and reporting "no exact version".
-//
-// The positive control runs the identical call on a single clause of the
-// same shape, so the refusal cannot be mistaken for a fixture that never
-// reached the classification in the first place.
+// TestOverlongConstraintIsRejectedAsInvalid pins that a constraint the semver
+// library refuses fails exactVersionFromConstraints instead of reading as a
+// range with no exact pin; where the library draws that line is not pinned.
 func TestOverlongConstraintIsRejectedAsInvalid(t *testing.T) {
 	t.Parallel()
 	// Eighty ">=1.0.0," clauses, less the trailing comma, make a 639-byte
@@ -349,10 +323,6 @@ func TestOverlongConstraintIsRejectedAsInvalid(t *testing.T) {
 	const repeats = 80
 	overlong := strings.TrimSuffix(strings.Repeat(">=1.0.0,", repeats), ",")
 
-	// Killing mutation: dropping repeats to 10 leaves a 79-byte constraint
-	// the library parses happily, which contributes no pin and no error, so
-	// the assertion below fails with:
-	//   exactVersionFromConstraints(<79-byte constraint>) expected an error, got version="" exact=false
 	version, exact, err := exactVersionFromConstraints([]string{overlong})
 	if err == nil {
 		t.Fatalf("exactVersionFromConstraints(<%d-byte constraint>) expected an error, got version=%q exact=%v",

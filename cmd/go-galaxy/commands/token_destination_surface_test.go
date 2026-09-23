@@ -11,24 +11,15 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// writeCWDAnsibleConfig neutralizes ansible.cfg discovery exactly as
-// neutralizeAnsibleDiscovery does ($ANSIBLE_CONFIG pointed at a path that
-// does not exist, $HOME redirected to an empty temp directory), then adds
-// what that helper deliberately does not: a real ./ansible.cfg, written into
-// a 0o755 (not world-writable, so cwdCandidate keeps it as a discovery
-// candidate) directory this test chdirs into. Real discovery therefore finds
-// this file through the same ./ansible.cfg candidate a checked-out
-// repository would use, rather than through the explicit --ansible-config
-// path config_surface_test.go's other rows exercise.
+// writeCWDAnsibleConfig neutralizes discovery like neutralizeAnsibleDiscovery,
+// then writes a real ./ansible.cfg into a 0o755 directory it chdirs into, so
+// discovery finds it through the same candidate a checked-out repository uses.
 func writeCWDAnsibleConfig(t *testing.T, body string) {
 	t.Helper()
 	dir := t.TempDir()
 	// #nosec G302 -- the permission is the fixture: cwdCandidate must accept
 	// this directory as a discovery source, which requires it not be
-	// world-writable (t.TempDir defaults to 0o700 on most systems, already
-	// satisfying that, but the mode is pinned explicitly here since it is
-	// what this test's discovery depends on rather than an accident of the
-	// test harness).
+	// world-writable, so the mode is pinned rather than left to t.TempDir.
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatalf("chmod cwd: %v", err)
 	}
@@ -40,19 +31,14 @@ func writeCWDAnsibleConfig(t *testing.T, body string) {
 	}
 }
 
-// bareGalaxyServerAnsibleCfg is the simplest leaking shape the token
-// destination pairing rule refuses: no server_list, no [galaxy_server.<id>]
-// section, no id for an operator to guess - just a bare [galaxy] server line
-// naming an address, exactly what a repository's own ansible.cfg can commit
-// with no involvement from whoever later runs a CI job against it.
+// bareGalaxyServerAnsibleCfg is the simplest shape the token pairing rule
+// refuses: a bare [galaxy] server line a repository's own ansible.cfg can
+// commit, with no server_list or section id for an operator to override.
 const bareGalaxyServerAnsibleCfg = "[galaxy]\nserver = https://corp.example\n"
 
-// TestTokenDestinationEndToEnd is the one place real ansible.cfg discovery,
-// full config resolution, and the value that would reach the wire are all
-// asserted together - the shape that would have caught the credential
-// redirection config.checkTokenPairing now refuses, since
-// config_surface_test.go's own rows never resolve a real cwd ansible.cfg
-// against a real token and inspect what serverAuths does with it.
+// TestTokenDestinationEndToEnd pins, through real cwd discovery and full config
+// resolution, that a file-sourced server with GO_GALAXY_TOKEN is refused and
+// that the documented remedy delivers the token to that origin via serverAuths.
 func TestTokenDestinationEndToEnd(t *testing.T) {
 	t.Run("refused: a bare file server plus GO_GALAXY_TOKEN", func(t *testing.T) {
 		writeCWDAnsibleConfig(t, bareGalaxyServerAnsibleCfg)
@@ -67,10 +53,8 @@ func TestTokenDestinationEndToEnd(t *testing.T) {
 	t.Run("accepted: the documented remedy resolves and the token reaches the operator's own origin", func(t *testing.T) {
 		writeCWDAnsibleConfig(t, bareGalaxyServerAnsibleCfg)
 		t.Setenv("GO_GALAXY_TOKEN", "s3cr3t-operator-token")
-		// The documented remedy: name the identical address through the
-		// operator channel ansible itself already defines for [galaxy]
-		// server, rather than through a switch this tool would have to
-		// invent. The url does not change; only who supplied it does.
+		// The documented remedy: the same address through ansible's own env
+		// channel for [galaxy] server, so only who supplied it changes.
 		t.Setenv("ANSIBLE_GALAXY_SERVER", "https://corp.example")
 
 		cfg, err := buildConfigFor(t, "install", cliflags.CollectionFlags(), nil)
@@ -100,21 +84,14 @@ func TestTokenDestinationEndToEnd(t *testing.T) {
 	})
 }
 
-// tlsPolicyGalaxyServerAnsibleCfg is the leaking shape the TLS-policy half
-// of the pairing rule refuses: a server_list entry whose section names
-// nothing but validate_certs = no - no url, no token - so both of those
-// still have to come from the operator's own environment for the fixture to
-// resolve into anything installable at all.
+// tlsPolicyGalaxyServerAnsibleCfg is the shape the TLS-policy half of the
+// pairing rule refuses: a server_list section setting only validate_certs = no,
+// its url and token left to the operator's environment.
 const tlsPolicyGalaxyServerAnsibleCfg = "[galaxy]\nserver_list = corp\n\n[galaxy_server.corp]\nvalidate_certs = no\n"
 
-// TestTokenTLSPolicyEndToEnd is TestTokenDestinationEndToEnd's sibling for
-// the TLS-policy half of the pairing rule: real ansible.cfg discovery, full
-// config resolution, and the exact fetch.ServerAuth combination that would
-// reach the wire, asserted together. The refusal alone would only prove the
-// gate fires; the positive control is what proves it fires for the right
-// reason - that this combination (an operator's real token, sent to a
-// connection whose certificate this run cannot verify) is exactly what the
-// refusal exists to keep out of serverAuths, not merely out of cfg.Servers.
+// TestTokenTLSPolicyEndToEnd pins that a file-sourced validate_certs = no with
+// the operator's token is refused, and that the env remedy yields exactly that
+// token-over-unverified-TLS fetch.ServerAuth as the positive control.
 func TestTokenTLSPolicyEndToEnd(t *testing.T) {
 	t.Run("refused: a file validate_certs=no with the operator's own url and token", func(t *testing.T) {
 		writeCWDAnsibleConfig(t, tlsPolicyGalaxyServerAnsibleCfg)
@@ -131,10 +108,8 @@ func TestTokenTLSPolicyEndToEnd(t *testing.T) {
 		writeCWDAnsibleConfig(t, tlsPolicyGalaxyServerAnsibleCfg)
 		t.Setenv("ANSIBLE_GALAXY_SERVER_CORP_URL", "https://real-hub.example")
 		t.Setenv("ANSIBLE_GALAXY_SERVER_CORP_TOKEN", "s3cr3t-operator-token")
-		// The documented remedy: name the identical validate_certs value
-		// through the operator's own environment channel, moving the TLS
-		// policy off the file and onto the operator - the value itself does
-		// not change, only who supplied it does.
+		// The documented remedy: the same validate_certs value from the
+		// operator's environment, so only who supplied it changes.
 		t.Setenv("ANSIBLE_GALAXY_SERVER_CORP_VALIDATE_CERTS", "no")
 
 		cfg, err := buildConfigFor(t, "install", cliflags.CollectionFlags(), nil)
@@ -145,12 +120,8 @@ func TestTokenTLSPolicyEndToEnd(t *testing.T) {
 			t.Fatalf("Servers = %+v, want one server at https://real-hub.example", cfg.Servers)
 		}
 
-		// This is the exact fetch.ServerAuth combination the refusal exists
-		// to prevent from being file-chosen: an operator token, sent to an
-		// origin whose certificate this run will not verify. Asserted here
-		// because this is the only place the value that reaches the wire -
-		// rather than cfg.Servers's own InsecureSkipTLSVerify bool - can be
-		// checked at all.
+		// The combination the refusal keeps from being file-chosen, checked on
+		// the fetch.ServerAuth that reaches the wire rather than on cfg.Servers.
 		auths := serverAuths(cfg.Servers)
 		if len(auths) != 1 {
 			t.Fatalf("len(serverAuths()) = %d, want 1", len(auths))

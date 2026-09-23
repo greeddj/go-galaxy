@@ -16,10 +16,9 @@ const mutatedReadMarker = "mutated-read"
 // testRoleDep is the one dependency the role fixtures in this file declare.
 const testRoleDep = "common"
 
-// TestInstalledRoleCloneOnWriteAndRead proves SetInstalledRole and
-// GetInstalledRole both clone Deps: a caller mutating the slice it passed in,
-// or the one it got back, never reaches the stored entry - the contract
-// SetInstalled and GetInstalled hold for a collection.
+// TestInstalledRoleCloneOnWriteAndRead pins that SetInstalledRole and
+// GetInstalledRole both clone Deps, the contract SetInstalled and GetInstalled
+// hold for a collection.
 func TestInstalledRoleCloneOnWriteAndRead(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -192,10 +191,9 @@ func TestDeleteRolePinRemovesOnlyThatKey(t *testing.T) {
 	}
 }
 
-// TestClearCachesDropsRolePinsKeepsInstalledRoles pins the --clear-cache
-// split for roles: a pin is an answer from a remote and goes, an installed
-// role is a record of content on disk and stays - exactly as GitPins and
-// Installed are treated.
+// TestClearCachesDropsRolePinsKeepsInstalledRoles pins that ClearCaches drops a
+// role pin, a remote's answer, but keeps an installed role, a record of content
+// on disk, as it does for git pins and installed collections.
 func TestClearCachesDropsRolePinsKeepsInstalledRoles(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -210,10 +208,9 @@ func TestClearCachesDropsRolePinsKeepsInstalledRoles(t *testing.T) {
 	}
 }
 
-// TestRolePinsSurviveSnapshotWithoutAWindow proves a pin older than every
-// retention window still round-trips through snapshotData, as a git pin
-// does: role pins are invalidated by the requirements signature and
-// --refresh, never by age.
+// TestRolePinsSurviveSnapshotWithoutAWindow pins that a role pin and an
+// installed role older than every retention window still survive
+// snapshotData: like git pins, they are never evicted by age.
 func TestRolePinsSurviveSnapshotWithoutAWindow(t *testing.T) {
 	t.Parallel()
 	st := New()
@@ -234,11 +231,9 @@ func TestRolePinsSurviveSnapshotWithoutAWindow(t *testing.T) {
 	}
 }
 
-// TestOnlyAnInstalledRoleCountsAsContent proves an installed role alone makes
-// a save stamp ContentRecorded: a roles-only project is evidence of on-disk
-// content exactly as an installed collection is, so a later destructive pass
-// reads the snapshot as knowledge rather than ignorance. The negative
-// control is a role pin alone, which is a remote answer and must not stamp.
+// TestOnlyAnInstalledRoleCountsAsContent pins that an installed role alone
+// makes a save stamp ContentRecorded, as an installed collection does, while a
+// role pin alone, a remote's answer, does not.
 func TestOnlyAnInstalledRoleCountsAsContent(t *testing.T) {
 	t.Parallel()
 

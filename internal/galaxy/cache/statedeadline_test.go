@@ -1,36 +1,10 @@
-// Package cache_test exercises WithStateDeadline as an external test
-// package specifically so it can import internal/cache/local - the real
-// local.Backend the decorator must be inert for - without an import cycle:
-// internal/cache/local itself imports internal/galaxy/cache for its
-// Backend/ArtifactStore interfaces, so a same-package (internal) test file
-// here could never import it back.
+// Package cache_test tests WithStateDeadline from outside so it can import the
+// real local.Backend, which itself imports internal/galaxy/cache: an in-package
+// test could not import it back.
 package cache_test
 
-// This file pins WithStateDeadline's core drift guarantee: every one of the
-// four state operations is bounded, Lock/ClearFiles are deliberately not,
-// and the whole thing is inert for the local backend by construction.
-//
-// Each test below was verified against a real revert of the production
-// change it pins, and this comment quotes the actual observed output:
-//
-//   - TestWithStateDeadlineBoundsEveryStateOperation, dropping SaveStore's
-//     own context.WithTimeout wrapping in statedeadline.go (calling
-//     b.inner.SaveStore(ctx, st) directly, so it inherits the caller's
-//     unbounded context instead), makes the SaveStore subtest hang until the
-//     harness kills it - run with a bounded -timeout so it fails instead of
-//     blocking the suite forever, observed as:
-//     "panic: test timed out after 5s
-//     running tests:
-//     TestWithStateDeadlineBoundsEveryStateOperation (5s)
-//     TestWithStateDeadlineBoundsEveryStateOperation/SaveStore (5s)"
-//     with the stuck goroutine's frame at
-//     "github.com/greeddj/go-galaxy/internal/galaxy/cache_test.
-//     (*stubStateBackend).SaveStore(...)" blocked on <-ctx.Done().
-//   - TestWithStateDeadlineDoesNotBoundLockOrClearFiles, wrapping Lock with
-//     the same per-operation budget the four state methods use, makes the
-//     Lock call fail before the stub's 3x-budget delay elapses, observed as:
-//     "Lock() error = cache state object deadline exceeded after 30ms: ...,
-//     want nil (Lock must not be bounded by the state-object budget)"
+// This file pins WithStateDeadline: the four state operations are bounded,
+// Lock and ClearFiles deliberately are not, and it is inert for local.Backend.
 
 import (
 	"context"
@@ -50,11 +24,9 @@ import (
 // test in this file uses.
 const stateDeadlineTestBudget = 30 * time.Millisecond
 
-// stubStateBackend is a minimal cacheManager.Backend whose four state
-// operations either block until their context ends (blocking == true) or
-// return fixed values immediately, and whose Lock/ClearFiles can be made to
-// take a fixed, deliberately long delay before succeeding, to prove
-// WithStateDeadline leaves them unbounded.
+// stubStateBackend is a Backend whose state operations block until their
+// context ends when blocking is set, and whose Lock and ClearFiles take a
+// fixed delay, to prove which methods WithStateDeadline bounds.
 type stubStateBackend struct {
 	store      *store.Store
 	registry   *store.ProjectRegistry
@@ -142,14 +114,9 @@ func (s *stubStateBackend) LoadProjectRegistry(ctx context.Context) (*store.Proj
 func (s *stubStateBackend) Artifacts() cacheManager.ArtifactStore { return nil }
 func (s *stubStateBackend) SweepTemp(_ context.Context) error     { return nil }
 
-// TestWithStateDeadlineBoundsEveryStateOperation tables over all four state
-// operations against a stub whose implementations block forever absent a
-// context deadline, asserting each is bounded by WithStateDeadline into
-// helpers.ErrStateObjectDeadline (matching neither context sentinel through
-// errors.Is). The positive control - the identical wrapper over a
-// non-blocking stub - proves the wrapper is otherwise transparent: it
-// returns nil and the stub's own recorded *store.Store/*store.ProjectRegistry
-// values unchanged.
+// TestWithStateDeadlineBoundsEveryStateOperation pins that each of the four
+// state operations over a blocking stub fails with ErrStateObjectDeadline,
+// matching neither context sentinel.
 func TestWithStateDeadlineBoundsEveryStateOperation(t *testing.T) {
 	t.Parallel()
 
@@ -186,9 +153,7 @@ func TestWithStateDeadlineBoundsEveryStateOperation(t *testing.T) {
 }
 
 // assertStateDeadlineFired fails the test unless err matches
-// helpers.ErrStateObjectDeadline and neither context sentinel through
-// errors.Is - split out of TestWithStateDeadlineBoundsEveryStateOperation
-// purely to stay under the cyclomatic-complexity budget.
+// helpers.ErrStateObjectDeadline and neither context sentinel.
 func assertStateDeadlineFired(t *testing.T, name string, err error) {
 	t.Helper()
 	if !errors.Is(err, helpers.ErrStateObjectDeadline) {
@@ -202,12 +167,8 @@ func assertStateDeadlineFired(t *testing.T, name string, err error) {
 	}
 }
 
-// assertStateDeadlinePositiveControl is
-// TestWithStateDeadlineBoundsEveryStateOperation's positive control, split
-// out purely to stay under the cyclomatic-complexity budget: the identical
-// wrapper over a non-blocking stub returns nil and the stub's own recorded
-// *store.Store/*store.ProjectRegistry values unchanged, proving the wrapper
-// is otherwise transparent.
+// assertStateDeadlinePositiveControl pins that the same wrapper over a
+// non-blocking stub is transparent: nil errors and the stub's own values.
 func assertStateDeadlinePositiveControl(t *testing.T) {
 	t.Helper()
 	wantStore := store.New()
@@ -231,14 +192,9 @@ func assertStateDeadlinePositiveControl(t *testing.T) {
 	}
 }
 
-// TestWithStateDeadlineDoesNotBoundLockOrClearFiles asserts Lock and
-// ClearFiles both pass through WithStateDeadline unbounded: a stub whose
-// implementations of both take 3x the wrapped budget still succeeds through
-// the wrapper. This is falsifiable because
-// TestWithStateDeadlineBoundsEveryStateOperation already proves the wrapper
-// is capable of producing the sentinel at the identical budget - so a
-// success here is a real refusal to bound these two methods, not a fixture
-// too generous to ever fail.
+// TestWithStateDeadlineDoesNotBoundLockOrClearFiles pins that Lock and
+// ClearFiles taking 3x the budget still succeed through the wrapper, which
+// TestWithStateDeadlineBoundsEveryStateOperation shows can fire at that budget.
 func TestWithStateDeadlineDoesNotBoundLockOrClearFiles(t *testing.T) {
 	t.Parallel()
 
@@ -261,17 +217,9 @@ func TestWithStateDeadlineDoesNotBoundLockOrClearFiles(t *testing.T) {
 	}
 }
 
-// TestWithStateDeadlineIsInertForTheLocalBackend is the falsifiable form of
-// "the local backend is not penalized": a real local.Backend over a fresh
-// t.TempDir() cache, wrapped with a 1-nanosecond budget, still succeeds on
-// every one of the four state operations. This holds by construction, not by
-// luck: local.Backend's own methods take a context parameter named "_" and
-// never consult it, so their returned errors (nil, here) never carry a
-// context signal for deadlineError's causal precondition to act on,
-// regardless of how long ago the wrapped context's 1ns deadline elapsed. The
-// positive control - the identical 1ns budget wrapping the blocking stub -
-// proves 1ns is still a budget capable of firing, so this is not merely a
-// budget too generous to ever bind.
+// TestWithStateDeadlineIsInertForTheLocalBackend pins that a real local.Backend
+// under a 1ns budget still succeeds on all four state operations, since it
+// ignores its context; the blocking stub shows 1ns can still fire.
 func TestWithStateDeadlineIsInertForTheLocalBackend(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()

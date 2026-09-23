@@ -1,8 +1,6 @@
-// Package cliflags declares the urfave/cli flag sets the commands share, and
-// the defaults those flags advertise. It owns the CLI surface only: what a
-// flag is named, what it accepts, and which environment variables feed it.
-// Turning a parsed command into configuration belongs to
-// internal/galaxy/config, which is why nothing here reads a value back.
+// Package cliflags declares the shared urfave/cli flag sets: names, defaults
+// and environment sources. Turning a parsed command into configuration belongs
+// to internal/galaxy/config, so nothing here reads a value back.
 package cliflags
 
 import (
@@ -53,15 +51,9 @@ func CollectionFlags() []cli.Flag {
 func collectionPathFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
-			// ANSIBLE_GALAXY_SERVER is deliberately NOT a source here, and is
-			// read in internal/galaxy/config instead. ansible treats it as the
-			// env spelling of the [galaxy] server key - the fallback used only
-			// when no server_list and no -s apply - while a flag source makes
-			// it outrank server_list entirely, since urfave/cli exposes no way
-			// to tell a CLI-set flag from an env-set one: Command.IsSet returns
-			// FlagBase.hasBeenSet, which Set (CLI parsing) and PostParse (value
-			// source) write identically, and ValueSourceChain.LookupWithSource
-			// is not reachable through the cli.Flag interface.
+			// ANSIBLE_GALAXY_SERVER is read in internal/galaxy/config: ansible
+			// treats it as the [galaxy] server fallback, but as a source here
+			// urfave's IsSet would report it like --server and outrank server_list.
 			Name:    "server",
 			Usage:   "Galaxy server URL",
 			Value:   defaultServerURL,
@@ -75,20 +67,14 @@ func collectionPathFlags() []cli.Flag {
 		},
 		&cli.StringFlag{
 			Name: "timeout",
-			// Names the semantics, not just the format: this bounds a lack of
-			// progress, and an operator who reads it as a cap on the whole
-			// transfer sets it far too low for a large collection.
+			// Names the semantics: a no-progress budget read as a whole-transfer
+			// cap gets set far too low for a large collection.
 			Usage: "No-progress budget: wait for response headers, and gap between body reads. " +
 				"Not a total-transfer cap. Seconds (e.g. 60) or Go duration (e.g. 90s, 1m30s)",
 			Value: defaultTimeout.String(),
-			// Source order is precedence: urfave/cli takes the first name in
-			// the chain that is set, so a name that was already effective
-			// keeps it and reordering these is a behavior change rather than
-			// a tidy-up. The flag-name-shaped spelling is listed second so
-			// that the GO_GALAXY_<FLAG_NAME> form every flag in this file
-			// accepts has no exception: behind the name that shipped first,
-			// which keeps the precedence it had, and ahead of the ANSIBLE_
-			// spelling, which is where every other GO_GALAXY_ name here sits.
+			// Source order is precedence (urfave takes the first set name), so
+			// reordering is a behavior change. GO_GALAXY_TIMEOUT sits behind the
+			// name that shipped first and ahead of the ANSIBLE_ spelling.
 			Sources: cli.EnvVars("GO_GALAXY_SERVER_TIMEOUT", "GO_GALAXY_TIMEOUT", "ANSIBLE_GALAXY_SERVER_TIMEOUT"),
 		},
 		&cli.StringFlag{
@@ -133,25 +119,9 @@ func collectionBehaviorFlags() []cli.Flag {
 			Name: "workers",
 			Usage: "Number of concurrent workers; accepted from 1 up to the CPU this process may use " +
 				"(at least 2), and outside that range the derived default is used instead",
-			// Value is load-bearing for an acceptance, not just a default.
-			// urfave marks a declared-but-empty env var as set while skipping
-			// the parse for it, so a CI block exporting GO_GALAXY_WORKERS=
-			// reaches applyWorkers (internal/galaxy/config/config.go) through
-			// its IsSet branch and is judged against that branch's range
-			// rather than skipped by its gate. What c.Int reads there is this
-			// Value, and that it lands inside the range is arithmetic rather
-			// than a coincidence of one machine's CPU count. Write p for
-			// runtime.GOMAXPROCS(0): the ceiling is
-			// MaxAcceptedInstallWorkers(p) = max(p, MinDefaultInstallWorkers),
-			// call it X, and this Value is DefaultInstallWorkers(p), which is
-			// that very X under a min() with MaxDefaultInstallWorkers - so
-			// min(X, MaxDefaultInstallWorkers) <= X puts Value at or below the
-			// ceiling for every p. The lower end is that same max() again,
-			// with MaxDefaultInstallWorkers sitting above
-			// MinDefaultInstallWorkers so the min() cannot cut beneath it:
-			// Value is never below MinDefaultInstallWorkers and so never below
-			// 1. Remove this field and that same shape reads 0, which is
-			// outside the range in the other direction and warns.
+			// Value is load-bearing: urfave marks an exported empty variable as
+			// set without parsing it, so applyWorkers range-checks this Value,
+			// which is always inside 1..MaxAcceptedInstallWorkers.
 			Value:   galaxyhelpers.DefaultInstallWorkers(runtime.GOMAXPROCS(0)),
 			Sources: cli.EnvVars("GO_GALAXY_WORKERS"),
 		},
@@ -232,37 +202,9 @@ func LockInspectFlags() []cli.Flag {
 	}
 }
 
-// SignatureFlags defines the CLI flags for collection signature verification.
-//
-// It is a separate constructor rather than part of CollectionFlags because not
-// every collection command can honor these: lock and outdated verify nothing,
-// and mounting the flags on them would advertise four settings those commands
-// would silently ignore. A command mounts this set exactly when it verifies.
-//
-// These flags and their environment variables are the whole configuration
-// surface for signature verification: ansible.cfg deliberately configures none
-// of it, even though ansible itself reads all four settings from a [galaxy]
-// section. This program cannot establish whether a discovered ansible.cfg was
-// authored by the operator or by the repository under test, and a setting that
-// can relax a verification check must not come from a file whose author is
-// unknown.
-//
-// Four shapes make that question undecidable here, and the second is the one
-// that reads safe and is not: a repository supplies ./ansible.cfg; a workflow
-// setting ANSIBLE_CONFIG normally names a repository-relative path, so the
-// operator picks the variable while the checkout picks the file; a repository
-// that also supplies the workflow picks both; and on a self-hosted runner a job
-// can leave ~/.ansible.cfg behind for every later job, which outlives the
-// checkout that dropped it.
-//
-// Each proxy for the authorship question leaks somewhere different, which is
-// why none is used. Keying on the discovery slot misses the second shape above.
-// Keying on the resolved path sitting under the working directory misses a
-// symlinked target and a run whose working directory is not the checkout.
-// Keying on file ownership misses the runner case entirely, since the earlier
-// job wrote the file as the same user. An environment variable is not immune to
-// a hostile workflow either, but it is set by whoever configured the run rather
-// than by whatever the checkout happened to contain.
+// SignatureFlags defines the signature verification flags, mounted only by
+// commands that verify. With their variables they are the whole surface: a
+// setting that can relax verification never comes from an ansible.cfg.
 func SignatureFlags() []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{
@@ -283,24 +225,17 @@ func SignatureFlags() []cli.Flag {
 		&cli.StringSliceFlag{
 			Name:  "ignore-signature-status-code",
 			Usage: "Signature failure status code to tolerate (repeatable), e.g. BADSIG or NO_PUBKEY",
-			// The go-galaxy name is singular and the ansible one plural, and
-			// neither can be made to match the other: the first is derived from
-			// this flag's own name, the second is ansible's own variable.
+			// The go-galaxy name is singular because it derives from this flag's
+			// name, and the ansible one is plural because it is ansible's own.
 			Sources: cli.EnvVars(
 				"GO_GALAXY_IGNORE_SIGNATURE_STATUS_CODE",
 				"ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES",
 			),
 		},
 		&cli.BoolFlag{
-			// ANSIBLE_GALAXY_DISABLE_GPG_VERIFY is deliberately NOT a source
-			// here, and is read in internal/galaxy/config instead, in the
-			// precedence slot directly below this flag. urfave/cli parses a bool
-			// source with Go's own bool grammar, which rejects the yes/no and
-			// on/off spellings ansible accepts - and rejects them by aborting the
-			// command, so an environment already exporting one for ansible would
-			// make every go-galaxy run fail. See resolveDisableGPGVerify
-			// (internal/galaxy/config/signature.go) for the full argument,
-			// including why this is the only one of the four that needs it.
+			// ANSIBLE_GALAXY_DISABLE_GPG_VERIFY is read by resolveDisableGPGVerify
+			// instead: urfave's bool source aborts the command on the yes/no and
+			// on/off spellings ansible accepts.
 			Name:    "disable-gpg-verify",
 			Usage:   "Skip signature verification even when a keyring is configured",
 			Sources: cli.EnvVars("GO_GALAXY_DISABLE_GPG_VERIFY"),

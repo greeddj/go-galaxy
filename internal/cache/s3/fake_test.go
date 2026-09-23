@@ -23,10 +23,8 @@ import (
 )
 
 // bucketListKey is the pseudo object key countRequest/requestCount use for a
-// bucket-level ListObjectsV2 request, which - unlike GET/PUT/HEAD/DELETE -
-// has no per-object key of its own. It can never collide with a real object
-// key, since every real key under this fake's buckets is a non-empty
-// slash-delimited path.
+// bucket-level ListObjectsV2 request; no real key can collide with it, since
+// every real key under this fake's buckets is a slash-delimited path.
 const bucketListKey = "list-objects-v2"
 
 // bucketDeleteObjectsKey is bucketListKey's counterpart for a Multi-Object
@@ -43,29 +41,22 @@ type fakeObject struct {
 	data     []byte
 }
 
-// fakeETag mints a distinct entity tag per stored version. A real S3 ETag is
-// the object's MD5 for a single-part upload, which would make two writes of
-// identical bytes indistinguishable - and the lock protocol writes a JSON
-// record whose fields can repeat within a clock second. The sequence number
-// is what guarantees every write gets a new tag, which is the property a
-// compare-and-swap test actually depends on.
+// fakeETag mints a distinct entity tag per stored version: unlike S3's
+// MD5-of-body ETag, the sequence number gives two writes of identical bytes
+// different tags, which is what a compare-and-swap test depends on.
 func fakeETag(body []byte, modified time.Time, seq uint64) string {
 	sum := sha256.Sum256(body)
 	return fmt.Sprintf("%q", fmt.Sprintf("%x-%d-%d", sum[:8], modified.UnixNano(), seq))
 }
 
-// fakeS3 is a minimal in-memory, path-style S3 fake used to exercise Backend
-// and Client against real HTTP round trips without a network dependency or
-// SigV4 verification (the client always signs requests, but this fake never
-// checks the Authorization header).
+// fakeS3 is a minimal in-memory, path-style S3 fake that drives Backend and
+// Client over real HTTP round trips; it never verifies the SigV4
+// Authorization header the client always sends.
 type fakeS3 struct {
 	objects map[string]fakeObject
-	// fails is keyed exactly like requests ("METHOD key"), plus a wildcard
-	// entry keyed " key" (empty method) that matches any method for that
-	// key. Keying by method (not by key alone) lets a test arm independent
-	// rules for two different methods against the very same key at once -
-	// e.g. a PUT that always reports precondition-failed together with a
-	// HEAD that always reports not-found on the same lock object key.
+	// fails is keyed like requests ("METHOD key"), plus a wildcard " key"
+	// matching any method, so a test can arm independent rules for two
+	// methods on the same key at once.
 	fails    map[string]*forcedFailure
 	requests map[string]int
 	// drips is keyed by object key, armed via dripGet: a matching GET never
@@ -76,9 +67,8 @@ type fakeS3 struct {
 	// stored object (see handleGet).
 	syntheticBodies map[string]int64
 	// headTokenSwaps is keyed by object key, armed via raceTokenOnNextHead:
-	// the next HEAD served for that key rewrites the stored object's token
-	// first, simulating another writer's PUT landing in between this call's
-	// own write and its own follow-up HEAD.
+	// the next HEAD for that key rewrites the stored token first, as if another
+	// writer's PUT landed between this call's write and its follow-up HEAD.
 	headTokenSwaps    map[string]string
 	failDeleteObjects *deleteObjectsFailure
 	lastDeleteHeaders http.Header
@@ -93,40 +83,29 @@ type fakeS3 struct {
 	// without enforcing it, which is what Open's capability probe must catch.
 	ignoreIfMatch bool
 	// refuseIfMatch simulates a backend that answers every compare-and-swap
-	// with 412, matching ETag or not - a plausible shape for one that parses
-	// the header without implementing it. It is the inverse of ignoreIfMatch
-	// and the only one of the three that a probe checking refusals alone would
-	// pass: nothing about it looks permissive, and every reclaim on it would
-	// simply never succeed.
+	// with 412, matching ETag or not: a probe checking refusals alone would
+	// pass it, yet no reclaim on it could ever succeed.
 	refuseIfMatch bool
-	// suppressETag simulates a backend that stores objects but never names
-	// their version on a read, leaving a caller nothing to swap against. It is
-	// the other non-conforming shape the same probe must catch, and it is not
-	// reducible to ignoreIfMatch: this one refuses the swap honestly rather
-	// than accepting it without arbitration.
+	// suppressETag simulates a backend that names no version on a read,
+	// leaving nothing to swap against; unlike ignoreIfMatch it refuses the
+	// swap honestly rather than accepting it without arbitration.
 	suppressETag          bool
 	oversizedList         bool
 	oversizedDeleteResult bool
 }
 
-// deleteObjectsFailure is a fault-injection rule for handleDeleteObjects: it
-// reports key as a single <Error> entry in the DeleteResult (with the given
-// code/message) instead of deleting it, while every other key in the same
-// batch is still deleted normally - simulating a real per-key partial
-// failure that DeleteObjects can report even under an overall 200 status.
+// deleteObjectsFailure makes handleDeleteObjects report key as a per-key
+// <Error> while still deleting every other key in the batch: the partial
+// failure a real DeleteObjects can report under an overall 200 status.
 type deleteObjectsFailure struct {
 	key     string
 	code    string
 	message string
 }
 
-// forcedFailure is a fault-injection rule matched by object key and HTTP
-// method: while remaining is nonzero, a matching request receives status
-// (and, if set, body) instead of the fake's normal response, and remaining
-// is decremented (unless already negative, meaning "fail indefinitely"). It
-// exists to force error branches - GET/HEAD/PUT/DELETE failures, optionally
-// carrying an S3-style XML error document - that a conforming in-memory fake
-// would otherwise never produce on its own.
+// forcedFailure is a fault-injection rule matched by object key and method:
+// while remaining is nonzero a matching request gets status (and body, if
+// set) instead of the normal response; a negative remaining never runs out.
 type forcedFailure struct {
 	body      []byte // optional response body written alongside status, e.g. an S3 <Error> document
 	status    int
@@ -157,21 +136,16 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// failNext arms a forced-failure rule for key: the next count requests to
-// key matching method (or every method, if method == "") receive status
-// instead of the fake's normal response. count == -1 fails every matching
-// request indefinitely, until failNext is called again for the same
-// key+method pair. Rules for different methods on the same key are
-// independent: arming one for http.MethodPut does not replace or interact
-// with one already armed for http.MethodHead on that same key.
+// failNext makes the next count requests to key matching method ("" for any
+// method) receive status; count -1 fails until re-armed. Rules for different
+// methods on the same key are independent of each other.
 func (f *fakeS3) failNext(key, method string, status, count int) {
 	f.failNextWithBody(key, method, status, count, nil)
 }
 
-// failNextWithBody behaves like failNext but additionally arms a response
-// body to be written alongside the forced status code - for example an S3
-// <Error> XML document - so a test can assert that callers surface its Code
-// and Message.
+// failNextWithBody behaves like failNext but also writes body with the
+// status, such as an S3 <Error> document whose Code and Message callers
+// surface.
 func (f *fakeS3) failNextWithBody(key, method string, status, count int, body []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -181,12 +155,9 @@ func (f *fakeS3) failNextWithBody(key, method string, status, count int, body []
 	f.fails[method+" "+key] = &forcedFailure{status: status, remaining: count, body: body}
 }
 
-// countRequest records that key received one request via method, counting
-// every request that reaches an object handler regardless of whether a
-// forced-failure rule matches it. It exists purely as an observability hook
-// so a test can assert the exact number of attempts a retrying call made
-// (via requestCount) rather than inferring it indirectly from a
-// forcedFailure's remaining count.
+// countRequest records one request to key via method, whether or not a
+// forced failure matches it, so a test can assert a retrying call's exact
+// attempt count through requestCount.
 func (f *fakeS3) countRequest(key, method string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -204,14 +175,9 @@ func (f *fakeS3) requestCount(key, method string) int {
 	return f.requests[method+" "+key]
 }
 
-// shouldFail reports whether the request for key+method matches an armed
-// forced-failure rule, consuming one use of it (unless the rule fails
-// indefinitely). It checks the method-specific rule first, falling back to
-// a wildcard rule armed for every method on key (method == "" when armed),
-// so a test can combine a method-specific rule and a wildcard rule - or two
-// method-specific rules for different methods - on the same key at once. It
-// returns the status and body to write; body is nil when none was armed. It
-// locks mu itself; callers must not already hold mu.
+// shouldFail reports whether key+method matches an armed rule, trying the
+// method-specific rule before the wildcard and consuming one use, and returns
+// the status and optional body to write. It locks mu; callers must not hold it.
 func (f *fakeS3) shouldFail(key, method string) (int, []byte, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -253,11 +219,9 @@ func (f *fakeS3) handleBucket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleList renders a minimal ListObjectsV2 XML response for keys under
-// the requested prefix. Pagination is not simulated: every matching key is
-// returned in one page (IsTruncated is always false). When oversizedList is
-// armed, the normal listing is skipped entirely in favor of
-// writeOversizedList.
+// handleList renders one ListObjectsV2 page for keys under the requested
+// prefix (IsTruncated is always false: pagination is not simulated), or
+// defers to writeOversizedList when oversizedList is armed.
 func (f *fakeS3) handleList(w http.ResponseWriter, r *http.Request) {
 	f.countRequest(bucketListKey, http.MethodGet)
 
@@ -297,13 +261,9 @@ func (f *fakeS3) handleList(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, body.String())
 }
 
-// writeOversizedList streams a ListObjectsV2-shaped body well past
-// helpers.S3ListMaxSize using a single reused chunk, so the fake itself
-// never allocates anywhere near that size; only the cumulative transferred
-// byte count grows across repeated writes of the same buffer. It stops as
-// soon as a write fails, which is expected once the client's size-limited
-// reader aborts the read and closes the response body after crossing the
-// cap.
+// writeOversizedList streams a body past helpers.S3ListMaxSize from one
+// reused chunk, so the fake never allocates that much; it stops at the first
+// write error, which is the client's size-limited reader closing the body.
 func (f *fakeS3) writeOversizedList(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
@@ -318,21 +278,9 @@ func (f *fakeS3) writeOversizedList(w http.ResponseWriter) {
 	}
 }
 
-// handleDeleteObjects answers a Multi-Object Delete (POST ?delete) request:
-// a forced failure armed via failNext(bucketDeleteObjectsKey, ...) takes
-// precedence over everything below, exactly like the object-level handlers,
-// so a test can drive deleteObjectsBatch's own transient-failure retry path.
-// Absent that, it parses the <Delete> body via encoding/xml - never by
-// string matching, so an object key carrying XML metacharacters round-trips
-// as a single literal <Object> entry exactly like a conforming S3 endpoint
-// would rather than being reinterpreted as extra markup - deletes every
-// listed key that is not the armed failDeleteObjects key, and renders a
-// Quiet-mode <DeleteResult> reporting only that one key (if any) as an
-// <Error>. When oversizedDeleteResult is armed, the normal response is
-// skipped entirely in favor of writeOversizedDeleteResult. The parsed
-// request and its headers are captured for
-// deleteObjectsRequest/deleteObjectsHeaders so a test can assert what
-// deleteObjectsBatch actually sent.
+// handleDeleteObjects answers a Multi-Object Delete (POST ?delete) unless a
+// failNext rule on bucketDeleteObjectsKey fires first. It parses <Delete> with
+// encoding/xml, not string matching, so a key with XML metacharacters round-trips.
 func (f *fakeS3) handleDeleteObjects(w http.ResponseWriter, r *http.Request) {
 	f.countRequest(bucketDeleteObjectsKey, http.MethodPost)
 	if status, _, fail := f.shouldFail(bucketDeleteObjectsKey, http.MethodPost); fail {
@@ -383,10 +331,8 @@ func (f *fakeS3) handleDeleteObjects(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(append([]byte(xml.Header), payload...))
 }
 
-// writeOversizedDeleteResult streams a DeleteResult-shaped body well past
-// helpers.S3ListMaxSize using a single reused chunk, mirroring
-// writeOversizedList, so a test can drive deleteObjectsBatch's size-limited
-// response read into rejecting an oversized body.
+// writeOversizedDeleteResult streams a body past helpers.S3ListMaxSize like
+// writeOversizedList, driving deleteObjectsBatch's size-limited read.
 func (f *fakeS3) writeOversizedDeleteResult(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
@@ -418,10 +364,9 @@ func (f *fakeS3) deleteObjectsRequest() deleteRequest {
 	return f.lastDeleteReq
 }
 
-// deleteObjectsHeaders returns the most recently received Multi-Object
-// Delete request's headers, so a test can assert deleteObjectsBatch signs
-// and content-hashes the batch (Content-MD5, X-Amz-Content-Sha256,
-// Content-Type) without re-deriving SigV4 verification in the fake.
+// deleteObjectsHeaders returns the last Multi-Object Delete request's
+// headers, so a test can assert Content-MD5, X-Amz-Content-Sha256 and
+// Content-Type without the fake verifying SigV4.
 func (f *fakeS3) deleteObjectsHeaders() http.Header {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -444,22 +389,9 @@ func (f *fakeS3) handleObject(w http.ResponseWriter, r *http.Request, key string
 	}
 }
 
-// raceTokenOnNextHead arms a one-shot rewrite of the stored object's
-// recorded token, applied the next time a HEAD request for key is served
-// (see handleHead). It simulates another acquirer's write landing in the
-// narrow window between this call's own successful create/reclaim PUT and
-// its own follow-up ownership-verifying HEAD - the race claim (lock.go)
-// exists specifically to detect. It fires exactly once: the swap is cleared
-// as soon as it is applied, so a subsequent HEAD sees the rewritten token
-// undisturbed rather than swapping again.
-// serveSyntheticBody arms key's GET to answer 200 with size bytes generated
-// on the fly, so a test can drive a body past a multi-hundred-megabyte
-// ceiling without materializing it anywhere: not in the caller, not in this
-// fake's own stored objects, and not on the wire in the upload direction,
-// since no PUT is needed at all. An armed key shadows any stored object of
-// the same name rather than merging with it, and nothing is written into
-// f.objects, so the fake's publish-immutable invariant for stored objects is
-// untouched.
+// serveSyntheticBody arms key's GET to answer 200 with size generated bytes,
+// shadowing any stored object without touching f.objects, so a test can cross
+// a large size ceiling without materializing the body anywhere.
 func (f *fakeS3) serveSyntheticBody(key string, size int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -469,19 +401,9 @@ func (f *fakeS3) serveSyntheticBody(key string, size int64) {
 	f.syntheticBodies[key] = size
 }
 
-// writeSyntheticBody streams EXACTLY size bytes of filler using one reused
-// chunk, trimming the final chunk rather than overshooting to the next chunk
-// boundary. The exactness is load-bearing, not tidiness: a caller arms this
-// to sit one byte on a particular side of a size ceiling, and a body that
-// rounded up to the next 64 KiB would trip that ceiling whether or not the
-// armed count crossed it, making the ceiling untestable from here.
-//
-// It stops early on the first write error - which is what a reader aborting
-// at its own size ceiling produces - so the fake stops as soon as the client
-// has seen enough rather than pushing the whole body first. No Content-Length
-// is declared: the body is deliberately allowed to end early, and announcing
-// a length this handler may not fulfill would only change how net/http tears
-// the connection down.
+// writeSyntheticBody streams exactly size filler bytes, trimming the last
+// chunk, since callers sit one byte on either side of a ceiling; it declares
+// no Content-Length and stops at the first write error, a reader giving up.
 func writeSyntheticBody(w http.ResponseWriter, contentType string, size int64) {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusOK)
@@ -500,6 +422,9 @@ func writeSyntheticBody(w http.ResponseWriter, contentType string, size int64) {
 	}
 }
 
+// raceTokenOnNextHead arms a one-shot rewrite of key's stored token on its
+// next HEAD, modeling another acquirer's write landing between this call's
+// PUT and the ownership-verifying HEAD that claim uses to detect that race.
 func (f *fakeS3) raceTokenOnNextHead(key, token string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -509,26 +434,9 @@ func (f *fakeS3) raceTokenOnNextHead(key, token string) {
 	f.headTokenSwaps[key] = token
 }
 
-// storeLockObject writes a lock object directly into the fake's object map,
-// carrying exactly the two X-Amz-Meta-* headers the lock protocol reads back
-// (token and deadline) and a fresh Last-Modified. It bypasses HTTP on
-// purpose: the tests that use it place a competing acquirer's write at an
-// exact point in another acquirer's request sequence - from inside a handler
-// that has just served a request, or between two requests of an in-flight
-// reclaim - and a real PUT would add a round trip of its own, and its own
-// entry in the request counters, right where the ordering is being set up.
-//
-// Like every other write path here it publishes a fresh meta map rather than
-// mutating a stored one, so handleHead and handleGet can still read obj.meta
-// after releasing f.mu without racing this call.
-//
-// It mints an ETag exactly as handlePut does, because the lock protocol reads
-// one back for every object it intends to swap against: an object stored here
-// without one would report a HEAD that names no version, which reclaimIfExpired
-// refuses outright, and every fixture seeding an expired holder this way would
-// then measure that refusal instead of the swap it meant to drive. A distinct
-// ETag per call is also what makes a write installed behind another acquirer's
-// HEAD observable as a version change rather than only as a token change.
+// storeLockObject writes a lock object (token, deadline, and the ETag that
+// reclaimIfExpired requires) straight into the map, bypassing HTTP so a test
+// can place a competing write at an exact point without adding a request.
 func (f *fakeS3) storeLockObject(key, token string, deadline time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -552,18 +460,12 @@ func (f *fakeS3) dropObject(key string) {
 	delete(f.objects, key)
 }
 
-// handleHead reports the stored object's metadata headers and Last-Modified
-// verbatim, or 404 if absent. This backs the lock protocol's HEAD-only reads
-// (token/deadline verification never needs to transfer the body). A forced
-// failure armed via failNext takes precedence over the normal response; a
-// swap armed via raceTokenOnNextHead is applied to the stored object before
-// this response is built.
+// handleHead reports the stored object's metadata headers and Last-Modified,
+// or 404 if absent; a failNext rule wins first, and a raceTokenOnNextHead
+// swap is applied to the stored object before the response is built.
 func (f *fakeS3) handleHead(w http.ResponseWriter, key string) {
 	f.countRequest(key, http.MethodHead)
-	// The body (if any) is deliberately not written here: real HTTP HEAD
-	// responses carry no entity body, and net/http's server elides one even
-	// if a handler attempts to write it, so arming a body on a HEAD rule
-	// would never reach the client anyway.
+	// An armed body is not written: a HEAD response carries no entity body.
 	if status, _, fail := f.shouldFail(key, http.MethodHead); fail {
 		w.WriteHeader(status)
 		return
@@ -572,15 +474,9 @@ func (f *fakeS3) handleHead(w http.ResponseWriter, key string) {
 	obj, ok := f.objects[key]
 	if ok {
 		if token, swap := f.headTokenSwaps[key]; swap {
-			// Every write path publishes a fresh meta map rather than
-			// mutating one already stored in f.objects (handlePut ->
-			// captureMeta builds a new map on every PUT) - the invariant
-			// that lets handleHead/handleGet read obj.meta in
-			// writeObjectHeaders after releasing f.mu without racing a
-			// concurrent writer on the same map. This swap upholds that
-			// invariant the same way: it clones obj.meta into a fresh map,
-			// applies the swapped token there, and only then replaces the
-			// stored fakeObject - it never writes through the old map.
+			// Clone rather than write through the stored map: every
+			// write publishes a fresh meta map, because handleHead and
+			// handleGet read obj.meta after releasing f.mu.
 			fresh := maps.Clone(obj.meta)
 			fresh["X-Amz-Meta-Token"] = token
 			obj.meta = fresh
@@ -598,10 +494,9 @@ func (f *fakeS3) handleHead(w http.ResponseWriter, key string) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleGet returns the stored object's metadata headers and body verbatim,
-// or 404 if absent. A forced failure armed via failNext/failNextWithBody
-// takes precedence over the normal response, and a drip armed via dripGet
-// takes precedence over the normal body (see driveDripGet).
+// handleGet returns the stored object's metadata headers and body, or 404 if
+// absent; a failNext rule wins first, a serveSyntheticBody size shadows the
+// stored object, and a dripGet drip replaces the normal body.
 func (f *fakeS3) handleGet(w http.ResponseWriter, r *http.Request, key string) {
 	f.countRequest(key, http.MethodGet)
 	if status, body, fail := f.shouldFail(key, http.MethodGet); fail {
@@ -634,14 +529,9 @@ func (f *fakeS3) handleGet(w http.ResponseWriter, r *http.Request, key string) {
 	_, _ = w.Write(obj.data)
 }
 
-// dripGet arms a per-key drip on key's next GET (and every one after, since
-// this fake has no notion of a fault Count): once the object's real headers
-// and 200 status are written, the response body never actually arrives -
-// driveDripGet writes one filler byte per interval instead, flushed onto the
-// wire, forever, until the request's context ends. This models a degraded or
-// hostile object-store endpoint whose GET keeps making genuine (if glacial)
-// progress and so never trips a read-inactivity watchdog, the same shape
-// fakegalaxy.Fault.DripInterval models for a Galaxy server.
+// dripGet makes every GET of key send the real headers and 200, then a body
+// that never completes (see driveDripGet): an endpoint that keeps making
+// glacial progress and so never trips a read-inactivity watchdog.
 func (f *fakeS3) dripGet(key string, interval time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -651,13 +541,9 @@ func (f *fakeS3) dripGet(key string, interval time.Duration) {
 	f.drips[key] = interval
 }
 
-// driveDripGet writes a single filler byte per interval, flushed onto the
-// wire, until r's context is done - enactFault's DripInterval arm in
-// internal/testing/fakegalaxy mirrors this exact shape for a JSON Galaxy
-// endpoint. The object's real Content-Length is never set here (handleGet's
-// caller wrote only the headers and status before calling this), so the
-// connection is served chunked and a client can never infer completion from
-// a declared length.
+// driveDripGet writes one flushed filler byte per interval until r's context
+// is done, like fakegalaxy's DripInterval; with no Content-Length the response
+// is chunked, so a client cannot infer completion from a declared length.
 func driveDripGet(w http.ResponseWriter, r *http.Request, interval time.Duration) {
 	flusher, _ := w.(http.Flusher)
 	for {
@@ -682,21 +568,9 @@ func (f *fakeS3) nextETagSeq() uint64 {
 	return f.etagSeq
 }
 
-// handlePut stores the request body and its X-Amz-Meta-* headers under key,
-// honoring both conditional headers the distributed lock uses. If-None-Match:
-// * ("create if absent") fails with 412 when the key already exists. If-Match:
-// <etag> ("compare and swap") answers the two statuses S3 itself distinguishes
-// here: 412 when the key exists under a different ETag, and 404 when the key is
-// absent entirely, since a swap names a version of an object rather than the
-// bucket. Answering 412 for both would hide the arm reclaimIfExpired reads as
-// "the holder released between our HEAD and our swap".
-//
-// ignoreIfNoneMatch simulates a non-conforming backend that overwrites
-// regardless of the create-if-absent header; ignoreIfMatch does the same for
-// the swap, which is what lets a test drive Open's own capability probe. A
-// forced failure armed via failNext takes precedence over all of that (e.g. to
-// simulate another writer's create winning a race, regardless of what this
-// fake's own object map holds).
+// handlePut stores the body and X-Amz-Meta-* headers under key unless a failNext
+// rule fires first, honoring the lock's conditional headers. If-Match on an absent
+// key answers 404, not 412, as S3 does; reclaimIfExpired reads that as a release.
 func (f *fakeS3) handlePut(w http.ResponseWriter, r *http.Request, key string) {
 	f.countRequest(key, http.MethodPut)
 	body, err := io.ReadAll(r.Body)
@@ -729,13 +603,9 @@ func (f *fakeS3) handlePut(w http.ResponseWriter, r *http.Request, key string) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// conditionalRefusal evaluates a PUT's conditional headers against what is
-// stored, reporting the status to answer with and whether the write is refused
-// at all. The caller already holds mu.
-//
-// It is split out of handlePut rather than inlined so the write path stays one
-// statement per outcome; the two conditions are independent rules, and a
-// request carrying neither falls through both.
+// conditionalRefusal evaluates a PUT's If-None-Match and If-Match against
+// what is stored, reporting the status to answer and whether the write is
+// refused. The caller already holds mu.
 func (f *fakeS3) conditionalRefusal(r *http.Request, key string) (int, bool) {
 	if !f.ignoreIfNoneMatch && r.Header.Get("If-None-Match") == "*" {
 		if _, exists := f.objects[key]; exists {
@@ -770,17 +640,9 @@ func captureMeta(header http.Header) map[string]string {
 	return meta
 }
 
-// writeObjectHeaders sets obj's captured metadata headers plus a
-// Last-Modified timestamp and, when withETag says so, the object's ETag,
-// mirroring what a real S3 HEAD or GET response carries. The ETag is what the
-// lock's reclaim conditions its compare-and-swap on, which is why withholding
-// it is a shape worth driving: a backend that answers reads without naming a
-// version is one the protocol has to refuse rather than guess around.
-//
-// withETag is a parameter rather than a read of f.suppressETag because this
-// runs after handleHead/handleGet have released f.mu, so reading the field
-// here would race a test arming it mid-run; the caller samples it inside its
-// own critical section instead.
+// writeObjectHeaders sets obj's captured metadata, Last-Modified and, when
+// withETag, the ETag; the caller samples withETag under mu, since this runs
+// after f.mu is released and reading f.suppressETag here would race.
 func writeObjectHeaders(header http.Header, obj fakeObject, withETag bool) {
 	for name, value := range obj.meta {
 		header.Set(name, value)
@@ -800,12 +662,9 @@ func (f *fakeS3) setSuppressETag(suppress bool) {
 	f.suppressETag = suppress
 }
 
-// handleDelete removes the object, always reporting success like S3 does
-// even when the key is already absent. If deleteDelay is set, it first
-// waits that long - or until the request's context is done, whichever
-// comes first - so a test can make DELETE outlast a caller's bounded
-// context and observe the resulting timeout. A forced failure armed via
-// failNext takes precedence over both of those behaviors.
+// handleDelete removes the object, reporting success even when it is absent
+// as S3 does; a failNext rule wins first, and deleteDelay stalls it until the
+// delay or the request's context ends, so a test can drive a DELETE timeout.
 func (f *fakeS3) handleDelete(w http.ResponseWriter, r *http.Request, key string) {
 	f.countRequest(key, http.MethodDelete)
 	if status, body, fail := f.shouldFail(key, http.MethodDelete); fail {
@@ -887,20 +746,9 @@ func newTestBackendWithFake(t *testing.T, fake *fakeS3) *Backend {
 	return backend
 }
 
-// newAcceptingNeverRespondingListener starts a live local TCP listener that
-// accepts every connection and drains what it reads, but never writes a
-// response, so a caller waiting on response headers gets exactly that: a
-// connection, and then silence. It is shared across this package's test
-// files, each pointing it at a different consumer: Client.do's own
-// response-header-timeout row (cache_backend_classification_test.go, which
-// also uses it for a dial-timeout row that never actually reaches the accept
-// loop before its own deadline fires), the distributed lock's wait-ceiling
-// classification (lock_test.go, simulating a live but unresponsive S3
-// endpoint during acquisition), and getObject's own retry-count assertion
-// against a repeated response-header timeout (client_test.go). The returned
-// counter increments once per accepted connection, so a caller can assert
-// exactly how many attempts a retrying request made against this listener
-// without needing its own separate bookkeeping.
+// newAcceptingNeverRespondingListener starts a local TCP listener that
+// accepts and drains every connection but never responds, so a caller hits
+// its response-header timeout; the counter counts accepted connections.
 func newAcceptingNeverRespondingListener(t *testing.T) (net.Listener, *atomic.Int32) {
 	t.Helper()
 	var lc net.ListenConfig
@@ -908,10 +756,8 @@ func newAcceptingNeverRespondingListener(t *testing.T) (net.Listener, *atomic.In
 	if err != nil {
 		t.Fatalf("net.Listen: %v", err)
 	}
-	// done gates when an accepted connection is finally closed: closing it the
-	// instant the request is drained would abort the connection out from under
-	// a caller still waiting on response headers, turning the intended timeout
-	// into an immediate EOF/connection-reset instead.
+	// done holds accepted connections open until cleanup: closing one right
+	// after draining would turn the intended timeout into an EOF or reset.
 	done := make(chan struct{})
 	t.Cleanup(func() {
 		close(done)

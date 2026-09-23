@@ -7,10 +7,8 @@ import (
 	"testing"
 )
 
-// mustReadFile reads path and fails the test on error. Centralizing the read
-// keeps each WriteFileAtomic test case focused on its own assertion and gives
-// gosec's G304 (potential file inclusion via variable) a single call site to
-// annotate instead of one per test.
+// mustReadFile reads path and fails the test on error, giving gosec's G304 a
+// single call site to annotate.
 func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 	//nolint:gosec // path is built from this test's own t.TempDir fixture, never external input.
@@ -56,11 +54,8 @@ func TestWriteFileAtomicWritesContentAndMode(t *testing.T) {
 	}
 }
 
-// TestWriteFileAtomicCreatesMissingParents asserts the parent tree is created
-// when absent, since directory existence is WriteFileAtomic's own precondition
-// rather than the caller's. The directory mode is deliberately not asserted:
-// os.MkdirAll is umask-filtered, unlike the file's explicit Chmod to FileMod,
-// so an exact DirMod check would be flaky under a non-default umask.
+// TestWriteFileAtomicCreatesMissingParents pins that a missing parent tree is
+// created. The directory mode is not asserted: os.MkdirAll is umask-filtered.
 func TestWriteFileAtomicCreatesMissingParents(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -77,11 +72,9 @@ func TestWriteFileAtomicCreatesMissingParents(t *testing.T) {
 	}
 }
 
-// TestWriteFileAtomicReplacesSymlinkWithoutFollowing is the regression test
-// for the whole point of this helper: a symlink pre-planted at the target
-// path must be replaced by rename, never followed and truncated in place.
-// This is the test that fails against a naive os.WriteFile(path, ...)
-// implementation.
+// TestWriteFileAtomicReplacesSymlinkWithoutFollowing pins that a symlink
+// planted at the target is replaced by the rename, never followed and
+// truncated in place as a plain os.WriteFile would.
 func TestWriteFileAtomicReplacesSymlinkWithoutFollowing(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -124,10 +117,8 @@ func TestWriteFileAtomicReplacesSymlinkWithoutFollowing(t *testing.T) {
 	}
 }
 
-// TestWriteFileAtomicOverwritesExistingFile asserts a second write to the
-// same path replaces the first: this is why the target itself is not opened
-// with O_EXCL/O_NOFOLLOW - that would break the legitimate overwrite-on-rerun
-// case a repeated install/metrics run relies on.
+// TestWriteFileAtomicOverwritesExistingFile pins that a rerun replaces the
+// file, which is why the target is not opened with O_EXCL or O_NOFOLLOW.
 func TestWriteFileAtomicOverwritesExistingFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -146,12 +137,9 @@ func TestWriteFileAtomicOverwritesExistingFile(t *testing.T) {
 	}
 }
 
-// TestWriteFileAtomicLeavesNoTempOnFailure asserts a failed write (here, the
-// target path is itself an existing directory, so the final os.Rename fails)
-// leaves no temp file behind. The error is asserted only as non-nil: the
-// underlying errno differs by platform (EEXIST on darwin, EISDIR on Linux),
-// and this failure mode is root-safe (unlike a permission-based failure), so
-// no root skip is needed.
+// TestWriteFileAtomicLeavesNoTempOnFailure pins that a failed rename (the
+// target is a directory) leaves no temp file; the error is checked only for
+// non-nil because its errno differs by platform.
 func TestWriteFileAtomicLeavesNoTempOnFailure(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

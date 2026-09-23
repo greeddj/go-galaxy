@@ -1,11 +1,8 @@
 package collections
 
-// This file exercises classifyCollectionsRootError directly rather than
-// through a production write site, since its own doc comment now makes a
-// claim - "load-bearing for classification, not for containment" - that no
-// end-to-end test can falsify: an end-to-end test only ever observes the
-// already-refused write, never whether the function correctly told an escape
-// apart from an ordinary filesystem error along the way.
+// Tests for classifyCollectionsRootError called directly: an end-to-end test
+// only sees the already refused write, never whether an escape was told apart
+// from an ordinary filesystem error.
 
 import (
 	"errors"
@@ -16,18 +13,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// TestClassifyCollectionsRootErrorReturnsRawErrorForNonEscapeFailure is the
-// test classifyCollectionsRootError's own doc comment cannot substitute for:
-// a root operation can fail for a reason that has nothing to do with an
-// escape - here, a regular file sitting where a directory component is
-// expected, measured (see the probe run ahead of writing this test) to
-// surface from the kernel as "openat blocker: not a directory", never
-// anything mentioning a symlink or an escape. classifyCollectionsRootError's
-// Lstat walk must find no symlink component here (there is none) and fall
-// through to returning err unchanged, not helpers.ErrCollectionsPathEscape.
-// Without this test, the walk could be widened into a catch-all - reporting
-// every root-operation failure as an escape - and nothing in this package
-// would notice, since every other test in this file drives an actual escape.
+// TestClassifyCollectionsRootErrorReturnsRawErrorForNonEscapeFailure pins that
+// a failure with no symlink component (a regular file where a directory is
+// expected, ENOTDIR) is returned unchanged, not as ErrCollectionsPathEscape.
 func TestClassifyCollectionsRootErrorReturnsRawErrorForNonEscapeFailure(t *testing.T) {
 	t.Parallel()
 	downloadPath := t.TempDir()
@@ -57,12 +45,8 @@ func TestClassifyCollectionsRootErrorReturnsRawErrorForNonEscapeFailure(t *testi
 }
 
 // TestClassifyCollectionsRootErrorReturnsEscapeForSymlinkComponent is the
-// positive control for TestClassifyCollectionsRootErrorReturnsRawErrorForNonEscapeFailure:
-// the identical call shape, but with an actual symlink component standing in
-// for "blocker", must be reported as helpers.ErrCollectionsPathEscape. Without
-// this, "not reported as an escape" on the sibling test would be
-// unfalsifiable - a classifyCollectionsRootError that never recognized an
-// escape at all would also pass that test for the wrong reason.
+// positive control: the same call with a symlinked component must report
+// helpers.ErrCollectionsPathEscape.
 func TestClassifyCollectionsRootErrorReturnsEscapeForSymlinkComponent(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

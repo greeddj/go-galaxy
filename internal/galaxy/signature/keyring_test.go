@@ -16,57 +16,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// Fixtures under testdata are generated once and committed, never built at
-// test time: generating a key costs seconds and needs a working gpg-agent,
-// neither of which belongs in a unit test. All of them come from gpg 2.5.21,
-// run against throwaway GNUPGHOMEs holding one key each.
-//
-// The first key backs every fixture not named further down. It was created
-// with
-//
-//	gpg --batch --passphrase '' --quick-generate-key \
-//	    'go-galaxy test key <test@example.invalid>' ed25519 sign never
-//
-// and then exported with
-//
-//	gpg --batch --export --armor 'test@example.invalid' > public.asc
-//	gpg --batch --export 'test@example.invalid' > public.gpg
-//	cp "$GNUPGHOME/pubring.kbx" pubring.kbx
-//	gpg --batch --export 'absent@example.invalid' > empty.gpg
-//	printf 'this file is not OpenPGP key material at all\n' > garbage.bin
-//
-// empty.gpg is zero bytes because that export names a key the keyring does not
-// hold, which is the one shape openpgp.ReadKeyRing answers with an empty list
-// and a nil error.
-//
-// A second key, in a GNUPGHOME of its own, backs second.asc; two-keys.asc is
-// the two armored exports concatenated, which is how an operator builds a
-// multi-key keyring:
-//
-//	gpg --batch --passphrase '' --quick-generate-key \
-//	    'go-galaxy second test key <second@example.invalid>' ed25519 sign never
-//	gpg --batch --export --armor 'second@example.invalid' > second.asc
-//	cat public.asc second.asc > two-keys.asc
-//
-// A third key, again in its own GNUPGHOME, is the single exception to the rule
-// that only public material is committed here: secret.gpg and secret.asc carry
-// its private half. It is a discardable key generated for exactly this
-// purpose - proving LoadKeyring refuses a file holding secret key material -
-// and nothing else in this repository refers to it: it certifies nothing, no
-// fixture was ever signed with it, and it is trusted by no test. Its public
-// half is committed as secret-public.asc so the refusals have a same-key
-// control.
-//
-//	gpg --batch --passphrase '' --quick-generate-key \
-//	    'go-galaxy discardable secret test key <secret@example.invalid>' \
-//	    ed25519 sign never
-//	gpg --batch --pinentry-mode loopback --passphrase '' \
-//	    --export-secret-keys 'secret@example.invalid' > secret.gpg
-//	gpg --batch --pinentry-mode loopback --passphrase '' \
-//	    --export-secret-keys --armor 'secret@example.invalid' > secret.asc
-//	gpg --batch --export --armor 'secret@example.invalid' > secret-public.asc
-//
-// The private halves of the first two keys never left their GNUPGHOMEs.
+// Fixtures under testdata are committed gpg 2.5.21 exports, never built at test
+// time. secret.gpg and secret.asc hold a discardable key trusted by nothing, and
+// two-keys.asc is public.asc and second.asc catted, each ending in a newline.
 const (
 	testdataDir = "testdata"
 
@@ -95,10 +47,9 @@ const (
 	// ceiling test sets its limit, so the control file fits and the padded one
 	// does not.
 	ceilingHeadroom = 16
-	// ceilingFiller is how many bytes the ceiling test appends after the
-	// armored fixture's end line. It only has to exceed ceilingHeadroom; the
-	// margin is what keeps the truncated read landing inside the filler rather
-	// than inside the armor block, which is the whole point of the fixture.
+	// ceilingFiller is how many bytes the ceiling test appends after the armor
+	// block's end line; its margin over ceilingHeadroom keeps a truncated read
+	// inside the filler, where the truncation would still parse.
 	ceilingFiller = 1024
 )
 
@@ -106,14 +57,9 @@ func fixturePath(name string) string {
 	return filepath.Join(testdataDir, name)
 }
 
-// requirePositiveControl loads the armored fixture out of the same testdata
-// directory every refusal case below draws its input from, and fails the test
-// if that load does not succeed.
-//
-// It is what separates "LoadKeyring refused this file" from "LoadKeyring
-// refuses everything here": without it, a refusal assertion passes just as
-// well against a loader that never reaches its check, or against a testdata
-// directory the test binary cannot read at all.
+// requirePositiveControl fails the test unless the armored fixture loads from
+// the same testdata directory, so a refusal assertion cannot pass against a
+// loader that refuses everything or a directory the test cannot read.
 func requirePositiveControl(t *testing.T) {
 	t.Helper()
 
@@ -171,11 +117,8 @@ func TestLoadKeyringAcceptsArmoredExport(t *testing.T) {
 	}
 }
 
-// TestLoadKeyringAcceptsBinaryKeyring covers the branch the armored test does
-// not reach at all. Both fixtures are exports of the same single key, so the
-// entity counts have to agree: an equal, non-zero count is what shows the
-// binary reader read the same key material rather than merely returning
-// without an error.
+// TestLoadKeyringAcceptsBinaryKeyring pins the binary reader: the binary and
+// armored exports of one key must load to the same non-zero entity count.
 func TestLoadKeyringAcceptsBinaryKeyring(t *testing.T) {
 	t.Parallel()
 
@@ -196,15 +139,9 @@ func TestLoadKeyringAcceptsBinaryKeyring(t *testing.T) {
 	}
 }
 
-// TestLoadKeyringReadsEveryArmorBlock pins the accumulation across armor
-// blocks.
-//
-// openpgp.ReadArmoredKeyRing decodes one block and stops, so a loader handing
-// it the whole file answers `cat teamA.asc teamB.asc` with team A's keys and a
-// nil error - a trust set silently smaller than the configured one, which then
-// reports an artifact signed by a team B key as signed by nobody trusted. That
-// is the failure the size ceiling's own refusal exists to avoid, arriving by a
-// route the ceiling never sees.
+// TestLoadKeyringReadsEveryArmorBlock pins that a catted multi-key keyring loads
+// every block's key, where openpgp.ReadArmoredKeyRing alone would silently
+// return the first block's keys with a nil error.
 func TestLoadKeyringReadsEveryArmorBlock(t *testing.T) {
 	t.Parallel()
 
@@ -221,47 +158,27 @@ func TestLoadKeyringReadsEveryArmorBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadKeyring(%s) = %v, want nil", twoKeyFixture, err)
 	}
-	// Killing mutation, actually run against this file: replace readEntities'
-	// `readArmoredKeyRing(data)` call with the single-block
-	// `openpgp.ReadArmoredKeyRing(bytes.NewReader(data))` it replaced. This
-	// assertion then fails with
-	//
-	//	keyring_test.go:234: LoadKeyring(two-keys.asc) Len() = 1, want 2
-	//
-	// and no error is reported alongside it, which is the whole defect: the
-	// second key is gone and nothing says so.
 	if kr.Len() != 2 {
 		t.Fatalf("LoadKeyring(%s) Len() = %d, want 2", twoKeyFixture, kr.Len())
 	}
 
 	got := keyFingerprints(kr)
-	// The count above cannot be the whole assertion, and this line's first
-	// failing state is a two-keys.asc rebuilt from two copies of one export:
-	// every assertion above it still passes there, and only this one fails.
-	// That is a fixture defect rather than a code mutation, which is exactly
-	// the state it is here for.
+	// The count alone would pass on a two-keys.asc rebuilt from two copies of
+	// one export; the fingerprints are what catch that fixture defect.
 	if !slices.Contains(got, first) || !slices.Contains(got, second) {
 		t.Fatalf("LoadKeyring(%s) holds %v, want both %s and %s", twoKeyFixture, got, first, second)
 	}
 }
 
 // TestLoadKeyringRefusesSecretKeyMaterial pins that a keyring holding a private
-// key is refused, in both encodings, by policy rather than by accident.
-//
-// Verification needs public keys alone, so secret material in the configured
-// keyring is a file an operator did not mean to point a build at. The binary
-// encoding used to load clean; the armored one used to be refused only because
-// the routing needle named the public armor header, so it reached the binary
-// reader and died on a malformed packet - a message naming nothing an operator
-// could act on.
+// key is refused in both encodings, with a message naming the problem and the
+// public export to make instead.
 func TestLoadKeyringRefusesSecretKeyMaterial(t *testing.T) {
 	t.Parallel()
 	requirePositiveControl(t)
 
-	// A second control, on the very key the fixtures below carry: its public
-	// half loads. Without it, "the loader refused secret.gpg" would be just as
-	// consistent with this throwaway key being unreadable for a reason of its
-	// own.
+	// Same-key control: the public half of the key below loads, so a refusal is
+	// the secret material rather than this key being unreadable.
 	if _, err := LoadKeyring(fixturePath(secretPublicFixture)); err != nil {
 		t.Fatalf("positive control: LoadKeyring(%s) = %v, want nil", secretPublicFixture, err)
 	}
@@ -271,37 +188,11 @@ func TestLoadKeyringRefusesSecretKeyMaterial(t *testing.T) {
 			t.Parallel()
 
 			_, err := LoadKeyring(fixturePath(name))
-			// Killing mutation, actually run against this file: delete the
-			// secretKeyPacketTags arm from judgeHeader, so the two secret-key
-			// tags fall through to the allow-list that no longer admits them.
-			// Both rows then keep failing the sentinel below and fail the
-			// message assertion under it instead, one of them with
-			//
-			//	keyring_test.go:306: LoadKeyring(secret.gpg) error does not name the problem:
-			//	keyring could not be read: "testdata/secret.gpg": malformed OpenPGP packet framing: a tag 5 packet has
-			//	no place in this stream
-			//
-			// The branch this paragraph used to name - loadKeyring's own
-			// holdsSecretKey call - no longer kills anything on its own: the walk
-			// refuses both encodings before a packet is parsed, so deleting that
-			// call leaves every row here passing. It stays as a backstop, and
-			// TestHoldsSecretKeyReportsMaterialInEitherPlace is what pins it.
 			if !errors.Is(err, helpers.ErrKeyringUnreadable) {
 				t.Fatalf("LoadKeyring(%s) error = %v, want the unreadable sentinel", name, err)
 			}
-			// Killing mutation, actually run against this file: drop the
-			// `|| bytes.Contains(data, []byte(privateKeyArmorHeader))` arm of
-			// readEntities' routing test. Only the secret.asc row then fails,
-			// with
-			//
-			//	keyring_test.go:306: LoadKeyring(secret.asc) error does not name the problem:
-			//	    keyring could not be read: "testdata/secret.asc": malformed OpenPGP packet framing: 532 bytes are
-			//	    not a packet header this walk can read
-			//
-			// while the assertion above it still passes: the armored secret key
-			// is refused either way, but only the routed one is refused for the
-			// reason that is true. The message is split over two lines so this
-			// quote of it fits the line limit the repository lints for.
+			// The message must name secret material: an armored secret key sent to
+			// the binary reader would be refused as malformed packet framing instead.
 			if !strings.Contains(err.Error(), "secret key material") {
 				t.Fatalf("LoadKeyring(%s) error does not name the problem:\n%v", name, err)
 			}
@@ -312,20 +203,9 @@ func TestLoadKeyringRefusesSecretKeyMaterial(t *testing.T) {
 	}
 }
 
-// TestHoldsSecretKeyReportsMaterialInEitherPlace pins the backstop no file can
-// reach any more.
-//
-// The packet walk refuses the two secret-key tags before openpgp.ReadKeyRing
-// sees them, so no entity this package builds from a file can carry private
-// material and holdsSecretKey answers false for every one of them. That is what
-// makes a file-driven test impossible and a direct one necessary: it takes
-// hand-built entities to ask the question the function exists to answer, and
-// without them the function could be inverted or emptied with the whole suite
-// still green.
-//
-// The false rows are the positive control, on entities of the same shape: a
-// primary key with no private half and a subkey with none answer false, so a true
-// row is the private material rather than the presence of an entity at all.
+// TestHoldsSecretKeyReportsMaterialInEitherPlace pins holdsSecretKey on
+// hand-built entities, since the packet walk keeps every file from reaching it;
+// the false rows are same-shape controls without private material.
 func TestHoldsSecretKeyReportsMaterialInEitherPlace(t *testing.T) {
 	t.Parallel()
 
@@ -354,14 +234,6 @@ func TestHoldsSecretKeyReportsMaterialInEitherPlace(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// Killing mutation, actually run against this file: delete the subkey
-			// loop from holdsSecretKey, which is the arm gpg's own exports never
-			// reach. Exactly its row fails, with
-			//
-			//	keyring_test.go:366: holdsSecretKey(a public primary with a private subkey) = false, want true
-			//
-			// and nothing else in the package notices, this being the only place
-			// that arm is reached at all.
 			if got := holdsSecretKey(tc.entities); got != tc.want {
 				t.Fatalf("holdsSecretKey(%s) = %t, want %t", tc.name, got, tc.want)
 			}
@@ -369,15 +241,9 @@ func TestHoldsSecretKeyReportsMaterialInEitherPlace(t *testing.T) {
 	}
 }
 
-// TestLoadKeyringRefusesADirectory covers the read failure between opening the
-// keyring and looking at its bytes.
-//
-// A directory opens like a file and fails on the read, on darwin and on Linux
-// alike, which is the one shape of that failure a test can stage portably - and
-// it is not a contrived one: an operator pointing --keyring at a directory of
-// exported keys is an ordinary mistake. What it pins is that such a failure is
-// reported as a keyring this tool could not read, wrapped rather than rendered,
-// so the cause stays reachable.
+// TestLoadKeyringRefusesADirectory pins that a read failing after a successful
+// open (a directory, portably) is ErrKeyringUnreadable naming the read error,
+// not a readable file reported as holding no keys.
 func TestLoadKeyringRefusesADirectory(t *testing.T) {
 	t.Parallel()
 	requirePositiveControl(t)
@@ -388,15 +254,6 @@ func TestLoadKeyringRefusesADirectory(t *testing.T) {
 	}
 
 	_, err := LoadKeyring(dir)
-	// Killing mutation, actually run against this file: have loadKeyring ignore
-	// io.ReadAll's error and carry on with whatever it read. This assertion then
-	// fails with
-	//
-	//	keyring_test.go:401: LoadKeyring(a directory) = keyring could not be read: "...keyring.d" holds no OpenPGP keys,
-	//	want the read failure to be named
-	//
-	// which is the wrong diagnosis: an unreadable path reported as a readable
-	// file holding nothing.
 	if err == nil || !strings.Contains(err.Error(), "is a directory") {
 		t.Fatalf("LoadKeyring(a directory) = %v, want the read failure to be named", err)
 	}
@@ -405,18 +262,9 @@ func TestLoadKeyringRefusesADirectory(t *testing.T) {
 	}
 }
 
-// TestArmoredKeyRingRefusesANonFinalBlock pins that a block failing anywhere but
-// last stops the file.
-//
-// readArmoredKeyRing reads every block, and the reason it refuses rather than
-// skips is that using part of a keyring quietly is the failure the whole loader
-// exists to avoid. Nothing else reaches that in-loop refusal: every other case
-// here puts its bad block last, where the error comes from the call after the
-// loop instead.
-//
-// Both rows are the same key export with something in front of it, and the
-// control is that export alone, so a refusal is the leading block rather than
-// the file having two of them.
+// TestArmoredKeyRingRefusesANonFinalBlock pins that a bad block anywhere but
+// last stops the whole file rather than being skipped; the control is the key
+// export alone, so the refusal is the leading block's.
 func TestArmoredKeyRingRefusesANonFinalBlock(t *testing.T) {
 	t.Parallel()
 
@@ -439,10 +287,8 @@ func TestArmoredKeyRingRefusesANonFinalBlock(t *testing.T) {
 			want:   "openpgp: invalid argument: expected public or private key block, got: PGP SIGNATURE",
 		},
 		{
-			// An opening line with nothing behind it inside its own cut: the
-			// decoder takes the line as a block start, runs out of input looking
-			// for the blank line that ends its header section, and reports the
-			// block it could not read as io.EOF.
+			// An opening line with nothing behind it: the decoder runs out of
+			// input in its header section and reports io.EOF.
 			name:   "an opening line with no block behind it",
 			leader: []byte("-----BEGIN NOT REALLY AN ARMOR BLOCK-----\n"),
 			want:   "openpgp: invalid argument: no armored data found",
@@ -459,15 +305,6 @@ func TestArmoredKeyRingRefusesANonFinalBlock(t *testing.T) {
 			}
 
 			entities, err := readEntities(file)
-			// Killing mutation, actually run against this file: drop the error
-			// arm from readArmoredKeyRing's in-loop readBlock call, so only the
-			// block after the loop can fail the read. Both rows then fail, one of
-			// them with
-			//
-			//	keyring_test.go:472: readEntities(a signature block ahead of the key block) = 1 entities, <nil>, want
-			//	"openpgp: invalid argument: expected public or private key block, got: PGP SIGNATURE"
-			//
-			// which is the loader using the half of the file it liked.
 			if err == nil || err.Error() != tc.want {
 				t.Fatalf("readEntities(%s) = %d entities, %v, want %q", tc.name, len(entities), err, tc.want)
 			}
@@ -475,14 +312,9 @@ func TestArmoredKeyRingRefusesANonFinalBlock(t *testing.T) {
 	}
 }
 
-// TestLoadKeyringRefusesNonKeyArmorBlock pins the direction reading every block
-// errs in: a block that is not key material stops the load and names its type,
-// rather than being passed over.
-//
-// Skipping it would put the loader back in the business of quietly using part
-// of a file, which is the defect the multi-block read exists to remove; and
-// deciding which non-key types are safe to ignore is a judgement the reader
-// behind this one already makes for itself.
+// TestLoadKeyringRefusesNonKeyArmorBlock pins that a block which is not key
+// material stops the load and names its type rather than being passed over, so
+// the loader never quietly uses part of a file.
 func TestLoadKeyringRefusesNonKeyArmorBlock(t *testing.T) {
 	t.Parallel()
 
@@ -535,10 +367,8 @@ func TestLoadKeyringRejectsKeybox(t *testing.T) {
 	if !errors.Is(err, helpers.ErrKeyringIsKeybox) {
 		t.Fatalf("LoadKeyring(%s) error = %v, want the keybox sentinel", keyboxFixture, err)
 	}
-	// Naming the remedy is the entire reason this sentinel is separate from
-	// helpers.ErrKeyringUnreadable, so the export command is part of the
-	// contract rather than decoration. The assertion guards the sentinel's own
-	// wording in internal/galaxy/helpers, which is where an edit could drop it.
+	// Naming the export command is why this sentinel is separate from
+	// ErrKeyringUnreadable; its wording lives in internal/galaxy/helpers.
 	if !strings.Contains(err.Error(), "--export --armor") {
 		t.Fatalf("keybox error does not name the export command: %v", err)
 	}
@@ -548,33 +378,21 @@ func TestLoadKeyringRejectsGarbage(t *testing.T) {
 	t.Parallel()
 	requirePositiveControl(t)
 
-	// One assertion, and the keybox case is covered by it rather than by a
-	// second: the keybox branch returns helpers.ErrKeyringIsKeybox alone, so
-	// garbage misrouted there fails this very check. A separate "and not a
-	// keybox" assertion below it could never be the first line to fail, which
-	// would make it documentary rather than pinned.
+	// A misroute to the keybox branch returns ErrKeyringIsKeybox alone, so this
+	// one assertion also covers "not a keybox".
 	_, err := LoadKeyring(fixturePath(garbageFixture))
 	if !errors.Is(err, helpers.ErrKeyringUnreadable) {
 		t.Fatalf("LoadKeyring(%s) error = %v, want the unreadable sentinel", garbageFixture, err)
 	}
 }
 
-// TestLoadKeyringRejectsEmptyKeyring pins the one refusal the OpenPGP library
-// does not make for itself: openpgp.ReadKeyRing answers an empty packet stream
-// with an empty list and a nil error, so a loader that only checks the error
-// hands back a keyring that verifies nothing while reporting nothing wrong.
+// TestLoadKeyringRejectsEmptyKeyring pins the refusal of a keyring holding no
+// keys, which openpgp.ReadKeyRing reports as an empty list and a nil error.
 func TestLoadKeyringRejectsEmptyKeyring(t *testing.T) {
 	t.Parallel()
 	requirePositiveControl(t)
 
 	_, err := LoadKeyring(fixturePath(emptyFixture))
-	// Killing mutation, actually run against this file: delete loadKeyring's
-	// `if len(entities) == 0` branch. This assertion then fails with
-	//
-	//	keyring_test.go:579: LoadKeyring(empty.gpg) = nil error, want the unreadable sentinel
-	//
-	// which is the shape the check exists to prevent - a nil error alongside a
-	// keyring holding no keys at all.
 	if err == nil {
 		t.Fatalf("LoadKeyring(%s) = nil error, want the unreadable sentinel", emptyFixture)
 	}
@@ -599,14 +417,9 @@ func TestLoadKeyringRejectsMissingFile(t *testing.T) {
 	}
 }
 
-// TestLoadKeyringRefusesFileOverCeiling exercises the size ceiling through
-// loadKeyring's limit parameter rather than a 64 MiB fixture.
-//
-// The padded file is built so that a truncating read would still SUCCEED: the
-// filler sits after the armor block's end line, so bytes cut from it leave a
-// complete, parseable block behind. That is what makes the refusal load-bearing
-// rather than incidental - drop the check and this file is accepted, not
-// reported as corrupt.
+// TestLoadKeyringRefusesFileOverCeiling pins the size ceiling via loadKeyring's
+// limit: the filler sits after the end line, so a truncating read would still
+// parse and only the refusal rejects the file.
 func TestLoadKeyringRefusesFileOverCeiling(t *testing.T) {
 	t.Parallel()
 
@@ -641,12 +454,6 @@ func TestLoadKeyringRefusesFileOverCeiling(t *testing.T) {
 	}
 
 	_, err = loadKeyring(paddedPath, limit)
-	// Killing mutation, actually run against this file: delete loadKeyring's
-	// `if int64(len(data)) > limit` branch. This assertion then fails with
-	//
-	//	keyring_test.go:651: loadKeyring(padded) error = <nil>, want the unreadable sentinel
-	//
-	// because the truncated read still carries a whole armor block.
 	if !errors.Is(err, helpers.ErrKeyringUnreadable) {
 		t.Fatalf("loadKeyring(padded) error = %v, want the unreadable sentinel", err)
 	}
@@ -689,13 +496,6 @@ func TestLooksLikeKeybox(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// Killing mutation, actually run against this file: set
-			// keyboxMagicOffset to 0. Three rows fail, one of them with
-			//
-			//	keyring_test.go:700: looksLikeKeybox(real keybox fixture) = false, want true
-			//
-			// and among them "magic at offset zero" flips to true, which is the
-			// pair that shows the offset is what does the identifying.
 			if got := looksLikeKeybox(tc.input); got != tc.want {
 				t.Fatalf("looksLikeKeybox(%s) = %t, want %t", tc.name, got, tc.want)
 			}
@@ -703,29 +503,13 @@ func TestLooksLikeKeybox(t *testing.T) {
 	}
 }
 
-// gluedBlockCount is how many armor blocks the concatenation case below builds.
-// Two would carry the defect, and the third is what separates "the loader read
-// the first block" from "the loader read one block per opening line it found":
-// with three, a cut fooled once still has to be fooled twice.
+// gluedBlockCount is how many armor blocks the glued case builds; a third block
+// separates reading only the first block from reading one per opening line.
 const gluedBlockCount = 3
 
-// TestGluedArmorBlocksAreRefused pins the refusal that keeps reading every
-// block from being a silent read of the first one.
-//
-// Measured on blocks armorEncode writes through armor.Encode: the last byte of
-// a block is the final "-" of its end line, so concatenating two of them puts
-// the second's opening line on the end of the first's last line and the cut
-// sees ONE block start in a file carrying three. Measured before this refusal
-// existed, such a file loaded as 1 entity with a nil error - a trust set
-// silently smaller than the configured one, which is the failure keyringMaxSize's
-// own refusal exists to avoid, arriving by a route neither that ceiling nor the
-// block loop can see.
-//
-// Two positive controls, answering two different objections. two-keys.asc is
-// the shape an operator really builds - two gpg exports catted, each ending
-// with the newline gpg writes - and it still loads as two keys, so the refusal
-// is not concatenation. The same three blocks with a newline between them load
-// as three, so it is not these blocks or the key they carry either.
+// TestGluedArmorBlocksAreRefused pins that armor blocks glued without a newline,
+// which the cut sees as one block, are refused rather than loading one key;
+// catted gpg exports and the same blocks newline-separated both still load.
 func TestGluedArmorBlocksAreRefused(t *testing.T) {
 	t.Parallel()
 
@@ -746,14 +530,6 @@ func TestGluedArmorBlocksAreRefused(t *testing.T) {
 	}
 
 	kr, err = LoadKeyring(writeKeyringFile(t, dir, "glued.asc", glued))
-	// Killing mutation, actually run against this file: delete the
-	// checkArmorBlockStartsAtLineStart call from readArmoredKeyRing. This
-	// assertion then fails with
-	//
-	//	keyring_test.go:758: LoadKeyring(3 glued blocks) = 1 keys, <nil>, want the mid-line refusal
-	//
-	// which is the defect in full: two of the three keys are gone and the load
-	// reports nothing wrong.
 	if !errors.Is(err, errArmorBlockStartMidLine) {
 		t.Fatalf("LoadKeyring(%d glued blocks) = %d keys, %v, want the mid-line refusal",
 			gluedBlockCount, keyringLen(kr), err)
@@ -781,10 +557,8 @@ func requireCattedKeyringStillLoads(t *testing.T) {
 	}
 }
 
-// gluedArmorBlocks builds gluedBlockCount copies of one armored key export
-// concatenated directly, and the same copies with a newline between them, in
-// that order. The two differ by those newlines and by nothing else, which is
-// what makes the second the control for the first.
+// gluedArmorBlocks returns gluedBlockCount copies of one armored export glued
+// directly, then the same copies newline-separated as their control.
 func gluedArmorBlocks(t *testing.T) ([]byte, []byte) {
 	t.Helper()
 
@@ -824,17 +598,9 @@ func keyringLen(kr *Keyring) int {
 	return kr.Len()
 }
 
-// TestEveryCommittedFixtureOpensItsArmorAtALineStart is the acceptance half of
-// that refusal, stated over every file testdata holds rather than over the
-// armored ones a hand-written list would have named.
-//
-// The refusal above carries its own controls, so a rule tight enough to turn
-// away ordinary armor does not go unnoticed. What those controls cannot state
-// is the property over the directory: a fixture committed later is inside it
-// with nobody adding it to a list.
-//
-// Two fixtures are named as well as swept, and
-// requireDamagedArmorFixturesOpenAtALineStart holds which two and why.
+// TestEveryCommittedFixtureOpensItsArmorAtALineStart sweeps every testdata file
+// through checkArmorBlockStartsAtLineStart, so a fixture added later is covered
+// too and the refusal is shown never to reject committed armor.
 func TestEveryCommittedFixtureOpensItsArmorAtALineStart(t *testing.T) {
 	t.Parallel()
 
@@ -876,14 +642,9 @@ func TestEveryCommittedFixtureOpensItsArmorAtALineStart(t *testing.T) {
 	t.Logf("%d of the %d committed fixtures carry an armor block start, every one of them at a line start", carrying, len(entries))
 }
 
-// requireDamagedArmorFixturesOpenAtALineStart names the two fixtures the sweep
-// above would otherwise cover anonymously.
-//
-// They are the ones whose armor was deliberately damaged, and so the ones a
-// reader would expect this rule to catch. Neither is its shape: sig-a-badarmor.asc
-// has its BODY joined into one line with the opening line untouched, and
-// sig-a-badbase64.asc has one body character replaced. Both still open their
-// armor at the start of a line, and this rule is about nothing else.
+// requireDamagedArmorFixturesOpenAtALineStart pins that the two deliberately
+// damaged fixtures (folded body, bad base64) still open their armor at a line
+// start, so their damage is not the shape the mid-line refusal is about.
 func requireDamagedArmorFixturesOpenAtALineStart(t *testing.T) {
 	t.Helper()
 

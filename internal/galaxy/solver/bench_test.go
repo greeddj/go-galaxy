@@ -8,28 +8,14 @@ import (
 	"testing"
 )
 
-// scaledGraphFanout is the branching factor of the synthetic dependency tree
-// buildScaledGraph builds: package i's children are indices
-// [i*fanout+1, i*fanout+fanout] (standard k-ary heap indexing), so every
-// non-root package has exactly one parent. A single parent per child -
-// unlike generateGraph's (property_test.go) convergent, multi-parent shape -
-// means a constraint that admits at least one of the child's own published
-// versions can never be contradicted by a second parent: the whole tree is
-// guaranteed solvable by construction, so the benchmark measures Solve's
-// per-package overhead at scale instead of occasionally timing a fast
-// *ConflictError. It also keeps total edge count linear in n (each node has
-// at most scaledGraphFanout children), unlike generateGraph's quadratic
-// edge-candidate scan, which would make the 1000-package size pathological
-// to even construct.
+// scaledGraphFanout is the k-ary fanout of buildScaledGraph's tree. One
+// parent per child means no second parent can contradict a safe constraint,
+// so the tree is solvable by construction and its edge count linear in n.
 const scaledGraphFanout = 3
 
-// safeConstraint returns a constraint drawn from pool that admits at least
-// one of childVersions (checked via propCheck, the same independent
-// membership authority property_test.go uses), falling back to "*" - which
-// every published version admits - if none of pool's forms happen to. This
-// is what lets buildScaledGraph and buildGalaxyShapeGraph draw real
-// constraint forms (narrow enough to sometimes force a universe fetch,
-// unlike a blanket "*") while staying guaranteed-solvable.
+// safeConstraint draws from pool a constraint admitting at least one of
+// childVersions (judged by propCheck), else "*", so benchmark graphs use
+// real constraint forms while staying solvable.
 func safeConstraint(rng *rand.Rand, pool, childVersions []string) string {
 	candidates := make([]string, 0, len(pool))
 	for _, c := range pool {
@@ -46,14 +32,9 @@ func safeConstraint(rng *rand.Rand, pool, childVersions []string) string {
 	return candidates[rng.Intn(len(candidates))]
 }
 
-// buildScaledGraph builds a deterministic, guaranteed-solvable n-package
-// dependency tree for the size-scaling benchmark: a k-ary tree (fanout
-// scaledGraphFanout) of packages, each with 1-3 published versions drawn
-// from sharpVersionPool, each edge constrained by a real form drawn from
-// sharpConstraintPool via safeConstraint. It reuses the property-test
-// generator's version/constraint alphabets for a realistic mix, but its own
-// bounded-fanout tree shape (rather than generateGraph's all-pairs scan)
-// keeps construction and solving linear in n.
+// buildScaledGraph builds a deterministic, solvable n-package k-ary tree
+// over the sharp version and constraint pools, with 1-3 versions per package;
+// the bounded fanout keeps construction and solving linear in n.
 func buildScaledGraph(seed int64, n int) ([]Requirement, *fakeProvider) {
 	//nolint:gosec // G404: deterministic seeded PRNG for a reproducible benchmark corpus, not security-sensitive
 	rng := rand.New(rand.NewSource(seed))
@@ -95,11 +76,9 @@ func buildScaledGraph(seed int64, n int) ([]Requirement, *fakeProvider) {
 	return []Requirement{{Package: pkgs[0], Constraint: "*"}}, p
 }
 
-// BenchmarkSolve measures raw Solve time over the in-memory fakeProvider
-// (no network, no disk) as the package count scales from a typical
-// requirements.yml size up to a stress size well beyond any real Galaxy
-// collection graph. Each subtest builds its graph once, outside the timed
-// b.Loop body, so only Solve itself is measured.
+// BenchmarkSolve measures Solve over the in-memory fakeProvider as the
+// package count scales from a typical requirements.yml to a stress size;
+// each graph is built outside the timed loop.
 func BenchmarkSolve(b *testing.B) {
 	for _, n := range []int{10, 100, 1000} {
 		b.Run(strconv.Itoa(n), func(b *testing.B) {
@@ -115,24 +94,16 @@ func BenchmarkSolve(b *testing.B) {
 	}
 }
 
-// galaxyShapeRoots and galaxyShapeHubs size the "galaxy shape" benchmark: a
-// shallow forest of many top-level requirements (as a real requirements.yml
-// lists many collections directly) converging on a small shared set of hub
-// dependencies - the realistic Galaxy topology, in contrast to
-// BenchmarkSolve's synthetic scaling tree.
+// galaxyShapeRoots and galaxyShapeHubs size the "galaxy shape" benchmark:
+// many top-level requirements converging on a few shared hub dependencies.
 const (
 	galaxyShapeRoots = 60
 	galaxyShapeHubs  = 5
 )
 
-// buildGalaxyShapeGraph builds a deterministic, guaranteed-solvable shallow
-// forest: galaxyShapeRoots top-level packages, each depending on two of
-// galaxyShapeHubs shared hub packages via an unconstrained "*" (so the
-// convergent root->hub edges can never jointly conflict), and each hub
-// chained to the next (hub[i] -> hub[i+1], the only non-trivial constraint
-// any hub carries, via safeConstraint) to add a little shared depth without
-// a cycle. This mirrors a realistic Galaxy install: many requested
-// collections, few truly shared transitive dependencies.
+// buildGalaxyShapeGraph builds a deterministic, solvable shallow forest:
+// each root needs two hubs via "*", so convergent edges never conflict, and
+// hubs form a chain constrained through safeConstraint.
 func buildGalaxyShapeGraph() ([]Requirement, *fakeProvider) {
 	//nolint:gosec // G404: deterministic seeded PRNG for a reproducible benchmark corpus, not security-sensitive
 	rng := rand.New(rand.NewSource(1))
@@ -183,15 +154,9 @@ func BenchmarkSolveGalaxyShape(b *testing.B) {
 // deepBacktrackChainLength is the chain length for BenchmarkSolveDeepBacktrack.
 const deepBacktrackChainLength = 200
 
-// buildDeepBacktrackGraph builds a deliberately conflict-dense chain: package
-// i's two higher versions ("2.0.0" and "3.0.0") each require package i+1 at
-// ">=2.0.0", but the chain's terminal package publishes only "1.0.0". The
-// chain is therefore only satisfiable if every package resolves to its
-// lowest version, "1.0.0" - decision making always tries the highest allowed
-// version first (decideFromAllowed), so conflict resolution must walk the
-// chain and re-derive "not >=2.0.0" one link at a time. This exercises the
-// backtracking/conflict-resolution path; it is deliberately not a realistic
-// dependency shape.
+// buildDeepBacktrackGraph builds a conflict-dense chain whose terminal
+// package publishes only 1.0.0 while every higher version needs its
+// successor >=2.0.0, forcing conflict resolution through every link.
 func buildDeepBacktrackGraph(n int) ([]Requirement, *fakeProvider) {
 	p := newFakeProvider()
 	pkgs := make([]string, n)
@@ -211,10 +176,8 @@ func buildDeepBacktrackGraph(n int) ([]Requirement, *fakeProvider) {
 	return []Requirement{{Package: pkgs[0], Constraint: "*"}}, p
 }
 
-// BenchmarkSolveDeepBacktrack measures Solve time on a conflict-dense chain
-// that forces conflict resolution to backtrack through every link. Whether
-// the chain ultimately resolves or reports a *ConflictError is incidental -
-// the point is to measure the backtracking path itself, not the outcome.
+// BenchmarkSolveDeepBacktrack measures Solve on the conflict-dense chain;
+// the outcome is incidental, the backtracking path is what is timed.
 func BenchmarkSolveDeepBacktrack(b *testing.B) {
 	reqs, p := buildDeepBacktrackGraph(deepBacktrackChainLength)
 	for b.Loop() {

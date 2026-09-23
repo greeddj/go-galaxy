@@ -9,9 +9,7 @@ import (
 )
 
 // gitExitCases pins the exit class of every git-source sentinel, one row per
-// sentinel, so that adding a sentinel to helpers without placing it in a
-// predicate here is caught by TestGitSentinelsAreAllClassified below rather
-// than by a pipeline exiting 1.
+// sentinel; a git sentinel added to helpers needs a row here.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var gitExitCases = []exitCase{
@@ -63,10 +61,9 @@ func TestGitSentinelsAreAllClassified(t *testing.T) {
 	}
 }
 
-// TestGitBuildFailureJoinedBehindInstallHeadline pins that a per-collection
-// git build failure folded behind helpers.ErrInstallationFailed still exits
-// with the install code, and that an integrity sentinel joined alongside it
-// outranks the headline exactly as it does for a downloaded artifact.
+// TestGitBuildFailureJoinedBehindInstallHeadline pins that a git build
+// failure joined behind helpers.ErrInstallationFailed exits ExitInstall, and
+// that an integrity sentinel joined alongside it still outranks the headline.
 func TestGitBuildFailureJoinedBehindInstallHeadline(t *testing.T) {
 	t.Parallel()
 	joined := errors.Join(

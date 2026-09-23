@@ -1,10 +1,7 @@
 package collections
 
-// This file proves extractCollection's own guard against a non-canonical
-// artifactSHA: the check runs before any of the destructive work
-// (verifyExtractMarker, os.RemoveAll, MkdirAll, unpack) rather than being
-// left to writeExtractMarker's own guard at the end of the function, which
-// runs only after all of that has already happened.
+// Tests for extractCollection's up-front artifactSHA guard and the .info
+// sweep a collection extraction makes.
 
 import (
 	"context"
@@ -19,16 +16,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
 )
 
-// TestExtractCollectionRefusesNonCanonicalSHABeforeDestroyingTree is the
-// load-bearing proof: installPath already holds a real, pre-existing tree
-// (as a warm reinstall would find), the tarball is a valid one
-// extractCollection could otherwise extract cleanly, and artifactSHA is a
-// traversal string. Both the sentinel and the untouched pre-existing tree
-// are asserted - the tree assertion is what actually discriminates, since
-// the error alone would still pass even if the check were left at the end
-// of the function (writeExtractMarker's own guard). t.Errorf, not
-// t.Fatalf, on the sentinel check, so the tree check still runs if the
-// sentinel check itself fails under mutation.
+// TestExtractCollectionRefusesNonCanonicalSHABeforeDestroyingTree pins that a
+// traversal artifactSHA is refused before the reset: the pre-existing tree
+// survives, which writeExtractMarker's late guard alone would not ensure.
 func TestExtractCollectionRefusesNonCanonicalSHABeforeDestroyingTree(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -53,12 +43,9 @@ func TestExtractCollectionRefusesNonCanonicalSHABeforeDestroyingTree(t *testing.
 	assertFileContent(t, preexisting, preexistingContent)
 }
 
-// TestResetCollectionInfoSweepsOnlyThisCollectionsVersions pins what the
-// sweep a collection extraction makes may remove: every .info directory of
-// this collection, whatever version it names, and nothing else. A directory
-// that merely starts with the same characters - one whose remainder is not an
-// exact version - and another collection's directory both survive, and the
-// extracted version's own directory comes back empty.
+// TestResetCollectionInfoSweepsOnlyThisCollectionsVersions pins that the sweep
+// removes only this collection's exact-version .info directories, keeps
+// look-alikes and other collections', and recreates its own version's empty.
 func TestResetCollectionInfoSweepsOnlyThisCollectionsVersions(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

@@ -8,35 +8,19 @@ import (
 )
 
 // fuelLimit bounds the main loop: the algorithm terminates by construction,
-// so exceeding this many iterations means a solver defect, not a large
-// input. It is a var, not a const, purely so tests can lower it (saving and
-// restoring around the change) to exercise the guard without constructing
-// an input that would otherwise loop forever.
+// so exceeding it means a solver defect, not a large input.
 //
 //nolint:gochecknoglobals // deliberately a var, not a const, so in-package tests can lower it to exercise the fuel guard
 var fuelLimit = 1_000_000
 
-// errSolverBug is the sentinel every internal invariant-violation error the
-// solver core raises wraps. Each signals a defect in the algorithm itself -
-// an assumption the reference algorithm guarantees but this implementation
-// failed to uphold - never a caller error, an unsatisfiable input (that is a
-// *ConflictError), or a provider failure (that is passed through wrapped on
-// its own). The rule that decides which assertion becomes which: an
-// invariant this package's own algorithm is responsible for upholding is
-// raised as an error wrapping this sentinel, so the failure travels back
-// through the caller's own error handling instead of terminating the
-// process. An assertion whose subject is something other than that
-// bookkeeping stays a panic - a value fixed at compile time and evaluated
-// during package initialization, before any run exists to fail, or the
-// vendored semver package's own consistency between what it accepts as a
-// version and what it accepts as the exact constraint on that same version.
-// None of these are part of Solve's documented exit-code taxonomy.
+// errSolverBug is wrapped by every violated invariant of the algorithm's own
+// bookkeeping, so a defect returns through the caller's error handling rather
+// than panicking; only an init-time constant (mustNewVersion) may panic.
 var errSolverBug = errors.New("solver: internal invariant violated")
 
-// solveState is one Solve call's mutable state: the incompatibility store,
-// the partial solution, per-package published-universe data, and the
-// bookkeeping the decision heuristic and dependency injection need. It is
-// never shared across goroutines and never persisted between calls.
+// solveState is one Solve call's mutable state: incompatibility store, partial
+// solution, per-package universes and decision bookkeeping. It is never shared
+// across goroutines and never persisted between calls.
 type solveState struct {
 	provider       Provider
 	store          *incompatStore
@@ -47,23 +31,9 @@ type solveState struct {
 	rootDeps       map[string]Constraint
 }
 
-// Solve resolves reqs against p, returning the chosen version per package
-// (plus their dependency graph) on success, or a *ConflictError when no
-// selection exists. Any other error is a provider failure passed through
-// wrapped, never modeled as an incompatibility.
-//
-// Solve checks ctx once per main-loop iteration, ahead of every provider call
-// that iteration would otherwise make, and when that check finds ctx canceled
-// it returns ctx.Err() bare - never wrapped in errSolverBug, so a caller's own
-// cancellation is never reported as an internal defect. Once per iteration is
-// the whole of what this loop guarantees, and it is deliberately not a claim
-// of promptness: decision making is the only phase that reaches the provider
-// (term arithmetic is exact without any universe, so propagation and conflict
-// resolution perform no I/O at all), and a cancellation arriving inside it is
-// observed by the provider first - which is what Provider's own contract
-// requires of a call that performs I/O - and comes back as that provider's
-// error wrapped by ensureUniverse, dependenciesOf, or tryDecideByProbe,
-// keeping errors.Is(err, context.Canceled) true but not bare.
+// Solve resolves reqs against p, or returns a *ConflictError when no selection
+// exists; other errors are wrapped provider failures or errSolverBug. ctx is
+// checked once per iteration, and a cancellation seen there returns ctx.Err().
 func Solve(ctx context.Context, reqs []Requirement, p Provider) (*Result, error) {
 	s := newSolveState(p, reqs)
 
@@ -132,12 +102,9 @@ func (s *solveState) uniFor(pkg string) *packageUniverse {
 	return u
 }
 
-// ensureUniverse fetches pkg's published version list from the provider,
-// unless it is the synthetic root (pre-populated, never fetched) or the
-// list was already fetched earlier. It has no partial-solution side effect:
-// term arithmetic is exact without any universe, so only decision making
-// (picking a concrete published candidate, detecting an empty candidate
-// set) and error reporting's cosmetics ever need the list.
+// ensureUniverse fetches pkg's published version list once, never for the
+// synthetic root. Term arithmetic is exact without it, so only decision making
+// and error-report cosmetics read the list.
 func (s *solveState) ensureUniverse(ctx context.Context, pkg string) error {
 	if pkg == rootPkg {
 		return nil
@@ -154,18 +121,9 @@ func (s *solveState) ensureUniverse(ctx context.Context, pkg string) error {
 	return nil
 }
 
-// extractResult builds the successful Result from every decision except
-// root: Versions maps each package to its decided version's original
-// string, and Graph maps each package to the sorted dependency names of its
-// causeDependency incompatibilities for that decided (package, version).
-//
-// Before returning, it asserts every Graph edge target is itself a key in
-// Versions - Result's own documented invariant ("every edge target is
-// itself a key in Versions"). A miss means the solve finished with an edge
-// pointing at a package that was never actually decided: a silent,
-// incomplete resolution that would otherwise under-install a real
-// dependency. Failing loudly here, rather than handing the caller a Result
-// that violates its own contract, is strictly safer than staying silent.
+// extractResult builds the Result from the decisions reachable from root and
+// fails with errSolverBug when an edge targets an undecided package, rather
+// than returning an incomplete resolution that would under-install.
 func (s *solveState) extractResult() (*Result, error) {
 	decidedVer := make(map[string]Version, len(s.ps.packages))
 	decidedDeps := make(map[string][]string, len(s.ps.packages))
@@ -177,12 +135,9 @@ func (s *solveState) extractResult() (*Result, error) {
 		decidedDeps[pkg] = s.decidedDependencyNames(pkg, p.decisionVersion)
 	}
 
-	// The result is the closure reachable from the root through the decided
-	// dependency edges, not every decided package. A version decided inside a
-	// branch the solver later backtracked away from can linger as a decision
-	// with no path from any requirement; including it would install a package
-	// nothing depends on. Walking the reachable closure keeps the result
-	// minimal.
+	// Only the closure reachable from root is returned: a decision left from a
+	// backtracked branch may have no path from any requirement, and including
+	// it would install a package nothing depends on.
 	reachable := make(map[string]bool, len(decidedVer))
 	stack := []string{rootPkg}
 	for len(stack) > 0 {

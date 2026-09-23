@@ -18,11 +18,8 @@ const (
 	rootRowName    = treearchive.RootName
 )
 
-// filesRow is one row of FILES.json, shaped as ansible's _make_entry shapes
-// it: a directory carries null for both checksum fields, a file the type
-// and the lowercase hex digest. The two pointers are what produce the
-// nulls; the key order follows field order, which consumers do not depend
-// on.
+// filesRow is one FILES.json row as ansible's _make_entry shapes it: a
+// directory carries null for both checksum fields, which the pointers produce.
 type filesRow struct {
 	ChksumType   *string `json:"chksum_type"`
 	ChksumSha256 *string `json:"chksum_sha256"`
@@ -80,10 +77,9 @@ func fileRow(name, digest string) filesRow {
 	return filesRow{Name: name, Ftype: ftypeFile, ChksumType: &chksumType, ChksumSha256: &digest, Format: manifestFormat}
 }
 
-// encodeDocuments renders FILES.json and then MANIFEST.json, whose pointer
-// carries the digest of the exact FILES.json bytes. Both use a one-space
-// indent, which is what Python's json.dumps(indent=True) produces, and
-// neither escapes HTML runes, so a ">=1.0.0" constraint reads as written.
+// encodeDocuments renders FILES.json, then MANIFEST.json pointing at its exact
+// bytes' digest. Both match Python's json.dumps(indent=True): a one-space
+// indent and no HTML escaping, so a ">=1.0.0" constraint reads as written.
 func encodeDocuments(meta *GalaxyYML, rows []filesRow) ([]byte, []byte, error) {
 	filesJSON, err := encodeIndented(filesDoc{Files: rows, Format: manifestFormat})
 	if err != nil {

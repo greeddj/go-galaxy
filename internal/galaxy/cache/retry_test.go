@@ -16,27 +16,18 @@ import (
 // classification without ever being returned by production code.
 var errTestTransport = errors.New("dial tcp: connection refused")
 
-// TestFetchRetryable pins the retry classification, in particular that a
-// stalled read is retryable in both its real production rendering and a
-// deliberately synthetic one that still carries context.Canceled, while a
-// genuine caller cancellation - which arrives as a raw context.Canceled,
-// never wrapped in ErrReadStalled - is not, and that a raw transport error
-// (no HTTPStatusError at all) is treated as non-retryable for a Galaxy API
-// GET.
+// TestFetchRetryable pins the retry classification: a stall is retryable in
+// both renderings, while a raw caller cancellation and a raw transport error
+// (no HTTPStatusError) are not, for a Galaxy API GET.
 func TestFetchRetryable(t *testing.T) {
 	t.Parallel()
 
-	// stalledProduction mirrors the real shape watchdogBody.Read builds: the
-	// cause rendered with %v, not wrapped with %w, so it does not carry
-	// context.Canceled through errors.Is (see helpers.ErrReadStalled's doc
-	// comment). This is the shape fetchRetryable actually receives today.
+	// stalledProduction mirrors watchdogBody.Read: the cause is rendered with
+	// %v, so it does not carry context.Canceled through errors.Is.
 	//nolint:errorlint // pinning the real, deliberately non-wrapping shape watchdogBody.Read builds.
 	stalledProduction := fmt.Errorf("%w: no data for %s: %v", helpers.ErrReadStalled, time.Second, context.Canceled)
-	// stalledSynthetic is deliberately NOT the production shape: it
-	// double-wraps context.Canceled with %w, a signature the current producer
-	// never builds. It is kept to pin fetchRetryable's ordering guard
-	// (ErrReadStalled classified before the context.Canceled check)
-	// independently of how the producer happens to render its cause.
+	// stalledSynthetic wraps context.Canceled with %w, a shape no producer
+	// builds, to pin that ErrReadStalled is classified before context.Canceled.
 	stalledSynthetic := fmt.Errorf("%w: no data for %s: %w", helpers.ErrReadStalled, time.Second, context.Canceled)
 
 	cases := []struct {
@@ -76,25 +67,9 @@ func TestFetchRetryable(t *testing.T) {
 	}
 }
 
-// TestFetchRetryableTreatsTheMetadataDeadlineAsTerminal pins that
-// isEarlyTerminalFetchError's helpers.ErrMetadataFetchDeadline check runs
-// ahead of the ErrReadStalled check: an error carrying both - a watchdog
-// stall that raced the deadline - must resolve deterministically toward
-// terminal, mirroring isEarlyTerminalDownloadError's identical placement and
-// reasoning for the artifact download path. The bare helpers.ErrReadStalled
-// row is the control proving the table can produce true at all, so the
-// combined row's false is a real refusal, not a fixture that can never
-// accept.
-//
-// A row carrying only the sentinel would not be killable on its own: moving
-// isEarlyTerminalFetchError below the ErrReadStalled check would still leave
-// a bare-sentinel-only error unclassified by ErrReadStalled (it does not
-// match) and unclassified by every check below it, falling through to the
-// same "return false" default-deny outcome fetchRetryable already reaches
-// today - so a bare-sentinel row is default-deny-covered and cannot
-// distinguish the two orderings. The combined-error row is what makes this
-// killable: only when both signatures are present does the ordering actually
-// decide the answer.
+// TestFetchRetryableTreatsTheMetadataDeadlineAsTerminal pins that an error
+// carrying both ErrMetadataFetchDeadline and ErrReadStalled is terminal; only
+// the combined error distinguishes the check order, a bare sentinel does not.
 func TestFetchRetryableTreatsTheMetadataDeadlineAsTerminal(t *testing.T) {
 	t.Parallel()
 

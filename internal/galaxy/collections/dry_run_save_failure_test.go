@@ -16,35 +16,13 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// A dry run still writes one thing: the resolve-side metadata caches, through
-// saveDryRunSnapshotIfPersisted. That write can fail, and until these tests
-// nothing confirmed any of the three dry-run commands surfaced the failure at
-// all, let alone with the exit class the same failure carries on the real
-// path. The gap was uniform across install, warm and lock, so the coverage is
-// too: fixing it for one command would have implied the other two already had
-// it.
-//
-// The classified sentinel (helpers.ErrCacheBackendUnavailable, the shape a
-// dead bucket's SaveStore produces) is used rather than an opaque one on
-// purpose. An opaque sentinel classifies as the generic exit code no matter
-// what the code under test does with it, so an exit-code assertion on it
-// would hold even if the error were rewrapped into something unrecognizable -
-// it is precisely the assertion that cannot fail. This one can.
-//
-// KILLING MUTATION, run and reverted: making saveDryRunSnapshotIfPersisted
-// return nil unconditionally - the shape a dry run would have if it stopped
-// saving, or stopped reporting the outcome of saving - fails all three rows on
-// the same line, one per command:
-//
-//	dry_run_save_failure_test.go:115: lock --dry-run swallowed its tail save failure: err = <nil>
-//	dry_run_save_failure_test.go:115: install --dry-run swallowed its tail save failure: err = <nil>
-//	dry_run_save_failure_test.go:115: warm --dry-run swallowed its tail save failure: err = <nil>
+// install, warm and lock --dry-run save their metadata caches through
+// saveDryRunSnapshotIfPersisted and must surface a failing save with the exit
+// class the real path gives it; a classified sentinel makes that assertable.
 
-// seedPersistedSnapshot writes an empty snapshot to cacheDir through a real
-// local backend and closes it again, so a state built afterwards loads a store
-// whose WasPersisted() is true. Without it every test here would take
-// saveDryRunSnapshotIfPersisted's other branch - the one that skips the save
-// entirely - and prove nothing about a save failure.
+// seedPersistedSnapshot saves an empty snapshot to cacheDir so a later state
+// loads with WasPersisted() true; otherwise saveDryRunSnapshotIfPersisted
+// would skip the save and nothing here would test a save failure.
 func seedPersistedSnapshot(t *testing.T, cacheDir string) {
 	t.Helper()
 
@@ -61,10 +39,9 @@ func seedPersistedSnapshot(t *testing.T, cacheDir string) {
 	}
 }
 
-// newDryRunSaveFailureFixture builds a cache directory holding an already
-// persisted snapshot, an empty requirements file, and a config in dry-run
-// mode, then returns the config and a state whose SaveStore always fails with
-// the classified sentinel.
+// newDryRunSaveFailureFixture returns a dry-run config over a cache holding a
+// persisted snapshot and an empty requirements file, and a state whose
+// SaveStore always fails with helpers.ErrCacheBackendUnavailable.
 func newDryRunSaveFailureFixture(t *testing.T) (*config.Config, *installState) {
 	t.Helper()
 
@@ -94,12 +71,9 @@ func newDryRunSaveFailureFixture(t *testing.T) (*config.Config, *installState) {
 	return cfg, state
 }
 
-// TestDryRunSurfacesItsTailSaveFailure runs all three dry-run commands against
-// the identical fixture: a cache that already holds a persisted snapshot, so
-// the dry run does attempt its metadata-cache save, and a backend whose
-// SaveStore always fails. Each command must return that failure and classify
-// it as the network exit class, exactly as its real path does for the same
-// backend failure.
+// TestDryRunSurfacesItsTailSaveFailure pins that install, warm and lock
+// --dry-run each return a failing tail save over a persisted snapshot and
+// classify it ExitNetwork, as the real path does; none writes a lockfile.
 func TestDryRunSurfacesItsTailSaveFailure(t *testing.T) {
 	t.Parallel()
 

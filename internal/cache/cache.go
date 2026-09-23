@@ -1,8 +1,6 @@
-// Package cache constructs the cache backend a run uses. New is the single
-// factory: it returns the S3 backend when an S3 bucket is configured and the
-// filesystem backend otherwise, both behind the Backend interface declared in
-// internal/galaxy/cache. A new backend implementation is selected here and
-// nowhere else, so no caller ever names a concrete one.
+// Package cache is the single factory for the cache backend: New returns the
+// S3 backend when S3 caching is enabled and the local one otherwise, and no
+// other package names a concrete backend.
 package cache
 
 import (

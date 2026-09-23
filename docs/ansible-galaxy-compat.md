@@ -96,12 +96,29 @@ would wrongly conclude the environment names are dead too - they are not.
   twice, and a collection recovered through the bounded evict-and-refetch
   path (see [Signature verification](signatures.md#signature-verification)) gathers every
   one of its sources again from scratch.
+- **Signature verdicts follow ansible's rules, with three narrow
+  differences.** The clauses of ansible-core's `verify_file_signatures` are
+  reproduced in their order (see [Required count and the vacuous
+  pass](signatures.md#required-count-and-the-vacuous-pass)). First, a
+  success counts the signing key rather than the signature, so one signature
+  supplied twice, or once armored and once binary, cannot satisfy a count of
+  two; that can change a verdict, but only toward refusal. Second,
+  signatures are checked in the order they were gathered, where ansible
+  iterates a set, so which of them a counted policy checks before it stops,
+  and the order its failures are reported in, are the same on every run;
+  that changes no verdict. Third, an `--ignore-signature-status-code` value,
+  from the flag or either environment variable, is trimmed and upper-cased
+  before it is judged, where ansible's command line takes only the exact
+  code; a value that is empty after trimming is refused rather than
+  skipped, since an ignore that recognizes nothing would read as a
+  tolerated failure while the run kept failing on it.
 - **Once at least one signature verifies, a collection's archive is checked
   against its own `FILES.json` listing in both directions rather than merely
   extracted.** Every file, symlink and hardlink entry the archive carries must
   be listed, and every file `FILES.json` lists must hash to the digest it
-  declares; see [Signature verification](signatures.md#signature-verification) for the two
-  exemptions this check makes. That precondition is the whole of it, and it is
+  declares; see [Manifest chain check](signatures.md#manifest-chain-check)
+  for the two exemptions this check makes and how it treats links and
+  `ftype`. That precondition is the whole of it, and it is
   the reason this bullet is not a claim about every run: a run with no keyring
   configured - the out-of-the-box state - or one under `--disable-gpg-verify`
   verifies nothing, and therefore checks no listing either.
@@ -138,10 +155,20 @@ would wrongly conclude the environment names are dead too - they are not.
     collection-name alphabet. ansible installs a missing or non-semver
     version as `*`. Here the run is refused naming the repository and the
     remedy, because the install path, the cache key and the lockfile all
-    need an exact version.
+    need an exact version. `galaxy.yml` is decoded strictly: a null string
+    key reads as empty and, as in ansible, a single string under a list key
+    (`authors`, `tags`, `build_ignore`, ...) as a one-element list, but any
+    other type mismatch is refused - among them an unquoted `version: 1.10`, which YAML reads as the float
+    `1.1`, refused with a hint to quote it.
   - `build_ignore` is honored with Python `fnmatch` semantics (so `*`
-    matches `/`); `manifest:` directives are refused with a usage error
-    naming `build_ignore` as the alternative. A directory carrying both a
+    matches `/`), against the path relative to the collection root,
+    anchored at both ends, case-sensitive, and byte by byte as ansible
+    matches it: a character outside ASCII takes one `?` per byte of its
+    UTF-8 form, and a `[...]` set matches a single byte of it, never the
+    whole character. Because a pattern is repository content, matching it costs
+    at most its length times the path's, however many stars it chains.
+    `manifest:` directives are refused with a usage error naming
+    `build_ignore` as the alternative. A directory carrying both a
     `galaxy.yml` and a `MANIFEST.json` is refused, where ansible silently
     prefers the `MANIFEST.json` for a git checkout. A `MANIFEST.json` alone
     is accepted and the tree is rebuilt, as ansible rebuilds it.
@@ -159,11 +186,13 @@ would wrongly conclude the environment names are dead too - they are not.
     or the `#subdir`) is one collection, otherwise every immediate child
     directory with a `galaxy.yml` or a `MANIFEST.json` is one, and all of
     them install unless the entry names one (`name: namespace.name` beside
-    a git `source:`). `#<subdir>` and `,<ref>` keep ansible's order: the
-    comma is split first, then the fragment, so `<url>#sub,main` is ref
-    `main` under `sub`, while `<url>,main#sub` asks for a ref named
-    `main#sub` and fails at the remote, as it fails for ansible at
-    checkout.
+    a git `source:`). Two directories declaring the same `namespace.name`
+    are refused, naming both, rather than letting one win, since the pin a
+    build produces has to name exactly one directory. `#<subdir>` and
+    `,<ref>` keep ansible's order: the comma is split first, then the
+    fragment, so `<url>#sub,main` is ref `main` under `sub`, while
+    `<url>,main#sub` asks for a ref named `main#sub` and fails at the
+    remote, as it fails for ansible at checkout.
   - Credentials come from the environment, bound to a host (see [Git
     sources and authentication](servers-and-auth.md#git-sources-and-credentials)).
     No credential helper, `~/.netrc`, `~/.gitconfig` or `~/.ssh/config` is
@@ -266,7 +295,14 @@ without them.
   else - on every command that reads the installed tree, so the document
   carries exactly those keys, and `signatures` is always a list: a null
   there passes ansible's validation and then makes `ansible-galaxy
-  collection verify --offline` fail with a Python `TypeError`. For a git
+  collection verify --offline` fail with a Python `TypeError`. The schema is
+  closed one level down as well: `format_version` is `1.0.0`, and a
+  `signatures` entry carries only `signature`, `pubkey_fingerprint`,
+  `signing_service` and `pulp_created`. An entry that is not a mapping,
+  holds a list or a mapping under one of those four keys, or has no
+  `signature` text is dropped, whether it comes from the server or from a
+  sidecar being read back, and any other key of a kept entry is dropped, so
+  an odd `signatures` value costs the signatures, never the whole document. For a git
   install `server` names the repository, and for a url install `server` and
   `download_url` both name the tarball. What such an install records beyond
   the schema - the commit, or the sha256 of the fetched bytes - goes into a
@@ -279,6 +315,17 @@ without them.
   installed once more (see the extract marker below), which writes the
   sidecar anew; until then `outdated` still reads the key where an earlier
   release left it.
+- **A version constraint is read by a wider grammar than ansible's.**
+  Constraints are parsed by `Masterminds/semver` v3, so besides the
+  comparison operators and comma-joined clauses ansible accepts, a
+  requirement or a dependency may use x-ranges (`1.x`, `1.2.x`), tilde
+  (`~1.2.3` holds the minor), caret (`^1.2.3` holds the major, but
+  `^0.2.3` means `<0.3.0` and `^0.0.3` only `0.0.3`), hyphen ranges
+  (`1.2 - 1.4`) and `||` alternatives. v3 has no `==`, so
+  ansible's `==` is rewritten to `=` in every comma-separated clause;
+  `===` and `>==` are left alone and fail as invalid constraints rather
+  than becoming an exact pin. A file that uses the wider forms does not
+  carry back to `ansible-galaxy`.
 - **Prereleases are excluded and admitted on different rules than ansible's.**
   Stricter in one direction: a collection publishing only prerelease versions
   satisfies no plain constraint here, so the resolve fails with its proof plus
@@ -287,10 +334,16 @@ without them.
   stays a candidate there. Looser in the other: a constraint carrying a
   prerelease operand admits prerelease versions for that whole constraint, so
   a `>=1.0.0-0` floor also matches a later prerelease such as `2.0.0-rc1`,
-  which ansible filters out. Take away both halves rather than either one -
-  prereleases are not unreachable here, since an exact pin on one installs it
-  and a `-0` floor admits them; they are reached by naming them in the
-  constraint, and `--pre` is not a flag this tool defines.
+  which ansible filters out. No version at all - no `version:`, an empty one
+  or `*`, on a requirement or a dependency - is not a plain constraint: it
+  admits every published version, prereleases included, so a collection
+  publishing only prereleases resolves rather than failing, and an
+  unversioned requirement can land on a prerelease newer than the latest
+  release; a floor such as `>=1.0.0` is what keeps a resolve on releases.
+  Take all three together rather than any one - prereleases are not
+  unreachable here, since an exact pin on one installs it, a `-0` floor
+  admits them and so does leaving the version out; `--pre` is not a flag
+  this tool defines.
 - **`requires_ansible` is not checked.** ansible reads a collection's
   `meta/runtime.yml` and refuses to install one whose `requires_ansible`
   excludes the running core version. go-galaxy never reads that file: it
@@ -308,6 +361,16 @@ without them.
   installed, so a collection installed under a later entry is invisible here
   and is installed into the first one. The default differs as well:
   `.collections`, project-local, against ansible's `~/.ansible/collections`.
+- **Only the keyring path expands `~`.** ansible expands `~`, `~user` and
+  `$VAR` in the keyring, `collections_path`, `roles_path` and `cache_dir`
+  settings alike. Here a keyring value, from the flag or either environment
+  variable, that is a bare `~` or starts with `~/` is expanded against the
+  home directory, and anything else is taken as written, `~user/...` and
+  `$VAR` included; such a value normally names no file, and opening the
+  keyring reports it unreadable, naming the literal value. `collections_path`, `roles_path` and
+  `cache_dir` get no expansion at all, whichever route they arrive by, so a
+  `collections_path = ~/.ansible/collections` in `ansible.cfg` is used
+  literally; spell such a path out in full.
 - **No token file is read.** ansible falls back to a token file when no server
   section supplies one - `~/.ansible/galaxy_token`, relocatable through
   `[galaxy] token_path`. go-galaxy reads no token file at all: `token_path` is
@@ -400,8 +463,10 @@ consequence of that, and every other deliberate difference, is listed here.
   Notes), a `#subdir` fragment on a git role, a `source:`, `signatures:`
   or `type:` key on a role entry (each would silently change what the entry
   means), two entries installing into one directory (ansible installs the
-  second over the first), and a credential in a repository URL. A key ansible
-  drops without a word is dropped here with a warning.
+  second over the first; install names are compared here without regard to
+  case, since `App` and `app` share one directory on a case-insensitive
+  filesystem), and a credential in a repository URL. A key ansible drops
+  without a word is dropped here with a warning.
 - **A Galaxy role name has exactly one dot.** ansible splits `owner.role` at
   the *last* dot and lets the owner carry dots of its own; no GitHub login
   can, so this tool asks for the one unambiguous spelling, each half matching
@@ -468,8 +533,10 @@ consequence of that, and every other deliberate difference, is listed here.
   request for an install name wins, as in ansible; a later request for the
   same name with a different source or version is ignored *with a warning*
   where ansible is silent. Which request is first is decided by the file's
-  and the meta's declaration order, never by which fetch finished. `--no-deps`
-  stops the walk. One run may discover at most 1000 roles.
+  and the meta's declaration order, never by which fetch finished. A scalar
+  `version:` in a dependency is taken as the text written, so `version: 1.10`
+  asks for `1.10` where ansible reads the YAML float and asks for `1.1`.
+  `--no-deps` stops the walk. One run may discover at most 1000 roles.
 - **An existing role directory is converged, not skipped.** ansible skips an
   already-installed role at a different version with a warning unless
   `--force`; this tool replaces a directory it installed itself (its extract
@@ -523,7 +590,7 @@ consequence of that, and every other deliberate difference, is listed here.
 Two shapes ansible accepts are handled here in opposite ways, which is worth
 knowing before a `requirements.yml` written for ansible is pointed at this tool.
 
-- **A `url` collection source installs, with divergences each in the
+- **A `url` collection source installs, with divergences almost all in the
   stricter direction.** An http(s) URL in the name position (or an explicit
   `type: url`) is downloaded directly, its identity and dependencies read
   from the artifact's own MANIFEST.json, and the collection resolved as the
@@ -549,7 +616,15 @@ knowing before a `requirements.yml` written for ansible is pointed at this tool.
   accepted, with one rule ansible does not impose: the embedded upstream URL
   must itself be a valid url source spelled in its canonical form (lower-case
   scheme and host, no default port), so one upstream artifact keeps one
-  spelling, one pin and one credential-match reading.
+  spelling, one pin and one credential-match reading. The collection's
+  identity is the one place a url source is held more loosely than a
+  Galaxy or git one: its namespace and name need only match
+  `[A-Za-z0-9_]+`, not the lower-case `[a-z][a-z0-9_]*` those must match,
+  because a url artifact is authored outside any Galaxy server and real
+  release artifacts carry mixed-case namespaces that ansible installs. Such
+  a collection installs, is recorded and is locked under its mixed-case
+  name; its version must still be exact and every dependency key a
+  lower-case `namespace.name`.
 - **A `file` or `dir` collection source fails the whole file, rather than
   being skipped.** A `type:` other than `galaxy`, `git` or `url`, or -
   where no `type:` is given - a name that reads as a source rather than as

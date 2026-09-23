@@ -16,10 +16,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegit"
 )
 
-// Every test here sets environment variables, so none of them may run in
-// parallel; newSSHFixture pins the environment to a hermetic state
-// (known_hosts from the listener, no agent, no proxy) and each test adjusts
-// what it exercises.
+// newSSHFixture pins a hermetic environment (known_hosts from the listener, no
+// agent, no proxy); every test here sets environment variables, so none may
+// run in parallel.
 func newSSHFixture(t *testing.T, passphrase string) sshFixture {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -162,11 +161,9 @@ func TestSSHHostKeyPolicy(t *testing.T) {
 	}
 }
 
-// TestSSHIgnoresConfigUnderHOME runs the ssh path with a ~/.ssh/config under
-// a redirected HOME that would send the host to an unreachable address. It
-// is not what pins harden's switch-off of go-git's reader - that is
-// TestHardenRemovesFileAndGitTransports, whose comment says why a planted
-// file cannot do it.
+// TestSSHIgnoresConfigUnderHOME pins that a hostile ~/.ssh/config under a
+// redirected HOME does not redirect the ssh fetch; harden's switch-off itself
+// is pinned by TestHardenRemovesFileAndGitTransports.
 func TestSSHIgnoresConfigUnderHOME(t *testing.T) {
 	fx := newSSHFixture(t, "")
 	sshSrv := fx.sshSrv
@@ -194,11 +191,9 @@ func writeSSHConfig(t *testing.T, home, body string) {
 	}
 }
 
-// TestSSHCommitBehindTheTipUsesTwoExchanges pins the fallback that needs a
-// second upload-pack exchange on ssh, where go-git's session is one command
-// and a second pack on it would write into a closed channel: a pinned commit
-// that is neither a tip nor served by hash, reached through the hint ref and
-// then through every tip.
+// TestSSHCommitBehindTheTipUsesTwoExchanges pins the ssh fallback for a pinned
+// commit that is neither a tip nor served by hash: the hint ref, then every
+// tip on a fresh session, since go-git's ssh session is a single command.
 func TestSSHCommitBehindTheTipUsesTwoExchanges(t *testing.T) {
 	fx := newSSHFixture(t, "")
 	r := fakegit.NewRepo(t)

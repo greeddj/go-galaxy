@@ -8,12 +8,9 @@ import (
 	"github.com/Masterminds/semver/v3"
 )
 
-// assertCanonicalVerSet fails the test unless s upholds the canonical
-// normal form every constructor and operation must preserve: pieces sorted
-// by lo, nonempty, disjoint, and non-abutting, on both sublines. Structural
-// equality coincides with set equality only under these invariants, so a
-// violation here is a correctness bug even when membership still answers
-// right.
+// assertCanonicalVerSet fails unless both sublines of s are canonical: sorted,
+// nonempty, disjoint, non-abutting. Set equality rests on this, so a violation
+// is a bug even when membership still answers right.
 func assertCanonicalVerSet(t *testing.T, s verSet) {
 	t.Helper()
 	assertCanonicalPieces(t, "rel", s.rel, cmpRel)
@@ -40,11 +37,9 @@ func assertCanonicalPieces[B any](t *testing.T, subline string, pieces []piece[B
 // pair combination in the pool gets exercised many times over.
 const algebraLawSeedCount = 400
 
-// TestVerSetAlgebraLaws property-checks the boolean algebra over random
-// pairs of pool-built sets: canonicality of every operation's result,
-// double complement, De Morgan (asserted by structural equality, so any
-// canonical-form drift fails loudly), excluded middle, and pointwise
-// consistency of every operation and predicate against direct membership.
+// TestVerSetAlgebraLaws property-checks the set algebra on random pool-built
+// pairs: canonical results, double complement, De Morgan by structural
+// equality, excluded middle, and pointwise agreement with membership.
 func TestVerSetAlgebraLaws(t *testing.T) {
 	t.Parallel()
 	pool := differentialConstraintPool()
@@ -111,10 +106,8 @@ func checkStructuralLaws(t *testing.T, a, b, inter, uni, compA verSet) {
 	}
 }
 
-// TestVerSetCanonicalEncodingIdentity pins that the canonical byte encoding
-// is an identity for set equality: semantically equal sets built through
-// different spellings or op orders encode identically, and inequal sets do
-// not.
+// TestVerSetCanonicalEncodingIdentity pins that equal sets built from
+// different spellings encode identically and unequal sets do not.
 func TestVerSetCanonicalEncodingIdentity(t *testing.T) {
 	t.Parallel()
 	equalPairs := [][2]string{
@@ -153,10 +146,9 @@ func encodeVerSet(s verSet) string {
 	return b.String()
 }
 
-// TestVerSetBoundArithmetic pins the successor and floor constructions the
-// builder's piece bounds rest on: immediate adjacency for succPre and
-// succRel (nothing from the probe pool sorts strictly between a bound and
-// its successor) and row-floor minimality for preFloor.
+// TestVerSetBoundArithmetic pins the bound constructions: nothing in the probe
+// pool sorts strictly between a bound and its succPre or succRel successor,
+// and preFloor is minimal within its row.
 func TestVerSetBoundArithmetic(t *testing.T) {
 	t.Parallel()
 	var pres []*semver.Version

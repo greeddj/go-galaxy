@@ -13,10 +13,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// mutateStoreSnapshot opens the fixture's cache backend under its exclusive
-// lock, hands the persisted snapshot to mutate, saves it back and releases
-// everything - the way a test simulates state an earlier binary or a
-// --clear-cache run left behind. Safe only between runs against the cache.
+// mutateStoreSnapshot loads the fixture's snapshot under the backend's
+// exclusive lock, hands it to mutate and saves it back, simulating state an
+// earlier binary or --clear-cache left. Safe only between runs.
 func mutateStoreSnapshot(t *testing.T, f *gitFixture, mutate func(st *store.Store)) {
 	t.Helper()
 	ctx := context.Background()
@@ -56,10 +55,9 @@ func mustCleanup(t *testing.T, f *gitFixture) {
 	}
 }
 
-// TestGitCleanupKeepsPinnedCollection proves a git-installed collection and
-// its locator-keyed artifact survive cleanup through the pin the install
-// recorded, and - once the pin is gone, as --clear-cache leaves it - through
-// the installed record's own locator, which names the same repository.
+// TestGitCleanupKeepsPinnedCollection asserts a git-installed collection and
+// its artifact survive cleanup through the recorded pin and, once the pin is
+// gone, through the installed record's locator naming the same repository.
 func TestGitCleanupKeepsPinnedCollection(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)
@@ -84,13 +82,9 @@ func TestGitCleanupKeepsPinnedCollection(t *testing.T) {
 	}
 }
 
-// TestGitCleanupRemovesForeignLocatorWithoutPin covers the fallback's other
-// verdict: with no pin, an installed tree whose record names a locator of
-// another repository is not what the requirement reaches, so cleanup removes
-// the tree and the artifact under that locator. Its Galaxy dependency goes
-// with it, since nothing reachable depends on it any more. While the pin is
-// still recorded the same record is ignored and the tree kept, which is how
-// the test tells the two branches of gitRootKeys apart.
+// TestGitCleanupRemovesForeignLocatorWithoutPin asserts that with no pin, a
+// record whose locator names another repository is unreachable: cleanup removes
+// its tree, artifact and Galaxy dependency. While the pin exists it is kept.
 func TestGitCleanupRemovesForeignLocatorWithoutPin(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)
@@ -123,10 +117,9 @@ func TestGitCleanupRemovesForeignLocatorWithoutPin(t *testing.T) {
 	assertPathAbsent(t, stale)
 }
 
-// TestGitCleanupNarrowsToTheNamedCollection proves pinnedGitKeys' narrowing
-// through the real pipeline: a multi-collection repository installed whole,
-// then re-declared as one named collection, loses its sibling on cleanup -
-// tree and locator-keyed artifact both - while the named one stays.
+// TestGitCleanupNarrowsToTheNamedCollection asserts a multi-collection
+// repository installed whole, then re-declared as one named collection, loses
+// its sibling's tree and artifact on cleanup while the named one stays.
 func TestGitCleanupNarrowsToTheNamedCollection(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)

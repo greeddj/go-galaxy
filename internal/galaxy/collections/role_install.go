@@ -34,12 +34,9 @@ const galaxyInstallInfoRel = "meta/.galaxy_install_info"
 // ansible-galaxy writes install_date in.
 const galaxyInstallInfoTimeLayout = "Mon Jan _2 15:04:05 2006"
 
-// openRolesRoot opens the single os.Root every role write funnels through,
-// rooted at rolesPath itself - the same boundary openCollectionsRoot draws at
-// the collections path, for the same reason: a swap of the directory a role
-// installs into must be refused by the kernel, not by a check that raced it.
-// With create false (a dry run) an absent rolesPath is "nothing to describe
-// yet" and yields a nil root; with create true the directory is made first.
+// openRolesRoot opens the os.Root every role write funnels through, at
+// rolesPath itself, so a swapped directory is refused by the kernel; with
+// create false (a dry run) an absent rolesPath yields a nil root.
 func openRolesRoot(rolesPath string, create bool) (*os.Root, error) {
 	if strings.TrimSpace(rolesPath) == "" {
 		return nil, errEmptyRolesPath
@@ -60,13 +57,9 @@ func openRolesRoot(rolesPath string, create bool) (*os.Root, error) {
 	return os.OpenRoot(rolesPath)
 }
 
-// newRoleTarget builds a role's installTarget rooted at root: the role's
-// install name is the one path element under roles_path, validated through
-// helpers.IsRoleInstallName before it is joined - the single chokepoint for
-// the role directory, as newInstallTarget is for a collection's. info stays
-// empty: a role has no version-scoped sidecar; its ansible-facing record is
-// meta/.galaxy_install_info inside the directory itself. A nil root (a dry
-// run over an absent roles path) fails closed as ok=false.
+// newRoleTarget builds a role's installTarget under root, the single
+// chokepoint that validates the install name before it is joined; a nil
+// root or an unsafe name fails closed as ok=false.
 func newRoleTarget(root *os.Root, cfg *config.Config, r resolvedRole) (installTarget, bool) {
 	if root == nil || !helpers.IsRoleInstallName(r.Name) {
 		return installTarget{}, false
@@ -74,11 +67,9 @@ func newRoleTarget(root *os.Root, cfg *config.Config, r resolvedRole) (installTa
 	return installTarget{root: root, rel: r.Name, path: absoluteOrAsIs(filepath.Join(cfg.RolesPath, r.Name)), marker: r.Name}, true
 }
 
-// absoluteOrAsIs renders p absolute against the working directory, or as
-// given when that cannot be done. A role's recorded install path is what
-// cleanup joins against the registry's absolute roles path to find the
-// record for a directory it scanned, so the record must not depend on the
-// spelling --roles-path happened to use.
+// absoluteOrAsIs renders p absolute, or as given when it cannot. Cleanup
+// finds a role's record by its absolute install path, so the record must
+// not depend on how --roles-path was spelled.
 func absoluteOrAsIs(p string) string {
 	abs, err := filepath.Abs(p)
 	if err != nil {
@@ -88,9 +79,8 @@ func absoluteOrAsIs(p string) string {
 }
 
 // installRoles installs every resolved role on the Workers-bounded pool,
-// flat: each role is its own directory, so no order between them is
-// load-bearing, and order is only what the report reads in. failures is the
-// same recorder the collection levels fed, so one summary covers the run.
+// flat, since each role is its own directory; failures is the recorder the
+// collection levels fed, so one summary covers the run.
 func installRoles(ctx context.Context, deps installDeps, res roleResolution, failures *failureRecorder) {
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, max(deps.cfg.Workers, 1))
@@ -115,10 +105,8 @@ func installRoles(ctx context.Context, deps installDeps, res roleResolution, fai
 }
 
 // installRole acquires, extracts and records one role. The directory policy
-// runs before any artifact is fetched: a directory this tool or ansible-galaxy
-// installed is replaced (convergence is the point of a CI install), one
-// neither did is refused, since replacing it could destroy a role somebody
-// wrote by hand - which is also what ansible-galaxy refuses.
+// runs before any fetch: a directory neither this tool nor ansible-galaxy
+// installed is refused, since it could be a role somebody wrote by hand.
 func installRole(ctx context.Context, deps installDeps, r resolvedRole) error {
 	runtime := deps.runtime
 	start := time.Now()
@@ -158,10 +146,9 @@ func installRole(ctx context.Context, deps installDeps, r resolvedRole) error {
 	return nil
 }
 
-// roleRecordMatches reports whether the store's record for the role names
-// this target and this locator with a non-empty artifact sha, and its
-// extract marker is present - the cheap, Stat-only half of the skip check,
-// which the dry-run probe uses too.
+// roleRecordMatches reports whether the store's record names this target
+// and locator and the marker and install info are present: the Stat-only
+// half of the skip check, which the dry-run probe uses too.
 func roleRecordMatches(target installTarget, r resolvedRole, st *store.Store) (store.InstalledRoleEntry, bool) {
 	if st == nil {
 		return store.InstalledRoleEntry{}, false
@@ -183,10 +170,9 @@ func roleRecordMatches(target installTarget, r resolvedRole, st *store.Store) (s
 	return entry, true
 }
 
-// roleEntryMatches is installEntryMatches for a role: the record names this
-// directory, a non-empty artifact sha, the same locator and the same
-// version - the version too, since it is what .galaxy_install_info shows and
-// a ref respelled onto the same commit must still rewrite it.
+// roleEntryMatches is installEntryMatches for a role. The version is
+// compared too: .galaxy_install_info shows it, so a ref respelled onto the
+// same commit must still rewrite it.
 func roleEntryMatches(entry store.InstalledRoleEntry, r resolvedRole, installPath string) bool {
 	return entry.InstallPath != "" && entry.InstallPath == installPath && entry.ArtifactSHA256 != "" &&
 		entry.Source == r.Source && entry.Version == r.Version
@@ -216,12 +202,9 @@ const (
 	roleDirectoryAnsible
 )
 
-// checkRoleDirectoryOwned applies the directory policy: absent, or holding
-// an extract marker of this tool's, or holding ansible-galaxy's
-// .galaxy_install_info, the directory may be replaced, and the caller is
-// told which; anything else is refused. The listing goes through
-// target.root so a symlinked role directory is judged as the escape it is
-// rather than followed.
+// checkRoleDirectoryOwned allows replacing a directory that is absent or
+// carries this tool's marker or ansible-galaxy's install info, and refuses
+// anything else; listing through target.root refuses a symlinked directory.
 func checkRoleDirectoryOwned(target installTarget) (roleDirectoryOwner, error) {
 	entries, err := fs.ReadDir(target.root.FS(), target.rel)
 	if err != nil {
@@ -285,12 +268,9 @@ func fetchCachedArtifact(ctx context.Context, deps installDeps, key string) (art
 	return artifactData{Path: cached.Path, Cleanup: cached.Cleanup, Meta: cached.Meta, SHA: cached.SHA}, nil
 }
 
-// roleFetchToCache rebuilds a pinned role's artifact from its commit, the
-// install-time counterpart of gitFetchToCache: reached after a --dry-run
-// discovery, on a --frozen run whose cached artifact was evicted or never
-// cached here, or through a cache miss on a shared cache. The commit the
-// repository serves must be the pinned one; a repository that no longer
-// serves it fails as helpers.ErrRoleArtifactIdentityMismatch.
+// roleFetchToCache rebuilds a pinned role's artifact on a cache miss at
+// install time; a repository serving another commit than the pin fails as
+// helpers.ErrRoleArtifactIdentityMismatch.
 func roleFetchToCache(ctx context.Context, deps installDeps, r resolvedRole, useCache bool) (downloadResult, error) {
 	if urlsource.IsLocator(r.Source) {
 		return urlRoleFetchToCache(ctx, deps, r, useCache)
@@ -363,21 +343,16 @@ func roleRefetchRequest(deps installDeps, r resolvedRole) (gitsource.RoleRequest
 }
 
 // galaxyInstallInfo is the document ansible-galaxy writes into
-// meta/.galaxy_install_info: the version installed and when. Its YAML is
-// produced by yaml v3, which quotes a version that would otherwise read as a
-// number; ansible reads the file with safe_load, so the quoting style is not
-// part of the contract.
+// meta/.galaxy_install_info; ansible reads it with safe_load, so yaml v3's
+// quoting of a numeric-looking version is not part of the contract.
 type galaxyInstallInfo struct {
 	InstallDate string `yaml:"install_date"`
 	Version     string `yaml:"version"`
 }
 
-// writeGalaxyInstallInfo writes ansible-galaxy's install record into the
-// role directory through target.root, before the extract marker is written
-// so the marker's tally counts it. The date is the wall clock, as ansible
-// writes it: the field means "when installed", and the artifact's
-// determinism is untouched because this file is written after
-// materialization, outside the artifact.
+// writeGalaxyInstallInfo writes ansible-galaxy's install record through
+// target.root before the extract marker, so the tally counts it; the date is
+// the wall clock, as ansible writes it, outside the deterministic artifact.
 func writeGalaxyInstallInfo(target installTarget, version string, now time.Time) error {
 	data, err := yaml.Marshal(galaxyInstallInfo{
 		InstallDate: now.UTC().Format(galaxyInstallInfoTimeLayout),
@@ -390,12 +365,9 @@ func writeGalaxyInstallInfo(target installTarget, version string, now time.Time)
 	if err := target.root.MkdirAll(path.Dir(rel), helpers.DirMod); err != nil {
 		return classifyRolesRootError(target.root, path.Dir(rel), err)
 	}
-	// Removed before it is written, never truncated in place: the builder
-	// leaves a committed .galaxy_install_info out of the artifact, but a
-	// file at this path is what a materialized tree would hold as a read-only
-	// hard link into the shared extracted store, and writing through that
-	// link would rewrite the store's own bytes under their sha - the same
-	// reason writeExtractMarker removes its marker first.
+	// Removed before it is written, never truncated in place: a file here
+	// may be a hard link into the shared extracted store, and writing
+	// through it would rewrite the store's bytes under their sha.
 	if err := target.root.Remove(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return classifyRolesRootError(target.root, rel, err)
 	}

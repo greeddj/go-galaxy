@@ -13,20 +13,14 @@ type Identity struct {
 	Version   string
 }
 
-// TempFileFunc hands the builder a temporary file to write an artifact into,
-// with a cleanup that removes it. The pipeline supplies the artifact store's
-// own TempFile so a committed artifact is a rename, never a copy, and so a
-// temp file left by a killed run is swept by the same prefix rule every
-// download temp is.
+// TempFileFunc hands the builder a temp file for an artifact and its cleanup;
+// the pipeline passes the artifact store's own TempFile, so committing is a
+// rename and a killed run's leftover is swept like any download temp.
 type TempFileFunc func(ctx context.Context) (*os.File, func(), error)
 
-// Request is one acquisition. With Commit empty, Ref is resolved against the
-// remote's advertised refs; with Commit set, exactly that commit is fetched
-// and Ref is only a hint for the cheapest way to reach it (the lockfile knows
-// which ref the commit came from). Only, when set, restricts the build to that
-// one collection of the repository - the install-time rebuild of a pinned
-// collection - and its absence, or a different identity under its subdir, is
-// an error rather than a silent substitution.
+// Request is one acquisition: with Commit empty Ref is resolved, with Commit
+// set exactly that commit is fetched and Ref is only a hint. Only restricts the
+// build to one pinned collection, whose absence or changed identity is an error.
 type Request struct {
 	Only     *Identity
 	TempFile TempFileFunc
@@ -37,11 +31,9 @@ type Request struct {
 	Auth     Credential
 }
 
-// Collection is one built artifact: its identity, the subdir it was built
-// from (relative to the repository root, "" for the root), the raw galaxy.yml
-// dependencies for the caller to validate, the temp path of the tar.gz and the
-// sha256 computed while writing it. Cleanup removes the temp file and is the
-// caller's duty on every path.
+// Collection is one built artifact: identity, subdir ("" for the root), raw
+// galaxy.yml dependencies for the caller to validate, the temp tar.gz and its
+// sha256. Cleanup removes the temp file and is the caller's duty on every path.
 type Collection struct {
 	Cleanup      func()
 	Dependencies map[string]string
@@ -58,12 +50,9 @@ func (c Collection) Identity() Identity {
 	return Identity{Namespace: c.Namespace, Name: c.Name, Version: c.Version}
 }
 
-// Result is what an acquisition produced: the commit the request resolved to,
-// the full ref name it was reached through ("HEAD" when HEAD was asked for
-// and the remote did not say what it points at), the built collections, the
-// warnings the build raised (skipped submodules and out-of-tree symlinks,
-// unknown galaxy.yml keys, an ambiguous name) for the caller to print, and
-// the bytes the fetch wrote to disk for the caller to count.
+// Result is an acquisition's outcome: the commit, the full ref name reached
+// ("HEAD" when the remote named no target), the built collections, warnings
+// for the caller to print, and the bytes the fetch wrote to disk.
 type Result struct {
 	Commit       string
 	RefName      string
@@ -72,10 +61,9 @@ type Result struct {
 	BytesFetched int64
 }
 
-// RoleRequest is one role acquisition. Commit and Ref behave as in Request;
-// a role has no subdir and no identity filter: the repository root is the
-// role, and the install name is the caller's to choose, as it is in ansible,
-// so nothing in the tree is compared against it.
+// RoleRequest is one role acquisition, Commit and Ref as in Request; the
+// repository root is the role and the install name is the caller's, as in
+// ansible, so nothing in the tree is compared against it.
 type RoleRequest struct {
 	TempFile TempFileFunc
 	URL      URL
@@ -84,13 +72,9 @@ type RoleRequest struct {
 	Auth     Credential
 }
 
-// RoleDependency is one dependency a role's meta declares, normalized to
-// ansible's spec keys and otherwise unjudged: the caller validates it
-// through the requirements grammar exactly as it validates
-// Collection.Dependencies through the constraint grammar. Src is the Galaxy
-// name or the repository URL as written, Scm the scm when one was spelled,
-// Version the version as written and Name the install name when one was
-// given; an empty field was not written.
+// RoleDependency is one meta dependency normalized to ansible's spec keys,
+// each as written and empty when absent, and otherwise unjudged: the caller
+// validates it through the requirements grammar.
 type RoleDependency struct {
 	Src     string
 	Scm     string
@@ -98,15 +82,9 @@ type RoleDependency struct {
 	Name    string
 }
 
-// RoleResult is the built role artifact: the commit the request resolved
-// to, the full ref name it was reached through (as Result.RefName), the
-// dependencies its meta declares, the temp path of the tar.gz and the sha256
-// computed while writing it, the warnings the build raised for the caller to
-// print, and the bytes the fetch wrote to disk for the caller to count.
-// GalaxyRoleName is the galaxy_info.role_name the meta carries, when it
-// does; it is informational, since the install directory is the
-// requirement's name, as in ansible. Cleanup removes the temp file and is
-// the caller's duty on every path.
+// RoleResult is the built role: commit, ref name, meta dependencies, temp
+// tar.gz and sha256, warnings and fetched bytes. GalaxyRoleName is informational
+// (the install directory is the requirement's name); Cleanup is the caller's duty.
 type RoleResult struct {
 	Cleanup        func()
 	Dependencies   []RoleDependency
@@ -119,13 +97,9 @@ type RoleResult struct {
 	BytesFetched   int64
 }
 
-// Client is the seam between the install pipeline and a git remote. Advertise
-// answers which commit a ref currently points at with one advertisement round
-// trip and no pack transfer; Acquire does the whole acquisition of a
-// repository's collections; AcquireRole does the same for the role a
-// repository's root is. Every error wraps one of the helpers git sentinels so
-// the caller can classify it, and all three honor ctx cancellation and
-// deadlines.
+// Client is the seam between the install pipeline and a git remote: Advertise
+// resolves a ref with no pack transfer, Acquire and AcquireRole build artifacts;
+// every error wraps a helpers git sentinel and all three honor ctx.
 type Client interface {
 	Advertise(ctx context.Context, u URL, ref Ref, auth Credential) (commit, refName string, err error)
 	Acquire(ctx context.Context, req Request) (Result, error)

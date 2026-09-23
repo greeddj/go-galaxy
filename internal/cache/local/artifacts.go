@@ -36,12 +36,9 @@ func (s *Artifacts) Has(_ context.Context, key string) (bool, error) {
 	return false, classifyCacheFailure(err)
 }
 
-// Fetch returns a cached artifact file by key. When a sidecar written by a
-// prior Commit holds a validly-shaped sha256 digest, it is surfaced via Meta
-// so a non-pinned cache hit can reuse it instead of re-hashing the whole
-// tarball. Any other sidecar state - missing, a torn/short write, or
-// non-hex content - yields Meta == nil, which sends the caller down the
-// hash-the-file fallback instead of trusting unverifiable bytes.
+// Fetch returns a cached artifact file by key. Meta carries the sidecar's
+// sha256 only when it passes helpers.IsSHA256Hex; any other sidecar state
+// yields nil Meta, so the caller hashes the file instead of trusting it.
 func (s *Artifacts) Fetch(_ context.Context, key string) (cacheManager.ArtifactFile, error) {
 	path, err := s.path(key)
 	if err != nil {
@@ -53,30 +50,16 @@ func (s *Artifacts) Fetch(_ context.Context, key string) (cacheManager.ArtifactF
 	return cacheManager.ArtifactFile{Path: path, Meta: s.sidecarMeta(path)}, nil
 }
 
-// Meta reports key's cached metadata without ever reading the artifact body -
-// see cacheManager.ArtifactStore's own doc comment for the tri-state contract
-// this implements. It calls Has first, so presence has exactly one
-// implementation on this backend too (Has itself stays a plain stat and is
-// deliberately not routed through this method, which would cost it an extra,
-// usually-discarded sidecar read on its own hot-path callers), then reads the
-// sidecar through the same helper Fetch uses - so the digest this method
-// reports is provably the one Fetch itself would have surfaced, and by
-// extension the one resolveArtifactSHA would take from artifactMeta.
+// Meta reports key's cached metadata without reading the artifact body.
+// Presence comes from Has and the digest from sidecarMeta, so it reports
+// exactly what Has and Fetch would, as cacheManager.ArtifactStore requires.
 func (s *Artifacts) Meta(ctx context.Context, key string) (map[string]string, bool, error) {
 	found, err := s.Has(ctx, key)
 	if err != nil || !found {
 		return nil, found, err
 	}
-	// This second derivation's err arm is unreachable by construction: s.path
-	// is a pure function of (s.cacheDir, key), and s.Has above already called
-	// it with this identical receiver and key and returned no error - had it
-	// failed, this method would already have returned at the
-	// `err != nil || !found` line above, before this call is ever reached.
-	// Recomputing rather than reusing Has's own path is kept anyway (one
-	// filepath.Join per collection, on a read-only preview path, not worth
-	// the code churn a restructure would cost); the check itself stays
-	// because silently ignoring this error return would be worse than an
-	// unreachable branch.
+	// The error arm is unreachable: Has already derived this path from the
+	// same key without error. It stays rather than discarding an error.
 	path, err := s.path(key)
 	if err != nil {
 		return nil, false, err
@@ -100,15 +83,9 @@ func (s *Artifacts) TempFile(_ context.Context, prefix string) (*os.File, func()
 	return file, cleanup, nil
 }
 
-// Commit moves a temporary artifact into its final cache location. When meta
-// carries a validly-shaped sha256 digest - as a freshly downloaded and
-// verified artifact does - Commit also persists it to a sidecar file next to
-// the tarball, so a later non-pinned cache hit can reuse it via Fetch
-// instead of re-hashing the whole tarball. A sidecar write failure is
-// swallowed rather than failing Commit: the artifact itself is already
-// committed by the time the sidecar is written, and a missing sidecar just
-// falls back to hashing on the next Fetch, so surfacing the write error here
-// would turn a perf-only miss into a hard install failure.
+// Commit renames a temporary artifact into its cache slot and records a meta
+// sha256 that passes helpers.IsSHA256Hex in a sidecar. A sidecar write failure
+// is swallowed: the tarball is in place, and a missing sidecar costs a re-hash.
 func (s *Artifacts) Commit(_ context.Context, key, tmpPath string, meta map[string]string) (cacheManager.ArtifactFile, error) {
 	path, err := s.path(key)
 	if err != nil {
@@ -142,14 +119,9 @@ func (s *Artifacts) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// sidecarMeta reads path's sha256 sidecar file, if any, and returns it as a
-// Meta-shaped map when its content is helpers.IsSHA256Hex - the identical
-// gate Commit applies before writing the sidecar. Any other sidecar state -
-// missing, a torn/short write, or non-hex content - yields nil, so Fetch's
-// caller falls back to hashing the file and Meta's caller reports "no
-// recorded metadata" rather than either one trusting unverifiable bytes.
-// Factored out of Fetch so Meta can reuse the exact same read-and-gate logic
-// instead of a second, independent copy that could drift from it.
+// sidecarMeta returns path's sidecar digest as a Meta map when it passes
+// helpers.IsSHA256Hex, the gate Commit applies before writing it, and nil for
+// a missing, torn or non-hex sidecar. Fetch and Meta share it so they agree.
 func (s *Artifacts) sidecarMeta(path string) map[string]string {
 	//nolint:gosec // path is derived from the process-controlled artifact key, not user input.
 	data, err := os.ReadFile(path + helpers.ArtifactSHASidecarSuffix)

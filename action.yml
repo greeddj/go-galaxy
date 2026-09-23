@@ -118,17 +118,15 @@ runs:
         mkdir -p "$bin"
         cd "$bin"
 
-        # checksums.txt is fetched beside the binary and the binary is checked
-        # against it. That is the same file the release signs with cosign, so a
-        # workflow that wants the stronger guarantee can verify the signature
-        # and this hash chains to it.
+        # The binary is checked against the release's checksums.txt, the file
+        # the release signs with cosign, so a workflow that verifies that
+        # signature gets a hash chain down to this binary.
         curl --proto '=https' --tlsv1.2 -sSLf -o "$asset" "$base/$asset"
         curl --proto '=https' --tlsv1.2 -sSLf -o checksums.txt "$base/checksums.txt"
 
-        # Exactly one line, or refuse by name. `shasum -c` does fail on a file
-        # naming nothing, with "no properly formatted SHA checksum lines
-        # found" - which describes the file rather than what happened, and
-        # what happened is that this release publishes no such asset.
+        # Exactly one line, or refuse by name: `shasum -c` on an empty file
+        # fails with a message about the file's format, when what happened is
+        # that this release publishes no such asset.
         grep -E "  ${asset}\$" checksums.txt > asset.sha256 || true
         if [ "$(wc -l < asset.sha256)" -ne 1 ]; then
           echo "::error::checksums.txt for $version names no $asset"
@@ -185,9 +183,8 @@ runs:
         if [ "$INPUT_OFFLINE" = "true" ]; then args+=(--offline); fi
         if [ -n "$INPUT_COLLECTIONS_PATH" ]; then args+=(-p "$INPUT_COLLECTIONS_PATH"); fi
         if [ -n "$INPUT_ROLES_PATH" ]; then args+=(--roles-path "$INPUT_ROLES_PATH"); fi
-        # Deliberately unquoted: `args` is a free-form tail the caller writes,
-        # and splitting it on whitespace is what makes `--no-deps --verbose`
-        # two arguments rather than one.
+        # Deliberately unquoted: splitting the caller's free-form tail on
+        # whitespace makes `--no-deps --verbose` two arguments.
         # shellcheck disable=SC2206
         if [ -n "$INPUT_ARGS" ]; then args+=($INPUT_ARGS); fi
         go-galaxy "${args[@]}"

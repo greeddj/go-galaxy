@@ -20,20 +20,9 @@ type holderCase struct {
 	work string
 }
 
-// holderCases is the whole table, built by a function rather than declared as
-// a package-level var so it needs no gochecknoglobals exemption. It is closed
-// on purpose: these two are every function that takes the backend's exclusive
-// lock and then does work under it. A third one added later must be added
-// here too - nothing detects its absence, which is the one gap this gate
-// cannot close from the inside.
-//
-// withBackend covers install, warm and lock at once, since all three reach
-// their lifecycle through it and none keeps one of its own - which is not
-// something this table can see, and is why delegateCases below is a second
-// closed table rather than a comment. cleanup is audited separately because
-// its own lifecycle genuinely differs (a defensive nil-state guard, and a
-// nil-backend check inside the close defer), so it is not a candidate for
-// that funnel.
+// holderCases is the closed table of every function that takes the backend's
+// exclusive lock and works under it: withBackend for install, warm and lock,
+// and runCleanup. A new such function must be added here; nothing detects it.
 func holderCases() []holderCase {
 	return []holderCase{
 		{file: "internal/galaxy/collections/run.go", fn: "withBackend", work: "work"},
@@ -50,12 +39,8 @@ type delegateCase struct {
 	work string
 }
 
-// delegateCases is that whole table, and it is what keeps the audit's reach
-// wide, since one funnel stands in for three lifecycles. Auditing
-// withBackend alone proves the funnel is correct, never that a command still
-// goes through it: a command that quietly took a lifecycle of its own again
-// would be invisible to holderCases, which is exactly the passing no-op shape
-// this package refuses elsewhere.
+// delegateCases is the closed table of collection commands that must reach
+// withBackend: auditing the funnel alone never proves a command still uses it.
 func delegateCases() []delegateCase {
 	return []delegateCase{
 		{file: "internal/galaxy/collections/install_command.go", fn: "runInstall", work: "installWithState"},
@@ -64,11 +49,9 @@ func delegateCases() []delegateCase {
 	}
 }
 
-// TestHolderContextIsThreadedAndJudged is the gate. For each row: the
-// function exists, it binds the holder context initInstall/initCleanup
-// returns to a real identifier, it hands that identifier to its work call,
-// that work call is wrapped in the lock-loss verdict, and every return after
-// the lock was acquired goes through that verdict or is a bare nil.
+// TestHolderContextIsThreadedAndJudged pins, per holderCases row, that the
+// holder context is bound to a name, handed first to the one work call wrapped
+// in the lock-loss verdict, and every later return is that verdict or nil.
 func TestHolderContextIsThreadedAndJudged(t *testing.T) {
 	t.Parallel()
 
@@ -81,10 +64,8 @@ func TestHolderContextIsThreadedAndJudged(t *testing.T) {
 			path := filepath.Join(root, filepath.FromSlash(tc.file))
 			file := parseGoFile(t, fset, path)
 
-			// A function this table names but the file does not hold is a
-			// failure, never a skip. This is the anti-vacuity check: without
-			// it, renaming one of the four turns the whole gate into a green
-			// no-op that keeps reporting success while checking nothing.
+			// A named function missing from the file fails rather than skips, so a
+			// rename cannot turn the gate into a passing no-op.
 			fn := findFunc(file, tc.fn)
 			if fn == nil {
 				t.Fatalf("%s holds no function %s; this gate names it and cannot audit what it cannot find", tc.file, tc.fn)
@@ -135,13 +116,9 @@ type delegateFixtureCase struct {
 	wantProblem bool
 }
 
-// delegateFixtureCases returns the two departures the delegation half exists
-// to catch, plus the control that proves it can accept. The first negative is
-// a command that inlines a lifecycle of its own - the exact regression that
-// would otherwise slip past holderCases, since it names withBackend rather
-// than each command. The second is a command that reaches the funnel but
-// hands it somebody else's work function, which would run the wrong work
-// under a perfectly threaded holder context.
+// delegateFixtureCases returns the two departures the delegation half catches,
+// a command inlining its own lifecycle and one handing the funnel another
+// work function, plus the control that must be accepted.
 func delegateFixtureCases() []delegateFixtureCase {
 	return []delegateFixtureCase{
 		{
@@ -201,13 +178,9 @@ func auditDelegationFixture(t *testing.T, body string) []string {
 	return auditDelegation(fn, "workWithState")
 }
 
-// auditDelegation reports every way fn departs from delegating its backend
-// lifecycle: it must call withBackend exactly once, hand it work as the work
-// half, and take no lifecycle of its own by calling initInstall directly.
-//
-// The first check bails out rather than accumulates, for the same reason
-// auditHolder's do: the argument check below is phrased in terms of the call
-// this one resolved.
+// auditDelegation reports every way fn departs from delegating its lifecycle:
+// exactly one withBackend call, handed work as its last argument, and no
+// initInstall of its own. A wrong withBackend count bails out at once.
 func auditDelegation(fn *ast.FuncDecl, work string) []string {
 	calls := collectCalls(fn, "withBackend")
 	if len(calls) != 1 {
@@ -226,10 +199,8 @@ func auditDelegation(fn *ast.FuncDecl, work string) []string {
 	return problems
 }
 
-// lastArgIs reports whether call's final argument is the identifier name. The
-// work half is withBackend's last parameter, and naming it positionally from
-// the end keeps this check indifferent to a banner or a config argument
-// moving.
+// lastArgIs reports whether call's final argument is the identifier name;
+// counting from the end survives withBackend's other arguments moving.
 func lastArgIs(call *ast.CallExpr, name string) bool {
 	return len(call.Args) > 0 && isIdent(call.Args[len(call.Args)-1], name)
 }
@@ -244,15 +215,9 @@ type holderFixtureCase struct {
 	wantProblem bool
 }
 
-// holderFixtureCases returns the two departures this gate exists to catch,
-// plus the control that proves it can accept. The two negatives are the two
-// single-edit mutations of a real lifecycle function that no other test in
-// this repository fails on: handing the work call the caller's own context
-// (so the run keeps working after the lock is gone and reports its own
-// unrelated verdict), and returning the work's outcome without the verdict
-// (so a stolen lock exits 0). The positive control is not optional here: a
-// predicate that rejects everything would pass both negatives while proving
-// nothing at all.
+// holderFixtureCases returns the two single-edit departures no other test
+// catches, the work call handed the caller's context and its outcome returned
+// unjudged (a stolen lock exits 0), plus the control that must be accepted.
 func holderFixtureCases() []holderFixtureCase {
 	return []holderFixtureCase{
 		{
@@ -297,10 +262,8 @@ func TestAuditReportsAMisthreadedLifecycle(t *testing.T) {
 	}
 }
 
-// TestAuditReportsADiscardedHolderContext covers the one departure the
-// fixtures above cannot express through their arguments: binding the holder
-// context to the blank identifier. Its control is the same fixture with the
-// blank replaced by a name, which must be accepted.
+// TestAuditReportsADiscardedHolderContext pins that a holder context bound to
+// the blank identifier is reported, while the same fixture with a name is not.
 func TestAuditReportsADiscardedHolderContext(t *testing.T) {
 	t.Parallel()
 
@@ -313,11 +276,8 @@ func TestAuditReportsADiscardedHolderContext(t *testing.T) {
 	}
 }
 
-// holderFixtureSource builds a synthetic lifecycle function in the shape this
-// gate audits. workArg is the identifier the work call is handed as its first
-// argument, and wrapped selects whether that call's outcome is returned
-// through the verdict or bare. The source is never compiled, only parsed, so
-// it declares no imports and needs none.
+// holderFixtureSource builds a parsed-only lifecycle function whose work call
+// is handed workArg first and, when wrapped, returned through the verdict.
 func holderFixtureSource(workArg string, wrapped bool) string {
 	work := fmt.Sprintf("workWithState(%s, cfg)", workArg)
 	final := "return " + work
@@ -354,15 +314,9 @@ func auditFixture(t *testing.T, source string) []string {
 	return auditHolder(fset, fn, "workWithState")
 }
 
-// auditHolder reports every way fn departs from the required shape, as a
-// human-readable line each. An empty result means fn threads and judges its
-// holder context.
-//
-// The first three checks bail out rather than accumulate: each later check is
-// phrased in terms of the holder identifier or the work call the earlier one
-// resolved, so reporting "the work call is not wrapped" against a function
-// whose holder could not even be identified would be noise, not a second
-// finding.
+// auditHolder reports every way fn departs from the required shape, one line
+// each, empty when fn threads and judges its holder context. The first three
+// checks bail out, since later ones are phrased in terms of what they resolve.
 func auditHolder(fset *token.FileSet, fn *ast.FuncDecl, work string) []string {
 	inits := collectInitAssignments(fn)
 	if len(inits) != 1 {
@@ -408,13 +362,9 @@ func holderIdent(assign *ast.AssignStmt) (string, string) {
 	return ident.Name, ""
 }
 
-// unjudgedReturns reports every return positioned after the lock was
-// acquired that is neither a bare nil nor a verdict carrying the holder.
-//
-// Position, not reachability, is what puts a return in scope: a return
-// BEFORE the init assignment ran cannot have a holder context to judge
-// against, because none exists yet - runWarm's own --no-cache refusal is
-// exactly that, and must stay legal.
+// unjudgedReturns reports every return positioned after the lock was acquired
+// that is neither a bare nil nor a verdict carrying the holder; a return before
+// the init assignment has no holder to judge against and stays legal.
 func unjudgedReturns(fset *token.FileSet, fn *ast.FuncDecl, init *ast.AssignStmt, holder string) []string {
 	var problems []string
 	inspectBody(fn, func(node ast.Node) {

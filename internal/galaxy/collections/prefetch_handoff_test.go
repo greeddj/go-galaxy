@@ -1,21 +1,8 @@
 package collections
 
-// This file is the load-bearing proof for the prefetch temp-path handoff: the
-// artifact a prefetch worker already downloaded is handed to the install
-// worker via prefetcher.Wait and reused directly, instead of being fetched a
-// second time from the artifact store. It exercises installLevels and
-// startPrefetcher directly - both package-internal - against a stub
-// cacheManager.ArtifactStore that reproduces the S3 backend's own artifact
-// semantics (see internal/cache/s3/artifacts.go): Commit uploads a temp's
-// bytes but does not consume the temp file, and Fetch always re-downloads
-// into a fresh one. That stub's own S3 client test double lives, unexported,
-// in internal/cache/s3's _test.go files and cannot be imported here, which is
-// why this stub exists instead.
-//
-// Driving installLevels directly (rather than through collections.Start)
-// also means every test here uses a real extracted.Store, so the reused
-// prefetched temp still passes through the same content-addressable ingest
-// path - and its verifyTarballSHA check - as any other artifact.
+// Tests that a prefetched temp reaches its install worker through Wait and is
+// reused, not fetched again, against an S3-style store stub and a real
+// extracted.Store, so the temp still passes the same ingest checks.
 
 import (
 	"context"
@@ -43,15 +30,9 @@ import (
 // artifact - see TestPrefetchedArtifactFailsClosedOnPinMismatch.
 const wrongPinSHA256 = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
-// s3StyleArtifacts is a stub cacheManager.ArtifactStore reproducing the S3
-// backend's own artifact semantics: Commit "uploads" a temp file's bytes into
-// bucketDir but leaves the temp itself in place (mirroring the real S3
-// backend, whose Commit uploads and returns the same tmpPath), and Fetch
-// always downloads a fresh copy into a new temp under tmpBase - the very
-// second-download this stub exists to let a test detect. Every Fetch and
-// every Cleanup call is counted per artifact key, so a test can assert
-// whether the object store was ever hit again and whether a given temp was
-// released exactly once.
+// s3StyleArtifacts is a cacheManager.ArtifactStore stub with the S3 backend's
+// semantics: Commit copies without consuming the temp, Fetch always copies
+// into a fresh temp. Has, Fetch and Cleanup calls are counted per key.
 type s3StyleArtifacts struct {
 	fetchCount   map[string]int
 	cleanupCount map[string]int
@@ -59,10 +40,8 @@ type s3StyleArtifacts struct {
 	committed    map[string]string
 	tmpBase      string
 	bucketDir    string
-	// commitOrder records the key argument of every Commit call in call order,
-	// letting a test observe the sequence in which artifacts were committed to
-	// the stub bucket - the signal TestPrefetchQueueOrderedByLevel uses to prove
-	// the prefetch queue is level-ordered rather than raced in map order.
+	// commitOrder is every Commit key in call order, which
+	// TestPrefetchQueueOrderedByLevel reads as the prefetch queue order.
 	commitOrder []string
 	mu          sync.Mutex
 }
@@ -91,10 +70,8 @@ func newS3StyleArtifacts(t *testing.T) *s3StyleArtifacts {
 	}
 }
 
-// Has reports whether key has already been committed to the stub bucket,
-// counting the call (keyed by key) so a test can assert exactly how many Has
-// probes a given key saw - the signal Test C uses to prove the prefetch
-// scan costs one probe rather than a scan-plus-reprobe pair.
+// Has reports whether key is in the stub bucket, counting the call so a test
+// can assert how many probes a key saw.
 func (a *s3StyleArtifacts) Has(_ context.Context, key string) (bool, error) {
 	a.mu.Lock()
 	a.hasCount[key]++
@@ -128,11 +105,9 @@ func (a *s3StyleArtifacts) TempFile(_ context.Context, prefix string) (*os.File,
 	return f, func() { _ = os.Remove(path) }, nil
 }
 
-// Commit "uploads" tmpPath's bytes into the stub bucket under key without
-// consuming tmpPath, exactly like the real S3 backend's Commit. Its returned
-// Cleanup counts the call (keyed by key) before removing tmpPath, so a test
-// can assert a temp - whether consumed by an install worker or reclaimed by
-// prefetcher.Close - was released exactly once.
+// Commit copies tmpPath into the stub bucket without consuming it, like the
+// S3 backend; its Cleanup is counted so a test can assert the temp was
+// released exactly once.
 func (a *s3StyleArtifacts) Commit(_ context.Context, key, tmpPath string, meta map[string]string) (cacheManager.ArtifactFile, error) {
 	if err := copyFile(tmpPath, filepath.Join(a.bucketDir, key)); err != nil {
 		return cacheManager.ArtifactFile{}, err
@@ -274,10 +249,8 @@ type prefetchHandoffFixture struct {
 	root *os.Root
 }
 
-// newPrefetchHandoffFixture builds a fixture wired to srv with workers
-// installer/prefetch workers, NoDeps set purely for symmetry with the other
-// fixtures in this package (this file only asserts the temp-handoff behavior,
-// not dependency resolution).
+// newPrefetchHandoffFixture builds a fixture wired to srv with the given
+// worker count and NoDeps set; dependency resolution is not under test here.
 func newPrefetchHandoffFixture(t *testing.T, srv *fakegalaxy.Server, workers int) *prefetchHandoffFixture {
 	t.Helper()
 	root := t.TempDir()
@@ -306,10 +279,8 @@ func (f *prefetchHandoffFixture) installPath(col collection) string {
 	return filepath.Join(f.cfg.DownloadPath, "ansible_collections", col.Namespace, col.Name)
 }
 
-// runLevels starts a prefetcher for collections and drives installLevels over
-// graph/levels against it, returning the prefetcher still open - the caller
-// must Close it once done asserting on the artifact store's state - alongside
-// installLevels' own results.
+// runLevels starts a prefetcher and drives installLevels against it,
+// returning the prefetcher still open: the caller Closes it after asserting.
 func (f *prefetchHandoffFixture) runLevels(
 	collections map[string]collection,
 	graph map[string][]string,
@@ -327,22 +298,9 @@ func (f *prefetchHandoffFixture) runLevels(
 	return prefetch, failures, err
 }
 
-// TestPrefetchedArtifactReusedNotRefetched is the headline proof for the
-// prefetch temp-path handoff: the artifact the prefetcher already downloaded
-// for acme.app is reused by the install worker rather than fetched a second
-// time from the artifact store.
-//
-// This test's fetchCountFor(key) == 0 assertion pins that installCollection
-// reuses the prefetcher's already-downloaded temp instead of taking the
-// cache-hit branch and calling artifacts.Fetch a second time: prepareInstall
-// observes the prefetcher's handoff (its already-set meta and verified sha)
-// and skips the redundant fetch, so fetchCountFor reads 0.
-//
-// The hasCountFor(key) == 1 assertion below additionally proves the scan/
-// re-probe consolidation: buildPrefetchTasks' parallel scan issues the sole
-// Has probe for this key, prefetchOne does not re-probe it, and the install
-// worker never probes a prefetched key either. With the prefetchOne re-probe
-// still present this would read 2.
+// TestPrefetchedArtifactReusedNotRefetched pins that the install worker reuses
+// the prefetched temp with no Fetch, that the scan's Has is the key's only
+// probe, and that the temp is cleaned up exactly once.
 func TestPrefetchedArtifactReusedNotRefetched(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -389,18 +347,9 @@ func TestPrefetchedArtifactReusedNotRefetched(t *testing.T) {
 	}
 }
 
-// TestCachedArtifactProbedOnceAcrossScanAndInstall pins the prefetch/install
-// handoff's elimination of the second duplicate probe: a collection whose
-// artifact is already cached, but never recorded as installed, is left
-// unscheduled by buildPrefetchTasks' own scan (its Has() found the key
-// present, so no prefetch task exists for it at all) and the install worker
-// that later handles it reuses that same scan answer through deps.presence
-// instead of calling Has() a second time.
-//
-// The artifact is pre-committed straight into the stub bucket (bypassing the
-// fake Galaxy HTTP server entirely) rather than downloaded through a real
-// prefetch, precisely so the EndpointArtifact assertion below can tell a
-// download that never happened from one this run performed itself.
+// TestCachedArtifactProbedOnceAcrossScanAndInstall pins that a cached,
+// uninstalled artifact is left unscheduled and its install worker reuses the
+// scan's answer through deps.presence instead of probing Has again.
 func TestCachedArtifactProbedOnceAcrossScanAndInstall(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -434,12 +383,6 @@ func TestCachedArtifactProbedOnceAcrossScanAndInstall(t *testing.T) {
 	}
 	assertFileContent(t, filepath.Join(fx.installPath(col), "README.md"), "# acme.app\n")
 
-	// Killing mutation (run for real, not merely described): deleting the
-	// "if deps.presence[artifactKey(col)] { return true }" short-circuit from
-	// isCacheHit (install.go) makes the install worker re-probe here, and
-	// this assertion fails with the real go test output:
-	//   --- FAIL: TestCachedArtifactProbedOnceAcrossScanAndInstall (0.01s)
-	//       prefetch_handoff_test.go:444: hasCount = 2, want exactly 1 (one scan probe, no install-worker re-probe)
 	if got := fx.artifacts.hasCountFor(key); got != 1 {
 		t.Fatalf("hasCount = %d, want exactly 1 (one scan probe, no install-worker re-probe)", got)
 	}
@@ -451,19 +394,8 @@ func TestCachedArtifactProbedOnceAcrossScanAndInstall(t *testing.T) {
 }
 
 // TestUncachedArtifactStillProbedByInstallWorkerAfterFailedPrefetch is the
-// mandatory positive control for TestCachedArtifactProbedOnceAcrossScanAndInstall
-// above: without it, that test's hasCountFor(key) == 1 assertion would be
-// indistinguishable from a change that simply stopped counting probes at
-// all, rather than one that correctly skips exactly one of them.
-//
-// Here the artifact is genuinely absent, so buildPrefetchTasks' scan
-// schedules a prefetch task for it instead of recording a presence hint (see
-// buildPrefetchTasks' own doc comment for why a scheduled key gets no hint
-// either way). The scheduled prefetch then fails - the artifact endpoint is
-// rigged to keep answering 500 - so the install worker reaches isCacheHit
-// with no hint to consult and falls through to its own artifactExists probe,
-// for a hasCountFor total of 2: one from the scan, one from the install
-// worker.
+// positive control for the probe count: a scheduled key gets no presence
+// hint, so after its prefetch fails the install worker probes Has itself.
 func TestUncachedArtifactStillProbedByInstallWorkerAfterFailedPrefetch(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -496,11 +428,9 @@ func TestUncachedArtifactStillProbedByInstallWorkerAfterFailedPrefetch(t *testin
 	assertPathAbsent(t, fx.installPath(col))
 }
 
-// TestUnconsumedPrefetchTempReclaimedOnLevelFailure proves the other half of
-// the ownership contract: a prefetched artifact whose install level never
-// ran - because an earlier level failed and installLevels broke before
-// scheduling it - is still reclaimed exactly once, by Close, rather than
-// leaking on disk.
+// TestUnconsumedPrefetchTempReclaimedOnLevelFailure pins that a prefetched
+// temp whose level never ran, after an earlier level failed, is reclaimed
+// exactly once by Close rather than leaked.
 func TestUnconsumedPrefetchTempReclaimedOnLevelFailure(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -564,11 +494,9 @@ func assertReclaimedExactlyOnce(t *testing.T, artifacts *s3StyleArtifacts, key, 
 	assertPathAbsent(t, path)
 }
 
-// TestPrefetchedArtifactFailsClosedOnPinMismatch proves the reused prefetched
-// temp still goes through the same verifyPinnedSHA lockfile pin verification
-// as any other artifact: a lockfile pin that does not match the real
-// (prefetched) bytes fails the install closed, with no futile refetch from
-// the object store.
+// TestPrefetchedArtifactFailsClosedOnPinMismatch pins that a reused prefetched
+// temp still meets verifyPinnedSHA: a wrong lockfile pin fails the install
+// closed, with no refetch from the object store.
 func TestPrefetchedArtifactFailsClosedOnPinMismatch(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -609,22 +537,9 @@ func TestPrefetchedArtifactFailsClosedOnPinMismatch(t *testing.T) {
 	}
 }
 
-// TestInstallCollectionSkipReleasesPrefetchedTempExactlyOnce proves the other
-// half of the prefetch handoff's ownership contract at the installCollection
-// level: the canSkipInstall branch (install.go, immediately after the
-// "already installed" log line) releases a prefetched artifact's temp
-// exactly once rather than leaking it until Close.
-//
-// This drives installCollection directly rather than through installLevels
-// because the triggering condition - a prefetched collection that turns out
-// to already be installed by the time its own worker call happens - reduces,
-// at the installCollection level, to exactly two preconditions: canSkipInstall
-// observes an already-installed entry, and the caller still hands in a
-// non-empty prefetched downloadResult. Reproducing the condition end to end
-// would require a collection that is simultaneously a prefetched top-level
-// entry and a dependency some other collection's own MANIFEST-driven install
-// already installed first; asserting the two preconditions directly is the
-// precise, minimal way to pin down this branch's behavior.
+// TestInstallCollectionSkipReleasesPrefetchedTempExactlyOnce pins that
+// installCollection's already-installed skip branch releases a handed-in
+// prefetched temp exactly once instead of leaking it until Close.
 func TestInstallCollectionSkipReleasesPrefetchedTempExactlyOnce(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

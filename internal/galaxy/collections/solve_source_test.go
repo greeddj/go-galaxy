@@ -10,16 +10,11 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// testVersion200 is this file's second-most-common fixture version literal
-// (testVersion100, this package's first, already covers "1.0.0"), pulled
-// out as a const purely to satisfy goconst.
+// testVersion200 is a fixture version literal, a const to satisfy goconst.
 const testVersion200 = "2.0.0"
 
-// TestSolveCollectionsMultiSourceRoots drives two roots, each pinned to its
-// own explicit Source, against two independent fake servers - each server
-// registers a distinguishable version of its own collection only - and
-// asserts solveCollections fetches each root from its own server (not the
-// other) and records that same server as the resolved collection's Source.
+// TestSolveCollectionsMultiSourceRoots pins that two roots pinned to two
+// different servers each resolve from, and record as Source, their own server.
 func TestSolveCollectionsMultiSourceRoots(t *testing.T) {
 	t.Parallel()
 	srvX := fakegalaxy.New(t)
@@ -49,13 +44,9 @@ func TestSolveCollectionsMultiSourceRoots(t *testing.T) {
 	}
 }
 
-// TestSolveCollectionsTransitiveDepUsesDefaultServer pins the reference
-// behavior a naive parent-source-inheritance reading would get wrong: a
-// transitive dependency always resolves against cfg.Server, never against
-// the source of whichever parent required it. The root lives on its own
-// explicit-source server and depends on a package published only on the
-// default server; the dependency must still resolve, with cfg.Server (not
-// the root's server) recorded as its Source.
+// TestSolveCollectionsTransitiveDepUsesDefaultServer pins that a transitive
+// dependency never inherits its parent's source: a pinned root's dependency
+// resolves from, and records as Source, the default server.
 func TestSolveCollectionsTransitiveDepUsesDefaultServer(t *testing.T) {
 	t.Parallel()
 	srvRoot := fakegalaxy.New(t)
@@ -94,11 +85,9 @@ func TestSolveCollectionsTransitiveDepUsesDefaultServer(t *testing.T) {
 	}
 }
 
-// TestSolveCollectionsSharedTransitiveDepUsesDefaultServer covers the
-// unambiguous case: two roots on two DIFFERENT explicit-source servers both
-// depend on the same package, published only on the default server. Neither
-// root's source ever touches the shared dependency; it resolves once,
-// against cfg.Server.
+// TestSolveCollectionsSharedTransitiveDepUsesDefaultServer pins that a
+// dependency shared by roots pinned to two different servers resolves against
+// the default server.
 func TestSolveCollectionsSharedTransitiveDepUsesDefaultServer(t *testing.T) {
 	t.Parallel()
 	srvX := fakegalaxy.New(t)
@@ -129,10 +118,8 @@ func TestSolveCollectionsSharedTransitiveDepUsesDefaultServer(t *testing.T) {
 	}
 }
 
-// TestRootSourceMap pins rootSourceMap's per-root rule directly: a root
-// with an explicit Source maps to that source, an unpinned root maps to ""
-// (a distinct, stable value - not cfg.Server), and a transitive
-// dependency's fqdn is simply never a key.
+// TestRootSourceMap pins that a pinned root maps to its source, an unpinned
+// root to "" (not cfg.Server), and a transitive dependency is never a key.
 func TestRootSourceMap(t *testing.T) {
 	t.Parallel()
 	roots := []collection{
@@ -152,12 +139,8 @@ func TestRootSourceMap(t *testing.T) {
 	}
 }
 
-// TestMetadataProviderSourceOf pins MetadataProvider.sourceOf's own
-// fallback directly: a fqdn recorded in sources returns that source, and
-// any other fqdn (a transitive dependency, or a root recorded with an empty
-// source, never distinguished here) falls back to "" - unpinned - so
-// serverCandidates walks the whole configured server list for it; there is
-// no inheritance from whichever parent required it.
+// TestMetadataProviderSourceOf pins that sourceOf returns a recorded source
+// and "" (unpinned, so the whole server list is walked) for any other fqdn.
 func TestMetadataProviderSourceOf(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Server: "https://default.example"}
@@ -172,14 +155,9 @@ func TestMetadataProviderSourceOf(t *testing.T) {
 	}
 }
 
-// TestResolvePinnedExactRootKeepsSourceUnderPrewarm is the direct regression
-// guard for the stamping half of source: pinning. Two exactly pinned roots
-// are what turns prewarmRootMetadata on, and it warms an exactly pinned
-// root through Dependencies on a provider whose bindings it discards - so
-// the solve's own Dependencies call finds the deps cache already warm and
-// returns before any fetch that could bind the root. The resolved Source
-// must still be the pinned server, not cfg.Server, or the install phase
-// would re-read metadata from a server that never carried the collection.
+// TestResolvePinnedExactRootKeepsSourceUnderPrewarm pins that exactly pinned
+// roots warmed by prewarmRootMetadata still resolve with their source: server
+// as Source, and the default server is never asked.
 func TestResolvePinnedExactRootKeepsSourceUnderPrewarm(t *testing.T) {
 	t.Parallel()
 	srvPinned := fakegalaxy.New(t)
@@ -215,11 +193,9 @@ func TestResolvePinnedExactRootKeepsSourceUnderPrewarm(t *testing.T) {
 	}
 }
 
-// TestResolvePinnedExactRootKeepsSourceUnderNoDeps covers the one tier
-// boundBaseFor cannot reach: under cfg.NoDeps the solve settles an exactly
-// pinned root through NewNoDepsProvider's own Dependencies, which never
-// reaches the real provider, so nothing binds the root and nothing fetches
-// for it either. Its source: is still what the resolved Source must carry.
+// TestResolvePinnedExactRootKeepsSourceUnderNoDeps pins that under NoDeps,
+// where nothing binds an exactly pinned root, its source: is still the
+// resolved Source.
 func TestResolvePinnedExactRootKeepsSourceUnderNoDeps(t *testing.T) {
 	t.Parallel()
 	srvPinned := fakegalaxy.New(t)
@@ -248,11 +224,8 @@ func TestResolvePinnedExactRootKeepsSourceUnderNoDeps(t *testing.T) {
 	}
 }
 
-// TestSourceForPrefersBindingOverSource pins sourceFor's tier order and the
-// spelling each tier records. A bound fqdn takes its binding even when it
-// also carries a source:; an unbound one pinned by server_list id records
-// that server's URL rather than the id itself, so both tiers agree on the
-// value every consumer keys on; and a fqdn with neither falls back to the
+// TestSourceForPrefersBindingOverSource pins sourceFor's tier order: binding,
+// then source: (a server_list id recorded as its server's URL), then the
 // first configured server.
 func TestSourceForPrefersBindingOverSource(t *testing.T) {
 	t.Parallel()

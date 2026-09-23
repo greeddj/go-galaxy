@@ -12,20 +12,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 )
 
-// TestExplainRequiresATarget pins explainArguments' zero-argument branch: a
-// missing target is refused as errExplainNoTarget before the action runs, and
-// exits as a usage error. Any other outcome, nil included, fails the errors.Is
-// check. The flags point into t.TempDir, so an action a faulty validator lets
-// through reads no galaxy.lock from the working directory or the environment.
-//
-// KILLING MUTATION, run and reverted, in explainArguments (explain.go) -
-// return nil for zero arguments. Both assertions fail, the second because a
-// missing lockfile exits 6:
-//
-//	explain_test.go:38: explain with no target: error = lockfile not found:
-//	.../001/galaxy.lock, want errors.Is match with missing argument: explain
-//	takes one, a collection name (namespace.name) or a role name
-//	explain_test.go:41: explain with no target: exit code = 6, want 2
+// TestExplainRequiresATarget pins that explain with no target is refused as
+// errExplainNoTarget before the action runs and exits as a usage error; flags
+// point into t.TempDir so a faulty validator reads no ambient galaxy.lock.
 func TestExplainRequiresATarget(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -64,10 +53,8 @@ func TestPrintExplainOrphan(t *testing.T) {
 	if !strings.Contains(out, "(no parents - orphan in lockfile)") {
 		t.Errorf("printExplain() output missing orphan message; got:\n%s", out)
 	}
-	// Spelled as an escape rather than as the character itself: this is the
-	// same rune either way, and the escape keeps the file from tripping the
-	// repository-wide ban on em dashes in committed text, which would
-	// otherwise need an exemption naming this line.
+	// Spelled as an escape so this file does not trip the repository-wide ban
+	// on em dashes in committed text.
 	if strings.ContainsRune(out, '\u2014') {
 		t.Errorf("printExplain() output contains an em dash (U+2014); got:\n%s", out)
 	}
@@ -106,22 +93,9 @@ func TestPrintExplainRequiredByAndDepends(t *testing.T) {
 	}
 }
 
-// TestPrintExplainRequiredByIsNameSorted pins the direction of
-// printRequiredBy's comparison, which nothing else in this package asserts:
-// every other fixture here has at most one reverse dependency, so a reversed
-// comparison would order a one-element slice indistinguishably from a correct
-// one and pass unnoticed.
-//
-// The lockfile lists the three parents in an order that is neither ascending
-// nor descending, so the assertion cannot be satisfied by the input order
-// surviving unsorted either. Line positions are compared rather than a
-// rendered block, so the check states the ordering property itself instead of
-// re-encoding the surrounding layout.
-//
-// KILLING MUTATION, run for real: swapping printRequiredBy's comparison to
-// strings.Compare(b.Name, a.Name) fails this test with "required by lists
-// ns.beta at 58 and ns.alpha at 78; want ns.alpha before ns.beta, got:" and
-// the whole rendered report. Reverting the argument order made it pass again.
+// TestPrintExplainRequiredByIsNameSorted pins printRequiredBy's ascending sort,
+// which single-parent fixtures cannot; the parents are listed in neither
+// ascending nor descending order, so the input order cannot pass either.
 func TestPrintExplainRequiredByIsNameSorted(t *testing.T) {
 	t.Parallel()
 	lf := &lockfile.File{
@@ -168,17 +142,9 @@ func TestPrintExplainNotFound(t *testing.T) {
 	}
 }
 
-// TestPrintExplainSanitizesLockfileText proves printExplain's
-// safeout.NewWriter wrap (its first statement) reaches every write its
-// helpers (printEntryHeader, printRequiredBy, printDepends) make: every
-// rendered field - Name, Version, Source, SHA256, and the one Deps element
-// - carries the hostileLockfileName/hostileLockfileSource shape (shared
-// with tree_test.go, reusing the adversarial shape at
-// internal/galaxy/lockfile/compare_test.go). No raw ESC/CR/NUL byte
-// survives anywhere in the output, U+FFFD stands in for each of them, and
-// the output stays valid UTF-8. The final assertion - both section headers
-// are still present - is the positive control: it proves the writer
-// sanitized the hostile text rather than discarding the whole report.
+// TestPrintExplainSanitizesLockfileText pins that printExplain's safeout wrap
+// reaches every field its helpers print: no raw ESC, CR or NUL survives, output
+// stays valid UTF-8, and both section headers remain as the positive control.
 func TestPrintExplainSanitizesLockfileText(t *testing.T) {
 	t.Parallel()
 	lf := &lockfile.File{

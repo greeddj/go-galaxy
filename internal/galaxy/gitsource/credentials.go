@@ -2,14 +2,9 @@ package gitsource
 
 import "strings"
 
-// Credential is one host-bound git credential in the plain form the fetcher
-// consumes: the binding URL (a ParsePrefix result), and either a Basic
-// username and password for http(s) or an ssh private key with its optional
-// passphrase. It carries secrets in the clear, which is why it is built in
-// exactly one place, the command wiring that reveals config.GitCredential's
-// Secret values, and never persisted, printed or formatted: nothing in this
-// package or in gitfetch renders one, and a test in config pins that the
-// Secret-bearing form redacts.
+// Credential is one host-bound git credential in clear form: the binding URL
+// and Basic or ssh-key secrets. Only the command wiring builds it, from
+// config.GitCredential's Secret values, and it is never persisted or printed.
 type Credential struct {
 	URL           URL
 	Username      string
@@ -24,12 +19,9 @@ func (c Credential) IsZero() bool {
 	return c.URL.Host == "" && c.Username == "" && c.Password == "" && len(c.SSHKey) == 0
 }
 
-// MatchCredential returns the credential bound to u, if any. A binding
-// applies when its origin (scheme, host and effective port) equals u's and u's
-// path equals the binding path or lies beneath it; among several, the longest
-// path prefix wins. The ssh user of u is not part of the match - a binding
-// names a host, and the requirement URL names the login. Duplicate bindings
-// are refused at configuration time, so a tie cannot happen here.
+// MatchCredential returns the credential bound to u: same origin and u's path
+// at or beneath the binding path, longest prefix winning. The ssh user is not
+// matched; duplicate bindings are refused at configuration, so no tie occurs.
 func MatchCredential(u URL, creds []Credential) (Credential, bool) {
 	var best Credential
 	bestLen := -1

@@ -13,11 +13,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// TestURLAuthTransport_MatchByOriginAndLongestPrefix drives urlAuthTransport
-// against a bare stub, proving the Bearer header is attached if and only if
-// the request's normalized origin equals a binding's and its path equals or
-// sits beneath the binding's prefix on a "/" boundary, the longest matching
-// prefix winning.
+// TestURLAuthTransport_MatchByOriginAndLongestPrefix pins that the Bearer
+// header attaches only on an exact origin with the path at or beneath a prefix
+// on a "/" boundary, the longest matching prefix winning.
 func TestURLAuthTransport_MatchByOriginAndLongestPrefix(t *testing.T) {
 	t.Parallel()
 	bindings := []URLBinding{
@@ -100,11 +98,9 @@ func TestURLAuthTransport_StringLeaksNoToken(t *testing.T) {
 	}
 }
 
-// TestNewURLDownload_CrossOriginRedirect pins the load-bearing redirect
-// property end to end over two real listeners: the bound origin sees the
-// Bearer header, the unbound redirect target sees no Authorization header at
-// all and no Referer, and the download still succeeds - the GitHub
-// release-asset shape.
+// TestNewURLDownload_CrossOriginRedirect pins the GitHub release-asset shape:
+// the bound origin sees the Bearer header, the unbound redirect target sees no
+// Authorization and no Referer, and the download succeeds.
 func TestNewURLDownload_CrossOriginRedirect(t *testing.T) {
 	t.Parallel()
 	var targetAuth, targetReferer atomic.Value
@@ -144,7 +140,7 @@ func TestNewURLDownload_CrossOriginRedirect(t *testing.T) {
 	}
 }
 
-// TestNewURLDownload_RedirectIntoBoundOriginGainsToken pins corollary (a) of
+// TestNewURLDownload_RedirectIntoBoundOriginGainsToken pins the other side of
 // the per-hop rule: a chain that hops INTO a bound origin attaches that
 // binding's token on the hop.
 func TestNewURLDownload_RedirectIntoBoundOriginGainsToken(t *testing.T) {

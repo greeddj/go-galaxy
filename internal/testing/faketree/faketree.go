@@ -1,10 +1,6 @@
-// Package faketree is an in-memory treearchive.Source for tests: a map of
-// "/"-joined paths to entries, listed in byte order so every test sees one
-// order, with a fixed committer time so two builds of one tree are
-// byte-identical. Directories are implied by their children and may also be
-// declared empty. It is the tree every builder test and the install
-// pipeline's git double build from, so none of them needs a git repository
-// or a filesystem to produce an artifact.
+// Package faketree is an in-memory treearchive.Source for tests, listed in
+// byte order with a fixed commit time so two builds of one tree are
+// byte-identical; the builder tests and the install pipeline's git double use it.
 package faketree
 
 import (
@@ -21,10 +17,9 @@ import (
 // ErrNoEntry is the refusal for a path the tree does not hold.
 var ErrNoEntry = errors.New("faketree: no such entry")
 
-// entry is one entry of the tree: the blob for a file or a symlink (the
-// target), nothing for a directory or a submodule. sizeOverride, when set, is
-// what ReadDir declares instead of the blob length, so a test can declare a
-// size no blob backs.
+// entry is one tree entry: the blob of a file or a symlink's target, nothing
+// for a directory or submodule. sizeOverride, when set, is what ReadDir
+// declares instead of the blob length, a size no blob backs.
 type entry struct {
 	data         string
 	sizeOverride int64

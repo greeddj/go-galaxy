@@ -28,17 +28,9 @@ const v2FallThroughVersionsURL = "http://v2-candidate.example/versions/"
 const v2FallThroughBody = `{"versions_url":"` + v2FallThroughVersionsURL +
 	`","highest_version":{"href":"http://v2-candidate.example/versions/9.9.9/","version":"9.9.9"}}`
 
-// newFallThroughServer starts an httptest.Server that answers 404 for any
-// candidate URL under "/api/v3/" and 200 with body for any candidate under
-// successMatch - checked only once the "/api/v3/" case has not already
-// matched, so successMatch may itself be a substring of an "/api/v3/" path
-// (e.g. "/v3/") without misrouting one of those 404s into a false success -
-// any other path also 404s. It records every request path it receives, in
-// order, guarded by a mutex since the handler runs on the server's own
-// goroutine. Shared by newRootMetadataFallThroughServer (the standard
-// galaxy.ansible.com v3-then-v2 fallback) and newHubShapedServer (the Galaxy
-// NG / Automation Hub v3-then-bare-v3 fallback), which differ only in which
-// candidate succeeds and with what body.
+// newFallThroughServer 404s every "/api/v3/" path, then serves body for a path
+// containing successMatch, and 404s the rest; "/api/v3/" is checked first so
+// successMatch may be "/v3/". It records request paths in order.
 func newFallThroughServer(t *testing.T, successMatch, body string) (*httptest.Server, func() []string) {
 	t.Helper()
 	var mu sync.Mutex
@@ -77,22 +69,13 @@ func newRootMetadataFallThroughServer(t *testing.T) (*httptest.Server, func() []
 	return newFallThroughServer(t, "/api/v2/", v2FallThroughBody)
 }
 
-// hubBasePath is the mount point of the simulated Galaxy NG / Automation
-// Hub, chosen to match the shape a real deployment takes: the v3 API lives
-// directly under it, at "<base>/v3/collections/...", never under a further
-// "/api/v3".
+// hubBasePath is the simulated Galaxy NG / Automation Hub mount point; as in
+// a real deployment its v3 API sits at "<base>/v3/...", not "<base>/api/v3".
 const hubBasePath = "/api/automation-hub"
 
-// TestLoadRootMetadataCachedResolvesHubShapedBase asserts that a base whose
-// v3 API is mounted directly under its own path (no "/api" immediately
-// before "/v3", the Galaxy NG / Automation Hub shape) resolves via the bare
-// "/v3" fallback candidate rather than failing outright. The fake hub 404s
-// the galaxy.ansible.com-shaped candidate exactly as a real one does, so
-// reaching its root metadata is only possible by falling through to the
-// next candidate. That the fall-through is ordered - "/api/v3" tried first,
-// "/v3" second - is pinned by TestAPIRootCandidates and by
-// TestLoadRootMetadataCachedFallsThroughOn404, which asserts the first
-// request on the wire.
+// TestLoadRootMetadataCachedResolvesHubShapedBase pins that a Galaxy NG /
+// Automation Hub base, which 404s "<base>/api/v3", resolves through the bare
+// "<base>/v3" fallback candidate.
 func TestLoadRootMetadataCachedResolvesHubShapedBase(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.NewAtBasePath(t, hubBasePath)
@@ -115,22 +98,16 @@ func TestLoadRootMetadataCachedResolvesHubShapedBase(t *testing.T) {
 		t.Fatalf("expected the root served by the bare /v3 candidate (versions_url=%q), got versions_url=%q",
 			want, root.VersionsURL)
 	}
-	// The hub only routes - and therefore only counts - its own "/v3" shape;
-	// the "/api/v3" probe that preceded this one 404s before reaching any
-	// endpoint. Exactly one counted request proves the walk stopped at the
-	// first candidate the hub actually serves.
+	// The hub counts only its own "/v3" route, so one counted request proves
+	// the walk stopped at the first candidate the hub serves.
 	if got := srv.Count(fakegalaxy.EndpointRootMetadata); got != 1 {
 		t.Fatalf("expected exactly 1 served root metadata request against the hub, got %d", got)
 	}
 }
 
 // TestLoadRootMetadataCachedGalaxyShapeResolvesOnFirstCandidateNoRegression
-// is the no-regression guard for this unit's change: a galaxy.ansible.com-shaped
-// base (its v3 API mounted at "<base>/api/v3", the shape apiRootCandidates
-// has always tried first) must still resolve on the very first candidate,
-// with exactly the same request count as before the Galaxy NG / Automation
-// Hub fallback candidates existed. The common case must never pay for the
-// new candidates.
+// pins that a galaxy.ansible.com-shaped base resolves on the first
+// "<base>/api/v3" candidate with one request, paying nothing for the hub ones.
 func TestLoadRootMetadataCachedGalaxyShapeResolvesOnFirstCandidateNoRegression(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -153,11 +130,9 @@ func TestLoadRootMetadataCachedGalaxyShapeResolvesOnFirstCandidateNoRegression(t
 	}
 }
 
-// TestLoadRootMetadataCachedFallsThroughOn404 asserts that a 404 on the v3
-// root-metadata candidate is treated as "try the next candidate" rather than
-// a hard failure: the loader must advance to the v2 candidate and return its
-// root metadata. This holds regardless of whether the collection carries an
-// explicit source.
+// TestLoadRootMetadataCachedFallsThroughOn404 pins that a 404 on the v3
+// root-metadata candidate means "try the next candidate": the loader asks v3
+// first, then advances to v2 and returns its root metadata.
 func TestLoadRootMetadataCachedFallsThroughOn404(t *testing.T) {
 	t.Parallel()
 	srv, seenPaths := newRootMetadataFallThroughServer(t)
@@ -199,10 +174,9 @@ func TestLoadRootMetadataCachedFallsThroughOn404(t *testing.T) {
 	}
 }
 
-// TestLoadRootMetadataCachedAllCandidates404ReturnsLastError asserts that
-// when every root-metadata candidate 404s, loadRootMetadataCached returns
-// the last 404 (rather than nil or helpers.ErrLoadMetadataFailed), so the
-// caller's error message still reflects the real upstream response.
+// TestLoadRootMetadataCachedAllCandidates404ReturnsLastError pins that when
+// every candidate 404s the last 404 is returned as an HTTPStatusError, so the
+// caller's message reflects the real upstream response.
 func TestLoadRootMetadataCachedAllCandidates404ReturnsLastError(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -232,15 +206,9 @@ func TestLoadRootMetadataCachedAllCandidates404ReturnsLastError(t *testing.T) {
 	}
 }
 
-// TestLoadRootMetadataCachedMemoizesWinningAPIRootAcrossCollections asserts
-// the memoization behavior: once a phase's apiRootMemo learns a server's
-// winning API root from one collection, a second collection under the same
-// server base must not re-probe the losing v3 candidate at all. The first
-// collection legitimately probes both of the v3 apiRoot's trailing-slash
-// variants (both 404) before falling through to v2 and succeeding, so the
-// v3 request count is captured after the first fetch rather than hardcoded;
-// what matters is that the count does not grow at all after the second
-// fetch - i.e. zero further v3 requests once the memo is populated.
+// TestLoadRootMetadataCachedMemoizesWinningAPIRootAcrossCollections pins that
+// once apiRootMemo learns a server's winning API root, a second collection on
+// that server sends no further request to the losing v3 candidate.
 func TestLoadRootMetadataCachedMemoizesWinningAPIRootAcrossCollections(t *testing.T) {
 	t.Parallel()
 	var v3Requests atomic.Int32
@@ -287,18 +255,9 @@ func TestLoadRootMetadataCachedMemoizesWinningAPIRootAcrossCollections(t *testin
 	}
 }
 
-// TestLoadRootMetadataCachedNonNotFoundErrorAbortsImmediately asserts the
-// other half of the candidate-walk rule: a non-404 error is not something a
-// different apiRoot could route around, so it aborts the whole walk on the
-// very first candidate instead of falling through to the remaining
-// v3/v2/bare-API candidates. This holds regardless of whether the collection
-// carries an explicit source - unlike the now-removed hasExplicitSource
-// short-circuit, both cases share this one rule. The response uses 400
-// rather than a transient status such as 500, since helpers.
-// IsRetryableHTTPStatus would otherwise make fetchJSONWithCachePolicy retry
-// the same candidate URL up to FetchRetryMaxAttempts times, which would
-// inflate the request count this test asserts on without probing any
-// further candidate.
+// TestLoadRootMetadataCachedNonNotFoundErrorAbortsImmediately pins that a
+// non-404 error aborts the candidate walk on the first candidate. It uses 400,
+// not a retryable 5xx, so retries cannot inflate the request count.
 func TestLoadRootMetadataCachedNonNotFoundErrorAbortsImmediately(t *testing.T) {
 	t.Parallel()
 	var requests atomic.Int32

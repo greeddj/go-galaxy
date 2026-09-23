@@ -1,9 +1,8 @@
 package cache
 
 // This file pins LockLostError's decision table: which (parent, holder, err)
-// shapes produce a lock-loss verdict, which are returned untouched, and - the
-// point of the last two rows - what a verdict deliberately puts out of reach
-// of errors.Is.
+// shapes produce a lock-loss verdict, which pass through untouched, and what a
+// verdict deliberately puts out of reach of errors.Is.
 
 import (
 	"context"
@@ -15,11 +14,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// errRunFailed stands in for whatever the run itself produced in the rows
-// that do not care about its class: only its non-nilness and its identity
-// matter there, so one static sentinel serves them all rather than a fresh
-// dynamic error per row - the same convention
-// internal/cache/s3/lock_test.go's errRawInFlightPlaceholder follows.
+// errRunFailed stands in for the run's own error in the rows that do not care
+// about its class: only its non-nilness and identity matter there.
 var errRunFailed = errors.New("the run's own failure")
 
 // lockLostVerdict names the three answers LockLostError can give, so each row
@@ -62,11 +58,9 @@ func liveHolder(t *testing.T) (context.Context, context.Context) {
 	return context.Background(), holder
 }
 
-// nilHolder is what Backend.Lock returns when nothing was ever acquired, and
-// what initInstall propagates from the arm that never reached the lock at
-// all. It is a required row rather than a defensive one: context.Cause(nil)
-// panics on a nil interface, so without LockLostError's first guard this row
-// would not fail an assertion, it would crash the run.
+// nilHolder is what Backend.Lock returns when nothing was acquired. The row
+// is required, not defensive: without LockLostError's nil guard,
+// context.Cause(nil) would panic.
 func nilHolder(t *testing.T) (context.Context, context.Context) {
 	t.Helper()
 	return context.Background(), nil
@@ -84,13 +78,9 @@ func holderCanceledWith(cause error) func(t *testing.T) (context.Context, contex
 	}
 }
 
-// canceledParentWithLostHolder is the Ctrl-C shape at its most adversarial:
-// the holder is canceled with a genuine loss cause FIRST, so cancellation
-// being first-cancel-wins keeps that cause readable, and only then does the
-// caller cancel. Both facts are therefore true at once, which is what makes
-// this row pin the ORDER of LockLostError's checks rather than merely one of
-// them: the caller's own cancellation has to outrank a real loss, or an
-// interrupted run would report exit 8 instead of exit 130.
+// canceledParentWithLostHolder cancels the holder with a loss cause, then the
+// parent, so the row pins the check order: a caller's own cancellation
+// outranks a loss, or Ctrl-C would exit 8, not 130.
 func canceledParentWithLostHolder(t *testing.T) (context.Context, context.Context) {
 	t.Helper()
 	parent, cancelParent := context.WithCancel(context.Background())
@@ -123,31 +113,25 @@ func lockLostCases() []lockLostCase {
 			want:    verdictUnchanged,
 		},
 		{
-			// The local backend returns the caller's own context as the
-			// holder, so a holder that ended for any reason other than a lost
-			// lock - a plain cancel, most commonly - must stay whatever it
-			// already was.
+			// The local backend's holder is the caller's own context, so a
+			// holder ended for any other reason must leave err as it was.
 			name:    "a holder canceled for another reason is returned unchanged",
 			fixture: holderCanceledWith(context.Canceled),
 			err:     errRunFailed,
 			want:    verdictUnchanged,
 		},
 		{
-			// The success path: the run finished every piece of work without
-			// an error of its own, and is still a failure, because detection
-			// is late by construction and the work was already done without
-			// exclusivity by the time the heartbeat noticed.
+			// A run with no error of its own still fails: detection is late,
+			// so its work was already done without exclusivity.
 			name:    "a lost holder with no run error is the bare sentinel",
 			fixture: holderCanceledWith(helpers.ErrCacheLockLost),
 			err:     nil,
 			want:    verdictBareSentinel,
 		},
 		{
-			// The real shape: the run failed BECAUSE the holder context it
-			// was working under got canceled, so its own error carries
-			// context.Canceled. Rendering that with %w would hand a stolen
-			// lock the interrupt exit code, since exitcode.FromError checks
-			// context.Canceled ahead of every other class.
+			// The run failed because its holder was canceled, so err carries
+			// context.Canceled; with %w, exitcode.FromError would classify a
+			// stolen lock as an interrupt.
 			name:         "a lost holder wraps the run error without leaving context.Canceled reachable",
 			fixture:      holderCanceledWith(helpers.ErrCacheLockLost),
 			err:          fmt.Errorf("save: %w", context.Canceled),
@@ -155,12 +139,8 @@ func lockLostCases() []lockLostCase {
 			want:         verdictWrapped,
 		},
 		{
-			// Supersession, stated executably: a run that both lost the lock
-			// and failed an integrity check reports the lock-loss class, not
-			// the integrity one. That is deliberate rather than collateral -
-			// once another holder is writing the same cache, this run's own
-			// sha256 mismatch may simply be that other holder rewriting an
-			// artifact underneath it, so exclusivity is the actionable fact.
+			// Lock loss supersedes an integrity failure: the mismatch may be
+			// the other holder rewriting the artifact underneath this run.
 			name:         "a lost holder supersedes the run's own integrity failure",
 			fixture:      holderCanceledWith(helpers.ErrCacheLockLost),
 			err:          fmt.Errorf("install: %w", helpers.ErrSHA256Mismatch),
@@ -189,30 +169,9 @@ func TestLockLostError(t *testing.T) {
 	}
 }
 
-// assertLockLostUnchanged fails the test unless got is still want: not
-// reclassified into a lock-loss verdict, and still matchable as the run's own
-// error.
-//
-// The lock-loss check comes first deliberately. A verdict that fired when it
-// must not have fails both checks at once - the %v rendering puts want out of
-// reach of errors.Is too - so whichever check is written first is the only one
-// that can ever report it, and "a verdict fired that must not have" is the
-// fact this helper exists to state. That ordering is also what leaves the
-// second check reachable on its own, since the shape that fails it alone is a
-// guard arm returning nil: no verdict, and no run error either.
-//
-// KILLING MUTATIONS, run and reverted, one per check - both reported against
-// TestLockLostError's own call site, since this helper calls t.Helper().
-// Deleting LockLostError's parent.Err() guard, so a caller's own cancellation
-// stops outranking a genuinely lost holder, fires the first:
-//
-//	locklost_test.go:182: LockLostError = cache lock ownership was lost to another holder: the run's own failure, want no lock-loss verdict
-//
-// Rewriting its third guard's arm to `return nil`, so a holder that ended for
-// some other reason erases the run's error instead of returning it, fires the
-// second - and leaves the first green, since nil is no verdict:
-//
-//	locklost_test.go:182: LockLostError = <nil>, want unchanged the run's own failure
+// assertLockLostUnchanged fails unless got is no lock-loss verdict and still
+// matches want. The verdict check comes first: a spurious verdict also hides
+// want, so only a check written first can name it.
 func assertLockLostUnchanged(t *testing.T, want, got error) {
 	t.Helper()
 	if errors.Is(got, helpers.ErrCacheLockLost) {
@@ -247,18 +206,8 @@ func assertLockLostWrapped(t *testing.T, tt lockLostCase, got error) {
 	if !strings.Contains(got.Error(), tt.err.Error()) {
 		t.Fatalf("LockLostError = %q, want it to carry the run error %q", got.Error(), tt.err.Error())
 	}
-	// KILLING MUTATION, run and reverted: rendering the cause with %w instead
-	// of %v in LockLostError's final fmt.Errorf leaves both listed sentinels
-	// reachable again, failing both verdictWrapped rows of the table (the
-	// reported line is TestLockLostError's own call site, since these helpers
-	// call t.Helper()):
-	//
-	//	locklost_test.go:186: still matches context canceled: cache lock ownership was lost to another holder: save: context canceled
-	//	locklost_test.go:186: still matches sha256 mismatch: cache lock ownership was lost to another holder: install: sha256 mismatch
-	//
-	// The two checks above stay green under that mutation - the sentinel
-	// still matches and the message still carries the cause's text - so this
-	// one is genuinely reachable rather than shadowed by them.
+	// This check alone pins %v over %w in LockLostError: under %w the
+	// sentinel and message checks above still pass.
 	for _, unreachable := range tt.mustNotMatch {
 		if errors.Is(got, unreachable) {
 			t.Fatalf("still matches %v: %v", unreachable, got)

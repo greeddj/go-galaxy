@@ -42,10 +42,8 @@ func doGet(t *testing.T, client *http.Client, url string) *http.Response {
 	return resp
 }
 
-// doGetWithAuth issues a GET against url, setting an Authorization header
-// to auth first unless auth is the empty string, failing the test on any
-// transport error. The caller owns the returned response and must close
-// its body.
+// doGetWithAuth issues a GET with Authorization set to auth unless it is
+// empty, failing the test on a transport error; the caller closes the body.
 func doGetWithAuth(t *testing.T, client *http.Client, url, auth string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
@@ -62,10 +60,8 @@ func doGetWithAuth(t *testing.T, client *http.Client, url, auth string) *http.Re
 	return resp
 }
 
-// getJSON performs a GET against url and decodes the JSON response body
-// into target (skipped when target is nil or the status is not 200),
-// returning the response's status code. The body is always closed before
-// returning, and read only as far as the decode above needs.
+// getJSON issues a GET, decodes a 200 body into a non-nil target, closes the
+// body and returns the status code.
 func getJSON(t *testing.T, client *http.Client, url string, target any) int {
 	t.Helper()
 	resp := doGet(t, client, url)
@@ -178,10 +174,8 @@ func TestVersionsListPagination(t *testing.T) {
 	}
 }
 
-// TestVersionDetail asserts a registered version's detail body carries the
-// download URL, the artifact sha256 matching the value AddVersion returned,
-// and the dependencies round-tripped through metadata.dependencies; an
-// unregistered version 404s.
+// TestVersionDetail pins a version detail's download URL, the sha256
+// AddVersion returned and metadata.dependencies; an unregistered version 404s.
 func TestVersionDetail(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -337,10 +331,9 @@ func TestFaultHangUnblocksOnContextCancellation(t *testing.T) {
 	}
 }
 
-// TestFaultStallAfterBytesDeliversRealPrefixThenBlocks asserts a
-// StallAfterBytes artifact fault delivers exactly that many real artifact
-// bytes, then blocks until the request context ends, and consumes its Count
-// so a later request serves the full artifact.
+// TestFaultStallAfterBytesDeliversRealPrefixThenBlocks pins that a stall
+// serves exactly that many real bytes, blocks until the context ends, and
+// spends its Count so the next request gets the full artifact.
 func TestFaultStallAfterBytesDeliversRealPrefixThenBlocks(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -391,14 +384,9 @@ func TestFaultStallAfterBytesDeliversRealPrefixThenBlocks(t *testing.T) {
 	}
 }
 
-// TestArtifactDripFaultKeepsWritingUntilTheContextEnds asserts a DripInterval
-// fault never lets the body complete: a client whose context has a short
-// deadline reads at least two bytes (proving the drip really writes more than
-// once) and then a read error (proving the request is eventually aborted, not
-// hung forever) - never a successful end-of-body. The positive control in the
-// same test, on the same fixture with no fault armed, reads the artifact to
-// completion and confirms its sha256 matches the Version AddVersion returned,
-// proving the fixture itself is capable of a normal, complete download.
+// TestArtifactDripFaultKeepsWritingUntilTheContextEnds pins that an artifact
+// drip writes more than once and ends only in a read error, while the same
+// fixture unfaulted downloads in full with the sha256 AddVersion reported.
 func TestArtifactDripFaultKeepsWritingUntilTheContextEnds(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -441,22 +429,9 @@ func TestArtifactDripFaultKeepsWritingUntilTheContextEnds(t *testing.T) {
 	}
 }
 
-// TestJSONEndpointDripFaultWritesBytesAndBlocksUntilCanceled asserts a
-// DripInterval fault armed against a JSON endpoint (root metadata here, but
-// applyFault/enactFault is shared by all three) writes real bytes onto the
-// wire rather than silently blocking with no output, and never completes
-// the response body on its own: the caller must abort it. The read deadline
-// used here is far shorter than the drip
-// interval, so a successful read of the opening byte plus a subsequent
-// timeout is only possible if the fake actually flushed data before blocking.
-//
-// Verified against a real revert of the production change it pins: deleting
-// enactFault's DripInterval arm makes the fault fall through to the
-// endpoint's normal (complete, immediate) response, so the "expected a read
-// error once the context ended" read succeeds instead of erroring, observed
-// as:
-// "expected a read error once the context ended, got nil (the drip must
-// never complete the body)".
+// TestJSONEndpointDripFaultWritesBytesAndBlocksUntilCanceled pins that a
+// drip on a JSON endpoint flushes its opening byte and never completes the
+// body, so only the caller aborting it ends the request.
 func TestJSONEndpointDripFaultWritesBytesAndBlocksUntilCanceled(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -489,10 +464,7 @@ func TestJSONEndpointDripFaultWritesBytesAndBlocksUntilCanceled(t *testing.T) {
 		t.Fatal("expected a read error once the context ended, got nil (the drip must never complete the body)")
 	}
 
-	// The fault's Count was consumed by the one request above, so a second
-	// request serves the server's normal, complete root metadata response -
-	// proving this fixture is capable of a normal response and the drip above
-	// was the only thing standing in its way.
+	// Positive control: with the Count spent, the same request completes.
 	var root types.GalaxyCollection
 	status := getJSON(t, s.Client(), url, &root)
 	if status != http.StatusOK {
@@ -545,10 +517,8 @@ func TestCounters(t *testing.T) {
 	}
 }
 
-// TestFailWildcardAndNamespaceMatching asserts ruleMatches' namespace/name
-// wildcard semantics: an empty namespace/name on a Fail call matches any
-// collection, while a rule pinned to one namespace must not trip for a
-// request against a different one.
+// TestFailWildcardAndNamespaceMatching pins that an empty namespace/name in
+// Fail matches any collection and a namespace-pinned rule no other.
 func TestFailWildcardAndNamespaceMatching(t *testing.T) {
 	t.Parallel()
 
@@ -579,21 +549,16 @@ func TestFailWildcardAndNamespaceMatching(t *testing.T) {
 
 // unregistered404Case is one table entry for TestUnregistered404Cases.
 type unregistered404Case struct {
-	// setup registers whatever this case needs on a freshly built server
-	// before the request is issued. A nil setup leaves the server with
-	// nothing registered at all, which is a scenario of its own rather
-	// than a shorthand for the other rows' registration.
+	// setup registers what the case needs on a fresh server; nil means an
+	// empty server, a scenario of its own.
 	setup func(s *Server)
 	name  string
 	path  string
 }
 
-// unregistered404Cases enumerates the routes that must answer 404 for an
-// identifier the fake never registered, one row per route. The two rows that
-// register an unrelated collection first prove the route looks its identifier
-// up rather than serving whatever the server happens to hold; the versions-list
-// row queries a server with nothing registered at all, so it covers the route
-// against an empty server instead.
+// unregistered404Cases lists one route per row that must 404 for an
+// unregistered identifier; rows holding an unrelated collection prove the
+// route looks its identifier up rather than serving what the server holds.
 func unregistered404Cases() []unregistered404Case {
 	return []unregistered404Case{
 		{
@@ -619,10 +584,9 @@ func unregistered404Cases() []unregistered404Case {
 	}
 }
 
-// TestUnregistered404Cases asserts every route answers 404 for an identifier
-// the fake never registered, rather than serving a zero-valued body or the one
-// collection it does hold. Each row builds its own server, so no row's
-// registration - or deliberate lack of one - can reach another's.
+// TestUnregistered404Cases pins a 404 on every route for an unregistered
+// identifier, never a zero-valued body or another collection; each row
+// builds its own server so no registration leaks between rows.
 func TestUnregistered404Cases(t *testing.T) {
 	t.Parallel()
 	for _, tc := range unregistered404Cases() {
@@ -640,10 +604,8 @@ func TestUnregistered404Cases(t *testing.T) {
 	}
 }
 
-// TestFaultFiresOnEachEndpoint asserts each of the four routes passes its
-// own Endpoint constant into applyFault: arming a one-shot fault against
-// one endpoint trips exactly the first request to it, while the second
-// request gets the fake's normal response.
+// TestFaultFiresOnEachEndpoint pins that each route matches faults by its own
+// Endpoint: a one-shot fault trips the first request and not the second.
 func TestFaultFiresOnEachEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -696,10 +658,8 @@ func TestFaultFiresOnEachEndpoint(t *testing.T) {
 	}
 }
 
-// TestFaultNoopFallsThroughToNormalResponse asserts a Fault with neither
-// Status nor Hang set is still consumed by consumeFault (its Count is
-// decremented) but enactFault treats it as a no-op, letting the request
-// fall through to the fake's normal response body.
+// TestFaultNoopFallsThroughToNormalResponse pins that a Fault with no action
+// set is consumed but serves the normal response.
 func TestFaultNoopFallsThroughToNormalResponse(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -716,11 +676,9 @@ func TestFaultNoopFallsThroughToNormalResponse(t *testing.T) {
 	}
 }
 
-// TestCompareDottedVersionsAndComponents directly exercises
-// compareDottedComponent and compareDottedVersions: numeric components
-// compare by magnitude rather than lexically, non-numeric components fall
-// back to a lexical comparison, and a shorter version sorts before a longer
-// one that only adds trailing zero components.
+// TestCompareDottedVersionsAndComponents pins numeric components compared by
+// magnitude, a lexical fallback for non-numeric ones, and "1.2" sorting
+// before "1.2.0".
 func TestCompareDottedVersionsAndComponents(t *testing.T) {
 	t.Parallel()
 
@@ -735,11 +693,9 @@ func TestCompareDottedVersionsAndComponents(t *testing.T) {
 	}
 }
 
-// TestPaginateClamps directly exercises paginate's boundary clamps: a
-// negative offset, an offset past the slice's end, a negative limit, and an
-// offset/limit sum that overflows int and wraps to a value below offset -
-// the scenario paginate's final clamp guards against, since parseQueryInt
-// places no upper bound on a caller-supplied limit.
+// TestPaginateClamps pins paginate's clamps: negative offset, offset past the
+// end, negative limit, and an offset+limit that overflows int, which an
+// unbounded ?limit= from parseQueryInt can produce.
 func TestPaginateClamps(t *testing.T) {
 	t.Parallel()
 	versions := []string{"1.0.0", "1.1.0", "2.0.0"}
@@ -769,10 +725,8 @@ func TestPaginateClamps(t *testing.T) {
 	}
 }
 
-// TestAuthAnonymousByDefault asserts a server that never called RequireAuth
-// serves requests exactly as before: no Authorization header is required,
-// and one supplied anyway is still captured but does not affect the
-// response.
+// TestAuthAnonymousByDefault pins that without RequireAuth no header is
+// required, and one sent anyway is captured without affecting the response.
 func TestAuthAnonymousByDefault(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -795,10 +749,8 @@ func TestAuthAnonymousByDefault(t *testing.T) {
 	}
 }
 
-// TestAuthMissingOrWrongHeaderRejected asserts RequireAuth rejects both a
-// request with no Authorization header at all and one carrying a header
-// that does not match byte for byte, in each case with the default 401
-// status.
+// TestAuthMissingOrWrongHeaderRejected pins that RequireAuth answers 401 to
+// a missing Authorization header and to one not matching byte for byte.
 func TestAuthMissingOrWrongHeaderRejected(t *testing.T) {
 	t.Parallel()
 
@@ -919,10 +871,8 @@ func TestAuthRejectedRequestStillCounted(t *testing.T) {
 	}
 }
 
-// TestAuthWinsOverArmedFault asserts an armed Fault never masks an auth
-// failure: the auth check runs first, so a request missing its
-// Authorization header is rejected with the auth failure status rather
-// than the fault's, even though a fault is armed and would otherwise match.
+// TestAuthWinsOverArmedFault pins that an armed matching Fault never masks
+// an auth failure: the request gets the auth status, not the fault's.
 func TestAuthWinsOverArmedFault(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -936,10 +886,8 @@ func TestAuthWinsOverArmedFault(t *testing.T) {
 	}
 }
 
-// TestAuthServersAreIndependent asserts two fake servers with different
-// required tokens do not interfere: each enforces only its own token, and
-// each one's counters and captured Authorization values reflect only
-// requests it itself received.
+// TestAuthServersAreIndependent pins that two servers with different tokens
+// each enforce, count and capture only their own requests.
 func TestAuthServersAreIndependent(t *testing.T) {
 	t.Parallel()
 	s1 := New(t)
@@ -977,10 +925,8 @@ func TestAuthServersAreIndependent(t *testing.T) {
 	}
 }
 
-// assertServersIndependentAfterS1Traffic asserts that the two requests
-// TestAuthServersAreIndependent issued against s1 left s2's counter and
-// captured Authorization value untouched, while s1's own counter reflects
-// both of them.
+// assertServersIndependentAfterS1Traffic asserts s1 counted both requests
+// while s2's counter and captured Authorization stayed untouched.
 func assertServersIndependentAfterS1Traffic(t *testing.T, s1, s2 *Server) {
 	t.Helper()
 	if got := s1.Count(EndpointRootMetadata); got != 2 {
@@ -994,12 +940,9 @@ func assertServersIndependentAfterS1Traffic(t *testing.T, s1, s2 *Server) {
 	}
 }
 
-// TestBasePathRouting asserts NewAtBasePath serves a hub-shaped server:
-// every endpoint under "<prefix>/v3", every self-generated URL carrying
-// that same prefix, and a 404 both for the unprefixed path and for the
-// galaxy.ansible.com shaped "<prefix>/api/v3" path. That second 404 is the
-// point of the shape: a client probing API roots against a real hub gets
-// nothing from "/api/v3" and must fall through to "<base>/v3".
+// TestBasePathRouting pins NewAtBasePath's hub shape: routes and generated
+// URLs under "<prefix>/v3", and a 404 for both the unprefixed path and
+// "<prefix>/api/v3", so API-root probing must fall through to "<base>/v3".
 func TestBasePathRouting(t *testing.T) {
 	t.Parallel()
 	s := NewAtBasePath(t, "/api/automation-hub")
@@ -1026,10 +969,8 @@ func TestBasePathRouting(t *testing.T) {
 	}
 }
 
-// TestNewServesGalaxyShapeNotHubShape is the mirror of TestBasePathRouting:
-// New models galaxy.ansible.com, so its collection routes live under
-// "/api/v3" and the hub-shaped "/v3" path must 404. Together the two tests
-// pin each constructor to exactly one deployment shape.
+// TestNewServesGalaxyShapeNotHubShape mirrors TestBasePathRouting: New
+// serves collections under "/api/v3" and 404s the hub-shaped "/v3".
 func TestNewServesGalaxyShapeNotHubShape(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -1047,10 +988,9 @@ func TestNewServesGalaxyShapeNotHubShape(t *testing.T) {
 	}
 }
 
-// TestNewAtBasePathEmptyPrefixServesHubShapeAtRoot asserts the shape is
-// fixed by the constructor rather than by whether a prefix is present: an
-// empty base path models a hub mounted at the root, so its routes live at
-// "/v3" and the galaxy-shaped "/api/v3" still 404s.
+// TestNewAtBasePathEmptyPrefixServesHubShapeAtRoot pins that the constructor,
+// not the prefix, fixes the shape: an empty base path serves "/v3" and still
+// 404s "/api/v3".
 func TestNewAtBasePathEmptyPrefixServesHubShapeAtRoot(t *testing.T) {
 	t.Parallel()
 	s := NewAtBasePath(t, "")
@@ -1139,10 +1079,9 @@ func assertBasePathArtifact(t *testing.T, s *Server, prefix string, v Version) {
 	}
 }
 
-// TestParseDigitsAndQueryInt directly exercises parseDigits' rejection of
-// empty and non-purely-numeric input (with a plain digit string as a
-// positive control), and parseQueryInt's fallback to its default on a
-// malformed or altogether absent query parameter.
+// TestParseDigitsAndQueryInt pins parseDigits refusing empty and partly
+// numeric input, and parseQueryInt falling back to its default when the
+// parameter is malformed or absent.
 func TestParseDigitsAndQueryInt(t *testing.T) {
 	t.Parallel()
 
@@ -1182,13 +1121,9 @@ func TestParseDigitsAndQueryInt(t *testing.T) {
 	})
 }
 
-// TestManifestJSONMatchesArtifactAndVerifiesChain proves ManifestJSON hands
-// back the exact bytes the downloaded artifact carries - which is what makes
-// it safe for a caller to sign: a signature over ManifestJSON's return value
-// is a signature over the artifact this server actually serves, not over
-// some other document a caller constructed by hand - and that the artifact's
-// own chain, from that MANIFEST.json down to the one file it lists, verifies
-// end to end.
+// TestManifestJSONMatchesArtifactAndVerifiesChain pins that ManifestJSON
+// returns the served artifact's exact MANIFEST.json, so signing it signs that
+// artifact, and that the artifact's digest chain verifies end to end.
 func TestManifestJSONMatchesArtifactAndVerifiesChain(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -1227,17 +1162,9 @@ func TestManifestJSONMatchesArtifactAndVerifiesChain(t *testing.T) {
 	}
 }
 
-// TestSignVersionAddsSignatureToVersionDetail pins SignVersion's own wire
-// contract: the blob it is given lands under signatures[0].signature in a
-// later fetch of that version's detail - the shape
-// internal/galaxy/collections' serverSignatureBlobs reads a server's own
-// signatures under.
-//
-// The second version is the positive control on the same server: it is
-// registered but never handed to SignVersion, and its own detail must carry
-// no signatures at all, which is what shows the first assertion is reading a
-// value SignVersion actually set rather than a field this wire shape always
-// carries.
+// TestSignVersionAddsSignatureToVersionDetail pins the signed blob at
+// signatures[0].signature, the shape serverSignatureBlobs reads, while an
+// unsigned sibling version's detail carries no signatures at all.
 func TestSignVersionAddsSignatureToVersionDetail(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -1274,33 +1201,9 @@ func TestSignVersionAddsSignatureToVersionDetail(t *testing.T) {
 	}
 }
 
-// stubTB is a minimal testing.TB double, used only to prove SignVersion's own
-// two misuse guards fire tb.Fatalf rather than falling through to an
-// unattributed nil-pointer panic. It embeds a nil testing.TB rather than a
-// real *testing.T: SignVersion calls only Helper and Fatalf on the tb it is
-// given, and stubTB overrides both itself, so the embedded interface's own
-// unexported method - present purely to satisfy testing.TB at compile time -
-// is never actually invoked on the nil value it holds.
-//
-// Fatalf itself has to stop the calling goroutine, not merely record a
-// message: SignVersion's own body, like a real *testing.T caller's, is
-// written assuming a Fatalf call never returns. Verified with a go test
-// -overlay copy of this file whose Fatalf records fatalMsg and returns
-// instead of calling runtime.Goexit, run against
-// TestSignVersionRefusesAnUnregisteredCollection: the goroutine SignVersion
-// runs on crashes instead of completing, and fatalMsg is never read by the
-// caller:
-//
-//	panic: runtime error: invalid memory address or nil pointer dereference
-//
-// with the stack naming (*Server).SignVersion and callSignVersion's own
-// goroutine literal - the nil-pointer dereference the first misuse guard
-// exists to prevent, reached because the stub let Fatalf return instead of
-// stopping the goroutine. runtime.Goexit is what testing.T.Fatalf itself
-// uses for exactly this property (through FailNow), and it still runs every
-// deferred call in the goroutine on the way out - including SignVersion's
-// own deferred s.mu.Unlock - so callers below drive it from a background
-// goroutine and read fatalMsg only after that goroutine has ended.
+// stubTB is a testing.TB double overriding Helper and Fatalf, whose Fatalf
+// records the message and calls runtime.Goexit as testing.T does, so it is
+// driven on its own goroutine and SignVersion's deferred unlock still runs.
 type stubTB struct {
 	testing.TB
 
@@ -1326,11 +1229,9 @@ func callSignVersion(s *Server, stub *stubTB, namespace, name, version string) {
 	<-done
 }
 
-// TestSignVersionRefusesAnUnregisteredCollection pins SignVersion's first
-// misuse guard: a namespace/name AddVersion never registered at all is
-// reported through tb.Fatalf, naming that identity, rather than reached as a
-// nil-pointer dereference one line further down, on the nil *fakeCollection
-// the failed lookup yields.
+// TestSignVersionRefusesAnUnregisteredCollection pins that an unregistered
+// namespace/name is reported through tb.Fatalf naming it, never reached as a
+// nil *fakeCollection dereference.
 func TestSignVersionRefusesAnUnregisteredCollection(t *testing.T) {
 	t.Parallel()
 	s := New(t)
@@ -1345,12 +1246,9 @@ func TestSignVersionRefusesAnUnregisteredCollection(t *testing.T) {
 	}
 }
 
-// TestSignVersionRefusesAnUnregisteredVersion pins SignVersion's second
-// misuse guard, on a server that registers only one version: a namespace and
-// name that ARE registered but a version that is not is reported through
-// tb.Fatalf, naming the full ns.name@version identity, rather than reached
-// further down as a nil-pointer dereference on entry.info, via the nil
-// *fakeVersionEntry the failed lookup yields.
+// TestSignVersionRefusesAnUnregisteredVersion pins that an unregistered
+// version of a registered collection is reported through tb.Fatalf naming
+// ns.name@version, never reached as a nil *fakeVersionEntry dereference.
 func TestSignVersionRefusesAnUnregisteredVersion(t *testing.T) {
 	t.Parallel()
 	s := New(t)

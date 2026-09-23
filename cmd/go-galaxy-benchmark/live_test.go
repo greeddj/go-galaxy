@@ -30,11 +30,9 @@ func (p *recordingPrinter) Errorf(format string, args ...any)           { p.Prin
 func (p *recordingPrinter) Warnf(format string, args ...any)            { p.Printf(format, args...) }
 func (p *recordingPrinter) Debugf(format string, args ...any)           { p.Printf(format, args...) }
 
-// OkVersionf and ErrorVersionf render the version tag the way
-// internal/progress does, minus its color, so a recorded line reads as the
-// operator's would. This binary prints no such line today - it reports
-// timings, not installs - so they exist to satisfy output.Printer without
-// leaving a tier that silently drops what it was handed.
+// OkVersionf and ErrorVersionf render the version tag as internal/progress
+// does, minus color. This binary prints no such line; they satisfy
+// output.Printer without a tier that silently drops what it is handed.
 func (p *recordingPrinter) OkVersionf(version, format string, args ...any) {
 	p.Printf("%s", renderVersionLine(version, "", format, args...))
 }

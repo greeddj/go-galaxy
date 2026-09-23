@@ -17,10 +17,9 @@ const (
 	locatorPinTag = "sha256:"
 )
 
-// Locator identifies a url collection or role source: the canonical tarball
-// URL and the sha256 of the artifact it served ("" for a requirement that has
-// not been resolved yet). Its String form is what the program persists
-// wherever a source is recorded.
+// Locator identifies a url source: the canonical tarball URL and the sha256 of
+// the artifact it served ("" before resolution). Its String form is what every
+// persisted source record carries.
 type Locator struct {
 	URL    string
 	SHA256 string
@@ -51,11 +50,9 @@ func IsLocator(s string) bool {
 	return strings.HasPrefix(s, LocatorPrefix)
 }
 
-// ParseLocator parses the String form back. It accepts only the canonical
-// spelling: the URL part must round-trip through ParseURL unchanged, and the
-// pin, when present, must be "sha256:" followed by sixty-four lowercase hex
-// digits. Anything else is helpers.ErrInvalidURLLocator, which is reachable
-// only through a hand-edited record.
+// ParseLocator parses the String form back, accepting only the canonical
+// spelling: a URL that round-trips through ParseURL and an optional lowercase
+// sha256 pin. Anything else, a hand-edited record, is ErrInvalidURLLocator.
 func ParseLocator(s string) (Locator, error) {
 	if !IsLocator(s) {
 		return Locator{}, fmt.Errorf("%w: missing %q prefix", helpers.ErrInvalidURLLocator, LocatorPrefix)

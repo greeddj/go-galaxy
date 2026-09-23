@@ -14,18 +14,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// A missing lockfile is one fact - the lockfile a command was told to read is
-// not there - and every command that requires one classifies it in the
-// lockfile exit class: the three that take --frozen, plus tree, explain and
-// outdated, where a bare fs.ErrNotExist would otherwise reach the usage
-// classifier and report an environment problem instead. This file pins that
-// shared classification, with hash's own fallback to the requirements file
-// pinned beside them so the exception stays a decision rather than a
-// forgotten corner.
-//
-// outdated is covered by its own package's test rather than here: it is not a
-// cmd/go-galaxy/commands entry point at all. What is shared, and what makes
-// these pins hold together, is lockfile.LoadRequired.
+// These tests pin that tree and explain classify a missing lockfile, through
+// lockfile.LoadRequired, as helpers.ErrLockfileMissing in the lockfile exit
+// class, and that hash still falls back to the requirements file.
 
 // missingLockfileFixture writes a requirements file into a fresh directory
 // and returns that directory, with no lockfile beside it.
@@ -41,12 +32,9 @@ func missingLockfileFixture(t *testing.T) string {
 	return dir
 }
 
-// runCommandInDir runs cmd with args from within dir. Running from the
-// fixture directory is what makes the commands resolve their default lockfile
-// path to a file that is genuinely absent, rather than to one that may exist
-// beside the test binary. t.Chdir restores the previous directory itself and
-// makes the test non-parallel, which is why nothing in this file calls
-// t.Parallel.
+// runCommandInDir runs cmd with args from within dir, so the default lockfile
+// path resolves to a genuinely absent file; t.Chdir is why nothing in this
+// file calls t.Parallel.
 func runCommandInDir(t *testing.T, dir string, cmd *cli.Command, args ...string) error {
 	t.Helper()
 
@@ -54,11 +42,9 @@ func runCommandInDir(t *testing.T, dir string, cmd *cli.Command, args ...string)
 	return cmd.Run(context.Background(), append([]string{cmd.Name}, args...))
 }
 
-// TestMissingLockfileClassifiesAsLockfileError pins the unified verdict for
-// the two commands here that require a lockfile. Both the sentinel and the
-// exit code are asserted: the sentinel is what the rest of the program reads,
-// the exit code is what CI branches on, and only the pair together rules out
-// a sentinel that no longer maps where it should.
+// TestMissingLockfileClassifiesAsLockfileError pins both the sentinel and the
+// exit code for each command here that requires a lockfile, so a sentinel that
+// no longer maps to ExitLock is caught.
 func TestMissingLockfileClassifiesAsLockfileError(t *testing.T) {
 	for _, tc := range missingLockfileCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,12 +83,9 @@ func missingLockfileCases() []missingLockfileCase {
 	}
 }
 
-// TestMissingLockfileLeavesHashFallingBack is the documented exception, and
-// it is pinned rather than described: hash must still succeed against a
-// repository that does not lock, hashing the requirements file instead. It is
-// also the control for the rows above - it proves the fixture really is a
-// directory with a readable requirements file and no lockfile, so their
-// failures are the absence of the lockfile and not a broken fixture.
+// TestMissingLockfileLeavesHashFallingBack pins hash's documented exception:
+// with no lockfile it hashes the requirements file, which also proves the
+// fixture sound for the rows above.
 func TestMissingLockfileLeavesHashFallingBack(t *testing.T) {
 	dir := missingLockfileFixture(t)
 

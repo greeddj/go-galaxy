@@ -8,16 +8,9 @@ import (
 	"sync"
 )
 
-// fakeProvider is the in-memory test double for Provider: a table-driven
-// fake keyed by package name (for versions and an optional Highest
-// override) and by "pkg@version" (for dependencies), with call counters so
-// tests can assert laziness (zero Universe calls on a fast path).
-//
-// Universe deliberately returns its versions in a freshly shuffled order on
-// every call (on top of Go's own per-process map iteration randomization
-// elsewhere in this fake), so a test that only passes when the core
-// re-sorts the universe itself - rather than trusting provider order -
-// exercises that defense in depth for real.
+// fakeProvider is the in-memory Provider double, keyed by package and by
+// "pkg@version", with call counters for laziness assertions. Universe
+// shuffles on every call so a core that trusts provider order fails tests.
 type fakeProvider struct {
 	versions      map[string][]string
 	deps          map[string]map[string]string
@@ -123,10 +116,8 @@ func (f *fakeProvider) withDeps(pkg, version string, deps map[string]string) *fa
 	return f
 }
 
-// withHighest overrides the registry-reported highest_version probe result
-// for pkg, independent of its true universe maximum - modeling a registry
-// field that a test can point at whatever value it needs to exercise the
-// probe-or-fetch fork.
+// withHighest overrides pkg's registry-reported highest version,
+// independent of its true universe maximum, to steer the probe-or-fetch fork.
 func (f *fakeProvider) withHighest(pkg, version string) *fakeProvider {
 	f.highestOf[pkg] = version
 	return f

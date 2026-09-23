@@ -2,17 +2,9 @@ package helpers
 
 import "testing"
 
-// TestSplitFQDNDoesNotValidatePathSafety pins that SplitFQDN is a pure
-// exactly-one-dot string split with no path-safety opinion at all: a
-// namespace containing a path separator still parses successfully as long as
-// the whole value contains exactly one ".", exactly as a clean "ns.name"
-// value would. This is why every caller that later uses the parsed
-// namespace/name as a filesystem path element (buildCollectionsMap,
-// newInstallTarget, cleanup.removeInstalled) must run its own IsPathElement
-// check - SplitFQDN itself is not, and was never meant to be, that guard.
-// The same holds on the other side: a caller reading a name from outside this
-// program applies IsCollectionName, which is a different question again (what
-// a collection may be called, rather than what a path element may contain).
+// TestSplitFQDNDoesNotValidatePathSafety pins that SplitFQDN splits a
+// namespace holding a path separator, so a caller building a path from its
+// halves must apply IsPathElement itself.
 func TestSplitFQDNDoesNotValidatePathSafety(t *testing.T) {
 	t.Parallel()
 	ns, name, ok := SplitFQDN("foo/bar.baz")
@@ -27,12 +19,9 @@ func TestSplitFQDNDoesNotValidatePathSafety(t *testing.T) {
 	}
 }
 
-// TestNormalizeConstraint pins NormalizeConstraint's pure-string contract:
-// trim/match-all handling, byte-identical passthrough for any constraint that
-// never uses "==", the clause-level "==" -> "=" rewrite (including when the
-// "==" clause is not the first one, and when whitespace surrounds a clause),
-// and the "===" / ">==" guards that must never be coerced since they are not
-// ansible's exact-match operator.
+// TestNormalizeConstraint pins the match-all mapping, passthrough without
+// "==", the per-clause "==" to "=" rewrite, and that "===" and ">==" are left
+// alone because they are not ansible's exact-match operator.
 func TestNormalizeConstraint(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -64,11 +53,8 @@ func TestNormalizeConstraint(t *testing.T) {
 	}
 }
 
-// TestIsCollectionNamePart pins the alphabet a collection name half must
-// satisfy, and pins it as an allow-list rather than a blocklist: the rows
-// below name what is accepted as well as what is not, so a future edit that
-// widened the predicate to "anything not obviously hostile" would fail here
-// rather than pass quietly.
+// TestIsCollectionNamePart pins the collection name half alphabet as an
+// allow-list, with rows for what is accepted as well as what is refused.
 func TestIsCollectionNamePart(t *testing.T) {
 	t.Parallel()
 	for _, tc := range collectionNamePartCases() {
@@ -88,10 +74,9 @@ type collectionNamePartCase struct {
 	want  bool
 }
 
-// collectionNamePartCases enumerates the alphabet's boundaries: what a real
-// Galaxy namespace or name looks like, the three shapes real servers reject
-// (uppercase, hyphen, leading digit or underscore), and the hostile shapes
-// this predicate exists to stop.
+// collectionNamePartCases enumerates the alphabet's boundaries: real Galaxy
+// names, the shapes Galaxy servers reject, and hostile shapes such as a
+// newline that would forge a report line.
 func collectionNamePartCases() []collectionNamePartCase {
 	return []collectionNamePartCase{
 		{name: "plain lowercase", value: "acme", want: true},

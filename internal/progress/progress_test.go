@@ -192,13 +192,9 @@ func TestStateBTransient(t *testing.T) {
 	})
 }
 
-// TestResultTierAcrossStates covers the result tier in the two states that
-// differ only in what they suppress elsewhere: state B (verbose) and state C
-// (quiet). Both must emit every result line, which is the whole point of the
-// tier - quiet suppresses the transient tier and nothing else - and both must
-// keep Errorf on stderr. Written as one table over the two states rather than
-// as two identical blocks, since the assertion is precisely that they do not
-// differ.
+// TestResultTierAcrossStates pins that verbose (state B) and quiet (state C)
+// both emit every result line and keep Errorf on stderr: quiet suppresses the
+// transient tier and nothing else.
 func TestResultTierAcrossStates(t *testing.T) {
 	states := []struct {
 		build func() (*Progress, *bytes.Buffer, *bytes.Buffer)
@@ -346,10 +342,8 @@ func TestStateDResult(t *testing.T) {
 		assertEmpty(t, errOut)
 	})
 
-	// The markers here are plain, not colored: state D is the non-TTY case,
-	// and a destination that is not a terminal gets no escape sequences. That
-	// is the whole difference between this block and states A through C
-	// above, which assert the colored form on the same calls.
+	// State D is the non-TTY case, so its markers are plain where states A
+	// through C assert the colored form on the same calls.
 	t.Run("Okf", func(t *testing.T) {
 		p, out, errOut := stateD()
 		defer p.Close()
@@ -426,12 +420,9 @@ func TestPrintfSuffixRace(t *testing.T) {
 	wg.Wait()
 }
 
-// TestConcurrentEmissionSerialized drives every buffer-emitting method from
-// many goroutines against shared writers. Without the printer mutex the
-// concurrent writes and the Stop/print/Restart sequences race (the detector
-// fires); with it, writes are serialized so each line stays intact and the
-// emitted-line counts are exact. It also confirms Errorf lands on stderr and
-// the stdout methods land on stdout under concurrency.
+// TestConcurrentEmissionSerialized drives every emitting method from many
+// goroutines: under -race the printer mutex must keep each line intact, the
+// line counts exact, and each method on its own stream.
 func TestConcurrentEmissionSerialized(t *testing.T) {
 	var out, errOut bytes.Buffer
 	p := newProgress(false, false, true, &out, &errOut)
@@ -537,22 +528,16 @@ func TestPackageLevelErrorf(t *testing.T) {
 	}
 }
 
-// hostileCallerText is a caller-supplied message carrying an ANSI escape
-// and a lone CR, and hostileCallerTextClean is its expected sanitized form,
-// spelled out by hand rather than computed by calling safeout.Clean: every
-// test below asserts against this literal so a broken Clean cannot also
-// break the expectation it is being checked against. Both are shared by
-// every sanitization test in this file so a single fixture backs every
-// tier.
+// hostileCallerText carries an ANSI escape and a lone CR; its clean form is
+// spelled by hand, not computed with safeout.Clean, so a broken Clean cannot
+// also break the expectation. Every sanitization test here shares the pair.
 const (
 	hostileCallerText      = "before\x1b[31mred\rafter"
 	hostileCallerTextClean = "before\ufffd[31mred\ufffdafter"
 )
 
-// capturePipe redirects *target (os.Stdout or os.Stderr) to a pipe for the
-// duration of fn, and returns everything fn caused to be written to it.
-// Used for the package-level Okf/Errorf helpers, which write directly to
-// os.Stdout/os.Stderr rather than to an injectable io.Writer.
+// capturePipe redirects *target (os.Stdout or os.Stderr) to a pipe while fn
+// runs and returns what was written, for the package-level Okf and Errorf.
 func capturePipe(t *testing.T, target **os.File, fn func()) string {
 	t.Helper()
 	orig := *target
@@ -575,10 +560,8 @@ func capturePipe(t *testing.T, target **os.File, fn func()) string {
 	return string(got)
 }
 
-// tierCase is one row of TestTiersSanitizeCallerText's table: a method that
-// renders caller-supplied text, and the expected exact line it produces on
-// whichever of stdout/stderr it targets (exactly one of wantOut/wantErr is
-// set).
+// tierCase is one row of TestTiersSanitizeCallerText: a method rendering
+// caller text and its exact line on stdout (wantOut) or stderr (wantErr).
 type tierCase struct {
 	invoke  func(p *Progress, msg string)
 	wantOut func(msg, clean string) string // non-empty when the tier lands on stdout
@@ -663,18 +646,9 @@ func runTierCase(t *testing.T, tc tierCase, msg, clean string) {
 	assertEmpty(t, out)
 }
 
-// TestTiersSanitizeCallerText is the core sanitization regression test: one
-// table covering every tier that renders caller-supplied text, each with a
-// benign row (the positive control, asserting the exact line including its
-// own prefix) and a hostile row (asserting the exact sanitized line). The
-// method tiers all run against a non-spinner Progress (state B, verbose) so
-// Debugf's row actually emits and Printf's row exercises its non-spinner
-// branch specifically - the spinner-suffix branch has its own test,
-// TestPrintfSpinnerSuffixIsSanitized. DebugSincef and the two package-level
-// helpers do not fit the same table shape (nondeterministic timing for the
-// former, a different transport - os.Stdout/os.Stderr rather than an
-// injectable io.Writer - for the latter) and are covered by their own
-// dedicated subtests below instead of forcing an awkward fit.
+// TestTiersSanitizeCallerText pins, for every tier rendering caller text, the
+// exact line for a benign and a hostile message, in verbose state B so Debugf
+// emits and Printf takes its non-spinner branch.
 func TestTiersSanitizeCallerText(t *testing.T) {
 	t.Parallel()
 
@@ -690,10 +664,8 @@ func TestTiersSanitizeCallerText(t *testing.T) {
 	}
 }
 
-// TestDebugSincefSanitizesCallerText covers DebugSincef separately from
-// TestTiersSanitizeCallerText's table: its prefix embeds a nondeterministic
-// elapsed-time string, so only the fixed prefix and fixed suffix around
-// that timing text can be asserted, not the exact line.
+// TestDebugSincefSanitizesCallerText pins DebugSincef's sanitization; its
+// elapsed time varies, so only the text around it is asserted.
 func TestDebugSincefSanitizesCallerText(t *testing.T) {
 	t.Parallel()
 
@@ -724,11 +696,8 @@ func TestDebugSincefSanitizesCallerText(t *testing.T) {
 	})
 }
 
-// TestPackageLevelHelpersSanitizeCallerText covers the standalone
-// package-level Okf/Errorf, which write directly to os.Stdout/os.Stderr
-// (they run before any Progress exists) rather than to an injectable
-// io.Writer, so they need capturePipe instead of the buffer-based tiers
-// above.
+// TestPackageLevelHelpersSanitizeCallerText pins sanitization in the
+// package-level Okf and Errorf, which write to os.Stdout and os.Stderr.
 func TestPackageLevelHelpersSanitizeCallerText(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -758,11 +727,9 @@ func TestPackageLevelHelpersSanitizeCallerText(t *testing.T) {
 	}
 }
 
-// TestPrintfSpinnerSuffixIsSanitized covers Printf's spinner branch (state
-// A): a hostile message must reach the spinner's suffix already sanitized,
-// and must never reach out directly. The benign row is this
-// test's positive control, on the same fixture shape, proving the suffix
-// carries real content rather than always being empty or replaced.
+// TestPrintfSpinnerSuffixIsSanitized pins that Printf's spinner branch
+// (state A) stores a sanitized suffix and writes nothing to out; the benign
+// row proves the suffix carries real content.
 func TestPrintfSpinnerSuffixIsSanitized(t *testing.T) {
 	t.Parallel()
 
@@ -790,22 +757,9 @@ func TestPrintfSpinnerSuffixIsSanitized(t *testing.T) {
 	})
 }
 
-// TestResultMarkerEscapesSurviveAHostileMessage covers every result tier -
-// Okf/OkVersionf/Errorf/ErrorVersionf/Warnf - against a hostile message with
-// two independently reachable assertions in a t.Fatalf chain: (1) the line
-// still starts with the raw marker constant (its own ANSI escape bytes
-// intact), reachable on its own by a writer-level sanitizer that would strip
-// the message but also corrupt a decoration this file adds; and (2), reached
-// only once (1) already holds, that the message half is exactly the
-// sanitized form and the tier's own trailing decoration is intact behind it,
-// reachable on its own by a missing Clean call that leaves the marker intact
-// but the message raw. Each assertion therefore pins a distinct failure mode
-// rather than restating the other.
-//
-// The two version tiers carry a benign version and cause here on purpose:
-// this test is about a hostile message surviving beside a decoration, and
-// the hostile version and cause are pinned separately by
-// TestVersionAndCauseAreSanitizedIndependently.
+// TestResultMarkerEscapesSurviveAHostileMessage pins, for every result tier,
+// that a hostile message leaves the marker's own escapes intact and is itself
+// sanitized, with the tier's version tag or cause intact behind it.
 func TestResultMarkerEscapesSurviveAHostileMessage(t *testing.T) {
 	t.Parallel()
 
@@ -871,15 +825,9 @@ func TestResultMarkerEscapesSurviveAHostileMessage(t *testing.T) {
 	}
 }
 
-// TestSpinnerWritesOutsideThisPackagesWriters pins the arrangement this
-// package's sanitization boundary depends on: the spinner writes to os.Stdout
-// directly rather than through either stream a Progress holds, so a frame is
-// never composed by writeLine and adds no sanitization duty there. The
-// production constructor does point a stream at os.Stdout too, and frames and
-// lines do share that file - which is exactly why emit stops and restarts the
-// spinner around every line it writes. The only caller-controlled text a
-// frame carries is the suffix, and that arrives already sanitized - which
-// TestPrintfSpinnerSuffixIsSanitized pins separately.
+// TestSpinnerWritesOutsideThisPackagesWriters pins that the spinner draws on
+// os.Stdout, never through a Progress stream, so frames bypass writeLine and
+// the only caller text a frame carries is the already sanitized suffix.
 func TestSpinnerWritesOutsideThisPackagesWriters(t *testing.T) {
 	t.Parallel()
 	var out, errOut bytes.Buffer
@@ -896,29 +844,20 @@ func TestSpinnerWritesOutsideThisPackagesWriters(t *testing.T) {
 	}
 }
 
-// okMark, failMark and warnMark are the marker prefixes a destination that
-// accepts color receives, glyph and trailing space included. They are built
-// through the production marker builder rather than re-spelled here, so a
-// change to the escape sequences cannot leave these expectations describing a
-// form nothing emits.
+// okMark and its siblings are the colored marker prefixes, built through
+// marker rather than re-spelled so they cannot describe a form nothing emits.
 func okMark() string     { return marker(okGlyph, ansiGreen, true) }
 func updateMark() string { return marker(updateGlyph, ansiYellow, true) }
 func stepMark() string   { return marker(stepGlyph, ansiGray, true) }
 func failMark() string   { return marker(failGlyph, ansiRed, true) }
 func warnMark() string   { return marker(warnGlyph, ansiYellow, true) }
 
-// Printing color from every marker unconditionally, including into a
-// redirected file, means `go-galaxy install > install.log 2>&1` puts
-// "\x1b[1m\x1b[32m✔\x1b[0m " in front of the line an operator greps
-// for, so `grep '^✔'` silently matches nothing. The tests below pin the two
-// halves of the rule - the destination check and the environment overrides -
-// and pin them on the package-level helpers too, which own no Progress and
-// so resolve their destination on every call.
+// The tests below pin both halves of the color rule, the destination check
+// and the environment overrides, including on the package-level helpers:
+// escapes in a redirected log would make `grep '^✔'` match nothing.
 
-// charDeviceFile opens a file that satisfies the same os.ModeCharDevice test
-// a terminal does. It stands in for a terminal because the production check
-// is exactly that mode test and nothing more; a real pty is not needed to
-// exercise the branch, and would not be portable here.
+// charDeviceFile opens a character device to stand in for a terminal, since
+// isTerminal is exactly an os.ModeCharDevice test and a pty is not portable.
 func charDeviceFile(t *testing.T) *os.File {
 	t.Helper()
 
@@ -976,10 +915,8 @@ type colorEnabledCase struct {
 	want          bool
 }
 
-// colorEnabledCases enumerates the rules and their interactions: the plain
-// destination check, each force variable on its own, the "0" value that is
-// not a force, NO_COLOR on its own, and NO_COLOR against a force - the one
-// combination where the precedence is a decision rather than a consequence.
+// colorEnabledCases covers the destination check, each force variable, the
+// non-forcing "0", NO_COLOR alone, and NO_COLOR against a force.
 func colorEnabledCases() []colorEnabledCase {
 	return []colorEnabledCase{
 		{name: "redirected, no variables", want: false},
@@ -995,12 +932,9 @@ func colorEnabledCases() []colorEnabledCase {
 	}
 }
 
-// TestMarkersFollowTheirOwnDestination proves the two destinations are
-// decided independently: a run whose stdout is redirected while stderr is
-// still a terminal must get a plain marker on one and a colored marker on the
-// other. A single process-wide decision would necessarily get one of the two
-// wrong, and with both halves asserted on the same Progress neither result
-// can be the fixture.
+// TestMarkersFollowTheirOwnDestination pins that stdout and stderr decide
+// color independently: a redirected stdout gets plain markers while a
+// terminal stderr on the same Progress gets colored ones.
 func TestMarkersFollowTheirOwnDestination(t *testing.T) {
 	t.Parallel()
 
@@ -1020,11 +954,9 @@ func TestMarkersFollowTheirOwnDestination(t *testing.T) {
 	}
 }
 
-// TestPackageLevelHelpersFollowTheEnvironment is the mandatory coverage for
-// the two helpers that own no Progress: they resolve their destination per
-// call, and they are what prints a run's final line. Both directions are
-// asserted on the identical pipe, so "no escapes" cannot be the pipe simply
-// never being written to.
+// TestPackageLevelHelpersFollowTheEnvironment pins that the package-level
+// Okf and Errorf resolve color per call: plain under NO_COLOR, colored under
+// FORCE_COLOR even on a pipe.
 func TestPackageLevelHelpersFollowTheEnvironment(t *testing.T) {
 	t.Setenv(envNoColor, "1")
 	plain := capturePipe(t, &os.Stdout, func() { Okf("x") })
@@ -1040,13 +972,9 @@ func TestPackageLevelHelpersFollowTheEnvironment(t *testing.T) {
 	}
 }
 
-// TestUpdateTierEmitsInEveryState pins that Updatef is a result tier like
-// the ones it sits beside in a report: it emits in all four output states -
-// with a spinner running, in verbose, in quiet, and on a non-TTY - and it
-// lands on stdout, where the rest of the report is, never on stderr with the
-// warnings it borrows its color from. Quiet is the row that matters most: a
-// CI run with --quiet still has to say which collections have a newer
-// version.
+// TestUpdateTierEmitsInEveryState pins that Updatef is a result tier: it
+// emits on stdout in all four states, quiet included, since a --quiet CI run
+// must still say which collections have a newer version.
 func TestUpdateTierEmitsInEveryState(t *testing.T) {
 	states := []struct {
 		build  func() (*Progress, *bytes.Buffer, *bytes.Buffer)
@@ -1070,11 +998,8 @@ func TestUpdateTierEmitsInEveryState(t *testing.T) {
 	}
 }
 
-// TestUpdateMarkerIsItsOwnGlyph pins the one property that makes the tier
-// worth having: its marker is neither the success nor the failure one, so a
-// report carrying all three says three different things rather than two.
-// Sharing warn's color is deliberate and is not the same question - the
-// glyph is what tells them apart, and warn lands on the other stream.
+// TestUpdateMarkerIsItsOwnGlyph pins that the update marker differs from the
+// success, failure and warning glyphs, so a report says three distinct things.
 func TestUpdateMarkerIsItsOwnGlyph(t *testing.T) {
 	t.Parallel()
 	for _, other := range []string{okGlyph, failGlyph, warnGlyph} {

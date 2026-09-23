@@ -1,30 +1,6 @@
-// Package galaxyv1 is the client for the one question this tool asks the
-// Galaxy v1 role API: which git repository and which tag a Galaxy role name
-// stands for. ansible-galaxy downloads a role as a GitHub archive of the tag
-// the v1 version list names; this tool maps the name to the repository and
-// the tag through the same two requests and then fetches the tag through its
-// git client, so the v1 answer is a pointer, never content: nothing this
-// package returns is downloaded from, only looked up.
-//
-// Both requests go through the caller's cache-policy-aware JSON fetch on the
-// Galaxy HTTP client, so a configured token reaches a configured server
-// exactly as it does for the v3 collection API and no other origin. What
-// the server answers is judged before it is used: the GitHub user and
-// repository are held to the GitHub name alphabet and composed into an
-// https://github.com URL through gitsource's grammar, never copied from a
-// URL the server sent (download_url is not read at all); the default branch
-// and every version name are held to the ref grammar, a version name the
-// grammar refuses being skipped rather than allowed to block the role; a
-// commit sha is kept only when it has the shape of one. A pagination link is
-// followed only within the server's own origin and for a bounded number of
-// pages.
-//
-// Version selection is ansible-galaxy's: with no version asked for, the
-// highest tag under distutils' LooseVersion order, the default branch when
-// the server lists no tags, "master" when it names no branch either; with a
-// version asked for, it must be one of the listed tags, or the default
-// branch itself. Two tags LooseVersion cannot order (a number against a
-// word) fail as they fail ansible, with the same remedy: name a version.
+// Package galaxyv1 maps a Galaxy role name to a GitHub repository and tag via
+// the v1 role API; the answer is a pointer, never content: download_url is not
+// read, every record field is validated, and paging stays on the server origin.
 package galaxyv1
 
 import (
@@ -76,13 +52,9 @@ type Version struct {
 	CommitSHA string
 }
 
-// Resolution is the answer to a Galaxy role name: the repository to fetch,
-// the ref to fetch from it - always qualified, refs/tags/<tag> or
-// refs/heads/<branch>, so a branch that happens to share a tag's name can
-// never be fetched in its place - the version that ref stands for (the tag
-// or branch name), the commit the server recorded for that tag ("" when it
-// recorded none, or the ref is a branch), and the tag names the server
-// listed, in the order listed, for a message naming what was available.
+// Resolution is a Galaxy role's answer: the repository, a qualified ref (so a
+// branch sharing a tag's name is never fetched instead), the version it names,
+// the commit the server recorded for the tag if any, and the listed tag names.
 type Resolution struct {
 	RepoURL   gitsource.URL
 	Ref       gitsource.Ref
@@ -123,10 +95,9 @@ func cleanForMessage(s string) string {
 	return helpers.TruncateForMessage(string(safeout.Clean(s)))
 }
 
-// apiRoots derives the v1 API roots a server base may serve roles under, in
-// the order the collection resolver probes its own: galaxy.ansible.com's
-// <base>/api/v1, then Galaxy NG's <base>/v1 for a base that already ends in
-// its API path.
+// apiRoots derives the v1 roots a server base may serve roles under, in probe
+// order: galaxy.ansible.com's <base>/api/v1, then Galaxy NG's <base>/v1, which
+// is the only root for a base already ending in /api.
 func apiRoots(base string) []string {
 	trimmed := strings.TrimRight(strings.TrimSpace(base), "/")
 	if trimmed == "" {
@@ -138,12 +109,9 @@ func apiRoots(base string) []string {
 	return []string{trimmed + "/api/v1", trimmed + "/v1"}
 }
 
-// LookupRole asks the server for the role owner.name. found is false when
-// the server has the v1 API and lists no such role. A server without a v1
-// API (every root answers 404) is helpers.ErrGalaxyRoleAPIUnavailable, for
-// the caller to route around; a 401/403 and a retryable status are the
-// auth and availability sentinels the collection resolver raises for the
-// same answers, and abort the walk.
+// LookupRole asks the server for owner.name; found is false when its v1 API
+// lists no such role. A 404 on every root is helpers.ErrGalaxyRoleAPIUnavailable,
+// for the caller to route around; 401/403 and retryable statuses abort the walk.
 func LookupRole(ctx context.Context, fetch FetchJSON, base, owner, name string, policy cacheManager.Policy) (Role, bool, error) {
 	query := "roles/?owner__username=" + url.QueryEscape(owner) + "&name=" + url.QueryEscape(name) +
 		"&page_size=" + strconv.Itoa(pageSize)
@@ -197,10 +165,9 @@ func validateRole(rec roleRecord) (Role, error) {
 // login at 39 characters and a repository at 100.
 const gitHubNameMaxLen = 100
 
-// isGitHubName reports whether s is a GitHub login or repository name:
-// letters, digits, "-", "_" and ".", not starting with "-" or ".", and not
-// a dot segment. The alphabet is what keeps a record from composing a URL
-// path gitsource would refuse, or one that reads as a different repository.
+// isGitHubName reports whether s is a GitHub login or repository name; the
+// alphabet keeps a record from composing a URL path gitsource would refuse,
+// or one that reads as a different repository.
 func isGitHubName(s string) bool {
 	if s == "" || len(s) > gitHubNameMaxLen || s == ".." || s[0] == '-' || s[0] == '.' {
 		return false
@@ -218,11 +185,9 @@ func isASCIIDigit(r rune) bool { return r >= '0' && r <= '9' }
 
 func isLowerLetter(r rune) bool { return r >= 'a' && r <= 'z' }
 
-// ListVersions walks the role's version list, page by page, following the
-// server's own next link within its origin and up to
-// helpers.RoleVersionsMaxPages pages. A version name the ref grammar
-// refuses is dropped; a commit sha without the shape of one is dropped from
-// its version.
+// ListVersions walks the role's version pages, following the server's next
+// link within its origin for at most helpers.RoleVersionsMaxPages pages; a
+// name the ref grammar refuses is dropped, as is a malformed commit sha.
 func ListVersions(ctx context.Context, fetch FetchJSON, base string, id int64, policy cacheManager.Policy) ([]Version, []string, error) {
 	var (
 		out      []Version
@@ -278,11 +243,9 @@ func walkVersions(ctx context.Context, fetch FetchJSON, first string, policy cac
 	return out, warnings, nil
 }
 
-// validateVersion judges one version record: a name that is not a tag name
-// under git's own rules - judged as refs/tags/<name>, so an all-digit tag
-// such as a date is a tag here and never mistaken for an abbreviated
-// commit - is dropped with a warning; a commit sha that is not forty hex
-// digits is dropped silently.
+// validateVersion drops, with a warning, a name that is not a tag name judged
+// as refs/tags/<name> (so an all-digit date tag is never an abbreviated
+// commit), and silently drops a commit sha that is not forty hex digits.
 func validateVersion(rec versionRecord) (Version, bool, string) {
 	name := strings.TrimSpace(rec.Name)
 	if name == "" || !helpers.IsRoleVersion(name) || !isTagName(name) {
@@ -375,10 +338,9 @@ func isTagName(name string) bool {
 	return err == nil && ref.Kind == gitsource.RefQualified
 }
 
-// ValidateRepository judges a repository URL a Galaxy pin recorded the way
-// a live v1 answer is judged: https, github.com, and a /<user>/<repo> path
-// in the GitHub name alphabet. A pin is cache state, and cache state may
-// not point a Galaxy role anywhere a server could not have.
+// ValidateRepository judges a recorded Galaxy pin's repository as a live v1
+// answer is judged, https://github.com/<user>/<repo> in the GitHub alphabet,
+// since cache state may not point a role anywhere a server could not have.
 func ValidateRepository(u gitsource.URL) error {
 	segments := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if u.Scheme != "https" || u.Host != gitHubHost || u.Port != "" || len(segments) != 2 ||
@@ -388,12 +350,9 @@ func ValidateRepository(u gitsource.URL) error {
 	return nil
 }
 
-// Select chooses the tag to fetch, as ansible-galaxy's GalaxyRole.install
-// does: no version asked for and tags listed - the highest by LooseVersion;
-// no tags - the default branch, else "master"; a version asked for - one of
-// the listed tags, or the default branch itself (ansible accepts only the
-// literal master there; the branch the record names is the same intent).
-// The commit sha returned is the one the server recorded for the chosen tag.
+// Select chooses the version as ansible's GalaxyRole.install does: the highest
+// tag by LooseVersion, else the default branch or "master"; a requested one must
+// be a listed tag, the default branch or "master", unless no tags are listed.
 func Select(versions []Version, requested, githubBranch string) (string, string, error) {
 	branch := githubBranch
 	if branch == "" {
@@ -536,11 +495,9 @@ func parseDigits(s string) int {
 	return n
 }
 
-// LooseLess reports whether a orders before b under distutils' LooseVersion:
-// component by component, numbers against numbers and text against text, a
-// shorter prefix before the longer. ok is false when a number meets a text
-// component, where Python raises and ansible reports the versions as
-// incomparable.
+// LooseLess reports whether a orders before b under distutils' LooseVersion;
+// ok is false when a number meets a text component, where Python raises and
+// ansible reports the versions as incomparable.
 func LooseLess(a, b string) (bool, bool) {
 	ca, cb := looseComponents(a), looseComponents(b)
 	for i := 0; i < len(ca) && i < len(cb); i++ {

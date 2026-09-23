@@ -47,11 +47,9 @@ func assertNoGitPasswordInLines(t *testing.T, printer *lineCapturingPrinter) {
 	}
 }
 
-// TestGitPasswordNeverLeaksOnSuccess runs install and lock with a bound git
-// credential under --verbose and asserts the password reaches none of: the
-// cache tree (snapshot, registry, artifacts), the lockfile, the GALAXY.yml
-// sidecar, the metrics file, or any printed line. The credential is proven
-// to have been presented, so a clean result is not a run that never used it.
+// TestGitPasswordNeverLeaksOnSuccess asserts a bound git password, proven to
+// have been presented, reaches neither the cache tree, the lockfile, GALAXY.yml,
+// the metrics file nor any printed line under --verbose.
 func TestGitPasswordNeverLeaksOnSuccess(t *testing.T) {
 	t.Parallel()
 	f, printer := newGitLeakFixture(t)
@@ -71,10 +69,9 @@ func TestGitPasswordNeverLeaksOnSuccess(t *testing.T) {
 	assertNoGitPasswordInLines(t, printer)
 }
 
-// TestGitPasswordNeverLeaksOnFailure covers the failing legs, where an error
-// message is built from the remote's refusal: an authentication refusal and
-// a repository the host does not serve. Neither the returned error nor any
-// printed line may carry the password.
+// TestGitPasswordNeverLeaksOnFailure asserts an authentication refusal and a
+// repository the host does not serve put the password into neither the
+// returned error nor any printed line.
 func TestGitPasswordNeverLeaksOnFailure(t *testing.T) {
 	t.Parallel()
 	f, printer := newGitLeakFixture(t)

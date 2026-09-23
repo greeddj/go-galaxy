@@ -9,10 +9,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// TestParseCollectionsAcceptedCases covers the requirements shapes
-// ParseCollections accepts. Each row carries its own assertions, since what an
-// accepted shape has to produce differs per shape rather than fitting one set
-// of expected fields.
+// TestParseCollectionsAcceptedCases pins the requirements shapes Parse
+// accepts; each row carries its own check, since what a shape must produce
+// differs per shape.
 func TestParseCollectionsAcceptedCases(t *testing.T) {
 	t.Parallel()
 	for _, tc := range parseCollectionsAcceptedCases() {
@@ -36,12 +35,9 @@ type parseCollectionsAcceptedCase struct {
 	source string
 }
 
-// parseCollectionsAcceptedCases enumerates the input shapes ParseCollections
-// accepts: the plain string list, the roles-only and null-collections forms,
-// the explicit empty list, both ways an entry can name a collection, and the
-// two source: forms the userinfo check leaves alone. Each row's assertions sit
-// in their own named function below rather than in a closure here, so one row's
-// branches are not counted against the whole table.
+// parseCollectionsAcceptedCases enumerates the shapes Parse accepts: a string
+// list, roles-only, null and empty collections, both ways to name a
+// collection, and the two source: forms the userinfo check leaves alone.
 func parseCollectionsAcceptedCases() []parseCollectionsAcceptedCase {
 	return append(signatureShapeAcceptedCases(), []parseCollectionsAcceptedCase{
 		{
@@ -91,10 +87,8 @@ func parseCollectionsAcceptedCases() []parseCollectionsAcceptedCase {
 			check:  checkAcceptedDottedNameWithoutNamespace,
 		},
 		{
-			// checks that a source: naming a bare server_list id (never
-			// URL-shaped: no "://") is left alone by the userinfo check -
-			// url.Parse succeeds on it but yields no scheme/host, so it never
-			// reaches the userinfo branch.
+			// A bare server_list id has no scheme or host, so the userinfo
+			// check leaves it alone.
 			name:   "source bare server_list id",
 			input:  "- name: ns.name\n  source: internal\n",
 			source: "",
@@ -111,17 +105,9 @@ func parseCollectionsAcceptedCases() []parseCollectionsAcceptedCase {
 	}...)
 }
 
-// signatureShapeAcceptedCases is the positive control for every signatures:
-// refusal in parseCollectionsRejectedCases: it proves the gate is about SHAPE
-// and about the cap, not about the field being present at all.
-//
-// The four rows are the shapes that carried nothing before checkSignatureSources
-// existed and must keep carrying nothing: an explicit empty list, an absent
-// value, a list of blank strings, and a single string - which is what
-// parseStringList itself accepts and therefore what the shape check has to keep
-// accepting. The fifth is the cap's own boundary, exactly at
-// helpers.MaxSignaturesPerCollection, which must be accepted where one more is
-// refused.
+// signatureShapeAcceptedCases is the positive control for the signatures:
+// refusals: an empty, absent or blank value, a single string, and exactly
+// helpers.MaxSignaturesPerCollection sources must all be accepted.
 func signatureShapeAcceptedCases() []parseCollectionsAcceptedCase {
 	return []parseCollectionsAcceptedCase{
 		{
@@ -227,10 +213,8 @@ func checkAcceptedStringList(t *testing.T, collections Collections, rolesFound b
 	}
 }
 
-// checkAcceptedRolesOnly asserts the "roles only" row. The assertion is on the
-// nil collections value itself, not on its length: a roles-only file must leave
-// the collections list unset rather than merely empty, which an emptiness check
-// would not distinguish from the null and empty-list rows.
+// checkAcceptedRolesOnly asserts the "roles only" row: the collections list
+// must be nil, not merely empty.
 func checkAcceptedRolesOnly(t *testing.T, collections Collections, rolesFound bool) {
 	t.Helper()
 	if !rolesFound {
@@ -304,10 +288,9 @@ func checkAcceptedPlainSourceURL(t *testing.T, collections Collections, _ bool) 
 	}
 }
 
-// TestParseCollectionsRejectedCases covers the requirements shapes
-// ParseCollections refuses, each row naming the sentinel the refusal has to
-// carry and, for an input embedding a credential, the substring the error must
-// not echo back.
+// TestParseCollectionsRejectedCases pins the shapes Parse refuses: each row
+// names the sentinel the refusal must carry and, for a credential-bearing
+// input, the substring its error must never echo.
 func TestParseCollectionsRejectedCases(t *testing.T) {
 	t.Parallel()
 	for _, tc := range parseCollectionsRejectedCases() {
@@ -338,10 +321,9 @@ type parseCollectionsRejectedCase struct {
 	mustNotContain string
 }
 
-// parseCollectionsRejectedCases enumerates the input shapes ParseCollections
-// refuses: the two unsupported requirements formats, a scalar collections
-// value, both namespace/name conflicts, and the two entry shapes a
-// credential-bearing source: can arrive in.
+// parseCollectionsRejectedCases enumerates the shapes Parse refuses: bad
+// formats, a scalar collections value, namespace/name conflicts, and a
+// credential-bearing source: in both entry shapes.
 func parseCollectionsRejectedCases() []parseCollectionsRejectedCase {
 	return append([]parseCollectionsRejectedCase{
 		{
@@ -365,37 +347,24 @@ func parseCollectionsRejectedCases() []parseCollectionsRejectedCase {
 			wantErr: helpers.ErrInvalidCollectionsList,
 		},
 		{
-			// checks that an explicit namespace combined with a dotted name is
-			// rejected, since normalizeCollectionName would otherwise silently
-			// keep the explicit namespace and overwrite name with only the
-			// dotted name's last segment - installing a different collection
-			// than either field implies alone.
+			// namespace: plus a dotted name is refused: normalizeCollectionName
+			// would otherwise keep the namespace and take the name's last segment.
 			name:    "namespace plus dotted name conflict",
 			input:   "- namespace: foo\n  name: bar.baz\n",
 			source:  "https://default",
 			wantErr: helpers.ErrConflictingNamespaceName,
 		},
 		{
-			// checks that the conflict is rejected unconditionally - even when
-			// the explicit namespace happens to match the dotted name's own
-			// namespace segment, so the two fields "look" consistent. This is
-			// intentional: the rule is about the shape of the input (namespace
-			// + dotted name is ambiguous), not about whether this particular
-			// combination happens to resolve harmlessly.
+			// Refused even when the two agree: the rule is about the ambiguous
+			// shape, not whether this combination happens to resolve harmlessly.
 			name:    "namespace plus dotted name conflict even when consistent",
 			input:   "- namespace: community\n  name: community.general\n",
 			source:  "https://default",
 			wantErr: helpers.ErrConflictingNamespaceName,
 		},
 		{
-			// pins the closed hole: a requirements.yml "source:" carrying
-			// embedded userinfo (a credential in the URL itself) must be
-			// rejected at parse time with ErrGalaxyServerURLUserinfo, the same
-			// sentinel config.Server's own URL validation uses. Without this
-			// check the userinfo-bearing URL flows unchanged into root-metadata
-			// request URLs, debug logs, HTTP error strings, the lockfile, and
-			// GALAXY.yml, all of which would then render the embedded password
-			// in plain text via url.URL.String().
+			// A source: embedding userinfo is refused at parse time with the
+			// sentinel config.Server uses, and the error must not echo it.
 			name: "source userinfo rejected",
 			// #nosec G101 -- test fixture literal, not a real credential
 			input:          "- name: ns.name\n  source: https://user:tok3n-must-not-leak@hub.example/api/\n",
@@ -404,13 +373,8 @@ func parseCollectionsRejectedCases() []parseCollectionsRejectedCase {
 			mustNotContain: "tok3n-must-not-leak",
 		},
 		{
-			// a regression guard for an ordering bug: an entry missing
-			// "name" fails with ErrInvalidCollectionEntry, whose message echoes
-			// the raw item back for diagnostics - and that raw item can itself
-			// carry the very credential-bearing source: this package's userinfo
-			// check exists to catch. The userinfo check must run before that
-			// raw dump, not after, or an invalid entry becomes a way to smuggle
-			// the credential out through its own error message.
+			// A missing name echoes the raw entry in its error, so the userinfo
+			// check must run first or the entry would leak its credential.
 			name: "invalid entry does not leak source credential",
 			// #nosec G101 -- test fixture literal, not a real credential
 			input:          "- source: https://user:tok3n-must-not-leak@hub.example/api/\n  version: \"*\"\n",
@@ -421,30 +385,21 @@ func parseCollectionsRejectedCases() []parseCollectionsRejectedCase {
 	}, signatureSourceRejectedCases()...)
 }
 
-// signatureSourceRejectedCases is the signatures: half of the table above,
-// split out for the length budget rather than because it is a separate
-// concern: every row is one way checkSignatureSources refuses a value a
-// requirements file declared.
+// signatureSourceRejectedCases is the signatures: half of the table above:
+// every row is one way checkSignatureSources refuses a declared value.
 func signatureSourceRejectedCases() []parseCollectionsRejectedCase {
 	return append([]parseCollectionsRejectedCase{
 		{
-			// The signatures: field is repository content like source: and,
-			// until checkSignatureSources existed, the only one of this struct's
-			// fields no boundary judged. A source this tool cannot fetch reached
-			// an install worker and failed one collection there, classified as
-			// that collection's failure rather than as the configuration error
-			// it is.
+			// A source this tool cannot fetch is a configuration error at load,
+			// not one collection's install failure.
 			name:    "unfetchable signature source rejected",
 			input:   "- name: ns.name\n  signatures:\n    - ftp://sigs.example/ns-name.asc\n",
 			source:  "https://default",
 			wantErr: helpers.ErrUnsupportedSignatureSource,
 		},
 		{
-			// The same shape source: already refuses, one field over, and with
-			// the same obligation: the refusal must not print what it refuses.
-			// Measured before this check existed, in a serialized snapshot
-			// shared across runners:
-			// "signatures":["https://ci-bot:s3cr3t@sig.example/acme-app.asc"].
+			// A userinfo-bearing signature source is refused, like source:,
+			// without the refusal printing the credential.
 			name: "signature source userinfo rejected without echoing it",
 			// #nosec G101 -- test fixture literal, not a real credential
 			input:          "- name: ns.name\n  signatures:\n    - https://bot:tok3n-must-not-leak@sig.example/a.asc\n",
@@ -478,11 +433,8 @@ func signatureSourceRejectedCases() []parseCollectionsRejectedCase {
 func fileSourceRejectedCases() []parseCollectionsRejectedCase {
 	return []parseCollectionsRejectedCase{
 		{
-			// The five shapes measured accepted at load and refused at fetch
-			// before checkFileSource moved into the shared grammar. Each is a
-			// file URL naming no local path this tool can read; joined behind
-			// helpers.ErrInstallationFailed they exited 5 rather than 2, which
-			// is the exit-class defect this gate exists to close.
+			// This and the next four file URLs name no readable local path;
+			// refused at load they exit 2, not 5 as an install failure.
 			name:    "file source naming another host",
 			input:   "- name: ns.name\n  signatures:\n    - file://otherhost/abs/sig.asc\n",
 			source:  "https://default",
@@ -513,12 +465,8 @@ func fileSourceRejectedCases() []parseCollectionsRejectedCase {
 			wantErr: helpers.ErrUnsupportedSignatureSource,
 		},
 		{
-			// This row pins the cap on what one entry may DECLARE, and only
-			// that: gatherLimit (internal/galaxy/collections/verify.go) is the
-			// separate, later boundary that decides what a gather does once
-			// the combined candidate set - this entry's own sources plus
-			// whatever the server offers - exceeds MaxSignaturesPerCollection,
-			// and reports it.
+			// Pins only the cap on what one entry may declare; gatherLimit caps
+			// the combined declared-plus-server candidate set separately.
 			name:    "more signature sources than the cap allows",
 			input:   tooManySignatureSourcesInput(),
 			source:  "https://default",
@@ -527,11 +475,9 @@ func fileSourceRejectedCases() []parseCollectionsRejectedCase {
 	}
 }
 
-// tooManySignatureSourcesInput builds a requirements entry declaring one more
-// signature source than helpers.MaxSignaturesPerCollection permits. It is
-// generated from the constant rather than spelled out, since the point is the
-// boundary rather than any particular count - and the row below it in
-// parseCollectionsAcceptedCases proves the cap itself is accepted.
+// tooManySignatureSourcesInput builds an entry declaring one more signature
+// source than helpers.MaxSignaturesPerCollection, derived from the constant
+// since the boundary, not a count, is the point.
 func tooManySignatureSourcesInput() string {
 	var b strings.Builder
 	b.WriteString("- name: ns.name\n  signatures:\n")
@@ -542,10 +488,8 @@ func tooManySignatureSourcesInput() string {
 	return b.String()
 }
 
-// TestParseCollectionsNullValue checks that ansible's null-collections-list
-// idioms ("collections:" and "collections: ~") are accepted as an empty
-// list rather than rejected, since both unmarshal collections_path to a nil
-// interface value.
+// TestParseCollectionsNullValue pins that ansible's "collections:" and
+// "collections: ~" idioms parse as an empty list, since both decode to nil.
 func TestParseCollectionsNullValue(t *testing.T) {
 	t.Parallel()
 	inputs := map[string]string{
@@ -570,18 +514,9 @@ func TestParseCollectionsNullValue(t *testing.T) {
 	}
 }
 
-// TestParseCollectionsNamespaceWithThreePartNameIsRejectedAsAName checks a
-// three-part dotted name (e.g. "a.b.c") with an explicit namespace set, and
-// checks it for two things at once. It is rejected - no Galaxy server has a
-// collection whose name contains a dot - and it is rejected as an invalid
-// name rather than as a namespace/name conflict, which is the property this
-// test exists to pin: helpers.SplitFQDN does not split three
-// parts, so there is no ambiguous split for the explicit namespace to
-// conflict with, and reporting one would send the operator looking for a
-// contradiction that is not there.
-//
-// Without the name alphabet this entry parses successfully and is carried
-// as a collection called "a.b.c".
+// TestParseCollectionsNamespaceWithThreePartNameIsRejectedAsAName pins that
+// namespace: plus a three-part name is refused as an invalid name, not as a
+// conflict: helpers.SplitFQDN does not split three parts.
 func TestParseCollectionsNamespaceWithThreePartNameIsRejectedAsAName(t *testing.T) {
 	t.Parallel()
 	input := "- namespace: foo\n  name: a.b.c\n"
@@ -606,16 +541,9 @@ func TestParseCollectionsNamespaceWithThreePartNameIsRejectedAsAName(t *testing.
 	}
 }
 
-// TestParseCollectionsRejectsNamesOutsideTheAlphabet covers the boundary a
-// requirements file is: every identity it declares is checked against the
-// alphabet a Galaxy server itself accepts, so a name this file could not
-// install is refused where it was written rather than much later.
-//
-// The explicit-namespace row is why the check sits at the entry level and not
-// inside helpers.SplitFQDN: that form never reaches SplitFQDN, since the name
-// carries no dot for it to split. Without the entry-level check such a
-// namespace reaches the resolver, which prints it - on an ordinary run with
-// no flags - and the run then fails while a URL is being built, unclassified.
+// TestParseCollectionsRejectsNamesOutsideTheAlphabet pins that every declared
+// identity must match the Galaxy name alphabet at load, including an explicit
+// namespace:, which never passes through helpers.SplitFQDN.
 func TestParseCollectionsRejectsNamesOutsideTheAlphabet(t *testing.T) {
 	t.Parallel()
 	for _, tc := range rejectedRequirementNameCases() {

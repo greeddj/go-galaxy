@@ -126,13 +126,9 @@ func assertBuiltCollection(t *testing.T, c gitsource.Collection, version string)
 	}
 }
 
-// TestHardenRemovesFileAndGitTransports pins both halves of harden by state:
-// the two transports are gone from go-git's registry, and go-git's
-// ~/.ssh/config reader is nil. The reader is pinned here rather than by a
-// hostile config file under a redirected HOME, because the reader locates
-// that file through os/user, which reads $HOME only when the uid is absent
-// from the password database, so on a developer machine or a CI runner a
-// planted file would never be read and would prove nothing.
+// TestHardenRemovesFileAndGitTransports pins harden by state (no file or git
+// transport, a nil ~/.ssh/config reader); a planted config would prove nothing,
+// since os/user reads $HOME only for a uid missing from the password database.
 func TestHardenRemovesFileAndGitTransports(t *testing.T) {
 	t.Parallel()
 	newFetcher(t)
@@ -509,11 +505,8 @@ func TestTLSServerIsTrustedThroughTheInjectedClient(t *testing.T) {
 	app := newAppRepo(t)
 	srv := fakegit.New(t)
 	srv.Add("app", app.repo)
-	// A client with no trust for the loopback server must fail on https,
-	// which the plain fakegit does not serve; the positive half is the http
-	// path every other test takes. What is pinned here is that the Fetcher's
-	// transport is the injected one: a client refusing every request makes
-	// every acquisition fail.
+	// A client refusing every request must make the acquisition fail, which
+	// pins that the Fetcher's transport is the injected client.
 	refusing := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errRefusedByTest
 	})}
@@ -605,10 +598,9 @@ func TestAmbiguousNamePrefersTheBranch(t *testing.T) {
 	}
 }
 
-// TestAnnotatedTagIsWantedAsTheTagObject proves an annotated tag is put on
-// the wire as the tag object, not its peeled commit: the remote here refuses
-// a want that is not an advertised tip, exactly as git does without
-// allow-reachable-sha1-in-want, so the fetch only succeeds through the tag.
+// TestAnnotatedTagIsWantedAsTheTagObject pins that an annotated tag is wanted
+// as the tag object, not its peeled commit, against a remote that, like git
+// without allow-reachable-sha1-in-want, refuses a want that is not a tip.
 func TestAnnotatedTagIsWantedAsTheTagObject(t *testing.T) {
 	t.Parallel()
 	app := newAppRepo(t)

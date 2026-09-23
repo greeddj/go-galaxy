@@ -24,10 +24,9 @@ func twoServerConfig(servers ...config.Server) *config.Config {
 	return cfg
 }
 
-// TestServersSignatureChangesOnReorder asserts list order is part of the
-// signature. Under first-match ownership the order decides which server owns
-// a collection, so the same two servers in the other order are a different
-// resolution problem whose answer must not be reused.
+// TestServersSignatureChangesOnReorder pins list order into the signature:
+// under first-match ownership a reordered list is a different resolution
+// problem whose answer must not be reused.
 func TestServersSignatureChangesOnReorder(t *testing.T) {
 	t.Parallel()
 
@@ -45,10 +44,9 @@ func TestServersSignatureChangesOnReorder(t *testing.T) {
 	}
 }
 
-// TestServersSignatureIgnoresTokenValue asserts a rotated token leaves the
-// signature untouched: only whether a credential exists is hashed, never the
-// credential. The signature is persisted in the snapshot, and no
-// token-derived value may ever land there.
+// TestServersSignatureIgnoresTokenValue pins that a rotated token leaves the
+// signature unchanged: only a token's presence is hashed, because the
+// signature is persisted in the snapshot and no token value may land there.
 func TestServersSignatureIgnoresTokenValue(t *testing.T) {
 	t.Parallel()
 
@@ -64,10 +62,9 @@ func TestServersSignatureIgnoresTokenValue(t *testing.T) {
 	}
 }
 
-// TestServersSignatureChangesWhenTokenAppears asserts the one credential
-// transition that does matter: an anonymous server gaining a token can start
-// revealing collections an anonymous read could not see, so a prior
-// resolution must not be reused across it.
+// TestServersSignatureChangesWhenTokenAppears pins that a server gaining a
+// token changes the signature, since it may reveal collections an anonymous
+// read could not see.
 func TestServersSignatureChangesWhenTokenAppears(t *testing.T) {
 	t.Parallel()
 
@@ -81,11 +78,9 @@ func TestServersSignatureChangesWhenTokenAppears(t *testing.T) {
 	}
 }
 
-// TestServersSignatureChangesOnAppendedServer asserts a configured but
-// seemingly unused server still changes the signature. Whether a server is
-// unused is not knowable without resolving, so this is deliberately
-// conservative: the cost is one cold resolve, and nobody has to reason about
-// which additions could matter.
+// TestServersSignatureChangesOnAppendedServer pins that even a seemingly
+// unused added server changes the signature: whether it is unused is not
+// knowable without resolving, and the cost is one cold resolve.
 func TestServersSignatureChangesOnAppendedServer(t *testing.T) {
 	t.Parallel()
 
@@ -100,11 +95,9 @@ func TestServersSignatureChangesOnAppendedServer(t *testing.T) {
 	}
 }
 
-// TestServersSignatureFallsBackToSingleServer asserts a config with no
-// Servers slice - the shape every hand-built config and every caller
-// predating multi-server support still has - hashes as the one effective
-// server it actually resolves against, so such a config keeps a stable
-// signature rather than collapsing every distinct server onto one value.
+// TestServersSignatureFallsBackToSingleServer pins that a config with no
+// Servers hashes as its one effective cfg.Server, so distinct single servers
+// keep distinct signatures.
 func TestServersSignatureFallsBackToSingleServer(t *testing.T) {
 	t.Parallel()
 
@@ -124,10 +117,9 @@ func TestServersSignatureFallsBackToSingleServer(t *testing.T) {
 	}
 }
 
-// TestServersSignatureIsPipeFree asserts the property the whole
-// fixed-position header scheme rests on: the value fed into the "servers="
-// header is hex, so it can never contain the "|" that separates a per-root
-// line's five fields, and therefore can never be mistaken for one.
+// TestServersSignatureIsPipeFree pins that the "servers=" header value is hex,
+// so it can never carry the "|" separating a per-root line's fields and be
+// mistaken for one.
 func TestServersSignatureIsPipeFree(t *testing.T) {
 	t.Parallel()
 

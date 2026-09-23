@@ -57,6 +57,40 @@ the mismatch is a symptom of it. Fix the contention first, then rerun; if the
 integrity failure is real, the rerun reports it as exit `7` with nothing else
 touching the cache.
 
+The same holds against every other class: once another holder took the lock,
+whatever the run returned is reported as exit `8`, a run that otherwise
+succeeded included, since the heartbeat notices the loss only after some work
+was already done without exclusivity. The backend stops the rest of the run by
+canceling it, and that cancellation exits `8` too, never `130`; only a caught
+signal or the caller's own cancellation outranks a lost lock.
+
+A run in which individual collections or roles fail prints each failure live
+as a `Failed:` line and ends with one headline error -
+`installation failed for N collections`, or `installation failed: warm failed
+for N collections` for `warm` - with every recorded cause kept behind it. The
+exit code is the first class, in the order
+[Exit code classes](commands.md#exit-code-classes) draws, that matches the
+headline or any cause. The headline is an install failure, so only a cause
+ranked above that class changes the code: an interrupt exits `130`, an
+integrity failure `7`, a signature verdict `10` and a lockfile error `6`,
+which is why a `--frozen`
+install whose sha256 pin does not match the artifact exits `7`, not `5`. Every
+other cause leaves the run at `5`, even one that alone would exit elsewhere: a
+network failure, or a collection not cached under `--offline`, exits `4` only
+where it ends the run by itself, outside the per-collection path. `outdated`
+follows the same rule behind its own headline, `latest version lookup failed
+for N collections`, whose class is `4`.
+
+The snapshot save at the end of `install`, `warm` and `lock` never replaces the
+run's own failure. When collections or roles also failed, or `lock --frozen`
+found drift, the save error is appended to that failure's message after
+`snapshot save failed:` and the run keeps the class the failure decides, `6`
+for the drift; the save error decides the exit code only when nothing else
+failed, as `cache backend unavailable` exiting `4` does. A plain `lock` writes
+the lockfile, and prints `Lockfile written`, before it saves the snapshot, so a
+`lock` that exits nonzero on a failed save still leaves a valid new lockfile on
+disk; `lock --frozen` never writes one.
+
 A stalled or byte-dripped transfer is never reported as an interrupt, even
 though the underlying mechanism that unblocks it is a context cancellation:
 the tool distinguishes its own no-progress cancellation from a genuine caught
@@ -84,6 +118,16 @@ allowed to carry the caller's own cancellation through unchanged, because
 unlike the four deadlines above, this failure already reports every other
 network cause faithfully - a stall here is the deadline sentinel's own job,
 not this one's - so there is nothing for a real Ctrl-C to be confused with.
+
+`artifact download deadline exceeded` is the stall verdict for every
+acquisition that spends the artifact budget described under
+[install options](cli.md#install-options) - a Galaxy or url artifact, a git
+fetch, a role - and two verdicts keep their own class even when that budget ran
+out at the same moment. A sha256 mismatch keeps exit `7`: a digest is compared
+only after a complete copy, so a transfer the deadline cut short never yields a
+false mismatch. A cache backend that cannot be used as configured keeps exit
+`2`, so a remote cannot turn a configuration error into a retryable exit `4` by
+stalling until the budget runs out.
 
 Exit codes `2`, `4`, and `8` each fold in more than one cache-backend
 condition too, distinguishable the same way - grep the run's output for the
@@ -122,8 +166,11 @@ run can proceed: grep the run's output for `corrupt project registry`,
 object`, or `corrupt snapshot store` to tell which one fired. The last of the
 four is local-backend only: it means the local cache directory's Bolt snapshot
 file itself failed one of its own corruption checks, not merely that this run's
-own reader could not make sense of it. The remedy is mechanical and safe to
-automate: delete the offending object (or the whole cache directory / bucket
+own reader could not make sense of it. Only bbolt's own corruption checks count,
+as [What the directory holds](caching.md#what-the-directory-holds) lists them;
+a permission failure opening the file exits `2` and an mmap failure `4`, with
+the cache-backend messages above, since discarding a healthy cache would fix
+neither. The remedy is mechanical and safe to automate: delete the offending object (or the whole cache directory / bucket
 prefix), or rerun with `--clear-cache`, then rerun the command. This is
 deliberately distinct from exit `2`: a snapshot a newer binary wrote in a
 schema this one cannot safely interpret (`unsupported snapshot schema

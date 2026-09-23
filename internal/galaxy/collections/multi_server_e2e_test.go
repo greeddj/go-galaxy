@@ -1,13 +1,8 @@
 package collections_test
 
-// This file drives the ordered-server-fallback design end-to-end: two
-// independent fakegalaxy servers, exercising first-match ownership,
-// fail-closed classification (404 advances, 401/403/exhausted-5xx aborts),
-// source: pinning by id/origin/anonymous-mismatch, transitive dependency
-// server-list walking, a Galaxy NG / Automation Hub shaped server mixed into
-// the list, per-origin credential isolation, and resolution determinism
-// across differing worker counts. See e2e_test.go for this package's own
-// doc comment.
+// End-to-end tests of the ordered server list over two fake servers:
+// first-match ownership, fail-closed errors, source: pinning, per-origin
+// credentials, hub-shaped servers and per-server cache scoping.
 
 import (
 	"context"
@@ -56,10 +51,9 @@ func buildMultiServerRequirements(entries []msReqSpec) string {
 	return b.String()
 }
 
-// newMultiServerConfig builds a *config.Config wired with servers and a
-// requirements.yml rendered from requirementsYAML, rooted under a fresh
-// t.TempDir - so two calls with the same servers/requirements still get
-// independent cache and download directories.
+// newMultiServerConfig builds a *config.Config with servers and a
+// requirements.yml, under a fresh t.TempDir so every call gets its own cache
+// and download directories.
 func newMultiServerConfig(t *testing.T, servers []config.Server, requirementsYAML string) *config.Config {
 	t.Helper()
 	root := t.TempDir()
@@ -82,11 +76,9 @@ func newMultiServerConfig(t *testing.T, servers []config.Server, requirementsYAM
 	}
 }
 
-// multiServerRuntime builds an *infra.Infra whose HTTP client is the real
-// production fetch.New transport, wired from cfg.Servers exactly like
-// cmd/go-galaxy/commands.newHTTPClient does - so per-origin token attachment
-// and TLS dispatch are exercised honestly rather than through a single
-// unconditional client.
+// multiServerRuntime builds an *infra.Infra on the production fetch.New
+// transport wired from cfg.Servers, so per-origin token and TLS dispatch are
+// exercised as in a real run.
 func multiServerRuntime(cfg *config.Config) *infra.Infra {
 	auths := make([]fetch.ServerAuth, 0, len(cfg.Servers))
 	for _, s := range cfg.Servers {
@@ -104,9 +96,7 @@ func multiServerRuntime(cfg *config.Config) *infra.Infra {
 }
 
 // msAssertInstalled fails the test unless ns.name's MANIFEST.json exists
-// under cfg.DownloadPath. Every collection in this file lives under the
-// fixed "ns" namespace, so it is hardcoded here rather than threaded
-// through as a parameter every caller would pass the same value for.
+// under downloadPath; every collection in this file is in namespace "ns".
 func msAssertInstalled(t *testing.T, downloadPath, name string) {
 	t.Helper()
 	path := filepath.Join(downloadPath, "ansible_collections", "ns", name, "MANIFEST.json")
@@ -115,12 +105,9 @@ func msAssertInstalled(t *testing.T, downloadPath, name string) {
 	}
 }
 
-// msArtifactSHA256 hashes the cached tarball for ns.name@version under
-// cacheDir, scoped to source (the server that actually resolved it - see
-// helpers.ArtifactKey), the same on-disk location the local artifact backend
-// commits a cached tarball to. The namespace is hardcoded for the same
-// reason msAssertInstalled hardcodes it: every collection in this file lives
-// under "ns".
+// msArtifactSHA256 hashes the cached tarball of ns.name@version that the
+// local artifact backend stored under cacheDir at helpers.ArtifactKey, scoped
+// to source, the server that resolved it.
 func msArtifactSHA256(t *testing.T, cacheDir, source, name, version string) string {
 	t.Helper()
 	filename := fmt.Sprintf("ns-%s-%s.tar.gz", name, version)
@@ -133,10 +120,8 @@ func msArtifactSHA256(t *testing.T, cacheDir, source, name, version string) stri
 	return hex.EncodeToString(sum[:])
 }
 
-// msLockFile runs collections.Lock against cfg/runtime and loads the
-// resulting lockfile, so a test can inspect each entry's recorded Source and
-// SHA256 - the winner, flowed all the way from MetadataProvider.recordBinding
-// through solverResultToResolvedGraph to buildLockfile.
+// msLockFile runs collections.Lock and loads the resulting lockfile, so a
+// test can inspect the Source and SHA256 recorded for each winning server.
 func msLockFile(t *testing.T, cfg *config.Config, runtime *infra.Infra) *lockfile.File {
 	t.Helper()
 	if err := collections.Lock(context.Background(), cfg, runtime); err != nil {
@@ -150,12 +135,9 @@ func msLockFile(t *testing.T, cfg *config.Config, runtime *infra.Infra) *lockfil
 	return lf
 }
 
-// TestMultiServerFirstMatchOwnership drives ns.a (server A only), ns.b
-// (server B only), and ns.both (both servers, with different artifact
-// bytes) through a single unpinned install, and asserts each resolves from
-// the server the "first match wins" rule predicts: ns.both's installed
-// bytes are A's, never B's, even though B also has a version satisfying the
-// same constraint.
+// TestMultiServerFirstMatchOwnership pins first-match ownership: with ns.a on
+// A, ns.b on B and ns.both on both with different bytes, ns.both installs and
+// locks A's bytes and source.
 func TestMultiServerFirstMatchOwnership(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -163,10 +145,8 @@ func TestMultiServerFirstMatchOwnership(t *testing.T) {
 	srvA.AddVersion("ns", "a", "1.0.0", nil)
 	srvB.AddVersion("ns", "b", "1.0.0", nil)
 	bothA := srvA.AddVersion("ns", "both", "1.0.0", nil)
-	// A non-nil-but-empty deps map renders as "{}" rather than "null" in the
-	// generated MANIFEST.json, giving B's copy of ns.both different artifact
-	// bytes (and therefore a different sha256) than A's, without changing
-	// either copy's resolved dependency set (both are still "no deps").
+	// An empty deps map renders "{}" rather than "null" in MANIFEST.json, giving
+	// B's copy different bytes and sha256 with the same (empty) dependency set.
 	srvB.AddVersion("ns", "both", "1.0.0", map[string]string{})
 
 	servers := []config.Server{{ID: "a", URL: srvA.URL()}, {ID: "b", URL: srvB.URL()}}
@@ -226,10 +206,8 @@ func TestMultiServerAdvancesOnPlain404(t *testing.T) {
 	}
 }
 
-// TestMultiServerAuthFailureAbortsClosed asserts a 401 from A - the wrong
-// token configured for a server that requires one - aborts the whole run
-// with helpers.ErrGalaxyAuthFailed naming A, and never falls through to B:
-// srvB.Total() stays 0.
+// TestMultiServerAuthFailureAbortsClosed pins that a 401 from A aborts the
+// run with helpers.ErrGalaxyAuthFailed naming A and never falls through to B.
 func TestMultiServerAuthFailureAbortsClosed(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -290,10 +268,9 @@ func TestMultiServerForbiddenAbortsClosed(t *testing.T) {
 	}
 }
 
-// TestMultiServerUnavailableAbortsAfterRetryBudget asserts an indefinitely
-// retryable 503 from A aborts with helpers.ErrGalaxyServerUnavailable naming
-// A, never falls through to B, and spends exactly the retry budget (proving
-// the budget is not multiplied by the server-list walk).
+// TestMultiServerUnavailableAbortsAfterRetryBudget pins that a persistent 503
+// from A aborts with helpers.ErrGalaxyServerUnavailable naming A, never reaches
+// B, and spends one retry budget, not one per API root candidate.
 func TestMultiServerUnavailableAbortsAfterRetryBudget(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -324,10 +301,9 @@ func TestMultiServerUnavailableAbortsAfterRetryBudget(t *testing.T) {
 	}
 }
 
-// TestMultiServerAll404YieldsUnknownPackage asserts that when neither
-// configured server has a collection at all, the run fails as an ordinary
-// unknown-package resolution conflict (not a network abort), classified by
-// exitcode as ExitResolution.
+// TestMultiServerAll404YieldsUnknownPackage pins that a collection no server
+// has fails as a solver.ConflictError classified ExitResolution, not as a
+// network abort.
 func TestMultiServerAll404YieldsUnknownPackage(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -370,13 +346,9 @@ func TestMultiServerPinnedByID(t *testing.T) {
 	}
 }
 
-// TestMultiServerPinnedByOriginDifferentPath asserts a source: value naming
-// a different path under a configured server's origin still adopts that
-// server's id (and therefore its credential): B is a Galaxy NG / Automation
-// Hub shaped server mounted at hubPath, configured by its bare origin only,
-// while the pinned source names hubPath explicitly - a different path,
-// same origin. B's token must still be attached, since fetch dispatches
-// credentials by origin, not by the exact configured URL string.
+// TestMultiServerPinnedByOriginDifferentPath pins that a source: naming another
+// path on a configured server's origin adopts that server and its token, since
+// fetch dispatches credentials by origin, not by the configured URL string.
 func TestMultiServerPinnedByOriginDifferentPath(t *testing.T) {
 	t.Parallel()
 	const hubPath = "/content/published"
@@ -408,12 +380,9 @@ func TestMultiServerPinnedByOriginDifferentPath(t *testing.T) {
 	}
 }
 
-// TestMultiServerPinnedMatchingNothingSendsNoAuth asserts a source: value
-// matching neither configured server's id nor origin is treated as an
-// anonymous, unmatched base: no Authorization header is attached, and if
-// that server requires one, the run fails closed with
-// helpers.ErrGalaxyAuthFailed naming the base URL - never A or B, which are
-// never even consulted.
+// TestMultiServerPinnedMatchingNothingSendsNoAuth pins that a source: matching
+// no configured id or origin is queried anonymously, fails closed with
+// helpers.ErrGalaxyAuthFailed naming that URL, and never consults A or B.
 func TestMultiServerPinnedMatchingNothingSendsNoAuth(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -475,10 +444,9 @@ func TestMultiServerPinnedNeverFallsThrough(t *testing.T) {
 	}
 }
 
-// TestMultiServerTransitiveDepWalksList asserts a transitive dependency of a
-// pinned root is not itself pinned: ns.root is pinned to A, but its
-// dependency ns.dep - absent from A, present on B - resolves from B, proving
-// there is no source inheritance from parent to dependency.
+// TestMultiServerTransitiveDepWalksList pins that a dependency does not
+// inherit its root's source: ns.root is pinned to A, and its dependency
+// ns.dep, present only on B, resolves from B.
 func TestMultiServerTransitiveDepWalksList(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -502,16 +470,9 @@ func TestMultiServerTransitiveDepWalksList(t *testing.T) {
 	}
 }
 
-// TestMultiServerHubShapeInList mixes a Galaxy NG / Automation Hub shaped
-// server (mounted at hubPath, v3 directly under it) into a two-server list
-// alongside a plain galaxy.ansible.com shaped one, and asserts both
-// collections hosted on the hub resolve successfully. fakegalaxy only counts
-// a request that actually matches its own configured route shape (see
-// fakegalaxy.NewAtBasePath), so an unmatched galaxy.ansible.com-shaped probe
-// against the hub is invisible to Count even without the apiRootMemo
-// optimization; what Count does prove is that each of the two collections
-// costs exactly one COUNTED hit - no redundant successful re-fetch of
-// either's root metadata.
+// TestMultiServerHubShapeInList pins that two collections on a Galaxy NG /
+// Automation Hub shaped server first in the list both resolve, each with one
+// counted root-metadata hit (unmatched probes are not counted).
 func TestMultiServerHubShapeInList(t *testing.T) {
 	t.Parallel()
 	const hubPath = "/api/automation-hub"
@@ -571,14 +532,9 @@ func TestMultiServerAuthReachesOwnServerOnly(t *testing.T) {
 	}
 }
 
-// TestMultiServerResolutionDeterministicAcrossWorkerCounts resolves and
-// installs ~12 collections split across two servers (some on A only, some on
-// B only, several on both with different artifact bytes) twice - with
-// cfg.Workers 1 and 8, against fresh cache/download directories but the same
-// two servers and requirements - and asserts the resulting fqdn -> Source
-// map and fqdn -> SHA256 map are byte-identical between the two runs: the
-// server-list walk and first-match ownership are resolve-time decisions,
-// unaffected by how many install workers happen to run concurrently.
+// TestMultiServerResolutionDeterministicAcrossWorkerCounts pins that the
+// locked Source and SHA256 of twelve collections split over two servers are
+// identical with 1 and 8 workers: server ownership is decided at resolve time.
 func TestMultiServerResolutionDeterministicAcrossWorkerCounts(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -643,12 +599,9 @@ func msReusedConfig(cfg *config.Config, servers []config.Server) *config.Config 
 	return &clone
 }
 
-// TestMultiServerSnapshotReuseIsPartitionedByServerList asserts the
-// resolved-snapshot reuse signature accounts for the effective server list:
-// re-running against the identical list reuses the persisted resolution and
-// touches no server, while re-running against the same two servers in the
-// other order re-resolves, because under first-match ownership that order
-// decides which server owns each collection.
+// TestMultiServerSnapshotReuseIsPartitionedByServerList pins that resolution
+// reuse keys on the ordered server list: the same list touches no server, the
+// reversed list re-resolves, since order decides first-match ownership.
 func TestMultiServerSnapshotReuseIsPartitionedByServerList(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -687,25 +640,16 @@ func TestMultiServerSnapshotReuseIsPartitionedByServerList(t *testing.T) {
 	}
 }
 
-// TestMultiServerArtifactCacheKeyIsScopedPerServer is the regression guard
-// for keeping the artifact-cache key scoped per server: two independent
-// projects, sharing one cache dir, each pin ns.shared@1.0.0 to a different
-// server carrying different artifact bytes for that same name and version.
-// Because helpers.ArtifactKey folds the server into the key rather than
-// using a flat, percent-encoded-filename-only key, each server's bytes land
-// under its own key, so both projects install their own server's bytes and
-// both cache entries coexist on disk, instead of the second project
-// silently reusing the first project's cached tarball - the wrong bytes,
-// with no metadata round trip able to catch the mismatch.
+// TestMultiServerArtifactCacheKeyIsScopedPerServer pins that two projects on
+// one cache, pinning ns.shared@1.0.0 to servers with different bytes, each get
+// their own server's tarball: helpers.ArtifactKey folds in the server.
 func TestMultiServerArtifactCacheKeyIsScopedPerServer(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
 	srvB := fakegalaxy.New(t)
 	verA := srvA.AddVersion("ns", "shared", "1.0.0", nil)
-	// A non-nil-but-empty deps map renders differently in the generated
-	// MANIFEST.json than a nil one, giving B's copy different artifact bytes
-	// (and therefore a different sha256) than A's, without changing either
-	// copy's dependency set.
+	// An empty deps map renders differently from nil in MANIFEST.json, giving
+	// B's copy different bytes and sha256 with the same dependency set.
 	verB := srvB.AddVersion("ns", "shared", "1.0.0", map[string]string{})
 	if verA.SHA256 == verB.SHA256 {
 		t.Fatalf("fixture bug: A and B must have distinct artifact bytes to prove no collision, both hash to %s", verA.SHA256)
@@ -736,16 +680,9 @@ func TestMultiServerArtifactCacheKeyIsScopedPerServer(t *testing.T) {
 	}
 }
 
-// TestMultiServerDepsCacheKeyIsScopedPerServer is the deps-cache sibling of
-// TestMultiServerArtifactCacheKeyIsScopedPerServer: two projects sharing one
-// cache dir each pin ns.shared@1.0.0 to a different server, and each
-// server's copy of ns.shared declares a different dependency. Keyed only by
-// "ns.shared@1.0.0" with no server component, both projects' resolves would
-// share one deps-cache entry, so the second project's resolve would silently
-// reuse the first project's cached dependency map instead of ever asking its
-// own server. Scoped per server, each server's dependency map lands under
-// its own key, so both projects end up with their own server's transitive
-// dependency installed.
+// TestMultiServerDepsCacheKeyIsScopedPerServer pins that cached dependency
+// maps are scoped per server: two projects on one cache pin ns.shared@1.0.0 to
+// servers declaring different deps, and each installs its own server's dep.
 func TestMultiServerDepsCacheKeyIsScopedPerServer(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)
@@ -776,12 +713,9 @@ func TestMultiServerDepsCacheKeyIsScopedPerServer(t *testing.T) {
 	msAssertInstalled(t, cfgB.DownloadPath, "depb")
 }
 
-// TestMultiServerSourceSwitchForcesReinstall proves installEntryMatches'
-// server-source check end to end: a collection first installed pinned to A
-// is re-run against the same cache dir and download path but pinned to B
-// instead. canSkipInstall compares the recorded install's server against the
-// newly resolved one, so a source change forces a reinstall against B rather
-// than silently keeping A's install untouched with B never even contacted.
+// TestMultiServerSourceSwitchForcesReinstall pins that re-pinning an installed
+// collection from A to B forces a reinstall from B: installEntryMatches
+// compares the recorded install's source with the newly resolved one.
 func TestMultiServerSourceSwitchForcesReinstall(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)

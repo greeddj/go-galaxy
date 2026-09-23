@@ -23,11 +23,8 @@ func TestIsPathElement(t *testing.T) {
 		{"traversal single segment", "..", false},
 		{"dotted name", "my.collection", true},
 
-		// Rejected: every rune safeout.IsUnsafeRune reports true for -
-		// every control character Clean replaces, plus the two Unicode
-		// line terminators - none of them belongs inside a single path
-		// element, even the two (\n, \t) Clean itself keeps for
-		// whole-line output.
+		// Rejected: every safeout.IsUnsafeRune rune, including \n and \t,
+		// which Clean keeps for whole-line output but a path element may not.
 		{"newline", "1.0.0\nX", false},
 		{"tab", "1.0.0\tX", false},
 		{"carriage return", "1.0.0\rX", false},
@@ -37,10 +34,8 @@ func TestIsPathElement(t *testing.T) {
 		{"unicode line separator", "1.0.0\u2028X", false},
 		{"unicode paragraph separator", "1.0.0\u2029X", false},
 
-		// Positive control, in the same table as the rejections above:
-		// ordinary, legitimate identifiers this project actually writes
-		// still pass, proving the control-character check does not
-		// overreach into rejecting harmless input.
+		// Positive control: ordinary identifiers, printable non-ASCII
+		// included, still pass the control-character check.
 		{"namespace", "ns", true},
 		{"name", "name", true},
 		{"exact version", "1.0.0", true},
@@ -82,10 +77,8 @@ func TestWithinDir(t *testing.T) {
 	}
 }
 
-// TestWithinDirRelError proves WithinDir returns false when filepath.Rel
-// itself cannot relate base and target - here a relative base against an
-// absolute target, which filepath.Rel rejects since it cannot make one
-// relative to the other - rather than panicking or matching by accident.
+// TestWithinDirRelError pins that WithinDir returns false when filepath.Rel
+// fails, here for a relative base against an absolute target.
 func TestWithinDirRelError(t *testing.T) {
 	t.Parallel()
 	if got := WithinDir("relative/dir", "/abs/other"); got {

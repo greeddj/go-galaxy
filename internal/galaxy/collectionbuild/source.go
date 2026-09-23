@@ -2,10 +2,9 @@ package collectionbuild
 
 import "github.com/greeddj/go-galaxy/internal/galaxy/treearchive"
 
-// The tree vocabulary is internal/galaxy/treearchive's; these aliases keep
-// a Source implementation and its callers spelled against this package
-// usable unchanged, since a collection build reads the same tree a role
-// build does.
+// The tree vocabulary is treearchive's; these aliases keep code spelled
+// against this package working, since a collection build reads the same tree
+// a role build does.
 type (
 	// Source is treearchive.Source: a read-only view of a source tree at one
 	// commit.

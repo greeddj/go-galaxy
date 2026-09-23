@@ -16,39 +16,9 @@ var (
 	errArtifactMetaNotFoundAfterCommit = errors.New("Meta reported the key absent right after Commit")
 )
 
-// TestArtifactsSafeForConcurrentUse pins the goroutine-safety half of
-// cacheManager.ArtifactStore's contract for the local backend: eight
-// goroutines each run the full TempFile/Commit/Has/Meta/Fetch/Delete cycle
-// concurrently, under the race detector, every one against its own,
-// distinct key. That is a deliberate choice, not an oversight - the
-// contract only promises safety across distinct keys, and a shared key
-// would exercise a guarantee the contract does not make.
-//
-// Killing mutation, actually run against this file: a temporary
-// unsynchronized `calls int` field was added to Artifacts and incremented at
-// the top of Has, with no other change. `go test ./internal/cache/local/
-// -run TestArtifactsSafeForConcurrentUse -race -v -count=1` then failed with
-// a real data race, both accesses inside Has (stack frame source locations
-// are omitted below: a Go comment in this module may not cite a production
-// file's line number, and every frame in a real -race dump carries one):
-//
-//	WARNING: DATA RACE
-//	Read at 0x00c0000101d8 by goroutine 14:
-//	  github.com/greeddj/go-galaxy/internal/cache/local.(*Artifacts).Has()
-//	Previous write at 0x00c0000101d8 by goroutine 13:
-//	  github.com/greeddj/go-galaxy/internal/cache/local.(*Artifacts).Has()
-//	==================
-//	--- FAIL: TestArtifactsSafeForConcurrentUse (0.00s)
-//	FAIL
-//
-// Removing the field restored a clean, race-free pass.
-//
-// Not covered here: the S3 backend's own ArtifactStore implementation is not
-// exercised by this test, because the fake HTTP server its tests run against
-// (fakeS3, defined across internal/cache/s3's own _test.go files) is
-// unexported and unreachable from this package. What is already covered
-// there instead: TestSaveStoreConcurrentMutationIsRaceFree pins the absence
-// of races when the store is mutated concurrently during SaveStore.
+// TestArtifactsSafeForConcurrentUse pins ArtifactStore's goroutine safety on
+// the local backend: eight goroutines run the full lifecycle under -race, each
+// on its own key, since the contract promises safety only across distinct keys.
 func TestArtifactsSafeForConcurrentUse(t *testing.T) {
 	dir := t.TempDir()
 	artifacts := NewArtifacts(dir)
@@ -71,12 +41,8 @@ func TestArtifactsSafeForConcurrentUse(t *testing.T) {
 	}
 }
 
-// exerciseArtifactKey runs the full artifact lifecycle - commit, then
-// Has/Meta/Fetch/Delete - against one key, returning the first error
-// encountered. Every caller of this helper works on its own key, so
-// concurrent calls never touch the same on-disk path. Split into two
-// smaller helpers below rather than kept as one function so each stays
-// under the project's cyclomatic-complexity ceiling.
+// exerciseArtifactKey commits key and reads it back through Has, Meta, Fetch
+// and Delete, returning the first error; each caller uses its own key.
 func exerciseArtifactKey(artifacts *Artifacts, key string) error {
 	if err := commitTestArtifact(artifacts, key); err != nil {
 		return err

@@ -7,18 +7,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// prepareRoots normalizes and validates root requirements, returning the
-// normalized roots. A root's empty Source is left as-is: unpinned is now a
-// distinct, stable value that lets the root walk the configured server list,
-// rather than being nailed to a single default server here.
-//
-// A git or url root may have no identity yet (its repository's galaxy.yml or
-// its artifact's MANIFEST.json supplies one at discovery), so its duplicate
-// check is by locator rather than by name; a git root that does name its
-// collection is checked by name as well, the same way a Galaxy root is. The
-// invariant that a root is typed git or url exactly when its Source is that
-// kind's locator is asserted here because everything downstream dispatches
-// on the locator prefix alone.
+// prepareRoots normalizes and validates root requirements, refusing
+// duplicates by locator and by name. A git or url root must carry that
+// kind's locator as Source, since downstream dispatches on the prefix alone.
 func prepareRoots(roots []collection) ([]collection, error) {
 	prepared := make([]collection, 0, len(roots))
 	seen := make(map[string]collection)

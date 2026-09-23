@@ -6,27 +6,9 @@ import (
 	"unicode/utf8"
 )
 
-// IsCollectionNamePart reports whether part is a valid half of a collection
-// name - a namespace or a name - under the alphabet ^[a-z][a-z0-9_]*$.
-//
-// That is the alphabet galaxy.ansible.com and Automation Hub themselves
-// accept, so a half outside it cannot name a collection any Galaxy server
-// could serve. Enforcing it on the way in is what turns a hostile identifier
-// into a classified failure at the boundary it entered through, instead of an
-// unclassified one much later: a name carrying a newline would otherwise pass
-// every check, print into reports as extra lines of its own choosing, and
-// finally fail while a URL was being built - reported as a network failure,
-// the one class a CI is most likely to retry forever.
-//
-// It is deliberately NOT expressed through IsPathElement, even though that
-// predicate would reject the same hostile inputs today. The two answer
-// different questions: IsPathElement asks whether a value can safely become
-// one component of a filesystem path, and is applied to versions and to
-// values walked off disk as well; this asks what a collection may be called,
-// which is a product decision about the ecosystem this tool installs from. A
-// third consumer sharing IsPathElement would have tied all three sides -
-// install's writes, cleanup's deletes, and this read boundary - to one
-// alphabet that no longer serves any of them exactly.
+// IsCollectionNamePart reports whether part is a namespace or name half under
+// ^[a-z][a-z0-9_]*$, the alphabet Galaxy servers accept. It is deliberately
+// separate from IsPathElement: naming policy and path safety evolve apart.
 func IsCollectionNamePart(part string) bool {
 	if part == "" {
 		return false
@@ -43,24 +25,15 @@ func IsCollectionNamePart(part string) bool {
 }
 
 // IsCollectionName reports whether value is a well-formed collection name:
-// exactly two dot-separated halves, each satisfying IsCollectionNamePart. It
-// is the whole-identifier form of that predicate, for a caller holding the
-// combined "namespace.name" string rather than its halves.
+// exactly two dot-separated halves, each satisfying IsCollectionNamePart.
 func IsCollectionName(value string) bool {
 	namespace, name, ok := SplitFQDN(value)
 	return ok && IsCollectionNamePart(namespace) && IsCollectionNamePart(name)
 }
 
-// IsURLCollectionNamePart reports whether part is acceptable as one half of
-// a url collection's identity: letters of either case, digits and
-// underscore - ansible's own runtime FQCN word rule. It is deliberately
-// wider than IsCollectionNamePart, which holds a server-resolved collection
-// to the Galaxy alphabet: a url artifact's MANIFEST.json is authored
-// outside any Galaxy server, real release artifacts carry mixed-case
-// namespaces, and ansible-galaxy installs them. Path safety does not rest
-// on this predicate - IsPathElement re-judges every component before a path
-// is built - so the widening admits no separator, no dot and no control
-// rune.
+// IsURLCollectionNamePart reports whether part is one half of a url
+// collection's identity under ansible's FQCN word rule [A-Za-z0-9_]+, wider
+// than the Galaxy alphabet because real url artifacts carry mixed-case names.
 func IsURLCollectionNamePart(part string) bool {
 	if part == "" {
 		return false
@@ -75,10 +48,8 @@ func IsURLCollectionNamePart(part string) bool {
 	return true
 }
 
-// SplitFQDN splits a "namespace.collection" string into parts. It validates
-// shape only - exactly one dot, two non-empty halves - and deliberately no
-// alphabet: see IsCollectionName for the check a caller reading a name from
-// outside this program applies on top.
+// SplitFQDN splits a "namespace.collection" string at its one dot into two
+// non-empty halves. It checks shape only, no alphabet and no path safety.
 func SplitFQDN(value string) (string, string, bool) {
 	parts := strings.Split(strings.TrimSpace(value), ".")
 	if len(parts) != CollectionNameParts {
@@ -103,16 +74,9 @@ func UpperFirstRune(s string) string {
 	return string(unicode.ToUpper(r)) + s[size:]
 }
 
-// NormalizeConstraint trims and normalizes a version constraint string for
-// Masterminds/semver v3 parsing.
-//
-// Beyond the pre-existing trim/match-all handling, this rewrites ansible's
-// `==` exact-match operator to v3's `=` per comma-separated clause:
-// Masterminds/semver v3 does not accept ansible's == operator -
-// NewConstraint("==1.2.3") fails to parse - so a == constraint from a
-// requirements.yml or a dependency manifest must be rewritten to = to be
-// usable. The rewrite is scoped to strings containing "==" so every
-// constraint that does not use it is returned byte-identical to its input.
+// NormalizeConstraint trims a version constraint for Masterminds/semver v3,
+// maps "" and "*" to match-all, and rewrites ansible's "==" clause operator
+// to "=", which v3 needs; a constraint without "==" is returned as trimmed.
 func NormalizeConstraint(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || trimmed == "*" {

@@ -2,11 +2,8 @@ package helpers
 
 import "testing"
 
-// TestArtifactKeyIsFlat proves ArtifactKey never produces a "/" - the
-// invariant both the local backend's filepath.Join(cacheDir, key) and the S3
-// backend's path.Join(prefix, key) rely on to stay a flat, single-level
-// layout with no extra directory nesting - across filenames that would
-// themselves need percent-encoding.
+// TestArtifactKeyIsFlat pins that ArtifactKey never produces a "/", which both
+// backends' flat layouts rely on, even for filenames needing percent-encoding.
 func TestArtifactKeyIsFlat(t *testing.T) {
 	t.Parallel()
 	cases := []string{
@@ -29,10 +26,8 @@ func TestArtifactKeyIsFlat(t *testing.T) {
 	}
 }
 
-// TestArtifactKeyDifferentBasesYieldDifferentPrefixes is the collision
-// regression guard: two distinct server bases publishing the identical
-// filename must produce distinct keys, since ArtifactKey folds a server
-// fingerprint into the key rather than using the filename alone.
+// TestArtifactKeyDifferentBasesYieldDifferentPrefixes pins that two server
+// bases publishing the identical filename get distinct keys.
 func TestArtifactKeyDifferentBasesYieldDifferentPrefixes(t *testing.T) {
 	t.Parallel()
 	const filename = "ns-name-1.0.0.tar.gz"
@@ -43,10 +38,8 @@ func TestArtifactKeyDifferentBasesYieldDifferentPrefixes(t *testing.T) {
 	}
 }
 
-// TestArtifactKeyStableForSameBase proves ArtifactKey is a pure, deterministic
-// function of its inputs: the same base and filename must always yield the
-// same key, since a later cache-hit lookup depends on this being stable
-// across process runs.
+// TestArtifactKeyStableForSameBase pins that ArtifactKey is deterministic,
+// since a later run's cache-hit lookup depends on getting the same key.
 func TestArtifactKeyStableForSameBase(t *testing.T) {
 	t.Parallel()
 	const base = "https://galaxy.example.com"
@@ -77,9 +70,8 @@ func TestArtifactKeyFingerprintLength(t *testing.T) {
 // filenames that would themselves need percent-encoding.
 func TestIsScopedArtifactKeyRecognizesArtifactKeyOutput(t *testing.T) {
 	t.Parallel()
-	// Rows are named rather than derived from base or filename, for the reason
-	// the bases table above states: both carry "/", which a derived subtest name
-	// would render as extra nesting levels.
+	// Rows are named rather than derived from base or filename: both carry
+	// "/", which a derived subtest name would render as extra nesting.
 	cases := []struct {
 		name     string
 		base     string
@@ -100,11 +92,8 @@ func TestIsScopedArtifactKeyRecognizesArtifactKeyOutput(t *testing.T) {
 	}
 }
 
-// TestIsScopedArtifactKeyRejectsUnscopedShapes proves IsScopedArtifactKey
-// rejects every shape that is not exactly ArtifactKeyFingerprintLen
-// lowercase hex characters followed by ".", including the pre-multi-server
-// flat key shape (a legacy artifact key carries no fingerprint prefix at
-// all) and a handful of near-miss shapes that must not be mistaken for it.
+// TestIsScopedArtifactKeyRejectsUnscopedShapes pins that IsScopedArtifactKey
+// refuses a legacy flat key and near misses of the fingerprint-then-"." shape.
 func TestIsScopedArtifactKeyRejectsUnscopedShapes(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -129,19 +118,15 @@ func TestIsScopedArtifactKeyRejectsUnscopedShapes(t *testing.T) {
 	}
 }
 
-// TestScopedDepsCacheKeyNeverCollidesWithOldFormat proves the pre-scoping key
-// shape ("<ns>.<name>@<version>", no server prefix at all) can never be
-// produced by ScopedDepsCacheKey for any server base: every scoped key
-// contains DepsCacheKeySeparator, which an old-format key - built as a bare
-// "ns.name@version" fmt.Sprintf, never containing "|" - never does.
+// TestScopedDepsCacheKeyNeverCollidesWithOldFormat pins that no server base,
+// empty included, makes ScopedDepsCacheKey yield the pre-scoping key shape:
+// every scoped key carries DepsCacheKeySeparator.
 func TestScopedDepsCacheKeyNeverCollidesWithOldFormat(t *testing.T) {
 	t.Parallel()
 	oldFormatKey := "acme.widgets@1.0.0"
 
-	// Each row carries a name of its own rather than being named by its base:
-	// one base is the empty string, which t.Run renders as a positional "#00"
-	// naming nothing, and the others contain "/", the character -run splits a
-	// subtest path on.
+	// Rows are named explicitly: an empty base renders as "#00", and a "/" in
+	// a base splits the subtest path under -run.
 	bases := []struct {
 		name string
 		base string
@@ -171,10 +156,8 @@ func TestScopedDepsCacheKeyNeverCollidesWithOldFormat(t *testing.T) {
 	}
 }
 
-// TestScopedDepsCacheKeyDistinguishesServers proves two different bases for
-// the identical fqdn@version produce two different scoped keys - the
-// collision regression guard for the deps-cache side of the server-scoped
-// key shape.
+// TestScopedDepsCacheKeyDistinguishesServers pins that two bases for the
+// identical fqdn@version produce different deps-cache keys.
 func TestScopedDepsCacheKeyDistinguishesServers(t *testing.T) {
 	t.Parallel()
 	const fqdnAtVersion = "acme.widgets@1.0.0"

@@ -1,13 +1,8 @@
 package collections_test
 
-// This file drives the install phase's own reading of a resolved Source end
-// to end: a root pinned with source: must be fetched from that server by
-// every phase, not only by the resolve that discovered it. Every entry it
-// writes names an exact version, the constraint shape that makes the solver
-// settle a root through its exact-pin fast path - through Dependencies
-// alone, never Highest - which is the shape that exposes what these tests
-// guard. See e2e_test.go for this package's own doc comment, and
-// multi_server_e2e_test.go for the fixtures reused here.
+// A root pinned with source: at an exact version, settled by the solver
+// through Dependencies alone, must be fetched from that server by every phase,
+// not only by the resolve.
 
 import (
 	"context"
@@ -46,24 +41,9 @@ func buildPinnedRequirements(entries []pinnedReqSpec) string {
 	return b.String()
 }
 
-// TestSourcePinnedExactRootInstallsFromItsOwnServer is the end-to-end guard
-// for the whole path a source: has to survive: the resolve, the resolved
-// snapshot, and the install phase's own second metadata read.
-//
-// The fixture is the caching-proxy shape that exposes it. One origin serves
-// the mirror endpoint the two roots pin themselves to; the configured server
-// is a DIFFERENT path under that same origin, which answers nothing - just
-// as a proxy endpoint fronting an upstream that does not carry these
-// collections would 404 them. Two roots are what makes it deterministic:
-// two roots turn prewarmRootMetadata on, and it warms an exactly pinned
-// root's dependency map on a provider whose bindings are discarded, so the
-// solve's own Dependencies call returns from the warm cache without a fetch
-// that could bind the root to its server.
-//
-// Reading the pinned source: back off the roots is therefore the only thing
-// left that can keep the install phase pointed at the mirror. Stamping the
-// configured server instead sends it to the endpoint that carries nothing,
-// which fails the run.
+// TestSourcePinnedExactRootInstallsFromItsOwnServer pins that prewarmed roots
+// pinned to a mirror path under the configured server's origin install, lock
+// and replay from the mirror, never from the configured path serving nothing.
 func TestSourcePinnedExactRootInstallsFromItsOwnServer(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.NewAtBasePath(t, mirrorPath)
@@ -71,9 +51,8 @@ func TestSourcePinnedExactRootInstallsFromItsOwnServer(t *testing.T) {
 	two := srv.AddVersion("ns", "two", "2.0.0", nil)
 
 	mirror := srv.URL() + mirrorPath
-	// The configured server shares the mirror's origin, so the pin matches it
-	// by origin and no unmatched-source warning is in play, but it names a
-	// path this fixture serves nothing under.
+	// Same origin as the mirror, so the pin matches it and no unmatched-source
+	// warning fires, but this path serves nothing.
 	servers := []config.Server{{ID: "proxy", URL: srv.URL() + "/galaxy/upstream"}}
 	cfg := newMultiServerConfig(t, servers, buildPinnedRequirements([]pinnedReqSpec{
 		{name: "ns.one", version: "1.0.0", source: mirror},
@@ -87,9 +66,8 @@ func TestSourcePinnedExactRootInstallsFromItsOwnServer(t *testing.T) {
 	msAssertInstalled(t, cfg.DownloadPath, "one")
 	msAssertInstalled(t, cfg.DownloadPath, "two")
 
-	// The artifact cache key folds the resolved Source in, so finding the
-	// mirror's own bytes under the mirror's key is the on-disk proof that the
-	// mirror, not the configured server, is what the run recorded.
+	// The artifact cache key folds in the resolved Source, so the mirror's
+	// bytes under the mirror's key prove the mirror was recorded.
 	if got := msArtifactSHA256(t, cfg.CacheDir, mirror, "one", "1.0.0"); got != one.SHA256 {
 		t.Fatalf("cached ns.one sha = %s, want the mirror's own %s", got, one.SHA256)
 	}
@@ -113,13 +91,9 @@ func TestSourcePinnedExactRootInstallsFromItsOwnServer(t *testing.T) {
 	}
 }
 
-// TestSourcePinnedExactRootUnderNoDepsInstallsFromItsOwnServer is the
-// --no-deps half of the same guarantee, and the one case no binding can
-// cover: NewNoDepsProvider answers an exactly pinned root's Dependencies
-// without the real provider, so the solve reaches no server at all and the
-// root's own source: is the only record of which one serves it. The pin is
-// spelled as a server_list id here, which the resolved Source must record as
-// that server's URL rather than as the id.
+// TestSourcePinnedExactRootUnderNoDepsInstallsFromItsOwnServer pins that under
+// --no-deps, where nothing binds the root, a source: naming a server_list id
+// installs from that server and is recorded as its URL, not the id.
 func TestSourcePinnedExactRootUnderNoDepsInstallsFromItsOwnServer(t *testing.T) {
 	t.Parallel()
 	srvA := fakegalaxy.New(t)

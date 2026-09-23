@@ -16,12 +16,9 @@ import (
 // benchmark tar entry, matching a typical extracted Ansible collection file.
 const benchFileMode = 0o644
 
-// buildBenchmarkArchive builds a deterministic in-memory tar.gz containing
-// files small regular files, all nested under one shared depth-level
-// directory chain (d0/d1/.../d{depth-1}/f{i}.txt). Every file shares the
-// same parent chain, which is the maximum-redundancy shape the
-// ensureNoSymlinkParents memo targets: without memoization, extracting this
-// archive re-Lstats the same depth ancestors once per file.
+// buildBenchmarkArchive builds a deterministic tar.gz of the given number of
+// one-byte files under one depth-deep directory chain, the shared-parent shape
+// the ensureNoSymlinkParents memo targets.
 func buildBenchmarkArchive(tb testing.TB, files, depth int) []byte {
 	tb.Helper()
 
@@ -66,15 +63,9 @@ func buildBenchmarkArchive(tb testing.TB, files, depth int) []byte {
 	return buf.Bytes()
 }
 
-// BenchmarkExtractTarGzStream measures full-archive extraction cost for a
-// deep, highly redundant directory chain, the shape ensureNoSymlinkParents'
-// parent-chain memoization targets.
-//
-// ReportAllocs measures allocations over the whole b.N loop, not scoped to
-// the StartTimer/StopTimer bracket around the extraction call, so
-// allocs/op includes minor MkdirTemp/RemoveAll setup-and-teardown noise
-// alongside the extraction itself. ns/op is the attributable metric here,
-// since the timer is stopped during setup and teardown.
+// BenchmarkExtractTarGzStream measures extracting a deep, shared directory
+// chain. Read ns/op: allocs/op also counts the per-iteration temp-dir setup and
+// teardown, which the timer excludes but ReportAllocs does not.
 func BenchmarkExtractTarGzStream(b *testing.B) {
 	sizes := []struct {
 		files int
@@ -90,11 +81,8 @@ func BenchmarkExtractTarGzStream(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
 				b.StopTimer()
-				// os.MkdirTemp+os.RemoveAll (rather than b.TempDir, which
-				// defers all cleanup to the end of the benchmark) frees each
-				// iteration's extracted tree immediately, so a large b.N
-				// does not accumulate thousands of extracted trees on disk
-				// before cleanup runs.
+				// os.MkdirTemp and os.RemoveAll rather than b.TempDir, so a
+				// large b.N does not pile extracted trees up on disk.
 				//nolint:usetesting // per-iteration cleanup, see comment above.
 				dst, err := os.MkdirTemp("", "gg-extract-bench-")
 				if err != nil {

@@ -8,9 +8,7 @@ import (
 )
 
 // roleExitCases pins the exit class of every role sentinel, one row per
-// sentinel, the way gitExitCases does for git sources: a sentinel added to
-// helpers without a place in a predicate here fails this table rather than
-// a pipeline exiting 1.
+// sentinel; a role sentinel added to helpers needs a row here.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var roleExitCases = []exitCase{

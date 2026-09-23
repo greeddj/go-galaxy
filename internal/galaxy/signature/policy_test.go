@@ -22,18 +22,14 @@ type countSpecCase struct {
 	wantErr         bool
 }
 
-// countSpecCases is the grammar, spelled out. Accepted and refused values sit
-// in one table on purpose: the accepted rows are the positive control for the
-// refused ones, so "the parser refused this" cannot pass equally well against a
-// parser that refuses everything it is handed.
+// countSpecCases is the grammar, spelled out; the accepted rows are the
+// positive control, so a parser refusing everything fails the table.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var countSpecCases = []countSpecCase{
 	{name: "bare count", value: "1", want: CountSpec{Count: 1}},
 	// A floor of zero parses rather than being refused: it asks for no floor,
-	// which is a policy an operator may write. What it must never become is a
-	// pass built on an empty signature list somebody else supplied, which is
-	// the rule CountSpec's own doc puts on the decision function.
+	// which is a policy an operator may write.
 	{name: "zero is a floor of zero", value: "0", want: CountSpec{Count: 0}},
 	{name: "multi digit count", value: "3", want: CountSpec{Count: 3}},
 	{name: "all", value: "all", want: CountSpec{All: true}},
@@ -93,18 +89,8 @@ func TestParseCountSpec(t *testing.T) {
 			if !strings.Contains(err.Error(), strconv.Quote(tc.value)) {
 				t.Fatalf("ParseCountSpec(%q) error does not name the offending value:\n%v", tc.value, err)
 			}
-			// Killing mutation, actually run against this file: delete
-			// ParseCountSpec's leading `if value == negativeAllSpelling`
-			// branch. Only the "negative one" row then fails, with
-			//
-			//	policy_test.go:109: ParseCountSpec("-1") error does not carry "does not mean every signature":
-			//	    invalid required valid signature count: "-1"; write a non-negative count or "all", optionally prefixed with "+" for strict
-			//
-			// while both assertions above it still pass: the generic refusal
-			// does carry the sentinel and does name the value, so what is lost
-			// is only the one thing an operator who read ansible's help needs -
-			// the spelling that does mean every signature. The rendered message
-			// is quoted on its own line because the assertion prints it there.
+			// Only this phrase tells a named refusal such as -1's apart from the
+			// generic one, which carries the sentinel and the value as well.
 			if tc.wantErrContains != "" && !strings.Contains(err.Error(), tc.wantErrContains) {
 				t.Fatalf("ParseCountSpec(%q) error does not carry %q:\n%v", tc.value, tc.wantErrContains, err)
 			}
@@ -123,9 +109,8 @@ type statusCodesCase struct {
 	wantErr         bool
 }
 
-// statusCodesCases covers the whole vocabulary, both normalizations, and every
-// shape that is refused. The accepted rows are the refusals' positive control,
-// on the same function and in the same table.
+// statusCodesCases covers the whole vocabulary, both normalizations and every
+// refused shape, with the accepted rows as the refusals' positive control.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var statusCodesCases = []statusCodesCase{
@@ -156,26 +141,16 @@ func TestParseStatusCodes(t *testing.T) {
 
 			got, err := ParseStatusCodes(tc.values)
 			if tc.wantErr {
-				// Killing mutation, actually run against this file: replace the
-				// `return nil, fmt.Errorf(...)` inside ParseStatusCodes' loop
-				// with `continue`, the silent swallow the sentinel exists to
-				// prevent. All four refusal rows then fail, one of them with
-				//
-				//	policy_test.go:170: ParseStatusCodes(["BADSIGG"]) error = <nil>, want the unknown-code sentinel
-				//
-				// which is the shape of the defect exactly: an ignore set that
-				// quietly tolerates nothing, on a run that keeps failing on the
-				// very status the operator asked it to tolerate.
+				// A silently skipped unknown code would leave the run failing on
+				// the very status the operator meant to tolerate.
 				if !errors.Is(err, helpers.ErrUnknownSignatureStatusCode) {
 					t.Fatalf("ParseStatusCodes(%q) error = %v, want the unknown-code sentinel", tc.values, err)
 				}
 				if !strings.Contains(err.Error(), tc.wantErrContains) {
 					t.Fatalf("ParseStatusCodes(%q) does not name the offending value %s:\n%v", tc.values, tc.wantErrContains, err)
 				}
-				// An operator who mistyped a code needs the alternatives, so
-				// the accepted list is part of the contract rather than
-				// decoration. The last code of the vocabulary stands in for it:
-				// a message carrying that one carries the whole list.
+				// The accepted list is part of the contract; the vocabulary's
+				// last code stands in for it, since the list is rendered whole.
 				if !strings.Contains(err.Error(), string(StatusFailure)) {
 					t.Fatalf("ParseStatusCodes(%q) error does not list the accepted codes:\n%v", tc.values, err)
 				}
@@ -212,8 +187,7 @@ type ignoresCase struct {
 }
 
 // ignoresCases pairs every synonym direction with a negative on the same
-// mechanism, so an Ignores that answered true for everything would fail here
-// rather than sail through the synonym rows.
+// mechanism, so an Ignores answering true for everything fails.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var ignoresCases = []ignoresCase{
@@ -242,17 +216,9 @@ func TestStatusSetIgnores(t *testing.T) {
 				set = statusSet(tc.configured...)
 			}
 
-			// Killing mutation, actually run against this file: collapse
-			// Ignores to a plain set lookup - `_, ok := s[code]; return ok`,
-			// dropping the statusSynonyms consultation. All four synonym rows
-			// then fail, one of them with
-			//
-			//	policy_test.go:257: StatusSet[KEYEXPIRED].Ignores(EXPKEYSIG) = false, want true
-			//
-			// and no row that must answer false flips. The assembly test's own
-			// synonym assertion goes with them, on the same mechanism: an
-			// operator configures one of gpg's two names for a condition, the
-			// verdict carries the other, and the ignore silently does nothing.
+			// The synonym rows fail if Ignores stops consulting statusSynonyms:
+			// an operator names one of gpg's two names for a condition and the
+			// verdict carries the other.
 			if got := set.Ignores(tc.code); got != tc.want {
 				t.Fatalf("StatusSet%v.Ignores(%s) = %t, want %t", tc.configured, tc.code, got, tc.want)
 			}
@@ -260,16 +226,8 @@ func TestStatusSetIgnores(t *testing.T) {
 	}
 }
 
-// wantVocabulary is the sixteen keys of ansible's GPG_ERROR_MAP, in the order
-// status.go's three const groups declare them: the eight a verdict can carry,
-// the two that are gpg's second name for one of those, and the six accepted and
-// inert.
-//
-// The spellings are hand-written rather than built from the constants they pin.
-// A table assembled from the constant it checks agrees with whatever value that
-// constant is given, so it could not catch a code renamed on the wire - which
-// is precisely the edit that would turn an operator's existing ignore list into
-// a usage error.
+// wantVocabulary is ansible's sixteen GPG_ERROR_MAP keys in statusCodes' order,
+// hand-written rather than built from the constants to catch a wire rename.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
 var wantVocabulary = []Status{
@@ -291,10 +249,9 @@ var wantVocabulary = []Status{
 	"FAILURE",
 }
 
-// TestStatusVocabularyIsTheFrozenSixteen pins the vocabulary itself. A constant
-// declared but left out of statusCodes is refused by ParseStatusCodes despite
-// being declared, and one left in statusCodes after its constant changed is
-// accepted for a code no verdict can carry; neither shows up anywhere else.
+// TestStatusVocabularyIsTheFrozenSixteen pins statusCodes, the list
+// ParseStatusCodes accepts from: a code missing from it or stale in it would
+// show up nowhere else.
 func TestStatusVocabularyIsTheFrozenSixteen(t *testing.T) {
 	t.Parallel()
 
@@ -303,10 +260,8 @@ func TestStatusVocabularyIsTheFrozenSixteen(t *testing.T) {
 	}
 }
 
-// TestStatusSynonymsAreBidirectional pins the table Ignores consults. The
-// expectation spells both directions of both pairs, so dropping either
-// direction from the production table fails here as well as in the behavioral
-// rows of TestStatusSetIgnores.
+// TestStatusSynonymsAreBidirectional pins the synonym table Ignores consults:
+// both directions of both pairs, each naming a code in the vocabulary.
 func TestStatusSynonymsAreBidirectional(t *testing.T) {
 	t.Parallel()
 
@@ -362,10 +317,8 @@ func TestPolicyEnabled(t *testing.T) {
 	}
 }
 
-// TestNewPolicyAssemblesWithoutExpandingThePath covers the assembly end to end,
-// including the one thing NewPolicy must not do: the path is stored as
-// configured, "~" and all, because expanding it belongs to the config layer and
-// would give this package a second reason to touch the disk.
+// TestNewPolicyAssemblesWithoutExpandingThePath pins the assembly end to end,
+// including that the keyring path is stored as configured, "~" and all.
 func TestNewPolicyAssemblesWithoutExpandingThePath(t *testing.T) {
 	t.Parallel()
 

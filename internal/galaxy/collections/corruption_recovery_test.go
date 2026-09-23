@@ -16,10 +16,8 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
-// newTestInstallDepsWithExtractStore builds installDeps like
-// newTestInstallDeps but also wires a content-addressable extracted store
-// rooted at cfg.CacheDir, for tests that need to observe CAS-side effects of
-// the corruption recovery path.
+// newTestInstallDepsWithExtractStore is newTestInstallDeps plus an extracted
+// store at cfg.CacheDir, for observing the recovery path's effect on it.
 func newTestInstallDepsWithExtractStore(t *testing.T, cfg *config.Config) installDeps {
 	t.Helper()
 	deps := newTestInstallDeps(t, cfg)
@@ -72,12 +70,9 @@ func assertFileSHA256(t *testing.T, path, want string) {
 	}
 }
 
-// TestInstallCollectionCacheHitExtractFailureRefetchesOnce is the
-// load-bearing proof that a cached tarball which is present, sidecar-valid,
-// and passes its (metadata-trusted) sha check, but fails to actually extract
-// - the corruption an on-disk hash check alone cannot catch - is evicted and
-// refetched exactly once, healing both the artifact cache and the
-// content-addressable extracted store.
+// TestInstallCollectionCacheHitExtractFailureRefetchesOnce proves a cached
+// tarball whose recorded sha is trusted but which fails to extract is evicted
+// and refetched once, healing the artifact cache and the extracted store.
 func TestInstallCollectionCacheHitExtractFailureRefetchesOnce(t *testing.T) {
 	t.Parallel()
 	validTarGz := buildMinimalTarGz(t)
@@ -134,17 +129,9 @@ func TestInstallCollectionCacheHitExtractFailureRefetchesOnce(t *testing.T) {
 	assertExists(t, collectionMarkerPath(installPath, col, correctSHA))
 }
 
-// TestInstallCollectionCacheHitExtractFailureRefetchOnceThenFails is the
-// bounded-once proof: when the refetched bytes are exactly as corrupt as the
-// evicted ones (so the download-time sha check still passes, and the failure
-// keeps landing in extraction), the retry loop still gives up after a single
-// refetch instead of looping forever.
-//
-// The corrupt bytes are a well-formed archive whose entry escapes the
-// destination, not arbitrary non-gzip bytes: the failure has to land in
-// extraction for this test to cover the arm it means to, and the download arm
-// this fixture takes refuses shapeless bytes before committing them, which
-// would move the failure earlier and quietly retarget the test.
+// TestInstallCollectionCacheHitExtractFailureRefetchOnceThenFails proves the
+// refetch is bounded to one when the new bytes, a well-formed archive whose
+// entry escapes (shapeless bytes would fail earlier), fail extraction too.
 func TestInstallCollectionCacheHitExtractFailureRefetchOnceThenFails(t *testing.T) {
 	t.Parallel()
 	corruptBytes := buildEscapingTarGz(t)
@@ -197,14 +184,9 @@ func TestInstallCollectionCacheHitExtractFailureRefetchOnceThenFails(t *testing.
 	}
 }
 
-// TestInstallCollectionCacheHitExtractFailureCountsOneHitAndOneMiss pins the
-// artifact-metrics semantic that a bounded evict-and-refetch recovery makes
-// one collection contribute exactly one cache hit AND one cache miss: the
-// run really did serve a cache hit (the corrupt cached tarball) which then
-// turned out bad, and the run really did download a replacement from the
-// origin. Without this test, a future change to prepareWithRecovery could
-// silently drift this accounting (e.g. by double-counting the hit, or by
-// never counting the miss) with nothing catching it.
+// TestInstallCollectionCacheHitExtractFailureCountsOneHitAndOneMiss pins that
+// an evict-and-refetch recovery counts exactly one cache hit, the corrupt
+// cached tarball, and one cache miss, the replacement download.
 func TestInstallCollectionCacheHitExtractFailureCountsOneHitAndOneMiss(t *testing.T) {
 	t.Parallel()
 	validTarGz := buildMinimalTarGz(t)
@@ -224,9 +206,8 @@ func TestInstallCollectionCacheHitExtractFailureCountsOneHitAndOneMiss(t *testin
 
 	col := collection{Namespace: "acme", Name: "gizmos", Version: "1.0.0"}
 	artifactPath := filepath.Join(cacheDir, artifactKey(col))
-	// Not a valid gzip stream, despite what the sidecar claims: this is what
-	// makes the cache-hit extraction fail and triggers the evict-and-refetch
-	// recovery path.
+	// Not a valid gzip stream, despite what the sidecar claims: the cache-hit
+	// extraction fails and triggers the evict-and-refetch recovery path.
 	corruptBytes := []byte("not a gzip stream, despite what the sidecar claims")
 	mustWriteFile(t, artifactPath, corruptBytes)
 	sidecarPath := artifactPath + helpers.ArtifactSHASidecarSuffix
@@ -258,11 +239,9 @@ func TestInstallCollectionCacheHitExtractFailureCountsOneHitAndOneMiss(t *testin
 	}
 }
 
-// TestInstallCollectionCacheHitPinMismatchRefetchesOnce covers the pinned
-// (frozen lockfile) variant of corruption recovery: a cached tarball that has
-// drifted away from its lockfile-pinned sha is evicted and refetched exactly
-// once, and the refetched bytes - which do match the pin - install
-// successfully.
+// TestInstallCollectionCacheHitPinMismatchRefetchesOnce proves a cached
+// tarball that drifted from its lockfile pin is evicted and refetched once,
+// and the matching refetched bytes install.
 func TestInstallCollectionCacheHitPinMismatchRefetchesOnce(t *testing.T) {
 	t.Parallel()
 	validTarGz := buildMinimalTarGz(t)

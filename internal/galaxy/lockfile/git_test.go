@@ -26,10 +26,9 @@ func gitEntry() Entry {
 	}
 }
 
-// TestSchemaFollowsTheEntries pins the rule that the schema is a function of
-// the content: a file with a git entry is written as schema 2 and comes back
-// as such, a file whose last git entry was removed goes back to schema 1, and
-// a producer-set schema never overrides either.
+// TestSchemaFollowsTheEntries pins that the schema is a function of content:
+// a git entry makes schema 2, removing the last one returns to schema 1, and
+// a producer-set schema overrides neither.
 func TestSchemaFollowsTheEntries(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

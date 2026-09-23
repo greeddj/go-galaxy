@@ -15,11 +15,9 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/storer"
 )
 
-// Wire constants of the upload-pack exchange this package speaks: the
-// service name the smart-HTTP prefix line and the ssh exec command carry,
-// the agent string the advertisement names, the depth this fake honors and
-// the delta window the pack encoder is run with (go-git's own server uses
-// the same window).
+// Wire constants of the upload-pack exchange: the service name, the agent
+// string, the one depth this fake honors and the pack encoder's delta window,
+// which matches go-git's own server.
 const (
 	uploadPackService = "git-upload-pack"
 	agentValue        = "fakegit"
@@ -28,32 +26,18 @@ const (
 	donePayload       = "done"
 )
 
-// uploadPackReply is the pre-rendered answer to one upload-pack request,
-// split where the transports need it split. header is everything before
-// the packfile - the shallow update when the request carried a depth, then
-// the NAK - or, when the request was refused, the ERR pkt-line that stands
-// in for both. pack is the packfile itself, kept apart so a StallAfterBytes
-// fault counts pack bytes alone. badRequest is non-empty when the request
-// is malformed in a way this fake answers with a protocol-level failure
-// rather than an ERR line (a deepen this fake does not honor): HTTP turns it
-// into a 400, ssh into a stderr line and a non-zero exit. Rendering the
-// whole reply before writing any of it means no encoder goroutine outlives
-// the handler, and a fault that blocks mid-pack blocks with the repository
-// lock already released.
+// uploadPackReply is one upload-pack answer, rendered in full before any write
+// so a blocking fault never holds the repository lock. The pack is kept apart
+// from the header so StallAfterBytes counts pack bytes alone.
 type uploadPackReply struct {
 	badRequest string
 	header     []byte
 	pack       []byte
 }
 
-// advertise writes the reference advertisement for repo with caps to w.
-// withServicePrefix adds the "# service=git-upload-pack" line and the flush
-// that smart HTTP puts in front of the advertisement; ssh has no such
-// prefix. The advertised capabilities are agent, ofs-delta and no-progress,
-// plus shallow and allow-reachable-sha1-in-want when caps asks for them, and
-// symref=HEAD:<branch> when HEAD is symbolic. Neither side-band nor
-// multi_ack nor thin-pack is ever advertised: without side-band the pack
-// follows the NAK raw, which keeps a stall a plain byte count.
+// advertise writes the reference advertisement for repo with caps to w, with
+// the smart-HTTP service prefix when withServicePrefix is set. No side-band is
+// advertised, so the pack follows the NAK raw and a stall is a byte count.
 func advertise(w io.Writer, repo *Repo, caps Capabilities, withServicePrefix bool) error {
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -128,14 +112,9 @@ func addHead(repo *Repo, ar *packp.AdvRefs) error {
 	return nil
 }
 
-// readUploadRequest reads one upload-pack request off r: the upload-request
-// proper (wants, shallows, deepen, flush), then whatever haves follow, up to
-// and including the "done" line, or EOF. It returns the decoded request, or
-// closed=true when the client opened the exchange with a flush - what go-git
-// sends over ssh to end a session after only reading the advertisement.
-// The request is re-encoded into a buffer before decoding because
-// packp.UploadRequest.Decode stops at the flush and the transport needs the
-// body drained to the "done" line regardless.
+// readUploadRequest reads one upload-pack request off r through "done" or
+// EOF, or reports closed on a leading flush, as go-git ends an ssh session.
+// It drains to "done" itself because UploadRequest.Decode stops at the flush.
 func readUploadRequest(r io.Reader) (*packp.UploadRequest, bool, error) {
 	buf, closed, err := drainRequest(r)
 	if err != nil || closed {
@@ -181,21 +160,9 @@ func drainRequest(r io.Reader) (*bytes.Buffer, bool, error) {
 	return &buf, first, nil
 }
 
-// buildReply renders the answer to req against repo with caps, under the
-// repository lock. fault is the matched upload-pack fault, if any; only its
-// ServeCommit field is read here, the transports enact the rest.
-//
-// Wants are checked against the advertised tips (every reference hash and
-// HEAD, but not a peeled "^{}" hash: git marks only the ref hashes as its
-// own and answers a want for a peeled commit with "not our ref"); a want that
-// is none of those is refused with an ERR line unless caps.AllowReachableSHA1
-// is set and the want is reachable from a tip (membership of closure over the
-// tips), which is how a real server treats allow-reachable-sha1-in-want. A depth is honored only as
-// DepthCommits(1) for a single want, and only when caps.Shallow is set: a
-// deepen against a server that did not advertise shallow, a deeper depth, or
-// several wants with a depth are a badRequest, so that a client deciding its
-// depth from anything but the advertisement fails loudly rather than being
-// quietly served a full pack.
+// buildReply renders the answer to req under the repository lock, reading
+// only fault.ServeCommit. As in git, a want must be an advertised tip (not a
+// peeled hash) or, under AllowReachableSHA1, reachable from one.
 func buildReply(repo *Repo, caps Capabilities, req *packp.UploadRequest, fault Fault) (uploadPackReply, error) {
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
@@ -233,11 +200,9 @@ func refusalReply(refused plumbing.Hash) (uploadPackReply, error) {
 	return uploadPackReply{header: hdr.Bytes()}, nil
 }
 
-// selectObjects decides what the pack holds for wants at depth, returning
-// the objects, the shallow commits and a badRequest reason: the full closure
-// when there is no depth, the single-commit shape of shallowObjects for the
-// one depth this fake honors, or a reason for any other depth. The caller
-// holds repo.mu.
+// selectObjects decides what the pack holds for wants at depth: the full
+// closure, the shallowObjects shape for the honored depth, or a badRequest
+// reason for any other. The caller holds repo.mu.
 func selectObjects(repo *Repo, caps Capabilities, depth packp.Depth, wants []plumbing.Hash) (
 	[]plumbing.Hash, []plumbing.Hash, string, error,
 ) {
@@ -277,10 +242,9 @@ func renderReply(repo *Repo, shallow bool, shallows, objs []plumbing.Hash) (uplo
 	return uploadPackReply{header: hdr.Bytes(), pack: pack.Bytes()}, nil
 }
 
-// advertisedTips collects every hash git's upload-pack would accept as a
-// want without allow-*-sha1-in-want: reference hashes and HEAD. A peeled tag
-// target is advertised but is not a tip, exactly as on a real server. The
-// caller holds repo.mu.
+// advertisedTips collects the hashes git accepts as a want without
+// allow-*-sha1-in-want: reference hashes and HEAD, never a peeled tag target.
+// The caller holds repo.mu.
 func advertisedTips(repo *Repo) ([]plumbing.Hash, error) {
 	ar := packp.NewAdvRefs()
 	if err := addReferences(repo, ar); err != nil {
@@ -299,11 +263,9 @@ func advertisedTips(repo *Repo) ([]plumbing.Hash, error) {
 	return tips, nil
 }
 
-// refusedWant returns the first want that is not a tip and - when
-// caps.AllowReachableSHA1 is set - not reachable from one either, or
-// plumbing.ZeroHash when every want is acceptable. Reachability is the
-// membership of closure over all tips, computed only when a non-tip want is
-// actually present. The caller holds repo.mu.
+// refusedWant returns the first want that is neither a tip nor, under
+// AllowReachableSHA1, reachable from one, else plumbing.ZeroHash. The caller
+// holds repo.mu.
 func refusedWant(repo *Repo, caps Capabilities, wants, tips []plumbing.Hash) (plumbing.Hash, error) {
 	var reachable []plumbing.Hash
 	reachableKnown := false
@@ -329,11 +291,9 @@ func refusedWant(repo *Repo, caps Capabilities, wants, tips []plumbing.Hash) (pl
 	return plumbing.ZeroHash, nil
 }
 
-// shallowObjects lists what a depth-1 fetch of want ships: the tag object
-// when want names one, the commit it peels to, and that commit's tree
-// closure - nothing from its parents. The returned shallows carry that one
-// commit, which is what the shallow update then reports. The caller holds
-// repo.mu.
+// shallowObjects lists what a depth-1 fetch of want ships: the tag object if
+// any, the commit and its tree closure, no parents; that commit is the one
+// shallow. The caller holds repo.mu.
 func shallowObjects(repo *Repo, want plumbing.Hash) ([]plumbing.Hash, []plumbing.Hash, error) {
 	var objs []plumbing.Hash
 	commitHash := want
@@ -354,15 +314,9 @@ func shallowObjects(repo *Repo, want plumbing.Hash) ([]plumbing.Hash, []plumbing
 	return objs, []plumbing.Hash{commitHash}, nil
 }
 
-// closure lists every object reachable from roots: commits with their
-// parents and trees, tag objects with their targets, trees with their
-// entries, and blobs. It is this package's own walk rather than
-// revlist.Objects because go-git's tree walker refuses an entry named ".",
-// "..", ".git" or carrying a control character - the very entries
-// RawTreeCommit exists to ship, so a server that walked through go-git could
-// never serve them. A submodule entry is skipped, as git skips it: the commit
-// it names lives in another repository. Each object is listed once, in
-// discovery order.
+// closure lists every object reachable from roots once, skipping submodules as
+// git does. It avoids revlist.Objects, whose tree walker refuses the hostile
+// entry names RawTreeCommit exists to ship.
 func closure(st storer.EncodedObjectStorer, roots []plumbing.Hash) ([]plumbing.Hash, error) {
 	seen := make(map[plumbing.Hash]bool)
 	var out []plumbing.Hash

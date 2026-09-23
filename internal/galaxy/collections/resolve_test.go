@@ -43,10 +43,8 @@ func TestBuildInstallLevelsCycle(t *testing.T) {
 	}
 }
 
-// unsortedLevelGraph is a single-level, six-node graph (no node depends on
-// any other) whose keys are deliberately unlike any plausible insertion or
-// map-iteration order, so TestInstallLevelsAreSortedWithinLevel below cannot
-// pass by accidentally already being sorted.
+// unsortedLevelGraph is a single-level six-node graph whose keys are unlike
+// any plausible insertion order, so a sort check cannot pass by accident.
 func unsortedLevelGraph() map[string][]string {
 	return map[string][]string{
 		"z.z@1.0.0": nil,
@@ -58,22 +56,9 @@ func unsortedLevelGraph() map[string][]string {
 	}
 }
 
-// TestInstallLevelsAreSortedWithinLevel proves buildInstallLevels sorts each
-// level by key rather than leaving it in Go's randomized map-iteration order.
-// That sort is what lets runInstallLevel's dispatch order match the prefetch
-// queue order sortTasksByLevel builds from the same (level, key) pair (see
-// topologicalLevels' own doc comment). The call runs 20 times because map
-// iteration order is randomized per run: a single iteration passing against
-// an unsorted implementation would not reliably catch a regression.
-//
-// KILLING MUTATION, run for real: deleting the "slices.Sort(current)" line
-// from topologicalLevels fails this test on the very first iteration, and on
-// the element loop rather than the length check - the mutation permutes the
-// level, it never changes what is in it. One run's output: "iteration 0:
-// levels[0] = [a.a@1.0.0 m.m@1.0.0 b.b@1.0.0 y.y@1.0.0 c.c@1.0.0 z.z@1.0.0],
-// want [a.a@1.0.0 b.b@1.0.0 c.c@1.0.0 m.m@1.0.0 y.y@1.0.0 z.z@1.0.0]". Only
-// one run's, because the permutation is map-iteration order, randomized per
-// run; which assertion fires is not, for the reason above.
+// TestInstallLevelsAreSortedWithinLevel pins that buildInstallLevels sorts each
+// level by key rather than leaving map-iteration order; it repeats 20 times
+// because that order is randomized per run.
 func TestInstallLevelsAreSortedWithinLevel(t *testing.T) {
 	t.Parallel()
 	graph := unsortedLevelGraph()
@@ -101,10 +86,8 @@ func TestInstallLevelsAreSortedWithinLevel(t *testing.T) {
 }
 
 // TestInstallLevelsMembershipUnchangedBySort is the positive control for
-// TestInstallLevelsAreSortedWithinLevel above: the same fixture graph still
-// produces exactly one level whose key set is unchanged, which is what
-// proves the sort assertion above catches ORDER rather than the leveling
-// being broken outright.
+// TestInstallLevelsAreSortedWithinLevel: the fixture still yields one level of
+// the same keys, so that test catches order rather than broken leveling.
 func TestInstallLevelsMembershipUnchangedBySort(t *testing.T) {
 	t.Parallel()
 	graph := unsortedLevelGraph()
@@ -118,13 +101,9 @@ func TestInstallLevelsMembershipUnchangedBySort(t *testing.T) {
 	assertLevel(t, levels[0], []string{"z.z@1.0.0", "a.a@1.0.0", "m.m@1.0.0", "b.b@1.0.0", "y.y@1.0.0", "c.c@1.0.0"})
 }
 
-// TestParseDependenciesMalformedKey covers the shapes a Galaxy server can put
-// in a dependency map that this program must not carry any further. The
-// forged-line row is the reason the check is on the alphabet and not just on
-// the split: that key has exactly one dot and two non-empty halves, so it used
-// to pass, and the solver then printed it - on an ordinary run, with no flags,
-// through "probing highest version of %s" - which is a line of the attacker's
-// choosing on the operator's stderr.
+// TestParseDependenciesMalformedKey pins that a malformed server-supplied
+// dependency key is refused; the forged-line case passes the split but not the
+// alphabet, and would otherwise reach the operator's stderr.
 func TestParseDependenciesMalformedKey(t *testing.T) {
 	t.Parallel()
 	for _, tc := range malformedDependencyKeyCases() {
@@ -183,11 +162,9 @@ func assertLevel(t *testing.T, got []string, want []string) {
 	}
 }
 
-// TestRequirementsSignatureModePartition proves the requirements signature
-// partitions --no-deps snapshots from deps-following ones, and stays
-// order-independent within a single mode. This is what makes a --no-deps
-// resolve unable to satisfy (or be satisfied by) a deps-following resolve's
-// RequirementsHash check.
+// TestRequirementsSignatureModePartition pins that --no-deps and deps-following
+// signatures differ, so neither mode's snapshot satisfies the other, and that
+// each is independent of root order.
 func TestRequirementsSignatureModePartition(t *testing.T) {
 	t.Parallel()
 	rootsForward := []collection{
@@ -225,11 +202,8 @@ func TestRequirementsSignatureModePartition(t *testing.T) {
 	}
 }
 
-// TestRefreshBypassesSnapshot pins refreshBypassesSnapshot's own accept/veto
-// table, including the nil-cfg case no e2e fixture ever reaches (every e2e
-// test builds a real *config.Config), and the precedence its own doc comment
-// states: --offline outranks --refresh, matching
-// cache.PolicyForConstraint's identical IsOffline()-before-IsRefresh() order.
+// TestRefreshBypassesSnapshot pins refreshBypassesSnapshot's veto table,
+// including a nil cfg and --offline outranking --refresh.
 func TestRefreshBypassesSnapshot(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

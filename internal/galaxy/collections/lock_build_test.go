@@ -1,9 +1,8 @@
 package collections
 
-// This file proves buildLockfile's own guard against a non-canonical
-// meta.Artifact.Sha256: lock is the command that manufactures a pin, so
-// rejecting a non-canonical value here means a poisoned or lying server can
-// never get its bad digest committed to a lockfile in the first place.
+// This file pins buildLockfile's guards: lock manufactures the pin, so a
+// non-canonical digest from a lying server or a non-exact version from a
+// poisoned snapshot must never reach a committed lockfile.
 
 import (
 	"bytes"
@@ -27,14 +26,9 @@ import (
 // acme.widgets fixture every test in this file shares.
 const testWidgetsFQDN = "acme.widgets"
 
-// sha256RewritingTransport wraps a real http.RoundTripper (fakegalaxy's own)
-// and rewrites the "artifact.sha256" field of every version-detail response
-// (matched by URL path, since fakegalaxy's version-detail route is the only
-// one shaped ".../versions/<version>/") to replacement, before the response
-// body ever reaches loadCollectionMetadata. This is the only way to drive a
-// non-canonical meta.Artifact.Sha256 through buildLockfile without teaching
-// the shared fakegalaxy test double a body-tampering hook it has no other
-// use for.
+// sha256RewritingTransport rewrites artifact.sha256 to replacement in every
+// OK response whose path contains pathMarker, so a bad digest reaches
+// loadCollectionMetadata without giving fakegalaxy a body-tampering hook.
 type sha256RewritingTransport struct {
 	base        http.RoundTripper
 	pathMarker  string
@@ -64,19 +58,15 @@ func (t *sha256RewritingTransport) RoundTrip(req *http.Request) (*http.Response,
 	return resp, nil
 }
 
-// newBuildLockfileFixture registers acme.widgets@1.0.0 on a fresh fakegalaxy
-// server and returns a collectionDeps whose HTTP client rewrites that
-// version's served artifact.sha256 to replacement, plus the resolved/graph
-// maps buildLockfile needs.
+// newBuildLockfileFixture serves acme.widgets@1.0.0 from fakegalaxy through a
+// client that rewrites its artifact.sha256 to replacement, and returns the
+// deps, resolved and graph arguments buildLockfile takes.
 func newBuildLockfileFixture(t *testing.T, replacement string) (collectionDeps, map[string]collection, map[string][]string) {
 	t.Helper()
 	srv := fakegalaxy.New(t)
 	srv.AddVersion("acme", "widgets", testVersion100, nil)
 
-	// fakegalaxy's own Client() carries a nil Transport for a plain (non-TLS)
-	// server - httptest.Server falls back to http.DefaultTransport
-	// internally, so this wrapper does the same explicitly, since it needs a
-	// concrete, non-nil RoundTripper to delegate to.
+	// fakegalaxy serves plain http, so http.DefaultTransport reaches it.
 	client := &http.Client{
 		Transport: &sha256RewritingTransport{
 			base:        http.DefaultTransport,
@@ -94,11 +84,9 @@ func newBuildLockfileFixture(t *testing.T, replacement string) (collectionDeps, 
 	return newCollectionDeps(cfg, runtime, st), resolved, graph
 }
 
-// TestBuildLockfileRejectsNonCanonicalDigest proves a non-canonical,
-// non-empty meta.Artifact.Sha256 (here, uppercase hex - a shape a real
-// server has actually served, per the S3 x-amz-meta-sha256 finding) fails
-// buildLockfile with helpers.ErrMalformedArtifactSHA256 and produces no
-// lockfile at all, rather than silently committing the bad digest.
+// TestBuildLockfileRejectsNonCanonicalDigest pins that an uppercase-hex
+// server digest fails buildLockfile with helpers.ErrMalformedArtifactSHA256
+// and yields no lockfile, rather than committing the bad digest.
 func TestBuildLockfileRejectsNonCanonicalDigest(t *testing.T) {
 	t.Parallel()
 	const nonCanonical = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -113,34 +101,9 @@ func TestBuildLockfileRejectsNonCanonicalDigest(t *testing.T) {
 	}
 }
 
-// TestBuildLockfileRejectsNonExactVersion proves buildLockfile's version
-// guard: a resolved collection whose Version is not helpers.IsExactVersion -
-// "*" here, the shape a poisoned persisted snapshot's ResolvedEntry can carry
-// (buildResolvedSnapshot only rejects an empty Version, deliberately not this
-// shape - see its own doc comment) - fails closed with
-// helpers.ErrInvalidCollectionVersion and produces no lockfile at all, rather
-// than committing a pin no --frozen install could ever consume as a real
-// version. TestBuildLockfileAcceptsEmptyDigest below is this test's positive
-// control on the same buildLockfile call: it already proves an exact version
-// ("1.0.0") produces a lockfile.
-//
-// srv.Total() == 0 additionally pins the guard's position: it runs before
-// loadCollectionMetadata, not after, so a poisoned entry buys zero metadata
-// round trips - each one otherwise spent under the backend's whole-run
-// exclusive lock - before this fails closed, rather than paying for one
-// request per poisoned collection first and only then rejecting it.
-//
-// Mutation (swapping the two blocks, so loadCollectionMetadata runs before
-// the version check) confirmed to fail this test with:
-//
-//	lock_build_test.go:163: srv.Total() = 2, want 0 (the version guard must
-//	reject before any metadata fetch)
-//	--- FAIL: TestBuildLockfileRejectsNonExactVersion (0.00s)
-//
-// which does not fail the sentinel/nil-lockfile checks above it: with "*"
-// unresolved, loadCollectionMetadata treats it as unpinned and fetches the
-// server's highest version (1.0.0 here) successfully, so buildLockfile
-// still reaches and returns the same rejection - just two requests later.
+// TestBuildLockfileRejectsNonExactVersion pins that a resolved Version "*", as
+// a poisoned snapshot entry can carry, fails with ErrInvalidCollectionVersion
+// before any metadata fetch (srv.Total() == 0) and yields no lockfile.
 func TestBuildLockfileRejectsNonExactVersion(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -164,10 +127,9 @@ func TestBuildLockfileRejectsNonExactVersion(t *testing.T) {
 	}
 }
 
-// TestBuildLockfileAcceptsEmptyDigest proves an empty meta.Artifact.Sha256 -
-// a server that simply does not publish digests - still produces a lockfile
-// entry with an empty pin and no error: verifyPinnedSHA treats an empty pin
-// as no pin at all, and that contract must survive this guard.
+// TestBuildLockfileAcceptsEmptyDigest pins that an empty digest, from a server
+// that publishes none, yields an entry with an empty pin and no error, since
+// verifyPinnedSHA reads an empty pin as no pin at all.
 func TestBuildLockfileAcceptsEmptyDigest(t *testing.T) {
 	t.Parallel()
 	deps, resolved, graph := newBuildLockfileFixture(t, "")

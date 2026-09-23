@@ -1,12 +1,8 @@
 package collections_test
 
-// This file (continued from e2e_test.go) closes the end-to-end coverage
-// gaps left after the production resolver switched to the version solver:
-// a plain install whose resolved version is checked directly against the
-// solver's own independent answer, an offline install whose only possible
-// resolution genuinely conflicts and must carry the offline note, and a
-// fully unsatisfiable requirement set surfacing the solver's own proof all
-// the way out of collections.Start.
+// End-to-end coverage of the version solver through collections.Start: the
+// installed version is the solver's own answer, and a conflict, online or
+// offline, surfaces the solver's proof.
 
 import (
 	"context"
@@ -27,14 +23,11 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// e2eVersion200 is this file's dominant test fixture version literal,
-// pulled out as a const purely to satisfy goconst.
+// e2eVersion200 is a fixture version literal, a const to satisfy goconst.
 const e2eVersion200 = "2.0.0"
 
-// writeRequirementsWithConstraint writes a requirements.yml at path
-// requiring name at the given constraint - the single-collection variant of
-// writeRequirements with a caller-chosen constraint instead of the fixed
-// "*".
+// writeRequirementsWithConstraint writes a requirements.yml at path requiring
+// the one collection name at constraint.
 func writeRequirementsWithConstraint(t *testing.T, path, name, constraint string) {
 	t.Helper()
 	content := "collections:\n  - name: " + name + "\n    version: \"" + constraint + "\"\n"
@@ -43,13 +36,9 @@ func writeRequirementsWithConstraint(t *testing.T, path, name, constraint string
 	}
 }
 
-// TestPlainInstallResolvesThroughSolverVersionSelection asserts a plain
-// install with a real version choice (acme.lib registers three versions,
-// all satisfying acme.app's ">=1.0.0" dependency) installs the highest one,
-// and cross-checks the installed version directly against an independent
-// solver.Solve call driven through the same MetadataProvider the pipeline
-// itself uses - proving the pipeline's resolution is exactly the solver's
-// own answer, not some other selection logic.
+// TestPlainInstallResolvesThroughSolverVersionSelection pins that install
+// picks the highest satisfying dependency version, and that it is exactly what
+// an independent solver.Solve over MetadataProvider answers.
 func TestPlainInstallResolvesThroughSolverVersionSelection(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -80,13 +69,9 @@ func TestPlainInstallResolvesThroughSolverVersionSelection(t *testing.T) {
 	}
 }
 
-// TestConflictingRequirementsSurfaceSolverProof asserts a fully unsatisfiable
-// requirement set (two roots depending on the same package through
-// mutually-exclusive version ranges) makes collections.Start fail with the
-// solver's own *solver.ConflictError, classifiable as
-// helpers.ErrNoVersionSatisfiesConstraints and exitcode.ExitResolution, and
-// carrying a proof ending in "version solving failed" - before anything is
-// installed.
+// TestConflictingRequirementsSurfaceSolverProof pins that disjoint dependency
+// ranges fail Start with the solver's *solver.ConflictError and its proof,
+// exit code ExitResolution, before anything is installed.
 func TestConflictingRequirementsSurfaceSolverProof(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -132,11 +117,9 @@ func TestConflictingRequirementsSurfaceSolverProof(t *testing.T) {
 	assertPathAbsent(t, installPathFor(downloadPath, "y"))
 }
 
-// TestOfflineConflictCarriesTheOfflineNote asserts that an offline install
-// whose only possible resolution is genuinely unsatisfiable, using nothing
-// but already-cached metadata, fails with a *solver.ConflictError annotated
-// with the offline note, while staying classifiable as
-// helpers.ErrNoVersionSatisfiesConstraints and exitcode.ExitResolution.
+// TestOfflineConflictCarriesTheOfflineNote pins that an offline conflict over
+// cached metadata is a *solver.ConflictError carrying the offline note and
+// still classified as ExitResolution.
 func TestOfflineConflictCarriesTheOfflineNote(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -158,10 +141,8 @@ func TestOfflineConflictCarriesTheOfflineNote(t *testing.T) {
 	}
 	runtime := infra.New(noopPrinter{}, s.Client())
 
-	// Warm the cache online: acme.thing's highest_version (1.5.0) does not
-	// satisfy "!=1.5.0", forcing a full versions-list fetch (not just the
-	// highest_version probe) that caches every registered version's own
-	// existence before the requirement changes below.
+	// "!=1.5.0" excludes highest_version, forcing the full versions list into
+	// the cache for the offline run below.
 	writeRequirementsWithConstraint(t, reqPath, "acme.thing", "!=1.5.0")
 	if err := collections.Start(context.Background(), cfg, runtime); err != nil {
 		t.Fatalf("first Start (online, populate the cache): %v", err)

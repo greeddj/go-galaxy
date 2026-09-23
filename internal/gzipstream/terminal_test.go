@@ -8,22 +8,14 @@ import (
 	"time"
 )
 
-// terminalReadDeadline is how long a Read past a stream's own ending is given
-// to come back before this file calls it a hang. It is generous rather than
-// tight, and that costs nothing: what it separates is "returns" from "never
-// returns", the failure it exists to catch being a channel send with no select
-// and no context, so a Read that returns at all returns in microseconds.
+// terminalReadDeadline is how long a Read past a stream's ending may take
+// before it counts as a hang; generous costs nothing, since a Read that
+// returns at all returns in microseconds.
 const terminalReadDeadline = 3 * time.Second
 
-// readPastTheEnd calls Read on r from a goroutine and reports its outcome,
-// failing the test rather than hanging when the call does not come back within
-// terminalReadDeadline.
-//
-// The blocked goroutine is deliberately leaked on that failure, and the caller
-// deliberately closes r only after this returns: the send it parks on is into
-// pgzip's own block pool, which nothing reachable from here drains, and
-// closing the decompressor underneath a live Read would report a data race in
-// place of the hang.
+// readPastTheEnd calls Read on r from a goroutine and fails the test if it
+// does not return within terminalReadDeadline. A parked goroutine is leaked,
+// and the caller closes r only afterwards: closing under a live Read races.
 func readPastTheEnd(t *testing.T, r *Reader) error {
 	t.Helper()
 
@@ -51,10 +43,9 @@ type terminalCase struct {
 	refused bool
 }
 
-// terminalCases builds that table. The three accepted rows are the three
-// shapes a stream can reach its ending in - one member, one member far larger
-// than pgzip's own block, and several members - and the two refused rows are
-// the other two terminal returns Read has.
+// terminalCases builds that table: three accepted endings (one small member,
+// one past pgzip's block pool, several members) and Read's two other terminal
+// returns, the empty-member refusal and trailing garbage.
 func terminalCases(t *testing.T) []terminalCase {
 	t.Helper()
 
@@ -74,29 +65,9 @@ func terminalCases(t *testing.T) []terminalCase {
 	}
 }
 
-// TestReaderRepeatsItsTerminalVerdict reads each stream to its own ending and
-// then reads once more.
-//
-// Raw pgzip with multistream left on answers that second read idempotently -
-// measured on go1.26.6, darwin/arm64 (Apple M3 Pro), (0, io.EOF) twice over
-// against the single-member row's fixture - and this package's member loop
-// did not. Read's own doc comment holds the mechanism, and it is two rather
-// than one across this table: four rows cross a boundary Reset, while the
-// empty-member row reaches its verdict with none having run. Both leave a
-// later read parked on a send into a full block pool, with no select and no
-// context to break it; on the S3 path, read under the distributed lock, that
-// leaves the holder's heartbeat renewing a lock this run never releases. What
-// the stickiness keeps out is pgzip's own hang in the mode this loop uses.
-//
-// It is not a claim any caller needs: the readers in this module today all
-// stop at the first error. It is a claim about this type, made because the
-// property it replaced was pgzip's own and the replacement dropped it.
-//
-// Killing mutation, run: deleting Read's own `if r.err != nil` guard - the
-// three assignments below it left in place, so the field is written and never
-// read - fails every row of this table, each of them with
-//
-//	terminal_test.go:106: Read past the stream's ending did not return within 3s, want its verdict repeated
+// TestReaderRepeatsItsTerminalVerdict pins that a Read past a stream's ending,
+// accepted or refused, repeats the first verdict instead of parking forever on
+// pgzip's full block pool.
 func TestReaderRepeatsItsTerminalVerdict(t *testing.T) {
 	t.Parallel()
 
@@ -108,15 +79,9 @@ func TestReaderRepeatsItsTerminalVerdict(t *testing.T) {
 	}
 }
 
-// assertTerminalVerdictRepeats drains one row's stream and then reads once
-// more, checking that the second read repeats the first outcome rather than
-// blocking. It is a function of its own only so the loop above stays inside
-// the length budget the linter enforces.
-//
-// What the drain asserts is deliberately coarse - a refusal row refused, an
-// accepted row did not - because TestReaderMemberRules already pins which
-// verdict each of these fixtures produces. What this one adds is that the
-// verdict survives being asked for twice.
+// assertTerminalVerdictRepeats drains one row's stream, checks only that it
+// was refused or accepted as declared (TestReaderMemberRules pins which), then
+// that one more Read repeats that verdict rather than blocking.
 func assertTerminalVerdictRepeats(t *testing.T, tt terminalCase) {
 	t.Helper()
 

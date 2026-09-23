@@ -2,12 +2,9 @@ package solver
 
 import "testing"
 
-// TestEarliestSatisfierJointSatisfaction pins the "partial satisfier" case:
-// a term satisfied only by the combination of two assignments of the same
-// package, neither of which suffices alone. This mirrors the reference
-// spec's "Conflict Resolution With a Partial Satisfier" example's core
-// mechanic (a term like foo>=1.0.0,<2.0.0 needing both a lower-bound and an
-// upper-bound derivation).
+// TestEarliestSatisfierJointSatisfaction pins the partial-satisfier case: a
+// term satisfied only by two assignments of one package together, where the
+// later is the satisfier and the earlier its previous satisfier.
 func TestEarliestSatisfierJointSatisfaction(t *testing.T) {
 	t.Parallel()
 	s := newTestState(newFakeProvider())
@@ -17,11 +14,8 @@ func TestEarliestSatisfierJointSatisfaction(t *testing.T) {
 	lower := s.ps.derive(term{Package: "foo", Set: mustSet(t, ">=1.0.0"), Positive: true}, dummyIdx)
 	upper := s.ps.derive(term{Package: "foo", Set: mustSet(t, "<2.0.0"), Positive: true}, dummyIdx)
 
-	// Neither assignment alone entails "foo ^1.0.0": the lower bound alone
-	// still admits 2.0.0 and above, the upper bound alone still admits
-	// versions below 1.0.0. Their signed conjunction is exactly
-	// [1.0.0, 2.0.0), which does entail it - so the satisfier is the later
-	// of the two jointly-necessary assignments.
+	// Each bound alone still admits versions outside ^1.0.0; their signed
+	// conjunction [1.0.0, 2.0.0) entails it, so the later one is the satisfier.
 	inc := &incompatibility{Terms: []term{{Package: "foo", Set: mustSet(t, "^1.0.0"), Positive: true}}}
 
 	satisfier, satisfiedTerm := s.earliestSatisfier(inc)
@@ -93,17 +87,13 @@ func TestResolveConflictBackjumpsWhenSatisfierIsDecision(t *testing.T) {
 	}
 }
 
-// TestResolveConflictMergeLearnsNewIncompatibility pins that a genuine merge
-// (satisfier is a derivation, same level as its previous satisfier) adds a
-// new, distinct incompatibility to the store once the loop finally
-// backjumps (incChanged == true), while a conflict resolved without ever
-// merging (immediate backjump) never grows the store at all.
+// TestResolveConflictMergeLearnsNewIncompatibility pins that a conflict
+// needing a merge step before backjumping still reaches the right answer:
+// the learned incompatibility rules out foo 2.0.0.
 func TestResolveConflictMergeLearnsNewIncompatibility(t *testing.T) {
 	t.Parallel()
-	// root depends on foo >=1.0.0; foo 2.0.0 depends on bar ^1.0.0; foo 1.0.0
-	// has no dependencies; bar 1.0.0 depends on foo ^1.0.0. This is the
-	// "Performing Conflict Resolution" fixture's own shape, which is known to
-	// exercise exactly one merge step before backjumping to level 0.
+	// The "Performing Conflict Resolution" fixture: exactly one merge step
+	// before backjumping to level 0.
 	p := conflictResolutionProvider()
 	result, err := Solve(t.Context(), []Requirement{{Package: "foo", Constraint: ">=1.0.0"}}, p)
 	if err != nil {
@@ -114,11 +104,9 @@ func TestResolveConflictMergeLearnsNewIncompatibility(t *testing.T) {
 	}
 }
 
-// TestResolveConflictSkipsStoreAddWhenUnchanged pins the incChanged == false
-// path precisely: resolving a conflict via an immediate backjump (no merge
-// iteration ever ran) must return the exact same *incompatibility pointer
-// that was passed in, never a newly-allocated one, and must never insert a
-// new entry into the store.
+// TestResolveConflictSkipsStoreAddWhenUnchanged pins that an immediate
+// backjump returns the input incompatibility pointer unchanged and adds
+// nothing to the store.
 func TestResolveConflictSkipsStoreAddWhenUnchanged(t *testing.T) {
 	t.Parallel()
 	s := newTestState(newFakeProvider().withVersions("foo", "1.0.0"))

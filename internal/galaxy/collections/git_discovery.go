@@ -14,12 +14,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// gitPin is what discovery learned about one collection a git requirement
-// carries, in the shape the solver and the install phase consume: the pinned
-// locator, the ref the requirements file asked for, the exact version
-// galaxy.yml declares, its validated dependency map, and - under --no-cache
-// only - the artifact discovery built, handed to the install phase so the
-// repository is not fetched a second time.
+// gitPin is what discovery learned about one git collection, in the shape the
+// solver and install phase consume: locator, requested ref, exact version,
+// validated deps and, under --no-cache only, the build for the install phase.
 type gitPin struct {
 	prebuilt *downloadResult
 	deps     map[string]string
@@ -28,12 +25,9 @@ type gitPin struct {
 	version  string
 }
 
-// gitDiscoveryMemo is the run-wide table of discovered git collections, keyed
-// by fqdn. It is created once per run (initInstall) and shared by the resolve,
-// prefetch and install phases, which is what lets the nested incremental
-// resolve see roots the top-level call already expanded, the solver answer
-// for a git fqdn without a remote, and the install phase pick up a --no-cache
-// build.
+// gitDiscoveryMemo is the run-wide table of discovered git collections by
+// fqdn, created once per run and shared by the resolve, prefetch and install
+// phases, so the solver answers a git fqdn without contacting the remote.
 type gitDiscoveryMemo struct {
 	pins map[string]gitPin
 	mu   sync.Mutex
@@ -102,32 +96,8 @@ func (m *gitDiscoveryMemo) cleanup() {
 }
 
 // expandGitRoots replaces every unpinned git root with the collections its
-// repository holds at the commit its ref resolves to, leaving every other
-// root untouched and in place. It is the first thing a resolve does, and the
-// only place a git remote is contacted during resolution.
-//
-// Per git root, in order: the recorded pin for (url, ref, subdir) is replayed
-// when the cache policy allows a read (a commit ref is always exact and
-// always replayable; a branch or tag is replayed unless --refresh asks
-// otherwise, and the policy's TTL is deliberately ignored - a pin is keyed by
-// the git line itself, so editing its url, ref or subdir is a new key, and
-// it is invalidated by --refresh and --clear-cache, never by the clock or by
-// an edit elsewhere in the requirements file); a miss under --offline is
-// helpers.ErrOfflineMode; a --refresh of an
-// existing branch or tag pin advertises first and keeps the pin when the
-// commit has not moved and every artifact is still cached; otherwise the
-// repository is acquired, its collections built, each artifact committed to
-// the artifact store (or kept as a temp file under --no-cache for the install
-// phase, or discarded under --dry-run, which fetches to learn identities and
-// writes nothing), and the pin recorded when the policy allows a write.
-//
-// Roots are processed on the download-worker pool and merged in input order,
-// so the expanded list is deterministic. A fqdn two roots both produce - two
-// repositories, a repository and a Galaxy root, or a repository and a url
-// root - is helpers.ErrDuplicateCollectionRequirement, the same refusal
-// prepareRoots makes for two Galaxy roots; the check runs in
-// expandSourceRoots, once the url expansion has given every root an
-// identity too.
+// repository holds at the resolved commit, on the download-worker pool and in
+// input order. It is the only place resolution contacts a git remote.
 func expandGitRoots(ctx context.Context, deps collectionDeps, roots []collection) ([]collection, error) {
 	if !anyUnpinnedGit(roots) {
 		return roots, nil
@@ -258,9 +228,8 @@ func expandGitRoot(ctx context.Context, deps collectionDeps, root collection) ([
 }
 
 // refreshGitPin is the cheap half of --refresh for a branch or tag pin: one
-// advertisement, and if the commit is unchanged and every artifact the pin
-// names is still cached, the pin stands. It returns ok=false when there is
-// no pin to refresh or the commit moved, in which case the caller acquires.
+// advertisement keeps the pin if the commit is unchanged and every artifact is
+// cached, else acquires the new tip. ok=false means there was no pin to refresh.
 func refreshGitPin(ctx context.Context, deps collectionDeps, req gitRootRequest, policy cacheManager.Policy) ([]collection, bool, error) {
 	if deps.cfg == nil || !deps.cfg.Refresh || req.ref.IsCommit() {
 		return nil, false, nil
@@ -319,10 +288,9 @@ func replayGitPin(deps collectionDeps, req gitRootRequest, pin store.GitPinEntry
 	return recordSelected(deps, req, expanded, pins)
 }
 
-// acquireGitRoot fetches the repository, builds its collections, commits or
-// keeps the artifacts, records the pin, and returns the expanded roots.
-// commit, when non-empty, is the tip an advertisement just resolved (the
-// --refresh path), so the acquisition fetches exactly that commit.
+// acquireGitRoot fetches the repository, builds and stores its collections,
+// records the pin and returns the expanded roots. A non-empty commit is the
+// tip a --refresh advertisement just resolved, and exactly that is fetched.
 func acquireGitRoot(
 	ctx context.Context, deps collectionDeps, req gitRootRequest, policy cacheManager.Policy, commit string,
 ) ([]collection, error) {
@@ -381,12 +349,9 @@ func acquireGitRoot(
 	return recordSelected(deps, req, expanded, pins)
 }
 
-// recordSelected narrows the expansion to what the root asked for and puts
-// exactly those collections into the memo. The narrowing has to come first:
-// the memo is what the solver answers git fqdns from, so a sibling collection
-// the requirements file did not name must not become a pin that would own
-// its fqdn against a Galaxy root or dependency. A sibling's --no-cache build,
-// which nothing will take, is removed here.
+// recordSelected narrows the expansion to what the root named before putting it
+// in the memo, since a memo entry owns its fqdn in the solver against any Galaxy
+// root or dependency. Builds of unselected siblings are removed here.
 func recordSelected(deps collectionDeps, req gitRootRequest, expanded []collection, pins map[string]gitPin) ([]collection, error) {
 	selected, err := selectExplicit(req, expanded)
 	if err != nil {
@@ -410,10 +375,9 @@ func recordSelected(deps collectionDeps, req gitRootRequest, expanded []collecti
 	return selected, nil
 }
 
-// gitTempFile adapts the artifact store's TempFile to the client's callback,
-// under the download temp prefix so a file a killed run leaves behind is
-// swept exactly as a download temp is. With no artifact store at hand the
-// run's temp directory stands in.
+// gitTempFile adapts the artifact store's TempFile to the client's callback
+// under the download temp prefix, so a killed run's leftover is swept like a
+// download temp. With no store, the run's temp directory stands in.
 func gitTempFile(deps collectionDeps) gitsource.TempFileFunc {
 	if deps.gitStore != nil {
 		return func(ctx context.Context) (*os.File, func(), error) {
@@ -440,12 +404,9 @@ func releaseBuilt(built []gitsource.Collection) {
 	}
 }
 
-// gitCollectionRoot validates one discovered collection's identity and
-// dependencies and returns it as a root together with the pin the solver will
-// answer from. The identity came from repository content (galaxy.yml) or from
-// a cached pin, and both are judged by the same predicates a Galaxy server's
-// answer is. Nothing is recorded in the memo here; recordSelected does that
-// for the collections the root actually asked for.
+// gitCollectionRoot judges an identity and deps read from galaxy.yml or a
+// cached pin by the same predicates as a Galaxy answer, and returns the root
+// and its pin. It records nothing; recordSelected fills the memo.
 func gitCollectionRoot(req gitRootRequest, commit, namespace, name, version, subdir string,
 	rawDeps map[string]string,
 ) (collection, gitPin, error) {
@@ -484,12 +445,9 @@ func keepsPrebuilt(deps collectionDeps) bool {
 	return deps.gitStore == nil || (deps.cfg != nil && deps.cfg.NoCache)
 }
 
-// storeGitArtifacts commits every built artifact to the artifact store under
-// its locator-scoped key, or hands it to the memo under --no-cache, or
-// discards it under --dry-run. The probe a download runs before its commit
-// (archive.ProbeTarGz) is not repeated here: the builder has already read the
-// whole archive back through the manifest chain check, which is a stronger
-// statement about its shape than the probe makes.
+// storeGitArtifacts commits each build under its locator-scoped key, leaves it
+// for the install phase under --no-cache or with no store, or discards it under
+// --dry-run. ProbeTarGz is skipped: the builder already read the archive back.
 func storeGitArtifacts(ctx context.Context, deps collectionDeps, expanded []collection, built []gitsource.Collection) error {
 	for i, b := range built {
 		col := expanded[i]
@@ -497,7 +455,7 @@ func storeGitArtifacts(ctx context.Context, deps collectionDeps, expanded []coll
 		case deps.cfg != nil && deps.cfg.DryRun:
 			cleanupIfNeeded(b.Cleanup)
 		case deps.cfg != nil && deps.cfg.NoCache, deps.gitStore == nil:
-			// Kept in the memo by gitCollectionRoot; the install phase takes it.
+			// acquireGitRoot kept it as the pin's prebuilt; the install phase takes it.
 		default:
 			key := helpers.ArtifactKey(col.Source, helpers.ArtifactFilename(col.Namespace, col.Name, col.Version))
 			if _, err := commitDownload(ctx, deps.gitStore, key, b.ArtifactPath, b.ArtifactSHA, b.Cleanup); err != nil {
@@ -511,10 +469,8 @@ func storeGitArtifacts(ctx context.Context, deps collectionDeps, expanded []coll
 }
 
 // selectExplicit narrows a repository's collections to the one a root named
-// explicitly (name: namespace.name beside a git source:), as ansible installs
-// only that one; a root without a name takes them all. A named collection the
-// repository does not carry is helpers.ErrGitNameMismatch naming what it
-// does carry.
+// (name: beside a git source:), as ansible installs only that one, else keeps
+// all. A name the repository does not carry is helpers.ErrGitNameMismatch.
 func selectExplicit(req gitRootRequest, expanded []collection) ([]collection, error) {
 	if req.root.Namespace == "" && req.root.Name == "" {
 		sort.SliceStable(expanded, func(i, j int) bool { return expanded[i].key() < expanded[j].key() })

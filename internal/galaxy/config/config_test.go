@@ -25,13 +25,9 @@ const (
 	testAnsibleConfigPath   = "path"
 )
 
-// newApplyAnsibleConfigCmd builds a minimal *cli.Command exposing only the
-// four flags applyAnsibleConfig reads (download-path, roles-path, cache-dir,
-// server),
-// runs it with args, and returns the *cli.Command captured from inside the
-// action so applyAnsibleConfig can be driven directly against it. Flags are
-// built inline (mirroring cmd/go-galaxy/cliflags/flags_test.go's pattern)
-// rather than importing the cliflags package, to avoid an import cycle.
+// newApplyAnsibleConfigCmd runs a command exposing only the four flags
+// applyAnsibleConfig reads (download-path, roles-path, cache-dir, server)
+// and returns the *cli.Command its action captured.
 func newApplyAnsibleConfigCmd(t *testing.T, args []string) *cli.Command {
 	t.Helper()
 
@@ -107,11 +103,9 @@ func assertApplyAnsibleConfig(t *testing.T, got *Config, want applyAnsibleConfig
 	}
 }
 
-// TestApplyAnsibleConfigDownloadPath checks the collections_path ->
-// DownloadPath mapping: an ansible.cfg value is used only when
-// --download-path was not explicitly set, an explicit flag always wins,
-// and an empty ansible.cfg value falls back to the flag default. It also
-// checks that AnsibleConfigPath is set from the ansiblePath argument.
+// TestApplyAnsibleConfigDownloadPath pins collections_path -> DownloadPath:
+// ansible.cfg applies only when --download-path is unset, an empty value falls
+// back to the flag default, and AnsibleConfigPath records the loaded file.
 func TestApplyAnsibleConfigDownloadPath(t *testing.T) {
 	t.Run("flag unset, ansible.cfg value present", func(t *testing.T) {
 		ansCfg := ansibleConfig{Defaults: ansibleDefaultsConfig{CollectionsPath: "/ansible/collections"}}
@@ -164,10 +158,9 @@ func assertWarningMentions(t *testing.T, got *Config, substr string) {
 	}
 }
 
-// assertRoleWarningMentions is assertWarningMentions for the role-scoped
-// queue, and additionally requires Warnings itself to be empty: a role
-// warning that also reached the unconditional queue would be printed to
-// every run regardless of the split.
+// assertRoleWarningMentions is assertWarningMentions for RoleWarnings, and
+// also requires Warnings to be empty: a role warning on the unconditional
+// queue would be printed to every run.
 func assertRoleWarningMentions(t *testing.T, got *Config, substr string) {
 	t.Helper()
 	if len(got.Warnings) != 0 {
@@ -181,11 +174,9 @@ func assertRoleWarningMentions(t *testing.T, got *Config, substr string) {
 	}
 }
 
-// TestCollectionsPathSplit checks that applyAnsibleConfig honors ansible's
-// POSIX ":"-separated collections_path list: only the first entry is used,
-// and a warning naming the ignored entries is recorded exactly once. A
-// single entry, a single entry with a trailing separator (an empty
-// segment), and an empty value must all leave Warnings untouched.
+// TestCollectionsPathSplit pins ansible's ":"-separated collections_path: the
+// first entry is used and the rest are named in exactly one warning, while a
+// single entry, a trailing separator or an empty value warn about nothing.
 func TestCollectionsPathSplit(t *testing.T) {
 	t.Run("multiple entries: first wins, rest warned about", func(t *testing.T) {
 		ansCfg := ansibleConfig{Defaults: ansibleDefaultsConfig{CollectionsPath: "a:b:c"}}
@@ -247,10 +238,9 @@ func TestApplyAnsibleConfigCacheDir(t *testing.T) {
 	})
 }
 
-// TestParseTimeout checks parseTimeout accepts both ansible's bare-integer
-// seconds form (GALAXY_SERVER_TIMEOUT is an int) and Go duration strings,
-// falls back to the default on an empty value, and rejects non-positive or
-// unparsable input as helpers.ErrInvalidTimeout.
+// TestParseTimeout pins that parseTimeout accepts ansible's bare-integer
+// seconds and Go durations, yields the default for an empty value, and refuses
+// non-positive or unparsable input as helpers.ErrInvalidTimeout.
 func TestParseTimeout(t *testing.T) {
 	t.Parallel()
 
@@ -290,12 +280,9 @@ func TestParseTimeout(t *testing.T) {
 	}
 }
 
-// newTimeoutCmd builds a *cli.Command for TestApplyTimeout. When
-// registerFlag is true it exposes a --timeout StringFlag (mirroring how
-// CollectionFlags registers it, with the same env sources and default
-// helpers.FetchDefaultTimeout.String()); when false no such flag exists at
-// all, mirroring commands like cleanup that never register --timeout, so
-// c.String("timeout") reads as an empty string.
+// newTimeoutCmd builds a command for TestApplyTimeout that registers --timeout
+// as CollectionFlags does when registerFlag is true, and otherwise no such
+// flag at all, like cleanup, so c.String("timeout") reads empty.
 func newTimeoutCmd(t *testing.T, registerFlag bool, args []string) *cli.Command {
 	t.Helper()
 
@@ -325,12 +312,9 @@ func newTimeoutCmd(t *testing.T, registerFlag bool, args []string) *cli.Command 
 	return captured
 }
 
-// TestApplyTimeout checks that applyTimeout wires parseTimeout's result
-// into cfg.Timeout: an explicit --timeout value (in Go duration form) is
-// honored as-is, an unset flag falls back to the default, a command that
-// never registers --timeout at all (e.g. cleanup) also falls back to the
-// default, and a value supplied via ANSIBLE_GALAXY_SERVER_TIMEOUT (ansible's
-// own env var) is picked up the same way an explicit flag would be.
+// TestApplyTimeout pins that applyTimeout honors an explicit --timeout or
+// ANSIBLE_GALAXY_SERVER_TIMEOUT, and falls back to the default when the flag
+// is unset or, as for cleanup, never registered.
 func TestApplyTimeout(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -389,23 +373,9 @@ func TestApplyTimeout(t *testing.T) {
 	})
 }
 
-// newIntFlagCmd builds a *cli.Command exposing a single IntFlag under
-// flagName (sourced from envName, with the given defaultValue) when
-// registerFlag is true, mirroring how collectionBehaviorFlags registers
-// --workers and --download-workers; when false no such flag exists at all,
-// mirroring a command like cleanup that never registers either, so
-// c.IsSet(flagName) reads false and c.Int(flagName) reads 0. Shared by
-// TestApplyWorkers and TestDownloadWorkersDefault, since both need the
-// identical minimal single-flag fixture shape against a different flag name
-// and default.
-//
-// defaultValue is a hand-copy of whichever production flag's own Value the
-// caller is mirroring, so it cannot pin that flag's Value on its own: that
-// pin lives in TestWorkersEnvShapes (cmd/go-galaxy/commands), which drives
-// the real cliflags.CollectionFlags(). It is copied anyway so the rows below
-// see the shape production has - a declared-but-empty environment variable is
-// marked set while its parse is skipped, so c.Int reads this Value for that
-// shape, and a 0 here would look like a value some source supplied.
+// newIntFlagCmd registers one IntFlag sourced from envName, or none at all
+// (the cleanup shape). defaultValue mirrors the production flag's Value, which
+// c.Int reads for a declared-but-empty variable.
 func newIntFlagCmd(t *testing.T, flagName, envName string, defaultValue int, registerFlag bool, args []string) *cli.Command {
 	t.Helper()
 
@@ -523,63 +493,12 @@ func workersRows() []workersRow {
 	}
 }
 
-// TestApplyWorkers covers applyWorkers and nothing else: which --workers
-// values it honors, which it replaces with helpers.DefaultInstallWorkers, and
-// when it queues a warning about a replacement. Every want is hand-spelled
-// rather than computed from helpers.DefaultInstallWorkers or
-// helpers.MaxAcceptedInstallWorkers, since a want built from the function it
-// checks moves with any mutation of that function and so could never fail
-// against one.
-//
-// The first row is the positive control - without it, the replacements below
-// would be indistinguishable from a fixture that never reaches the check at
-// all - and the last is the cleanup shape, a command that registers no
-// --workers flag and must take the default silently rather than be warned
-// about a value nobody supplied.
-//
-// Two procs values carry rows procs=8 structurally cannot. At 8 the derived
-// default and the accepted ceiling are the same number, so a substitution
-// handing back the ceiling instead of the default is invisible there; the
-// procs=64 rows separate the two (ceiling 64, default 16). At 8 the ceiling is
-// procs itself, so the floor under it is invisible too; the procs=1 rows are
-// where max(procs, MinDefaultInstallWorkers) is the only thing admitting 2.
-//
-// This test says nothing about which value the production flag resolves to;
-// that is TestWorkersEnvShapes' subject (cmd/go-galaxy/commands), on the real
-// cliflags.CollectionFlags().
-//
-// KILLING MUTATIONS, all four run and reverted.
-//
-// M1, applyWorkers' whole `if !c.IsSet("workers")` branch deleted. Of the
-// rows above only the unregistered one fails, and it fails on its WARNING
-// assertion rather than its value one: an unknown flag name reads 0, which the
-// range arm then replaces with the very default the deleted branch would have
-// taken, so the warning count is the only observable difference:
-//
-//	config_test.go:592: len(cfg.Warnings) = 1, want 0
-//
-// M2, helpers.MaxAcceptedInstallWorkers' body reduced to a bare `procs`. Of
-// the rows above only procs=1, --workers=2 fails, since it is the only one
-// whose honored value sits above procs and at or below the floor:
-//
-//	config_test.go:592: len(cfg.Warnings) = 1, want 0
-//
-// M3, the substitute changed from the default to the ceiling (`n = fallback`
-// rewritten to `n = upper`). Only the procs=64, --workers=65 row fails; every
-// procs=8 row survives it, which is exactly why that row exists at all:
-//
-//	config_test.go:592: cfg.Workers = 64, want 16
-//
-// M4, `n < 1` relaxed to `n < 0` in the range arm. Both zero shapes fail - the
-// zero row quoted below and the environment subtest that follows it - while
-// the negative row survives, pinning the boundary rather than replacement:
-//
-//	config_test.go:592: cfg.Workers = 0, want 8
+// TestApplyWorkers pins which --workers values applyWorkers honors, which it
+// replaces with the derived default plus a warning, and that an unregistered
+// flag takes the default silently. Wants are hand-spelled, never computed.
 func TestApplyWorkers(t *testing.T) {
-	// The fixture flag's own Value. No row in the table reads it - each
-	// registered row supplies --workers explicitly and the unregistered one has
-	// no flag at all - so it matters only in the declared-but-empty subtest at
-	// the end, where it stands in for the production flag's Value at procs 8.
+	// Only the declared-but-empty subtest reads the fixture flag's Value, where
+	// it stands in for the production flag's Value at procs 8.
 	fixtureValue := helpers.DefaultInstallWorkers(8)
 
 	tests := workersRows()
@@ -603,11 +522,8 @@ func TestApplyWorkers(t *testing.T) {
 		assertWorkersOutcome(t, cfg, workersRow{wantWorkers: 8, wantWarn: true, wantWarnHas: "= 0"})
 	})
 
-	// The declared-but-empty shape urfave marks as set while skipping the parse
-	// for. It reaches the range arm rather than the gate, and is honored there
-	// because what c.Int reads is the flag's own Value - which is why this
-	// subtest is the one place the fixture's Value has to be the production
-	// derivation rather than an arbitrary number.
+	// urfave marks a declared-but-empty variable set while skipping its parse,
+	// so it reaches the range check carrying the flag's own Value.
 	t.Run("a declared but empty variable is honored on the flag's Value", func(t *testing.T) {
 		t.Setenv("GO_GALAXY_WORKERS", "")
 		c := newIntFlagCmd(t, "workers", "GO_GALAXY_WORKERS", fixtureValue, true, nil)
@@ -617,29 +533,9 @@ func TestApplyWorkers(t *testing.T) {
 	})
 }
 
-// TestDownloadWorkersDefault covers helpers.DefaultDownloadWorkers's own
-// clamp (cpus * DownloadWorkersPerCPU, floored at MinDefaultDownloadWorkers
-// and capped at MaxDefaultDownloadWorkers), plus newConfigFromCLI's
-// DownloadWorkers fallback, which applies that identical default whenever no
-// source supplied a positive --download-workers value. That fallback is
-// silent and carries no ceiling above it, which is where it parts company
-// with applyWorkers: a --workers value outside the range that one accepts is
-// replaced with a warning, while a --download-workers value above the
-// permitted CPU is a legitimate configuration rather than an oversubscription
-// - this pool waits on the network instead of extracting a tree.
-//
-// KILLING MUTATION, run for real: the MinDefaultDownloadWorkers floor
-// removed from DefaultDownloadWorkers (the inner `max(cpus*DownloadWorkersPerCPU,
-// MinDefaultDownloadWorkers)` call rewritten to a bare `cpus*DownloadWorkersPerCPU`,
-// leaving only the MaxDefaultDownloadWorkers cap). The 1-cpu row fails, because its
-// raw product (1*4=4) sits below the floor and nothing clamps it back up:
-//
-//	config_test.go:659: DefaultDownloadWorkers(1) = 4, want 8
-//
-// The 2-cpu row does NOT fail this mutation: its raw product (2*4=8) already
-// equals MinDefaultDownloadWorkers, so the floor was never the thing keeping
-// that row at 8 in the first place - only the 1-cpu row's outcome actually
-// depends on the floor existing.
+// TestDownloadWorkersDefault pins helpers.DefaultDownloadWorkers' clamp and
+// newConfigFromCLI's silent fallback to it for a non-positive value; unlike
+// --workers there is no ceiling, since that pool waits on the network.
 func TestDownloadWorkersDefault(t *testing.T) {
 	t.Run("derives from cpu count", func(t *testing.T) {
 		tests := []struct {
@@ -692,50 +588,9 @@ func TestDownloadWorkersDefault(t *testing.T) {
 	})
 }
 
-// TestInstallWorkersDefault covers helpers.DefaultInstallWorkers's own clamp
-// (procs, floored at MinDefaultInstallWorkers and capped at
-// MaxDefaultInstallWorkers), plus the relation between that clamp and
-// helpers.MaxAcceptedInstallWorkers' ceiling. It is TestDownloadWorkersDefault's
-// sibling, against the other of the two worker pools. Which supplied values
-// applyWorkers then honors or replaces is TestApplyWorkers' subject, not this
-// one's.
-//
-// The rows are spelled as permitted CPUs rather than cores because that is
-// what the parameter means: under a CFS quota runtime.NumCPU() reports the
-// node while runtime.GOMAXPROCS(0) reports the quota, and this function is
-// fed the latter (see helpers.DefaultInstallWorkers). Every want is
-// hand-spelled rather than computed from the two constants, since a want
-// built from the constant it checks moves with any mutation of that constant
-// and so could never fail against one.
-//
-// Two rows the boundaries suggest collapse into one each, and that is a
-// property of the values rather than a gap: the floor is 2, so "one below the
-// floor" IS the 1-cpu row, and "the floor itself" IS the 2-cpu row.
-//
-// No row here drives a *cli.Command at all. The production flag's own Value is
-// pinned by TestWorkersEnvShapes (cmd/go-galaxy/commands), which runs the real
-// cliflags.CollectionFlags(); a fixture flag here would only carry a hand-copy
-// of that Value and so could only compare it against itself.
-//
-// KILLING MUTATIONS, both run for real against helpers.DefaultInstallWorkers.
-//
-// M1, the floor removed - the whole body rewritten to
-// `min(procs, MaxDefaultInstallWorkers)`. Only the 1-cpu row fails, since it
-// is the only row whose input sits below the floor at all:
-//
-//	config_test.go:757: DefaultInstallWorkers(1) = 1, want 2
-//
-// The 2-cpu row does NOT fail this mutation: its input already equals
-// MinDefaultInstallWorkers, so the floor was never what kept that row at 2 -
-// only the 1-cpu row's outcome actually depends on the floor existing.
-//
-// M2, the cap removed - the body rewritten to
-// `max(procs, MinDefaultInstallWorkers)`. Both rows above the cap fail while
-// the row exactly at it survives, which is what makes the trio a pin on the
-// boundary rather than on clamping in general:
-//
-//	config_test.go:757: DefaultInstallWorkers(17) = 17, want 16
-//	config_test.go:757: DefaultInstallWorkers(128) = 128, want 16
+// TestInstallWorkersDefault pins helpers.DefaultInstallWorkers' clamp of the
+// permitted CPU count at each boundary, and that the result always lies inside
+// helpers.MaxAcceptedInstallWorkers' range. Wants are hand-spelled.
 func TestInstallWorkersDefault(t *testing.T) {
 	t.Run("derives from permitted cpu", func(t *testing.T) {
 		tests := []struct {
@@ -760,14 +615,9 @@ func TestInstallWorkersDefault(t *testing.T) {
 		}
 	})
 
-	// What this pins is the RELATION between the two functions; the ceiling
-	// assertion ahead of it holds each hand-spelled wantCeiling to
-	// MaxAcceptedInstallWorkers' own answer, so the relation is measured
-	// against the real ceiling rather than a figure that drifted from it - and
-	// hand-spelled for the same reason every want above is. The relation is
-	// what a declared-but-empty GO_GALAXY_WORKERS= rests on: that shape reaches
-	// applyWorkers' range arm carrying the flag's Value, so a derived default
-	// outside the accepted range would warn about a value nobody wrote.
+	// An empty GO_GALAXY_WORKERS= reaches applyWorkers' range check carrying
+	// the flag's Value, so a derived default outside the accepted range would
+	// warn about a value nobody wrote.
 	t.Run("the derived default is always inside the accepted range", func(t *testing.T) {
 		tests := []struct {
 			name        string
@@ -830,12 +680,9 @@ func TestApplyAnsibleConfigServer(t *testing.T) {
 	})
 }
 
-// newAnsibleConfigCmd builds a *cli.Command exposing only the "ansible-config"
-// flag as it is really defined in cmd/go-galaxy/cliflags/flags.go: no default
-// value, sourced only from GO_GALAXY_ANSIBLE_CONFIG (ANSIBLE_CONFIG is
-// handled by discovery, not by the flag itself). Matching that shape matters
-// here because c.IsSet("ansible-config") is exactly what distinguishes
-// "explicitly requested" from "let discovery decide".
+// newAnsibleConfigCmd declares --ansible-config as cliflags does, with no
+// default and only GO_GALAXY_ANSIBLE_CONFIG as a source, since c.IsSet is what
+// tells an explicit request from discovery, which reads ANSIBLE_CONFIG itself.
 func newAnsibleConfigCmd(t *testing.T, args []string) *cli.Command {
 	t.Helper()
 
@@ -868,10 +715,9 @@ func writeAnsibleCfg(t *testing.T, path, server string) {
 	}
 }
 
-// TestLoadAnsibleConfigFromCLIExplicit checks the strict handling of an
-// explicitly requested --ansible-config: an existing file is loaded and its
-// path returned, and a missing file is an error (helpers.ErrAnsibleConfigNotFound),
-// unlike ansible.cfg discovery which tolerates a missing candidate.
+// TestLoadAnsibleConfigFromCLIExplicit pins that an explicit --ansible-config
+// is strict: an existing file is loaded, and a missing one is
+// helpers.ErrAnsibleConfigNotFound where discovery would move on.
 func TestLoadAnsibleConfigFromCLIExplicit(t *testing.T) {
 	t.Run("existing path is loaded", func(t *testing.T) {
 		dir := t.TempDir()
@@ -902,15 +748,9 @@ func TestLoadAnsibleConfigFromCLIExplicit(t *testing.T) {
 	})
 }
 
-// TestLoadAnsibleConfigFromCLIDiscovery checks ansible.cfg discovery when
-// --ansible-config is not explicitly set: ./ansible.cfg in the current
-// directory is found, $ANSIBLE_CONFIG is preferred over it when both exist,
-// and a missing $ANSIBLE_CONFIG target falls through to the next candidate
-// instead of erroring (unlike the explicit-flag case above).
-//
-// These subtests mutate the working directory and environment (t.Chdir,
-// t.Setenv), so they cannot run in parallel with each other or anything
-// else that depends on cwd/env.
+// TestLoadAnsibleConfigFromCLIDiscovery pins discovery without the flag:
+// $ANSIBLE_CONFIG beats ./ansible.cfg, a missing $ANSIBLE_CONFIG falls through,
+// and a world-writable cwd is skipped. Not parallel: t.Chdir and t.Setenv.
 func TestLoadAnsibleConfigFromCLIDiscovery(t *testing.T) {
 	t.Run("cwd ansible.cfg is discovered", func(t *testing.T) {
 		dir := t.TempDir()
@@ -919,10 +759,8 @@ func TestLoadAnsibleConfigFromCLIDiscovery(t *testing.T) {
 
 		c := newAnsibleConfigCmd(t, nil)
 		cfg, gotPath, _, err := loadAnsibleConfigFromCLI(c)
-		// discoverAnsibleConfigPath checks the literal relative candidate
-		// "ansible.cfg", not an absolute path, since it relies on the
-		// process's current directory the same way ansible's own discovery
-		// does.
+		// The cwd candidate is the relative "ansible.cfg", resolved against
+		// the working directory as ansible's own discovery does.
 		assertAnsibleConfigLoaded(t, cfg, gotPath, err, "ansible.cfg", "https://cwd.example")
 	})
 
@@ -958,14 +796,9 @@ func TestLoadAnsibleConfigFromCLIDiscovery(t *testing.T) {
 	t.Run("world-writable cwd: a relative ANSIBLE_CONFIG still reads that file", subtestWorldWritableCwdEnvPathStillRead)
 
 	t.Run("nothing found in cwd or ANSIBLE_CONFIG: falls through cleanly", func(t *testing.T) {
-		// ANSIBLE_CONFIG points at a missing file and the cwd has no
-		// ansible.cfg, so discovery must fall through to ~/.ansible.cfg and
-		// then /etc/ansible/ansible.cfg without erroring. This test cannot
-		// control whether those two machine-level files exist, so it only
-		// asserts the one thing that must hold regardless of the host: no
-		// error, and if a path was found, it is one of those two candidates
-		// (production discovery order is not weakened to make this
-		// assertion pass).
+		// Whether ~/.ansible.cfg or /etc/ansible/ansible.cfg exists is up to
+		// the host, so only no error, and a found path being one of those
+		// two, can be asserted.
 		t.Setenv("ANSIBLE_CONFIG", filepath.Join(t.TempDir(), "missing.cfg"))
 		t.Chdir(t.TempDir())
 
@@ -987,9 +820,8 @@ func chmodDir(t *testing.T, dir string, mode os.FileMode) {
 	}
 }
 
-// subtestWorldWritableCwdSkipped proves ./ansible.cfg is not a discovery
-// candidate when the working directory is world-writable, and that the run
-// says so rather than falling silent.
+// subtestWorldWritableCwdSkipped pins that ./ansible.cfg is not a discovery
+// candidate in a world-writable working directory and that a warning says so;
 // subtestNonWorldWritableCwdDiscovered is its positive control.
 func subtestWorldWritableCwdSkipped(t *testing.T) {
 	// The env candidate is pointed at a missing file so it cannot win and
@@ -1006,11 +838,6 @@ func subtestWorldWritableCwdSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadAnsibleConfigFromCLI() error = %v, want nil", err)
 	}
-	// Killing mutation, run: reducing cwdCandidate to an unconditional
-	// `return cwdAnsibleCfgName, ""` fails this assertion with `path =
-	// "ansible.cfg", want the cwd candidate to have been skipped`. The check
-	// cannot be deleted on its own and still compile, since the stat result
-	// would go unused - which is why the mutation is the whole body.
 	if gotPath == "ansible.cfg" {
 		t.Fatalf("path = %q, want the cwd candidate to have been skipped", gotPath)
 	}
@@ -1019,11 +846,9 @@ func subtestWorldWritableCwdSkipped(t *testing.T) {
 	}
 }
 
-// subtestNonWorldWritableCwdDiscovered is the positive control described on
-// subtestWorldWritableCwdSkipped: the same directory and the same file, with
-// only the mode differing, must be discovered and must warn about nothing.
-// Without it, "skipped" would be indistinguishable from a fixture discovery
-// never reaches at all.
+// subtestNonWorldWritableCwdDiscovered is subtestWorldWritableCwdSkipped's
+// positive control: the same fixture at mode 0o755 must be discovered with no
+// warning, or "skipped" could not be told from never reached.
 func subtestNonWorldWritableCwdDiscovered(t *testing.T) {
 	t.Setenv("ANSIBLE_CONFIG", filepath.Join(t.TempDir(), "missing.cfg"))
 
@@ -1040,47 +865,16 @@ func subtestNonWorldWritableCwdDiscovered(t *testing.T) {
 	}
 }
 
-// subtestWorldWritableCwdEnvPathStillRead pins that the world-writable
-// warning discloses the escape hatch rather than stopping at what it
-// dropped. It pins only that half: a regression keeping the old "ignoring
-// ./ansible.cfg" wording while appending a mention of $ANSIBLE_CONFIG would
-// satisfy every assertion here. Pinning the absence of that wording was
-// considered and rejected, because warningMentions exists precisely so this
-// file does not own wording it has no reason to own.
-//
-// The fixture is built identically to subtestWorldWritableCwdSkipped's - a
-// fresh t.TempDir holding the same planted file at the same 0o777 mode -
-// and differs in one input: $ANSIBLE_CONFIG names that file relatively
-// instead of naming a missing one. The check discoverAnsibleConfigPath
-// applies is scoped to the cwd candidate alone (see cwdCandidate), so the
-// env candidate reaches the same file untouched and the run loads it.
-//
-// gotPath cannot discriminate between the two candidates here, and that is
-// what makes the warning assertion load-bearing rather than decorative:
-// $ANSIBLE_CONFIG is set to the relative "ansible.cfg", so the winning path
-// is byte-identical to cwdAnsibleCfgName whichever candidate produced it.
-// The sibling subtest is what covers the direction this one structurally
-// cannot see - a regression that warns while KEEPING the cwd candidate
-// fails there and passes here.
-//
-// Killing mutation, run: restoring cwdCandidate's former warning text ("the
-// current directory %q is world-writable; ignoring ./ansible.cfg as a
-// configuration source") leaves this subtest's first two assertions passing -
-// the file still loads, and the text still names the directory as
-// world-writable - and fails the third, at config_test.go:1093:
-//
-//	warnings = [the current directory "/var/folders/..." is world-writable;
-//	ignoring ./ansible.cfg as a configuration source], want one naming
-//	$ANSIBLE_CONFIG as a path still read
+// subtestWorldWritableCwdEnvPathStillRead pins that the skip covers only the
+// cwd candidate: a relative $ANSIBLE_CONFIG naming the same file still loads
+// it, and the world-writable warning names $ANSIBLE_CONFIG as still read.
 func subtestWorldWritableCwdEnvPathStillRead(t *testing.T) {
 	dir := t.TempDir()
 	writeAnsibleCfg(t, filepath.Join(dir, "ansible.cfg"), "https://cwd.example")
 	chmodDir(t, dir, 0o777)
 	t.Chdir(dir)
-	// Relative on purpose. An absolute path into the same directory would
-	// reach the same file, but the relative form makes that identity
-	// self-evident without the assertion depending on a temp path, and it is
-	// the form cwdAnsibleCfgName documents as resolving at open time.
+	// Relative on purpose: it names the same file without the assertion
+	// depending on a temp path.
 	t.Setenv("ANSIBLE_CONFIG", "ansible.cfg")
 
 	c := newAnsibleConfigCmd(t, nil)
@@ -1094,10 +888,8 @@ func subtestWorldWritableCwdEnvPathStillRead(t *testing.T) {
 	}
 }
 
-// warningMentions reports whether any warning contains every one of parts.
-// Matching by fragment rather than by the whole line keeps the test from
-// pinning wording it has no reason to own, while still requiring the warning
-// to name both what is wrong and which directory it is wrong about.
+// warningMentions reports whether any warning contains every one of parts,
+// matching fragments so the test does not pin wording it has no reason to own.
 func warningMentions(warnings []string, parts ...string) bool {
 	for _, w := range warnings {
 		matched := true
@@ -1129,10 +921,9 @@ func assertAnsibleConfigLoaded(t *testing.T, cfg ansibleConfig, gotPath string, 
 	}
 }
 
-// assertDiscoveryFallsThroughCleanly checks that discovery produced no
-// error, and that any discovered path is one of the two machine-level
-// candidates (~/.ansible.cfg, /etc/ansible/ansible.cfg) this test cannot
-// control the presence of; see the caller for why.
+// assertDiscoveryFallsThroughCleanly checks for no error and that any path
+// found is one of the machine-level candidates (~/.ansible.cfg,
+// /etc/ansible/ansible.cfg) this test cannot control.
 func assertDiscoveryFallsThroughCleanly(t *testing.T, gotPath string, err error) {
 	t.Helper()
 	if err != nil {
@@ -1151,26 +942,9 @@ func assertDiscoveryFallsThroughCleanly(t *testing.T, gotPath string, err error)
 	}
 }
 
-// TestAnsibleGalaxyServerEnv pins where ANSIBLE_GALAXY_SERVER sits in the
-// precedence chain: it is the env spelling of the [galaxy] server key, so it
-// outranks that key and nothing above it. The rows are the three states the
-// variable can be in, and the third is the one that decides a design question
-// rather than restating the other two - an exported but empty value must not
-// name a server with no URL, so it has to read as absent rather than as an
-// override that won.
-//
-// No t.Parallel anywhere here: t.Setenv forbids it, and the neighboring
-// applyAnsibleConfig tests do not use it either.
-//
-// KILLING MUTATION, run and reverted: making ansibleGalaxyServer prefer the
-// ini value over the env one (returning ini whenever it is non-empty). Two
-// rows fail - the first, on the precedence itself:
-//
-//	config_test.go:1182: Server = "https://ini.example", want "https://env.example"
-//
-// and the third, because a non-empty ini value shadows the empty-env case too:
-//
-//	config_test.go:1207: Server = "https://ini.example", want the flag default "https://default.example"
+// TestAnsibleGalaxyServerEnv pins ANSIBLE_GALAXY_SERVER as the env spelling of
+// [galaxy] server: it outranks that key, and an exported but empty value still
+// hides the key and falls through to the flag default, not to an empty URL.
 func TestAnsibleGalaxyServerEnv(t *testing.T) {
 	const envServer = "https://env.example"
 
@@ -1213,10 +987,8 @@ func TestAnsibleGalaxyServerEnv(t *testing.T) {
 	})
 }
 
-// TestApplyAnsibleConfigRolesPath checks the roles_path -> RolesPath
-// mapping with the same three precedence scenarios as
-// TestApplyAnsibleConfigDownloadPath, plus the search-list split and the
-// same-directory warning that are roles_path's own.
+// TestApplyAnsibleConfigRolesPath checks the roles_path -> RolesPath mapping
+// under the three precedence scenarios of TestApplyAnsibleConfigDownloadPath.
 func TestApplyAnsibleConfigRolesPath(t *testing.T) {
 	t.Run("flag unset, ansible.cfg value present", func(t *testing.T) {
 		ansCfg := ansibleConfig{Defaults: ansibleDefaultsConfig{RolesPath: "/ansible/roles"}}
@@ -1245,12 +1017,9 @@ func TestApplyAnsibleConfigRolesPath(t *testing.T) {
 	})
 }
 
-// TestRolesPathSplitAndOverlap covers the two warnings roles_path can raise:
-// a search list beyond its first entry, and a directory shared with
-// collections_path. Both land on RoleWarnings rather than Warnings, which is
-// what keeps them off a run whose requirements.yml has no roles: block -
-// Warnings must stay empty in both cases, or the split would be defeated by
-// the queue alone.
+// TestRolesPathSplitAndOverlap pins roles_path's two warnings, a search list
+// beyond its first entry and a directory shared with collections_path: both go
+// to RoleWarnings, never Warnings, so a run with no roles never prints them.
 func TestRolesPathSplitAndOverlap(t *testing.T) {
 	t.Run("search list: first wins, rest warned about by name", func(t *testing.T) {
 		ansCfg := ansibleConfig{Defaults: ansibleDefaultsConfig{RolesPath: "/r/a:/r/b"}}
@@ -1268,10 +1037,8 @@ func TestRolesPathSplitAndOverlap(t *testing.T) {
 	})
 }
 
-// TestCollectionsPathSplitStaysUnconditional is TestRolesPathSplitAndOverlap's
-// counterpart on the other setting, pinning that the queue split cut only
-// what it was meant to: collections_path is read by every run, so its
-// search-list warning stays on Warnings, where nothing can suppress it.
+// TestCollectionsPathSplitStaysUnconditional pins that collections_path's
+// search-list warning stays on Warnings, since every run reads that setting.
 func TestCollectionsPathSplitStaysUnconditional(t *testing.T) {
 	t.Parallel()
 	got := runApplyAnsibleConfig(t, []string{"--download-path=/c/a:/c/b"}, ansibleConfig{})

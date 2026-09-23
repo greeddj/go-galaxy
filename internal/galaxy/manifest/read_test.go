@@ -14,16 +14,13 @@ import (
 	"github.com/klauspost/pgzip"
 )
 
-// testManifest is the document every fixture below carries as its top-level
-// MANIFEST.json. Its exact bytes are what the positive assertions compare
-// against, so a walk that returned some other entry's body would fail on the
-// content rather than merely on the length.
+// testManifest is every fixture's top-level MANIFEST.json; assertions compare
+// its exact bytes, so a walk returning another entry's body fails on content.
 const testManifest = `{"collection_info":{"namespace":"acme","name":"widgets","version":"1.0.0"}}`
 
 // testEntry describes one tar entry for tarStream. declaredSize overrides the
-// size the entry's header announces, the only way to build a header declaring
-// more bytes than the archive carries; zero means "the length of content".
-// typeflag defaults to tar.TypeReg, and linkname is written verbatim.
+// header's size (zero means the length of content); typeflag defaults to
+// tar.TypeReg.
 type testEntry struct {
 	name, linkname string
 	content        []byte
@@ -31,16 +28,9 @@ type testEntry struct {
 	typeflag       byte
 }
 
-// tarStream renders entries, in order, into a raw tar byte stream.
-//
-// It writes each entry through its own tar.Writer, which is what lets one
-// declare a size it never writes: a tar stream is a concatenation of
-// self-contained 512-byte blocks, while a single writer refuses to emit a
-// second header after an entry whose body it never received. Flush reports
-// exactly that shortfall, and for an over-declaring entry that report is this
-// builder's purpose rather than a failure - it also suppresses the padding
-// Flush would otherwise write, which keeps the stream block-aligned for the
-// entries that follow.
+// tarStream renders entries, in order, into a raw tar stream. Each entry has
+// its own tar.Writer so a header may declare bytes it never carries; Flush then
+// reports the shortfall, which is expected, and writes no padding.
 func tarStream(tb testing.TB, entries []testEntry) []byte {
 	tb.Helper()
 
@@ -92,15 +82,9 @@ func writeArtifact(tb testing.TB, entries []testEntry) string {
 	return writeFile(tb, "artifact.tar.gz", buf.Bytes())
 }
 
-// writePaddedArtifact writes an artifact carrying padBytes of zeros ahead of a
-// top-level MANIFEST.json, so the manifest sits a chosen distance into the
-// decompressed stream.
-//
-// The padding is compressed in chunks rather than assembled in memory, so a
-// fixture reaching past the production scan bound never holds its own
-// decompressed size; being zeros, it also leaves the file on disk around a
-// hundred kilobytes whatever padBytes is. Both properties are what make a test
-// at the real ceiling cheap enough to run unconditionally.
+// writePaddedArtifact writes padBytes of zeros ahead of a top-level
+// MANIFEST.json, compressed in chunks so a fixture past the real scan bound
+// stays cheap in memory and on disk.
 func writePaddedArtifact(t *testing.T, padBytes int64) string {
 	t.Helper()
 
@@ -217,15 +201,8 @@ func TestReadFromTarGzRejectsNestedManifest(t *testing.T) {
 
 	nested := testEntry{name: "vendored/other/" + helpers.ManifestFileName, content: []byte(`{"decoy":true}`)}
 
-	// The positive control puts the nested entry AHEAD of the real one, so a
-	// name check matching on the base name alone would return the decoy rather
-	// than merely accepting an archive that has both.
-	//
-	// Relaxing that check - path.Clean(header.Name) in topLevelManifest
-	// replaced by path.Base(header.Name), applied through go test -overlay so
-	// no production file is edited - fails here first:
-	//
-	//	read_test.go:235: ReadFromTarGz(nested entry ahead of the real one) = "{\"decoy\":true}", want the top-level manifest (err: <nil>)
+	// The control puts the nested entry ahead of the real one, so a check on the
+	// base name alone would return the decoy.
 	control := writeArtifact(t, []testEntry{
 		nested,
 		{name: helpers.ManifestFileName, content: []byte(testManifest)},
@@ -244,10 +221,8 @@ func TestReadFromTarGzRejectsNestedManifest(t *testing.T) {
 func TestReadFromTarGzRejectsOversizeEntry(t *testing.T) {
 	t.Parallel()
 
-	// An entry declaring one byte past the per-entry cap and carrying nothing.
-	// The walk has to refuse it on its header alone, since reading past a body
-	// this size is exactly what the cap exists to prevent - and the fixture
-	// could not carry those bytes anyway.
+	// One byte past the per-entry cap and carrying nothing: the walk must refuse
+	// it on the header alone, before reading a body that size.
 	oversize := testEntry{name: "huge.bin", declaredSize: helpers.ArchiveMaxEntrySize + 1}
 	manifest := testEntry{name: helpers.ManifestFileName, content: []byte(testManifest)}
 
@@ -269,18 +244,8 @@ func TestReadFromTarGzRejectsOversizeEntry(t *testing.T) {
 func TestReadFromTarGzRejectsScanOverrun(t *testing.T) {
 	t.Parallel()
 
-	// Both fixtures carry a real top-level MANIFEST.json BEHIND their padding,
-	// which is what makes the refusal mean something: an archive that simply
-	// ran out of entries would be refused by the end of the stream alone, so
-	// the manifest behind the bound is the only thing separating "stopped at
-	// the ceiling" from "read everything and found nothing".
-	//
-	// Loosening the ceiling - max: helpers.ManifestScanMaxBytes in
-	// readFromTarGzStream replaced by max: helpers.ArchiveMaxDecompressedSize,
-	// applied through go test -overlay so no production file is edited - lets
-	// the walk reach that manifest and hand it back:
-	//
-	//	read_test.go:286: ReadFromTarGz(manifest past the scan bound) error = <nil>, want the not-found sentinel
+	// Both fixtures carry a real MANIFEST.json behind the padding, so the refusal
+	// means "stopped at the ceiling", not "read everything and found nothing".
 	beyond := writePaddedArtifact(t, helpers.ManifestScanMaxBytes+(1<<20))
 	if _, err := ReadFromTarGz(t.Context(), beyond); !errors.Is(err, helpers.ErrManifestNotFound) {
 		t.Fatalf("ReadFromTarGz(manifest past the scan bound) error = %v, want the not-found sentinel", err)
@@ -333,16 +298,8 @@ func TestReadFromTarGzRejectsEmptyManifest(t *testing.T) {
 		t.Fatalf("ReadFromTarGz(one-byte manifest) = %q, %v, want that one byte", got, err)
 	}
 
-	// A signature over a zero-byte document verifies whenever a keyring key
-	// made it, so an empty manifest reaching a verifier is indistinguishable
-	// from a real one. It is refused here, where the difference between an
-	// empty document and a real one is still visible.
-	//
-	// Admitting it instead - `if size <= 0` in readManifestBody replaced by
-	// `if size < 0`, applied through go test -overlay so no production file
-	// is edited - fails on that refusal:
-	//
-	//	read_test.go:349: ReadFromTarGz(zero-length manifest) error = <nil>, want the not-found sentinel
+	// A signature over a zero-byte document verifies whenever a keyring key made
+	// it, so an empty manifest is refused here, where it is still recognizable.
 	artifact := writeArtifact(t, append(nonManifestEntries(),
 		testEntry{name: helpers.ManifestFileName}))
 	if _, err := ReadFromTarGz(t.Context(), artifact); !errors.Is(err, helpers.ErrManifestNotFound) {
@@ -401,10 +358,8 @@ func TestReadFromTarGzNeverReportsAnEmptyManifest(t *testing.T) {
 func TestReadFromTarGzRefusesAnArtifactItCannotOpen(t *testing.T) {
 	t.Parallel()
 
-	// The path is the run's own rather than anything read out of an archive, so
-	// the failure this reports is an artifact that is not where it was said to
-	// be - evicted from the cache, or never written. The control is the same
-	// fixture at the path it really sits on.
+	// The path is the run's own, so a missing file means an artifact evicted or
+	// never written; the control is the same fixture where it really sits.
 	artifact := writeArtifact(t, []testEntry{{name: helpers.ManifestFileName, content: []byte(testManifest)}})
 	got, err := ReadFromTarGz(t.Context(), artifact)
 	if err != nil || string(got) != testManifest {
@@ -440,22 +395,9 @@ func (c *countingReader) Read(p []byte) (int, error) {
 func TestLimitReaderStaysRefusedPastItsCeiling(t *testing.T) {
 	t.Parallel()
 
-	// The source is endless, so nothing but the ceiling can end this. That is
-	// also the positive control: the reads under the ceiling hand a byte back
-	// each, so the refusal is the count crossing rather than the source
-	// running out.
-	//
-	// What the stickiness is worth is visible in the source's call count and
-	// nowhere else. A reader that recomputed the refusal on every call would
-	// report the same verdict and still pull a byte out of the decompressor
-	// for every call it was handed, and bytes out of the decompressor are what
-	// this reader exists to count.
-	//
-	// Dropping it - `if r.err != nil` in limitReader.Read replaced by
-	// `if false && r.err != nil`, applied through go test -overlay so no
-	// production file is edited - fails here:
-	//
-	//	read_test.go:477: limitReader.Read past the ceiling = 0, test ceiling: read 4 bytes, limit is 2 bytes after 4 source reads, want 3
+	// The source is endless, so only the ceiling ends this. Stickiness shows only
+	// in the source's call count: a reader recomputing the refusal would still
+	// pull a byte out of the decompressor on every call.
 	source := &countingReader{}
 	limited := &limitReader{r: source, over: errTestCeiling, max: 2}
 	buf := make([]byte, 8)
@@ -481,34 +423,9 @@ func TestLimitReaderStaysRefusedPastItsCeiling(t *testing.T) {
 func TestReadFromTarGzCapsAnEntryNameBeforeAnythingRendersIt(t *testing.T) {
 	t.Parallel()
 
-	// This walk retains no entry name and still has to measure one: the
-	// over-declared-entry refusal quotes the name it refuses, and archive/tar
-	// hands back a GNU long name of up to 1,048,575 bytes, so without the cap a
-	// megabyte of archive-chosen text reaches an operator to report that the
-	// entry carrying it declared too large a size.
-	//
-	// The five rows separate the two rules from each other and from the walk.
-	// The first two accept: the fixture as it stands, then the same fixture
-	// carrying an entry named at exactly the cap, which is the tightest control
-	// available - one byte from the row below it. The third is that name one
-	// byte over. The fourth declares an over-cap size under an ordinary name,
-	// so the size arm is shown reachable and shown to quote what it refuses.
-	// The fifth is that entry with a name past the cap: the name rule answers
-	// first, under its own sentinel and in a message bounded whatever the name.
-	//
-	// Moving the check back - the checkEntryNameLength call in
-	// readFromTarGzStream moved below the size refusal, applied through go test
-	// -overlay so no production file is edited - fails the fifth row on the
-	// message ceiling rather than on the sentinel, which is the whole point:
-	//
-	//	read_test.go:549: readFromTarGzStream(a name past the cap under an over-cap size) message is 200046 bytes, want under 300
-	//
-	// Rendering that name with %s rather than %q, applied the same way, fails
-	// the fourth row instead. A bare name can carry a newline of its own, which
-	// safeout.Clean passes through, so the quoting is what keeps an entry name
-	// from forging a line of an operator's output:
-	//
-	//	read_test.go:549: readFromTarGzStream(an over-cap size under an ordinary name) message does not quote "huge.bin"
+	// The size refusal quotes the entry name and archive/tar accepts GNU long
+	// names near a megabyte, so the name cap must answer first; %q quoting keeps
+	// a newline in a name, which safeout.Clean passes, from forging output lines.
 	const (
 		longNameLen         = 200_000
 		oversizeDeclaration = helpers.ArchiveMaxEntrySize + 1
@@ -551,9 +468,9 @@ func TestReadFromTarGzCapsAnEntryNameBeforeAnythingRendersIt(t *testing.T) {
 	}
 }
 
-// nameCapCase is one row of the table above: an entry to put ahead of the
-// manifest, and what the walk owes for it. A zero want means the row is one of
-// the accepting ones, and quotes names a fragment the refusal has to render.
+// nameCapCase is one row of the name-cap table: an entry put ahead of the
+// manifest and the refusal it owes, with quotes naming a fragment it renders.
+// A nil want marks an accepting row.
 type nameCapCase struct {
 	want   error
 	name   string
@@ -562,21 +479,9 @@ type nameCapCase struct {
 	size   int64
 }
 
-// checkNameCapRefusal asserts what one refusing row owes: a message an
-// operator can read, the sentinel it names, and the fragment it has to quote.
-//
-// The message ceiling is checked ahead of the sentinel deliberately, and not
-// because the sentinel needs the help: run with this ceiling disabled - the
-// `n > messageMax` condition below becoming `n > messageMax && false` - the
-// ordering mutation the table above describes still fails the fifth row on the
-// sentinel alone, the size arm raising helpers.ErrArchiveEntryIsTooLarge where
-// that row wants the name one. The order is about what failing on the sentinel
-// COSTS, since that assertion renders err with %v:
-//
-//	read_test.go:549: readFromTarGzStream(a name past the cap under an over-cap size) error = archive entry is too large "aaaa
-//
-// elided after four of the 200,000 a's, which is the whole of what checking the
-// ceiling first keeps out of a failure log.
+// checkNameCapRefusal asserts a refusing row's message length, sentinel and
+// quoted fragment. The length is checked first so a failure never renders a
+// 200,000-byte name into the test log.
 func checkNameCapRefusal(t *testing.T, tc nameCapCase, err error) {
 	t.Helper()
 
@@ -608,23 +513,14 @@ func artifactStream(tb testing.TB, entries []testEntry) ([]byte, error) {
 	return readFromTarGzStream(tb.Context(), bytes.NewReader(raw))
 }
 
-// TestReadFromTarGzRefusesAGzipMemberProducingNoBytes pins the one refusal
-// decompressorOpenError names as arriving from somewhere else: a member whose
-// gzip HEADER is well-formed, so the decompressor opens over it and the
-// verdict comes from the walk behind it instead of from the open.
-//
-// The positive control is TestReadFromTarGzRejectsNonGzip's, which reads a
-// well-formed artifact back through this same ReadFromTarGz path out of a file
-// the same writeFile builder wrote. This fixture differs from it in what the
-// member carries and in nothing else.
+// TestReadFromTarGzRefusesAGzipMemberProducingNoBytes pins that an empty but
+// well-formed gzip member opens, and is refused by the walk with
+// helpers.ErrEmptyGzipMember rather than by the open as a shape failure.
 func TestReadFromTarGzRefusesAGzipMemberProducingNoBytes(t *testing.T) {
 	t.Parallel()
 
-	// Twenty bytes that are a whole gzip member: the ten-byte header, one
-	// fixed-Huffman final block carrying nothing, and an eight-byte trailer
-	// over zero bytes. Hand-spelled rather than produced by a writer, which
-	// pays 23 bytes for the same nothing - twenty is what one member of a
-	// flood costs its author on the wire.
+	// Twenty hand-spelled bytes form a whole gzip member: a ten-byte header, an
+	// empty fixed-Huffman final block and an eight-byte trailer over nothing.
 	member := make([]byte, 0, 20)
 	member = append(member, "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff"...)
 	member = append(member, 0x03, 0x00)
@@ -632,28 +528,14 @@ func TestReadFromTarGzRefusesAGzipMemberProducingNoBytes(t *testing.T) {
 
 	_, err := ReadFromTarGz(t.Context(), writeFile(t, "empty.tar.gz", member))
 
-	// Dropping the member rule - `if r.n == 0` in gzipstream.Reader.Read
-	// becoming `if false && r.n == 0`, applied through go test -overlay so no
-	// production file is edited - lets the Reset behind it run the stream out,
-	// leaving the walk to report an artifact that carried nothing:
-	//
-	//	read_test.go:646: ReadFromTarGz(an empty gzip member) error = .../empty.tar.gz: collection
-	//	artifact contains no MANIFEST.json: the tar stream ended after 0 bytes, want the empty-member sentinel
-	//
-	// Both quotes here carry the test's own temp directory elided to .../ and
-	// are wrapped, since neither fits this file's line width whole.
+	// gzipstream's member rule answers; without it the walk would report a
+	// stream that simply ended with no manifest.
 	if !errors.Is(err, helpers.ErrEmptyGzipMember) {
 		t.Fatalf("ReadFromTarGz(an empty gzip member) error = %v, want the empty-member sentinel", err)
 	}
 
-	// And that verdict is the walk's rather than the open's, which is the whole
-	// of what this fixture separates. Rendering it as the open's - walkError
-	// replaced by decompressorOpenError at readFromTarGzStream's own
-	// tarReader.Next error arm, applied through an overlay too - leaves the
-	// sentinel above readable and puts the shape one on it as well:
-	//
-	//	read_test.go:658: ReadFromTarGz(an empty gzip member) error = .../empty.tar.gz: downloaded
-	//	artifact is not a gzip-compressed tar archive: gzip stream carries a member that produces no bytes, want no shape sentinel
+	// The verdict is the walk's rather than the open's, so it carries no shape
+	// sentinel.
 	if errors.Is(err, helpers.ErrArtifactNotTarGz) {
 		t.Fatalf("ReadFromTarGz(an empty gzip member) error = %v, want no shape sentinel", err)
 	}

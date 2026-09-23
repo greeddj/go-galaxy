@@ -1,14 +1,8 @@
 package archive
 
-// This file measures the figure helpers.ArchiveProbeMaxBytes is derived from -
-// how far archive/tar can be made to read before Next returns its first header
-// - by building the maximal composite that reaches it and handing it to
-// archive/tar. It lives apart from archive_test.go for the reason
-// probe_decompressor_test.go states about itself: archive_test.go's comments
-// cite their own line numbers, so an import or a helper added there shifts
-// citations this has no business re-running. Nothing is added there; five
-// things it already declares - tarBlockSize, putTarOctal, sealTarBlock,
-// countingReader and probeArchiveBytes - are used where they stand.
+// This file measures how far archive/tar reads before Next returns its first
+// header, the figure helpers.ArchiveProbeMaxBytes is derived from, by building
+// the maximal composite that reaches it.
 
 import (
 	"archive/tar"
@@ -20,51 +14,20 @@ import (
 )
 
 const (
-	// metaBodyMaxBytes is archive/tar's own maxSpecialFileSize, spelled here
-	// because it is unexported there: the 1 MiB it allows one meta header's
-	// body and one sparse map alike. See helpers.ArchiveProbeMaxBytes for the
-	// measurement of both bounds.
+	// metaBodyMaxBytes is archive/tar's unexported maxSpecialFileSize: the 1 MiB
+	// it allows one meta header's body and one sparse map alike.
 	metaBodyMaxBytes = 1 << 20
-	// sparseEntryName is the name the composite's ordinary header carries. Its
-	// GNU.sparse.name record and its long-name meta headers spell the same
-	// value, so no part of the composite disagrees about which file it
-	// describes.
+	// sparseEntryName is the name of the composite's ordinary header, spelled
+	// identically by its GNU.sparse.name record and its long-name meta headers.
 	sparseEntryName = "collection/README.md"
 	// compositeModTime stamps every block the composite builds, so the fixture
 	// never depends on wall-clock time.
 	compositeModTime = int64(1704067200) // 2024-01-01T00:00:00Z
 )
 
-// TestMetaHeaderCeilingIsWhatArchiveTarReads measures the floor
-// helpers.ArchiveProbeMaxBytes has to clear, against archive/tar rather than
-// against that constant's own prose: the maximal composite the comment
-// describes is built here and archive/tar is made to read it.
-//
-// It is the runtime half of a cross-check whose structural half is
-// TestArchiveProbeMaxBytesClearsTheMetaHeaderCeiling, in
-// probe_decompressor_test.go. That one says the constant clears the documented
-// figure, and needs no builder to say it; this one says the documented figure
-// is what archive/tar actually does. Neither covers the other: lowering the
-// constant fails only the structural half, while a toolchain whose archive/tar
-// reads a different number of bytes before returning its first header - a go
-// directive bump being the routine way that happens - fails only this one.
-//
-// 4,196,352 is hand-spelled rather than computed from
-// helpers.ArchiveProbeMaxBytes or from a term formula built out of it: an
-// expectation derived from the value under test follows every mutation of it
-// and can never fail one.
-//
-// The straddle is what makes the first assertion a measurement of a MAXIMUM
-// rather than of a builder that happens to emit 4,196,352 bytes: the same
-// composite with a sparse map one block longer is refused. Measured on
-// go1.27.1, the toolchain go.mod pins, that refusal reads "archive/tar: sparse
-// map too long" and arrives after the identical 4,196,352 bytes, archive/tar
-// refusing the longer map rather than reading it. The text is recorded rather
-// than asserted, so archive/tar's own wording stays free to change.
-//
-// The gzip arm ties the measurement to the probe. It pins the direction a
-// stale figure fails in - the probe refusing an archive archive/tar accepts -
-// against behavior rather than against the constant's arithmetic.
+// TestMetaHeaderCeilingIsWhatArchiveTarReads pins that archive/tar reads
+// exactly 4,196,352 bytes of the maximal composite before its first header,
+// refuses a map one block longer, and that ProbeTarGz accepts the composite.
 func TestMetaHeaderCeilingIsWhatArchiveTarReads(t *testing.T) {
 	t.Parallel()
 
@@ -104,35 +67,16 @@ func TestMetaHeaderCeilingIsWhatArchiveTarReads(t *testing.T) {
 	}
 }
 
-// buildMetaCeilingComposite renders the composite helpers.ArchiveProbeMaxBytes
-// is derived against, as raw uncompressed tar bytes: an 'L', a 'K' and an 'x'
-// meta header each carrying a maximal body, then an ordinary header whose data
-// section holds a PAX 1.0 sparse map of mapBlocks blocks. The bytes are raw
-// because what is measured is archive/tar rather than the probe; a caller that
-// wants the probe compresses them itself.
-//
-// Exactly one 'x' is present, and that is what the sparse records depend on
-// rather than a matter of ordering: archive/tar assigns each meta kind's value
-// rather than merging it, so a second 'x' would discard this one's records
-// whole.
-//
-// Every block is assembled by hand, at the offsets archive/tar's own reader
-// parses them from, because tar.Writer refuses the three meta typeflags
-// outright - archive_test.go's buildMetaHeaderChainArchive quotes that
-// refusal - and has no field for a sparse map. The ordinary header follows the
-// same path rather than mixing a writer into a stream it could not produce
-// three quarters of.
+// buildMetaCeilingComposite hand-assembles raw tar bytes, as tar.Writer refuses
+// meta typeflags: maximal 'L', 'K' and 'x' bodies (one 'x' only, since a second
+// would replace its sparse records), then a header over a mapBlocks-block map.
 func buildMetaCeilingComposite(t *testing.T, mapBlocks int) []byte {
 	t.Helper()
 
 	sparseMap := buildPAXSparseMap(t, mapBlocks)
 
-	// The records the ordinary header needs to read as PAX 1.0 sparse, padded
-	// out to a maximal body by one filler record. Every fragment in that map is
-	// an empty one, which is why a realsize of zero validates: a zero-length
-	// fragment at offset zero lies inside a zero-size file, so archive/tar's own
-	// sparse validation accepts as many of them in a row as the map cares to
-	// spell.
+	// PAX 1.0 sparse records padded to a maximal body by one filler record. A
+	// realsize of zero validates because every fragment in the map is empty.
 	records := paxRecord("GNU.sparse.major", "1") +
 		paxRecord("GNU.sparse.minor", "0") +
 		paxRecord("GNU.sparse.name", sparseEntryName) +
@@ -162,17 +106,9 @@ func buildMetaCeilingComposite(t *testing.T, mapBlocks int) []byte {
 	return buf.Bytes()
 }
 
-// buildPAXSparseMap renders a PAX 1.0 sparse map occupying exactly blocks tar
-// blocks: the fragment count, then that many offset/length pairs, NUL-padded
-// to the block boundary.
-//
-// Every pair is spelled "0\n0\n", the shortest a pair can be, so the map
-// describes as many fragments as its bytes allow and the read it forces is a
-// function of the block count alone. The padding is never parsed: archive/tar
-// reads this map a whole block at a time and stops on the last newline it
-// needs, which the count below places inside the final block. The second guard
-// refuses a count that would leave that block newline-free, since such a map is
-// one of blocks-1 blocks wearing this one's name.
+// buildPAXSparseMap renders a NUL-padded PAX 1.0 sparse map of exactly blocks
+// tar blocks with the most "0\n0\n" pairs that fit; its last newline must land
+// in the final block, or archive/tar would read one block fewer.
 func buildPAXSparseMap(t *testing.T, blocks int) []byte {
 	t.Helper()
 
@@ -204,10 +140,8 @@ func buildPAXSparseMap(t *testing.T, blocks int) []byte {
 	return buf.Bytes()
 }
 
-// paxRecord renders one PAX extended record in the "<len> <key>=<value>\n"
-// form archive/tar's parser reads back, where <len> counts its own digits -
-// which is why the length is computed twice: spelling it can push the record
-// across a power of ten.
+// paxRecord renders one "<len> <key>=<value>\n" PAX record. <len> counts its
+// own digits, so it is computed twice: spelling it can cross a power of ten.
 func paxRecord(key, value string) string {
 	const padding = 3 // the space, the '=' and the newline
 
@@ -220,10 +154,8 @@ func paxRecord(key, value string) string {
 	return record
 }
 
-// paxFillerRecord renders a record of exactly target bytes. archive/tar parses
-// an 'x' body whole and refuses the header when a record in it is malformed, so
-// a body padded out to a maximal special file has to be padded with a record
-// rather than with filler.
+// paxFillerRecord renders a record of exactly target bytes: archive/tar refuses
+// an 'x' body holding a malformed record, so padding must be a record itself.
 func paxFillerRecord(t *testing.T, key string, target int) string {
 	t.Helper()
 
@@ -260,10 +192,9 @@ func paxMetaHeaderBlock(size int64) []byte {
 	return blk
 }
 
-// ordinaryHeaderBlock assembles the header the walk finally returns. Its size
-// field is the PHYSICAL size - the sparse map that follows it - since the
-// logical size arrives separately, in the 'x' header's GNU.sparse.realsize
-// record.
+// ordinaryHeaderBlock assembles the header the walk returns. Its size field is
+// the physical size, the sparse map after it; the logical size arrives in the
+// 'x' header's GNU.sparse.realsize record.
 func ordinaryHeaderBlock(size int64) []byte {
 	blk := newHeaderBlock(sparseEntryName, tar.TypeReg, size)
 	copy(blk[257:263], "ustar\x00")

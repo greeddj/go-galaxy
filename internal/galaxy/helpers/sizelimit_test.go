@@ -7,13 +7,9 @@ import (
 	"testing"
 )
 
-// TestNewSizeLimitedReaderWholeStream drives NewSizeLimitedReader through
-// io.ReadAll, which itself performs multiple Read calls with a growing
-// internal buffer, to pin the three whole-stream outcomes: comfortably under
-// the cap, landing exactly on it, and overrunning it by a small or large
-// margin. In every overrun case the returned error must be
-// ErrResponseTooLarge rather than a silent truncation (which is exactly what
-// a bare io.LimitReader would produce instead).
+// TestNewSizeLimitedReaderWholeStream pins, through io.ReadAll, that a
+// stream under or exactly at the cap reads whole and any overrun fails with
+// ErrResponseTooLarge rather than truncating.
 func TestNewSizeLimitedReaderWholeStream(t *testing.T) {
 	t.Parallel()
 
@@ -41,12 +37,8 @@ func TestNewSizeLimitedReaderWholeStream(t *testing.T) {
 			} else if err != nil {
 				t.Fatalf("io.ReadAll() unexpected error: %v", err)
 			}
-			// wantBytes < 0 means "do not assert an exact count", used for the
-			// far-over-the-cap case where the internal buffer growth of
-			// io.ReadAll makes the exact byte count read before failing an
-			// implementation detail rather than something worth pinning; what
-			// matters there is only that it errors instead of returning all
-			// 4096 bytes as a silently truncated success.
+			// wantBytes < 0 skips the count: far over the cap, how much
+			// io.ReadAll gets before the error depends on its buffer growth.
 			if tc.wantBytes >= 0 && len(got) != tc.wantBytes {
 				t.Fatalf("io.ReadAll() returned %d bytes, want %d", len(got), tc.wantBytes)
 			}
@@ -57,12 +49,9 @@ func TestNewSizeLimitedReaderWholeStream(t *testing.T) {
 	}
 }
 
-// TestSizeLimitedReaderCrossesBoundaryMidStream pins the per-call behavior
-// precisely: reads that stay under the cap must pass through untouched, and
-// the exact Read call whose cumulative total first exceeds the cap must
-// surface ErrResponseTooLarge on that same call - not one call later, and not
-// silently swallowed into a clean EOF - returning zero bytes alongside it, so
-// no caller that treats a satisfied request as success can erase the refusal.
+// TestSizeLimitedReaderCrossesBoundaryMidStream pins that reads under the
+// cap pass through and the very call that first exceeds it returns zero
+// bytes with ErrResponseTooLarge.
 func TestSizeLimitedReaderCrossesBoundaryMidStream(t *testing.T) {
 	t.Parallel()
 
@@ -124,18 +113,9 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return c.r.Read(p)
 }
 
-// TestSizeLimitedReaderSurvivesSatisfyingCallers is the reason the crossing
-// call returns zero bytes. Both helpers below erase an error returned
-// alongside a fully-satisfied request - io.ReadFull through io.ReadAtLeast's
-// `if n >= min { err = nil }`, io.CopyN through its own
-// `if written == n { return n, nil }` - so a cap that handed back the bytes
-// it read would be silently defeated by either one. Both are reachable in
-// production through a bufio.Reader or gzip.Reader layered over this type.
-//
-// Killing mutation, run: returning `n` instead of `0` from the crossing
-// branch fails the io.ReadFull row with `io.ReadFull over a cap of 8 = (9,
-// <nil>), want an ErrResponseTooLarge` and the io.CopyN row with `io.CopyN
-// over a cap of 8 = (9, <nil>), want an ErrResponseTooLarge`.
+// TestSizeLimitedReaderSurvivesSatisfyingCallers pins that io.ReadFull and
+// io.CopyN, which drop an error beside a satisfied request, still see the
+// refusal, and that the refusal is sticky.
 func TestSizeLimitedReaderSurvivesSatisfyingCallers(t *testing.T) {
 	t.Parallel()
 

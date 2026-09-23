@@ -131,12 +131,9 @@ func milliseconds(ms float64) string {
 // people as often as by `show`, so it is written indented rather than dense.
 const reportIndent = "  "
 
-// saveReport writes the document, creating the directory it goes in.
-//
-// encoding/json/v2 rather than v1, and the difference shows in the output: a
-// Result with no successful run gets "samples_ms": [] where v1 wrote null,
-// which is the truer statement about a series that ran and produced nothing.
-// v2 reads a v1-written report unchanged, so older reports keep loading.
+// saveReport writes the document, creating its directory. encoding/json/v2
+// writes a series with no successful run as "samples_ms": [] where v1 wrote
+// null, and still reads a v1-written report unchanged.
 func saveReport(path string, report *Report) error {
 	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
 		return fmt.Errorf("creating report directory: %w", err)

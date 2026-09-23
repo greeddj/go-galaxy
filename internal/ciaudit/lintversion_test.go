@@ -19,31 +19,24 @@ import (
 const lintVersionJustfile = "Justfile"
 
 // lintActionPrefix is the action whose `version` input is CI's spelling of
-// that same release. The tag the action is itself used at (`@v9`) is
-// deliberately outside this prefix: what this gate reads is the input, never
-// the action's own pin.
+// that release; the action's own `@v9` pin is deliberately not read.
 const lintActionPrefix = "golangci/golangci-lint-action"
 
 // lintWorkflowFile is the workflow carrying that step, as a slash path
 // relative to the module root.
 const lintWorkflowFile = ".github/workflows/ci.yml"
 
-// justfileLintVersionPattern matches the Justfile's own spelling of the
-// release, `GOLANGCI_LINT_VERSION := "vX.Y.Z"`, and captures the value. It is
-// anchored per line rather than searched for anywhere, so the prose of a
-// comment mentioning the variable cannot stand in for the assignment.
+// justfileLintVersionPattern captures `GOLANGCI_LINT_VERSION := "vX.Y.Z"`,
+// anchored per line so a comment mentioning the variable cannot stand in.
 var justfileLintVersionPattern = regexp.MustCompile(`(?m)^GOLANGCI_LINT_VERSION\s*:=\s*"([^"]+)"\s*$`)
 
-// pinnedLintVersionPattern is the shape both spellings must have: one exact
-// release. `latest` and a truncated `vX.Y` are refused because neither names a
-// single binary - the first changes what CI enforces from one day to the next,
-// and the second lets the two spellings agree while resolving differently.
+// pinnedLintVersionPattern is the exact-release shape a pin must have:
+// `latest` drifts from day to day, and a truncated `vX.Y` lets two agreeing
+// spellings resolve to different binaries.
 var pinnedLintVersionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
-// lintFixtureVersion is the release the in-memory fixtures pin, and
-// lintFixtureOther the one a drifted spelling names instead. Neither has to be
-// the release this repository is actually on: the fixtures exist to be
-// disagreed with.
+// lintFixtureVersion is the release the fixtures pin and lintFixtureOther the
+// one a drifted spelling names; neither need match the repository's release.
 const (
 	lintFixtureVersion = "v2.11.4"
 	lintFixtureOther   = "v2.12.2"
@@ -59,11 +52,8 @@ type lintJob struct {
 	Steps []lintStep `yaml:"steps"`
 }
 
-// lintStep is one step. With is a map of any rather than of string because a
-// workflow's inputs are not all strings - `fetch-depth: 0` and
-// `fail_ci_if_error: false` both live in this repository's own ci.yml, and a
-// string-typed map would fail to decode the whole file over an input this gate
-// does not even look at.
+// lintStep is one step. With maps to any because ci.yml carries non-string
+// inputs such as `fetch-depth: 0`, which a string map would fail to decode.
 type lintStep struct {
 	With map[string]any `yaml:"with"`
 	Uses string         `yaml:"uses"`
@@ -82,10 +72,8 @@ func TestLintVersionIsPinnedAndAgrees(t *testing.T) {
 	}
 }
 
-// readRepoFile returns the contents of one of this repository's own files,
-// named as a slash path relative to root. A file it cannot read is a failure
-// rather than a skip: both of these are files the gate exists to compare, so a
-// rename that hides one must not quietly pass.
+// readRepoFile returns a repository file named as a slash path under root; an
+// unreadable file fails rather than skips, so a rename cannot pass silently.
 func readRepoFile(t *testing.T, root, name string) []byte {
 	t.Helper()
 
@@ -137,10 +125,8 @@ func checkOneProblem(t *testing.T, problems []string, want string) {
 	}
 }
 
-// TestAuditLintVersionDetectsDrift pins the audit over in-memory fixtures. The
-// first row is the positive control: every refusal below is built from the same
-// two helpers and differs from it in one value, so without it a refusal would
-// be indistinguishable from a gate that never reached its check.
+// TestAuditLintVersionDetectsDrift pins the audit over in-memory fixtures; the
+// first row is the positive control each refusal differs from in one value.
 func TestAuditLintVersionDetectsDrift(t *testing.T) {
 	t.Parallel()
 
@@ -168,14 +154,8 @@ func TestAuditLintVersionDetectsDrift(t *testing.T) {
 			justfile:    lintJustfileSource(lintFixtureVersion),
 			wantProblem: `pins version "v2.12", which is not an exact`,
 		},
-		// Run against the mutation this row exists to catch: with the two
-		// captured versions compared nowhere in auditLintVersion and only the
-		// pin-shape check left, it failed with
-		//
-		//	audit reported 0 problems, want 1 containing "pins golangci-lint v2.11.4 while Justfile pins v2.12.2": []
-		//
-		// because a workflow and a Justfile that each name a well-formed
-		// release are, one at a time, beyond reproach.
+		// Each file names a well-formed release on its own, so only the
+		// comparison between them catches this drift.
 		{
 			name:        "disagreeing",
 			workflow:    lintWorkflowSource(lintFixtureVersion),
@@ -209,11 +189,9 @@ func TestAuditLintVersionDetectsDrift(t *testing.T) {
 	}
 }
 
-// auditLintVersion reports every problem with how the two files spell the
-// golangci-lint release this repository is linted with. Each half is read on
-// its own so a file that names nothing usable is reported as that, rather than
-// as a disagreement with the other file; the comparison then runs only over two
-// values that both survived their own half.
+// auditLintVersion reports every problem with the two spellings. Each half is
+// judged alone, so an unusable file is reported as such, and only two
+// surviving values are compared.
 func auditLintVersion(workflow, justfile []byte) []string {
 	var problems []string
 

@@ -26,21 +26,18 @@ type GalaxyYML struct {
 	BuildIgnore   []string
 }
 
-// Candidate is one collection directory Discover found: its build metadata,
-// its subdir relative to the repository root ("" for the root), and whether
-// the metadata came from a MANIFEST.json rather than a galaxy.yml (in which
-// case the tree is rebuilt from scratch, exactly as ansible-galaxy does for an
-// installed tree handed to it as a source).
+// Candidate is one collection directory Discover found. FromManifest marks
+// metadata read from MANIFEST.json rather than galaxy.yml; the tree is then
+// rebuilt from scratch, as ansible-galaxy does for an installed tree.
 type Candidate struct {
 	Subdir       string
 	Meta         GalaxyYML
 	FromManifest bool
 }
 
-// Built is one artifact Build produced: the identity and raw dependencies
-// from its metadata, the subdir it was built from, the temp path of the
-// tar.gz, its sha256 computed while writing, the warnings raised along the
-// way, and a Cleanup that removes the temp file.
+// Built is one artifact Build produced: identity and raw dependencies from
+// its metadata, the temp tar.gz path and its sha256, the build warnings, and
+// a Cleanup that removes the temp file.
 type Built struct {
 	Cleanup      func()
 	Dependencies map[string]string

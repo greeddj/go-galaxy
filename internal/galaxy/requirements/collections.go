@@ -1,42 +1,6 @@
-// Package requirements parses an ansible-style requirements.yml into the
-// collection entries the resolver works from and the role entries the role
-// pipeline installs. It accepts both shapes ansible writes - a bare list, or
-// a mapping carrying a collections: key and/or a roles: key - and refuses
-// any other shape rather than guessing at it. A bare list is a list of
-// collections here, where ansible reads it as the legacy roles format; a
-// collection entry spelled with a role's keys (src:, scm:) is refused with
-// a message pointing at roles:, so that one misfire is a named refusal
-// rather than a silent non-install.
-//
-// A collection item is a "namespace.name" string, a git pointer string
-// ("git+<url>" or "git@host:path"), an http(s) tarball URL, or a mapping. A
-// role item is ansible's "src[,version[,name]]" string or a mapping with
-// src:, scm:, version:, name: (or the old-style role:), and is a Galaxy
-// role - src: is owner.role - a git role - src: is a git pointer, an scm:
-// git URL, or ansible's github.com special case - or a url role - src: is
-// an http(s) URL ending .tar.gz. What ansible would install from and this
-// tool does not - a local path, a non-http or non-.tar.gz role URL, an scm
-// other than git, an include: of a second file - is refused at load.
-//
-// This is one of the boundaries an untrusted identifier enters the program
-// through, so an entry is validated here rather than downstream:
-// parseCollectionItem is where both collection item shapes converge on the
-// collection name alphabet, validateRequirement rejects a type: that is
-// none of galaxy, git and url and a source: embedding URL userinfo before
-// anything can print or request it, parseGitRequirement judges a git
-// entry's URL, ref and subdir through internal/galaxy/gitsource's grammar,
-// which is where a credential in a repository URL is refused,
-// parseURLRequirement judges a url entry's URL through
-// internal/galaxy/urlsource's grammar, which refuses a credential and a
-// fragment the same way, and finishRole applies the role alphabets
-// (helpers.IsRoleName, helpers.IsRoleInstallName, helpers.IsRoleVersion)
-// and the same source grammars to a role entry. A git collection entry has
-// no identity at parse time unless the file names one (name: namespace.name
-// beside a git source:), exactly as in ansible, where the repository's own
-// galaxy.yml is what says which collection it holds, and a url entry never
-// has one - its artifact's MANIFEST.json is what names its collection; the
-// alphabet check is therefore applied only when an entry carries a name to
-// check.
+// Package requirements parses requirements.yml into collection and role
+// entries. It is the boundary where every name, URL and signature source in
+// the file is validated, and it refuses any shape this tool cannot install.
 package requirements
 
 import (
@@ -55,12 +19,9 @@ import (
 // Collections is a list of collection requirements.
 type Collections = []CollectionRequirement
 
-// CollectionRequirement describes a single collection requirement entry. For
-// a Galaxy entry, Version is a constraint and Source a server id or URL. For
-// a git entry (Type == TypeGit), Source is the canonical repository URL, Ref
-// the branch, tag or commit asked for (HEAD when none was), Subdir the
-// "#fragment" with its slashes trimmed, Version is empty, and Namespace and
-// Name are empty unless the file named the collection explicitly.
+// CollectionRequirement is one collection entry. For Galaxy, Version is a
+// constraint and Source a server id or URL; for git, Source is the repository
+// URL, Ref the ref (HEAD by default), Subdir the fragment, Version empty.
 type CollectionRequirement struct {
 	Namespace  string
 	Name       string
@@ -82,10 +43,9 @@ const (
 // IsGit reports whether the requirement names a git source.
 func (r CollectionRequirement) IsGit() bool { return r.Type == TypeGit }
 
-// IsURL reports whether the requirement names a url source: a direct http(s)
-// URL to a tar.gz artifact. Source is then the canonical URL, Version the
-// exact version the entry asserted ("" for none), and every other field is
-// empty - the artifact's own MANIFEST.json names its collection.
+// IsURL reports whether the requirement names a url source: Source is then
+// the canonical tarball URL, Version the asserted exact version or "", and the
+// artifact's MANIFEST.json supplies the identity.
 func (r CollectionRequirement) IsURL() bool { return r.Type == TypeURL }
 
 // File is everything a requirements file declares: its collections, its
@@ -132,10 +92,8 @@ func parseRaw(raw any, defaultSource string) (File, error) {
 			return File{}, err
 		}
 		if f.Roles, f.Warnings, err = parseRoleList(rolesRaw); err != nil {
-			// The collections are handed back beside the refusal: a reader
-			// that only needs them (cleanup's reachability walk) can keep
-			// what it can still judge rather than treat the whole project as
-			// unknown, while every other caller sees the error as before.
+			// The collections ride beside the refusal so cleanup's
+			// reachability walk can still use them.
 			return File{Collections: f.Collections}, &RolesError{Err: err}
 		}
 		return f, nil
@@ -150,10 +108,9 @@ func parseRaw(raw any, defaultSource string) (File, error) {
 	}
 }
 
-// parseCollectionList parses a list of collection items. A nil raw value
-// (ansible accepts a bare "collections:" or "collections: ~" as an empty
-// list) yields an empty result rather than an error; any other non-list
-// value (e.g. a scalar) is still rejected.
+// parseCollectionList parses a list of collection items. A nil value (ansible
+// takes a bare "collections:" as an empty list) yields no entries; any other
+// non-list value is refused.
 func parseCollectionList(raw any, defaultSource string) (Collections, error) {
 	if raw == nil {
 		return nil, nil
@@ -173,26 +130,16 @@ func parseCollectionList(raw any, defaultSource string) (Collections, error) {
 	return items, nil
 }
 
-// parseCollectionItem parses a single collection entry and checks the
-// resulting identity against the collection-name alphabet.
-//
-// The check lives here rather than inside helpers.SplitFQDN because the
-// explicit form - a mapping with its own `namespace:` and `name:` keys - never
-// reaches SplitFQDN at all: normalizeCollectionName calls it only when the
-// name still carries a dot. So a requirements file could name a collection its
-// own lockfile could not, and an explicit namespace carrying a newline reached
-// the resolver, which printed it, before anything looked at it. Both parse
-// branches converge here, which is what makes this the boundary rather than
-// one of the two paths through it.
+// parseCollectionItem parses one entry and applies the collection name
+// alphabet. It sits where both item shapes converge, since a mapping's
+// explicit namespace: and name: never pass through helpers.SplitFQDN.
 func parseCollectionItem(item any, defaultSource string) (CollectionRequirement, error) {
 	req, err := parseCollectionItemByShape(item, defaultSource)
 	if err != nil {
 		return CollectionRequirement{}, err
 	}
-	// A git entry without an explicit name, and every url entry, has no
-	// identity to check yet: the repository's galaxy.yml or the artifact's
-	// MANIFEST.json supplies one at discovery, where the same alphabet is
-	// applied to what it says.
+	// An unnamed git entry and every url entry get their identity at
+	// discovery, from galaxy.yml or MANIFEST.json, where it is judged.
 	if (req.IsGit() || req.IsURL()) && req.Namespace == "" && req.Name == "" {
 		return req, nil
 	}
@@ -203,9 +150,8 @@ func parseCollectionItem(item any, defaultSource string) (CollectionRequirement,
 	return req, nil
 }
 
-// parseCollectionItemByShape dispatches on the entry's YAML shape; it is the
-// former body of parseCollectionItem, split out so the alphabet check above
-// covers both branches without either having to remember it.
+// parseCollectionItemByShape dispatches on the entry's YAML shape; it is kept
+// apart so the alphabet check in parseCollectionItem covers both branches.
 func parseCollectionItemByShape(item any, defaultSource string) (CollectionRequirement, error) {
 	switch v := item.(type) {
 	case string:
@@ -291,14 +237,9 @@ func parseCollectionMapFields(value map[string]any) CollectionRequirement {
 	return req
 }
 
-// checkNamespaceNameConflict rejects an explicit namespace combined with a
-// dotted name, e.g. namespace: foo + name: bar.baz. normalizeCollectionName
-// would otherwise keep the explicit namespace but silently overwrite name
-// with the dotted name's last segment, installing a different collection
-// than either field implies alone. The conditions mirror exactly those
-// under which normalizeCollectionName would perform that split: only a
-// namespace that is actually about to be shadowed is flagged, not every
-// dotted name.
+// checkNamespaceNameConflict refuses an explicit namespace beside a dotted
+// name (namespace: foo, name: bar.baz) under exactly the conditions in which
+// normalizeCollectionName would silently replace name with its last segment.
 func checkNamespaceNameConflict(req CollectionRequirement) error {
 	if req.Namespace == "" || req.Name == "" || !strings.Contains(req.Name, ".") ||
 		req.Type != "" || looksLikeSourceName(req.Name) {
@@ -338,13 +279,8 @@ func finalizeCollectionRequirement(req CollectionRequirement, defaultSource stri
 }
 
 func validateRequirement(req CollectionRequirement, raw any) error {
-	// Checked first, ahead of every other branch below (including the
-	// req.Name == "" one immediately following): that branch echoes the
-	// entire raw item back in its error message for diagnostic purposes, and
-	// raw may itself carry the very userinfo-bearing source: this check
-	// exists to catch. Validating source before ever touching raw means an
-	// invalid entry ("name" missing or empty) can never smuggle a credential
-	// out through its own error message.
+	// Checked before the req.Name branch below, which echoes raw in its
+	// error, so a userinfo-bearing source: is refused before it can print.
 	if err := checkSourceUserinfo(req); err != nil {
 		return err
 	}
@@ -366,11 +302,9 @@ func validateRequirement(req CollectionRequirement, raw any) error {
 	return checkGalaxySourceShape(req)
 }
 
-// checkGalaxySourceShape refuses a Galaxy entry whose source: is a git
-// pointer or a persisted locator: it would otherwise pass validation as a
-// server reference and be dispatched as a git or url source later by its
-// prefix alone, with its URL never judged. The spellings that mean those
-// sources are type: git and type: url.
+// checkGalaxySourceShape refuses a Galaxy entry whose source: is a git pointer
+// or a git or url locator: it would otherwise be dispatched later by prefix
+// alone with its URL never judged. type: git and type: url spell those.
 func checkGalaxySourceShape(req CollectionRequirement) error {
 	if gitsource.IsPointer(req.Source) || gitsource.IsLocator(req.Source) {
 		return fmt.Errorf("%w: source %q names a git repository; spell the entry with type: git",
@@ -383,17 +317,9 @@ func checkGalaxySourceShape(req CollectionRequirement) error {
 	return nil
 }
 
-// parseURLMapItem parses a mapping that names a url source: type: url, or a
-// name: that reads as an http(s) URL. The URL always lives in name:, as
-// ansible spells it. signatures: is refused before raw is ever echoed, the
-// rule parseGitMapItem states, and for the reason ansible itself documents:
-// user-provided signatures are not used for a url source. source: and
-// namespace: are refused rather than dropped - ansible ignores both, and a
-// key that changes nothing is a mistake this tool would rather name.
-// version:, when given, must be an exact version: the URL serves exactly one
-// artifact, so a range could only ever be vacuously satisfied or a lie, and
-// the exact value is asserted against the artifact's MANIFEST.json at
-// discovery.
+// parseURLMapItem parses a mapping naming a url source (type: url, or an
+// http(s) URL in name:). signatures:, source: and namespace: are refused, and
+// version: must be exact, as it is asserted against the MANIFEST.json.
 func parseURLMapItem(req CollectionRequirement, raw map[string]any) (CollectionRequirement, error) {
 	if value, ok := raw["signatures"]; ok && value != nil {
 		return CollectionRequirement{}, fmt.Errorf("%w: a signatures key is not supported on a url requirement",
@@ -422,10 +348,8 @@ func parseURLMapItem(req CollectionRequirement, raw map[string]any) (CollectionR
 	return parseURLRequirement(req.Name, version)
 }
 
-// parseURLRequirement turns a tarball URL plus an optional exact version
-// into a requirement, judged through urlsource's grammar; a URL is rendered
-// in an error only through helpers.URLForMessage, and the grammar has
-// already refused one carrying a credential before any message is composed.
+// parseURLRequirement judges a tarball URL through urlsource's grammar, which
+// refuses a credential before any error message can render the URL.
 func parseURLRequirement(rawURL, version string) (CollectionRequirement, error) {
 	u, err := urlsource.ParseURL(rawURL)
 	if err != nil {
@@ -438,15 +362,9 @@ func parseURLRequirement(rawURL, version string) (CollectionRequirement, error) 
 	}, nil
 }
 
-// parseGitMapItem parses a mapping that names a git source: type: git, or a
-// name: that reads as a git pointer. The repository URL is source: when
-// given and name: otherwise; when source: carries the URL, name: (or the
-// namespace:/name: pair) may name the one collection of the repository the
-// entry is for. signatures: is refused on a git entry before raw is ever
-// echoed, for the same reason validateRequirement checks credential-bearing
-// keys first: a git artifact is built here and carries no signature anyone
-// could have made, so a signatures: block can only be a mistake or a
-// smuggled value.
+// parseGitMapItem parses a mapping naming a git source (type: git, or a git
+// pointer in name:). With the URL in source:, name: may pick one collection;
+// signatures: is refused, since nobody signed an artifact built here.
 func parseGitMapItem(req CollectionRequirement, raw map[string]any) (CollectionRequirement, error) {
 	if value, ok := raw["signatures"]; ok && value != nil {
 		return CollectionRequirement{}, fmt.Errorf("%w: a signatures key is not supported on a git requirement",
@@ -471,9 +389,7 @@ func parseGitMapItem(req CollectionRequirement, raw map[string]any) (CollectionR
 }
 
 // gitCollectionName reads the optional collection name of a git entry whose
-// source: carries the repository URL: empty when neither name: nor
-// namespace: is given, the namespace:/name: pair when both are, else name:
-// split as a fully qualified collection name.
+// source: holds the URL: none, the namespace:/name: pair, or name: as an FQDN.
 func gitCollectionName(req CollectionRequirement) (string, string, error) {
 	switch {
 	case req.Name == "" && req.Namespace == "":
@@ -491,11 +407,9 @@ func gitCollectionName(req CollectionRequirement) (string, string, error) {
 	return namespace, name, nil
 }
 
-// parseGitRequirement turns a git pointer plus version into a requirement,
-// in ansible's parse_scm order (gitsource.SplitSCM), then judges each part
-// through gitsource's grammar. A URL is rendered in an error only through
-// helpers.URLForMessage, and the grammar has already refused one carrying a
-// credential before any message is composed.
+// parseGitRequirement splits a git pointer in ansible's parse_scm order
+// (gitsource.SplitSCM) and judges URL, ref and subdir through gitsource's
+// grammar, which refuses a credential before any message renders the URL.
 func parseGitRequirement(pointer, version, namespace, name string) (CollectionRequirement, error) {
 	rawURL, rawRef, rawSubdir := gitsource.SplitSCM(pointer, version)
 	u, err := gitsource.ParseURL(rawURL)
@@ -520,46 +434,9 @@ func parseGitRequirement(pointer, version, namespace, name string) (CollectionRe
 	}, nil
 }
 
-// checkSignatureSources validates the one repository-authored field of a
-// requirements entry that no other boundary judges: signatures:.
-//
-// Everything it refuses would otherwise be refused, or silently mangled, much
-// later and much worse. A source this tool cannot fetch reaches an install
-// worker and fails one collection among however many, classified as that
-// collection's failure rather than as the configuration error it is. A source
-// carrying userinfo is a credential in repository content, and by then it has
-// been copied into the resolved snapshot - a shared S3 object in a
-// multi-runner cache - where url.URL.String() renders it back in plain text;
-// the refusal here names the value with its userinfo cut off, exactly as the
-// fetch's own would. A source's query reaches that same snapshot too, but is
-// cut rather than refused (normalizeSignatures,
-// internal/galaxy/collections/resolve.go). A value that is not a string at
-// all is turned by parseStringList's fmt.Sprint arm into a plausible-looking
-// source ("map[]", "false", "0") that nothing downstream can tell from one an
-// author wrote. And more sources than helpers.MaxSignaturesPerCollection
-// allows is a list this tool would take only the first 64 of - warned about
-// downstream by gatherLimit, but still not what the file asked for, which
-// is a worse answer than refusing the file outright.
-//
-// helpers.MaxSignaturesPerCollection is one number enforced at two layers,
-// and the two must be read together: this gate bounds what one entry may
-// DECLARE, never what the gather does once the combined candidate set -
-// this entry's own sources plus whatever the server offers alongside the
-// artifact - exceeds that bound. gatherLimit
-// (internal/galaxy/collections/verify.go) owns that second layer and
-// reports it; per the one-home rule, this gate's job ends at load time.
-//
-// What it does NOT do is re-state the grammar: signature.ValidateRequirementSource
-// answers what a source may be, and the fetch answers through the same
-// function, so a value accepted here cannot be refused there or the reverse.
-//
-// The shape check reads raw rather than req.Signatures, because by the time a
-// requirement carries []string the evidence is gone: parseStringList has
-// already turned whatever was written into strings. Both bearing shapes are
-// accepted - a list of strings, and a single string, which is what
-// parseStringList itself accepts - and the refusal names a Go type rather than
-// a value, since a YAML mapping's contents are repository content this message
-// has no reason to render.
+// checkSignatureSources judges signatures:, the one repository-authored field
+// no other boundary does: its shape, the declared-count cap, and each source
+// through signature.ValidateRequirementSource, the rule the fetch shares.
 func checkSignatureSources(req CollectionRequirement, raw any) error {
 	if err := checkSignatureSourceShape(raw); err != nil {
 		return err
@@ -577,10 +454,9 @@ func checkSignatureSources(req CollectionRequirement, raw any) error {
 	return nil
 }
 
-// checkSignatureSourceShape refuses a signatures: value that is neither a list
-// of strings nor a single string, naming the offending Go type and never its
-// content. An absent key, and a key whose value is nil, are both left alone:
-// declaring nothing is how an entry asks for nothing.
+// checkSignatureSourceShape refuses a signatures: value that is neither a
+// string nor a list of strings, naming its Go type and never its content. It
+// reads raw because parseStringList's fmt.Sprint would disguise a bad value.
 func checkSignatureSourceShape(raw any) error {
 	item, ok := raw.(map[string]any)
 	if !ok {
@@ -608,21 +484,9 @@ func checkSignatureSourceShape(raw any) error {
 	}
 }
 
-// checkSourceUserinfo rejects an explicit "source:" that embeds userinfo
-// (e.g. "https://user:pass@hub/"), the same shape config.Server's own URL
-// already refuses (see helpers.ErrGalaxyServerURLUserinfo). Unlike a
-// configured server, a per-collection source: comes straight from
-// requirements.yml - repository content, not an operator-controlled
-// config file - and an unmatched source: flows unchanged into root-metadata
-// request URLs, debug log lines, HTTP error strings, the resolved snapshot,
-// the lockfile, and GALAXY.yml (see serverCandidates/pinnedServerCandidate
-// in package collections). url.URL.String() renders a userinfo password
-// back out in plain text, so without this check any of those repository-
-// content-controlled sinks could leak a credential embedded in the source.
-//
-// A source: naming a bare server_list id (e.g. "internal", never URL-shaped)
-// is left alone: url.Parse succeeds on it but yields no scheme/host, so it
-// never reaches the User-set branch below.
+// checkSourceUserinfo refuses a URL-shaped source: embedding userinfo: it is
+// repository content, and url.URL.String() would render the password into
+// request URLs, logs, the snapshot, the lockfile and GALAXY.yml.
 func checkSourceUserinfo(req CollectionRequirement) error {
 	if req.Source == "" {
 		return nil
@@ -713,11 +577,9 @@ func looksLikeSourceName(value string) bool {
 	return false
 }
 
-// RolesError reports that the collections: list parsed and the roles: list
-// did not. Load and Parse return it with File.Collections filled, so a
-// caller that can act on the collections alone may, after deciding that a
-// roles list it cannot read is a warning rather than an unknown project;
-// every other caller treats it as the load failure it wraps.
+// RolesError reports that collections: parsed and roles: did not. Load and
+// Parse return it with File.Collections filled, for a caller (cleanup) that
+// can act on the collections alone; every other caller treats it as fatal.
 type RolesError struct {
 	Err error
 }

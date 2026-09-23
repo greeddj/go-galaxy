@@ -34,9 +34,7 @@ func (p *recordingPrinter) Debugf(format string, args ...any) {
 func (p *recordingPrinter) DebugSincef(time.Time, string, ...any) {}
 
 // assertContainsAll fails the test unless line contains every one of want,
-// naming the whole line once rather than repeating it per missing
-// substring - kept as its own helper so the caller's branching stays flat
-// enough for the linter's cyclomatic-complexity budget.
+// kept apart so the caller stays under the cyclomatic-complexity budget.
 func assertContainsAll(t *testing.T, line string, want ...string) {
 	t.Helper()
 	for _, w := range want {
@@ -46,10 +44,9 @@ func assertContainsAll(t *testing.T, line string, want ...string) {
 	}
 }
 
-// TestDebugAnsibleConfigReportsServerListWithoutLeakingToken pins the
-// invariant that a verbose run's resolved-server-list debug line names
-// every server's id, URL, and TLS policy, and reports token presence as a
-// boolean - never the plaintext token, however loud the run's verbosity.
+// TestDebugAnsibleConfigReportsServerListWithoutLeakingToken pins that each
+// server's debug line names its id, URL and TLS policy and reports the token
+// only as a presence boolean.
 func TestDebugAnsibleConfigReportsServerListWithoutLeakingToken(t *testing.T) {
 	t.Parallel()
 	const secretToken = "tok3n-must-not-appear-in-debug-output"
@@ -125,13 +122,9 @@ func TestDebugAnsibleConfigNilSafe(t *testing.T) {
 	i.DebugAnsibleConfig(nil)
 }
 
-// TestArtifactDeadlineDefaultsToTheConstantAndHonorsAnOverride pins
-// ArtifactDeadline's fallback contract: a nil receiver, a zero-value Infra, a
-// freshly constructed one, and an explicitly non-positive override all report
-// helpers.ArtifactDownloadDeadline, while a positive override is honored
-// verbatim. The nil and zero-value cases matter because ArtifactDeadline must
-// never panic or silently return 0 for an Infra a test built by hand without
-// going through New.
+// TestArtifactDeadlineDefaultsToTheConstantAndHonorsAnOverride pins that a
+// positive override is honored, while a nil Infra, a zero value, one from New
+// or a negative override reports the constant, so no Infra gets a zero budget.
 func TestArtifactDeadlineDefaultsToTheConstantAndHonorsAnOverride(t *testing.T) {
 	t.Parallel()
 
@@ -167,21 +160,9 @@ func TestArtifactDeadlineDefaultsToTheConstantAndHonorsAnOverride(t *testing.T) 
 	}
 }
 
-// TestSignatureDeadlineFallsBackAndHonorsAnOverride pins SignatureDeadline's
-// fallback contract, which is ArtifactDeadline's above: a nil receiver, a
-// zero-value Infra, a freshly constructed one, and an explicitly non-positive
-// override all report helpers.SignatureFetchDeadline, while a positive override
-// is honored verbatim.
-//
-// The nil and zero-value rows are the load-bearing ones:
-// verifyCollectionSignatures reads this budget for every collection it checks,
-// so an Infra a test built by hand must neither panic here nor wrap a zero
-// budget around a gather that would then expire instantly.
-//
-// Written as independent assertions rather than as a table like the one above,
-// so that a change to one accessor cannot be mistaken for a change to both -
-// and each line is reachable whatever the lines before it concluded, since
-// every one of them builds its own receiver.
+// TestSignatureDeadlineFallsBackAndHonorsAnOverride pins the same fallback for
+// SignatureDeadline, whose nil and zero-value rows keep
+// verifyCollectionSignatures from wrapping a zero budget around its gather.
 func TestSignatureDeadlineFallsBackAndHonorsAnOverride(t *testing.T) {
 	t.Parallel()
 

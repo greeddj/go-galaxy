@@ -11,16 +11,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// The path this package exists for - put an artifact and get it back - was
-// never walked by a test. Its helpers were covered in isolation
-// (verifyArtifactSHA, metaFromHeaders, objectKey) while Commit and Delete sat
-// at zero, so nothing proved the digest Commit records is the one Fetch later
-// checks against, or that the two ends agree on where an object lives. There
-// is no build-tagged integration suite in this repository either, so this was
-// not covered somewhere else.
-//
-// Everything here runs against the fake already in this package. It can
-// already do all of it, fault injection included.
+// These tests walk the artifact round trip against this package's fake,
+// proving Commit and Fetch agree on the object key and the recorded digest.
 
 // artifactRoundTripKey is the cache key every test in this file commits and
 // fetches under.
@@ -69,11 +61,9 @@ func commitRoundTripArtifact(t *testing.T, b *Backend, meta map[string]string) s
 	return committed.Path
 }
 
-// TestArtifactRoundTrip walks the whole cycle: stage, commit, read back,
-// remove. The read-back is what makes it a round trip rather than four
-// unrelated calls - it proves both ends agree on the object key, and that the
-// digest Commit recorded is the one Fetch verifies against, since Fetch
-// refuses an object whose recorded digest disagrees with its bytes.
+// TestArtifactRoundTrip walks stage, commit, read back and remove, proving
+// both ends agree on the object key and that Fetch accepts the digest Commit
+// recorded.
 func TestArtifactRoundTrip(t *testing.T) {
 	t.Parallel()
 	b := openRoundTripBackend(t)
@@ -108,12 +98,9 @@ func TestArtifactRoundTrip(t *testing.T) {
 	}
 }
 
-// TestCommitRecordsTheDigestFetchVerifies pins the agreement the round trip
-// above can only imply. Commit is given no digest, so it hashes the payload
-// itself; the object is then overwritten with different bytes under that same
-// recorded digest, and Fetch must refuse them. If Commit had recorded nothing,
-// or recorded it under a name Fetch does not read, the refusal could not
-// happen - the corrupted body would come back as if it were fine.
+// TestCommitRecordsTheDigestFetchVerifies pins that the digest Commit derives
+// itself is the one Fetch checks: bytes overwritten under that recorded digest
+// are refused with helpers.ErrSHA256Mismatch.
 func TestCommitRecordsTheDigestFetchVerifies(t *testing.T) {
 	t.Parallel()
 	b := openRoundTripBackend(t)
@@ -138,11 +125,8 @@ func TestCommitRecordsTheDigestFetchVerifies(t *testing.T) {
 	}
 }
 
-// TestCommitHonorsASuppliedDigest covers the other half of Commit's digest
-// handling: a caller that already hashed the payload - which every real
-// download does - has its value recorded rather than replaced by a second
-// hash of the same bytes. Fetch reading the object back is what proves the
-// supplied value was actually stored and is the one Fetch checks.
+// TestCommitHonorsASuppliedDigest pins that a caller-supplied sha256, which
+// every real download passes, is recorded as given and accepted by Fetch.
 func TestCommitHonorsASuppliedDigest(t *testing.T) {
 	t.Parallel()
 	b := openRoundTripBackend(t)
@@ -167,12 +151,9 @@ func TestCommitHonorsASuppliedDigest(t *testing.T) {
 	cleanupIfNeeded(fetched.Cleanup)
 }
 
-// TestTempFileLeavesNothingBehind pins the staging half on both outcomes. A
-// temp file survives its own creation - a cleanup that ran too eagerly would
-// leave Commit nothing to open - and is gone once its cleanup runs, whether
-// the commit succeeded or was refused. The refused row uses the fake's own
-// fault injection, so the failure is a real PUT rejection rather than a
-// simulated one.
+// TestTempFileLeavesNothingBehind pins that a staged temp file still exists
+// when Commit is called and is gone once its cleanup runs, whether the commit
+// succeeded or the fake refused the PUT.
 func TestTempFileLeavesNothingBehind(t *testing.T) {
 	t.Parallel()
 
@@ -223,11 +204,9 @@ func TestTempFileLeavesNothingBehind(t *testing.T) {
 	})
 }
 
-// TestDeleteOfAnAbsentObjectIsNotAnError pins the shape eviction relies on:
-// removing a key the bucket does not hold is the ordinary outcome of a race
-// with another runner's own eviction, not a failure to report. The committed
-// row is the control, proving Delete against this fake does reach the object
-// it names.
+// TestDeleteOfAnAbsentObjectIsNotAnError pins that deleting an absent key
+// succeeds, since eviction can race another runner's own eviction; deleting
+// a committed object is the control.
 func TestDeleteOfAnAbsentObjectIsNotAnError(t *testing.T) {
 	t.Parallel()
 	b := openRoundTripBackend(t)

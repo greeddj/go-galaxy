@@ -1,9 +1,7 @@
 package collections
 
-// This file provides the shared test scaffolding every test that needs a
-// real installTarget or a real os.Root builds on, so each test file does not
-// hand-roll its own os.OpenRoot/newInstallTarget boilerplate and risk one of
-// them skipping the cleanup or the validation another gets right.
+// Shared scaffolding for tests that need a real os.Root or installTarget, so
+// each opens, validates and closes them the way a real run does.
 
 import (
 	"os"
@@ -12,12 +10,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 )
 
-// newTestCollectionsRoot opens (creating if needed) the collections root for
-// downloadPath via openCollectionsRoot, the same entry point installWithState
-// itself uses, and registers t.Cleanup to close it. This is the helper every
-// test that drives production code expecting a live *os.Root (installLevels,
-// installCollection, shouldSchedulePrefetch, installDryRunProbe, ...) should
-// use, so the root is opened and torn down exactly the way a real run does.
+// newTestCollectionsRoot opens the collections root for downloadPath through
+// openCollectionsRoot, creating it as installWithState does, and closes it on
+// cleanup.
 func newTestCollectionsRoot(t *testing.T, downloadPath string) *os.Root {
 	t.Helper()
 	root, err := openCollectionsRoot(downloadPath, true)
@@ -30,11 +25,8 @@ func newTestCollectionsRoot(t *testing.T, downloadPath string) *os.Root {
 	return root
 }
 
-// newTestInstallTarget opens a fresh collections root for cfg.DownloadPath
-// (via newTestCollectionsRoot) and builds col's installTarget through the
-// real newInstallTarget chokepoint, failing the test outright if col's
-// identity is reported unsafe - every caller of this helper is exercising
-// something else and expects a valid target to work with.
+// newTestInstallTarget builds col's installTarget through newInstallTarget on
+// a fresh root, failing the test if col's identity is reported unsafe.
 func newTestInstallTarget(t *testing.T, cfg *config.Config, col collection) installTarget {
 	t.Helper()
 	root := newTestCollectionsRoot(t, cfg.DownloadPath)
@@ -45,13 +37,9 @@ func newTestInstallTarget(t *testing.T, cfg *config.Config, col collection) inst
 	return target
 }
 
-// newFlatInstallTarget builds an installTarget whose "install directory" is
-// dir itself (rel = "."), for marker-level unit tests that operate directly
-// on a bare tree rather than the ansible_collections/<namespace>/<name>
-// layout a real install produces. It deliberately bypasses newInstallTarget's
-// own identifier validation - these tests exercise scanTree/markerRel/
-// writeExtractMarker/verifyExtractMarker directly and supply their own
-// (often deliberately unsafe) sha, not a namespace/name/version triple.
+// newFlatInstallTarget builds an installTarget whose install directory is dir
+// itself (rel "."), bypassing newInstallTarget's validation, for marker-level
+// tests that work on a bare tree with their own, often unsafe, sha.
 func newFlatInstallTarget(t *testing.T, dir string) installTarget {
 	t.Helper()
 	root, err := os.OpenRoot(dir)

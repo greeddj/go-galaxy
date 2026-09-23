@@ -14,16 +14,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// TestMetadataFetchRejectsOversizedResponse proves a Galaxy API metadata
-// response that overruns helpers.MetadataMaxSize is rejected before it is
-// decoded or cached, that the rejection is treated as terminal rather than
-// retried, and that its message names the surface that overran - a Galaxy
-// metadata document - rather than surfacing helpers.ErrResponseTooLarge bare,
-// since the same sentinel is also raised for an artifact download and an S3
-// list or batch-delete response. TestMetadataFetchAcceptsResponseWithinCeiling
-// below is the positive control on the same fixture: it proves the identical
-// server shape, kept under the cap, is read back correctly rather than the
-// oversized case merely never reaching the size check at all.
+// TestMetadataFetchRejectsOversizedResponse pins that a response over
+// helpers.MetadataMaxSize is refused uncached and unretried, with a message
+// naming the metadata surface, since ErrResponseTooLarge is shared.
 func TestMetadataFetchRejectsOversizedResponse(t *testing.T) {
 	t.Parallel()
 	var requests atomic.Int32
@@ -73,12 +66,8 @@ func TestMetadataFetchRejectsOversizedResponse(t *testing.T) {
 }
 
 // TestMetadataFetchAcceptsResponseWithinCeiling is the positive control for
-// TestMetadataFetchRejectsOversizedResponse above: the same real
-// httptest.Server fixture, this time writing a well-formed JSON document
-// comfortably under helpers.MetadataMaxSize, must be fetched, decoded, and
-// cached successfully - proving the oversized case above is rejected because
-// it overran the cap, not because this fixture shape fails for some other
-// reason.
+// TestMetadataFetchRejectsOversizedResponse: the same fixture under the cap is
+// fetched, decoded and cached.
 func TestMetadataFetchAcceptsResponseWithinCeiling(t *testing.T) {
 	t.Parallel()
 	var requests atomic.Int32

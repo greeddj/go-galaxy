@@ -13,18 +13,9 @@ import (
 // for each collection it builds (see fakeGitClient.Acquire).
 const fakeGitBytesPerCollection = 1024
 
-// TestGitArtifactMetricsColdInstall pins what a cold git install contributes
-// to the run's counters. The fixture's graph is acme.app from git, depending
-// on acme.lib from Galaxy, so the expected numbers follow from it:
-//
-//   - CacheMisses = 2: one for the git artifact committed to the store at
-//     discovery time, one for the lib tarball downloaded from Galaxy. The
-//     install phase then finds the git artifact already in the store, which
-//     is the run's single CacheHit rather than a second miss.
-//   - BytesDownloaded = 1024 + len(lib tarball): the fake client reports
-//     fakeGitBytesPerCollection per built collection, and the lib bytes are
-//     whatever Galaxy served, read back from the cached artifact rather than
-//     guessed.
+// TestGitArtifactMetricsColdInstall asserts a cold install of git acme.app over
+// Galaxy acme.lib counts two misses (git commit at discovery, lib download), one
+// hit (install serving the git artifact) and the git and lib bytes.
 func TestGitArtifactMetricsColdInstall(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)
@@ -53,10 +44,9 @@ func TestGitArtifactMetricsColdInstall(t *testing.T) {
 	}
 }
 
-// TestGitDuplicateFQDNIsRefused pins that one fqdn may have one root: the
-// same collection reached through two repositories, or through a repository
-// and Galaxy, is helpers.ErrDuplicateCollectionRequirement - the refusal two
-// Galaxy roots already get - rather than a silent winner.
+// TestGitDuplicateFQDNIsRefused asserts one fqdn reached through two
+// repositories, or through a repository and Galaxy, is refused with
+// helpers.ErrDuplicateCollectionRequirement rather than a silent winner.
 func TestGitDuplicateFQDNIsRefused(t *testing.T) {
 	t.Parallel()
 	const mirrorURL = "https://git.example/acme/app-mirror.git"

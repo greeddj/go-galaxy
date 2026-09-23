@@ -13,23 +13,16 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// galaxyRolePinKey is the store key of a Galaxy role's own pin: which
-// repository and tag the name resolved to at the requested version, so a
-// rerun rebuilds the git request without the two v1 round trips. Keyed by
-// the Galaxy name and the version asked for, the requirement line itself,
-// as a git pin is keyed by its own. The git pin beneath it is keyed by the
-// repository and tag, and is what carries the commit.
+// galaxyRolePinKey is the store key of a Galaxy role's pin, keyed by the
+// requirement line (name and version asked for); it records the repository
+// and tag so a rerun skips the v1 round trips, the git pin below it the commit.
 func galaxyRolePinKey(galaxyName, requested string) string {
 	return "galaxy\n" + galaxyName + "\n" + requested
 }
 
-// resolveGalaxyRole resolves a Galaxy role: the name is mapped to a
-// repository and a tag - from the Galaxy pin when the cache policy allows,
-// else through the v1 API of the first configured server that knows it -
-// and from there the role takes the git path exactly as an scm role does,
-// with its own pin, its own --refresh advertisement and its own artifact.
-// The Galaxy pin is recorded after the git path answered, since it carries
-// the commit the git path resolved.
+// resolveGalaxyRole maps a Galaxy role to a repository and tag (pin or v1
+// API) and then takes the git path as an scm role does; the Galaxy pin is
+// recorded only after the git path answered, since it carries the commit.
 func resolveGalaxyRole(ctx context.Context, deps collectionDeps, req requirements.RoleRequirement) (rolePin, error) {
 	policy := cacheManager.PolicyForConstraint(deps.cfg, req.Version != "")
 	key := galaxyRolePinKey(req.Src, req.Version)
@@ -75,12 +68,9 @@ func resolveGalaxyRole(ctx context.Context, deps collectionDeps, req requirement
 	return pin, nil
 }
 
-// replayGalaxyPin rebuilds the v1 answer from the Galaxy pin when the policy
-// allows a read and the run is not refreshing (--offline outranks --refresh,
-// as it does everywhere else): the repository must be a GitHub repository
-// as a live answer would be, the ref a qualified tag or branch, and the
-// version a role version, since a pin is cache state and is judged as a
-// server's answer would be.
+// replayGalaxyPin rebuilds the v1 answer from the Galaxy pin unless the run
+// refreshes (--offline outranks --refresh); the pin is cache state, so it is
+// judged by the same rules a live server answer is.
 func replayGalaxyPin(deps collectionDeps, key string, policy cacheManager.Policy) (galaxyv1.Resolution, string, bool, error) {
 	refreshing := deps.cfg != nil && deps.cfg.Refresh && !deps.cfg.Offline
 	if !policy.Read || refreshing {
@@ -115,14 +105,9 @@ func galaxyPinResolution(pin store.RolePinEntry) (galaxyv1.Resolution, error) {
 	return galaxyv1.Resolution{RepoURL: repo, Ref: ref, Version: pin.Version, GalaxySHA: pin.GalaxySHA}, nil
 }
 
-// lookupGalaxyRole walks the configured servers in order and asks each
-// one's v1 API for the role. A server without a v1 API and a server that
-// has one but not the role are both passed over; any other answer aborts
-// the walk, since a different server could not route around it. When no
-// server answered, the error says which of the two it was: no v1 anywhere
-// is configuration, a role nobody has is resolution. The base of the server
-// that answered is returned beside the resolution, for the lockfile's
-// provenance.
+// lookupGalaxyRole asks each configured server's v1 API in order, passing
+// over one without v1 or without the role and aborting on any other failure;
+// it returns the answering server's base for the lockfile's provenance.
 func lookupGalaxyRole(
 	ctx context.Context, deps collectionDeps, req requirements.RoleRequirement, policy cacheManager.Policy,
 ) (galaxyv1.Resolution, string, error) {

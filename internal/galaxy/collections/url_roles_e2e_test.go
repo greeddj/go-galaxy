@@ -101,12 +101,9 @@ func sortedStrings(in []string) []string {
 	return out
 }
 
-// TestURLRoleInstallFromTarball proves the whole url role pipeline for both
-// layouts a real tarball takes: the archive is downloaded once, normalized
-// (the wrapping directory cut), repacked, and installed under roles_path
-// with ansible's install record carrying the sha-derived version label; the
-// record and the artifact carry the url locator, and a rerun replays the
-// pin without touching the origin.
+// TestURLRoleInstallFromTarball pins flat and wrapped role tarballs: one
+// download, installed under roles_path with the sha-derived version label and
+// the url locator, and a rerun that replays the pin without the origin.
 func TestURLRoleInstallFromTarball(t *testing.T) {
 	t.Parallel()
 	for name, prefix := range map[string]string{"flat": "", "wrapped": "myrole-1.2.3"} {
@@ -180,10 +177,9 @@ func TestURLRoleDependencyWalk(t *testing.T) {
 	assertPathAbsent(t, f.rolePath("common"))
 }
 
-// TestURLRoleLockAndFrozenInstall proves the lockfile half for roles: lock
-// writes a schema-4 url role entry pinned by the origin sha256, a frozen
-// cache miss re-downloads and repacks, and an origin serving different
-// bytes fails the integrity class.
+// TestURLRoleLockAndFrozenInstall pins a schema-4 url role lock entry by
+// origin sha256, a frozen cache miss that re-downloads and repacks, and an
+// origin serving different bytes failing the integrity class.
 func TestURLRoleLockAndFrozenInstall(t *testing.T) {
 	t.Parallel()
 	f := newURLRoleFixture(t)

@@ -59,11 +59,9 @@ func Explain() *cli.Command {
 	}
 }
 
-// explainArguments is explain's own ArgValidator, declared so that the root's
-// NoArguments does not refuse the one argument explain takes. It holds explain
-// to exactly one: a missing target is errExplainNoTarget, and every argument
-// after the first is refused by name rather than dropped, since "explain a b"
-// explaining only a would read as an answer about both.
+// explainArguments replaces the root's NoArguments for explain and demands one
+// target. Extra arguments are refused by name rather than dropped, because
+// "explain a b" answering only a would read as an answer about both.
 func explainArguments(_ context.Context, c *cli.Command) error {
 	args := c.Args().Slice()
 	switch {
@@ -76,18 +74,9 @@ func explainArguments(_ context.Context, c *cli.Command) error {
 	}
 }
 
-// printExplain writes why target was resolved to its locked version and
-// which other collections depend on it. A target may name a collection, a
-// role (by install name or Galaxy name), or both - the two are different
-// objects and neither outranks the other, so both sections are printed, the
-// collection first.
-//
-// w is wrapped in safeout.NewWriter as the first statement so every write
-// this function and the helpers it calls (printEntryHeader,
-// printRequiredBy, printDepends) make is sanitized, regardless of what a
-// lockfile entry's Name/Version/Source/SHA256/Deps contain - a lockfile
-// can be edited by hand or reach this command from an untrusted source,
-// and its fields are otherwise printed verbatim.
+// printExplain writes why target was locked and what depends on it; a name that
+// is both a collection and a role prints both, the collection first. w is
+// wrapped in safeout because lockfile fields are untrusted and printed verbatim.
 func printExplain(w io.Writer, lf *lockfile.File, target string, roots, roleRoots map[string]bool) error {
 	w = safeout.NewWriter(w)
 	entry, rdeps, found := findExplainTarget(lf, target)

@@ -11,18 +11,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 )
 
-// TestRequestURLSignedPathMatchesSentPath is the load-bearing SigV4 proof
-// that, for every key below, the canonical URI signed into the Authorization
-// header is byte-identical to the path the stdlib actually places on the
-// wire. encodePath (net/url's PathEscape-based encoder) and the raw
-// objectPath fed straight into http.NewRequestWithContext must agree for a
-// key containing a space, a literal '%', or a reserved character: routing
-// objectPath through net/url.Parse instead would decode and re-escape %XX
-// sequences differently than encodePath's own escaping, producing a
-// mismatched signature (SignatureDoesNotMatch, surfaced as a 403) even
-// though the request was otherwise well-formed. Both PathStyle modes are
-// exercised because requestURL builds the sent URL differently in each
-// branch.
+// TestRequestURLSignedPathMatchesSentPath pins that the canonical URI signed
+// into Authorization is byte-identical to the path sent on the wire, in both
+// PathStyle modes, for keys with a space, a '%' or a reserved character.
 func TestRequestURLSignedPathMatchesSentPath(t *testing.T) {
 	t.Parallel()
 
@@ -93,10 +84,8 @@ type cachedEndpointCase struct {
 	pathStyle   bool
 }
 
-// cachedEndpointTestCases returns cases covering both PathStyle modes, a
-// custom non-TLS endpoint, and an endpoint given with and without a trailing
-// "/". A function (rather than a package-level var) keeps the table a local,
-// per-test value instead of shared global state.
+// cachedEndpointTestCases returns cases for both PathStyle modes, a non-TLS
+// endpoint, and an endpoint with and without a trailing "/".
 func cachedEndpointTestCases() []cachedEndpointCase {
 	return []cachedEndpointCase{
 		{
@@ -171,12 +160,9 @@ func assertCachedEndpointCase(t *testing.T, tt cachedEndpointCase) {
 	}
 }
 
-// TestRequestURLUsesCachedEndpoint proves requestURL derives its host and
-// scheme from the fields newClient parsed once at construction, rather than
-// re-parsing cfg.Endpoint on every call. requestURL calls url.Parse
-// nowhere (a structural property verifiable by inspection), so identical
-// output here for every case is what proves the cached fields cannot
-// shift any byte of the signed-and-sent URL.
+// TestRequestURLUsesCachedEndpoint pins that requestURL builds host and scheme
+// from the fields newClient parsed once, so they cannot shift any byte of the
+// signed-and-sent URL.
 func TestRequestURLUsesCachedEndpoint(t *testing.T) {
 	t.Parallel()
 	for _, tt := range cachedEndpointTestCases() {
@@ -187,13 +173,9 @@ func TestRequestURLUsesCachedEndpoint(t *testing.T) {
 	}
 }
 
-// TestAwsURIEncodeMatchesS3 proves awsURIEncode reproduces AWS SigV4's exact
-// UriEncode transform byte-for-byte: only A-Za-z0-9 and -._~ are left
-// literal, every other byte becomes an uppercase-hex %XX escape (including a
-// literal '%' itself), and "/" is preserved or escaped depending on
-// encodeSlash. This is stricter than url.PathEscape, which leaves several
-// sub-delimiters (+$&,;=:@) literal - exactly the divergence that would break
-// SigV4 signing if awsURIEncode's escaping matched url.PathEscape instead.
+// TestAwsURIEncodeMatchesS3 pins awsURIEncode to SigV4 UriEncode: only
+// A-Za-z0-9 and -._~ stay literal, "/" per encodeSlash, and every other byte,
+// '%' included, becomes uppercase %XX, stricter than url.PathEscape.
 func TestAwsURIEncodeMatchesS3(t *testing.T) {
 	t.Parallel()
 
@@ -223,14 +205,9 @@ func TestAwsURIEncodeMatchesS3(t *testing.T) {
 	}
 }
 
-// TestS3RoundTripReservedCharKey proves that an object key containing
-// reserved characters (a space, a '+', and a '!') PUTs and GETs/HEADs
-// successfully through the fake S3 server and comes back byte-identical.
-// fakeS3 never verifies the Authorization header it receives (see its own
-// doc comment), so this test validates that PUT and GET/HEAD agree on how
-// the reserved-character key is escaped on the wire; it does not itself
-// validate the signature against a conforming S3 endpoint - that proof is
-// TestRequestURLSignedPathMatchesSentPath above.
+// TestS3RoundTripReservedCharKey pins that PUT and GET/HEAD agree on the wire
+// escaping of a key with a space, '+' and '!'. fakeS3 never checks signatures;
+// TestRequestURLSignedPathMatchesSentPath is the signing proof.
 func TestS3RoundTripReservedCharKey(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)

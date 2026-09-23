@@ -12,10 +12,9 @@ import (
 	galaxyhelpers "github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// ansibleCfgWithServerTimeout writes an ansible.cfg whose [galaxy] section
-// sets server_timeout to value, points $ANSIBLE_CONFIG at it, and returns
-// its path. Like ansibleCfgWithServerList it neutralizes discovery first and
-// then overrides the variable that helper points at a missing file.
+// ansibleCfgWithServerTimeout writes an ansible.cfg setting [galaxy]
+// server_timeout to value, points $ANSIBLE_CONFIG at it after
+// neutralizeAnsibleDiscovery, and returns its path.
 func ansibleCfgWithServerTimeout(t *testing.T, value string) string {
 	t.Helper()
 	neutralizeAnsibleDiscovery(t)
@@ -28,17 +27,9 @@ func ansibleCfgWithServerTimeout(t *testing.T, value string) string {
 	return path
 }
 
-// TestAnsibleServerTimeoutIsRead pins that ansible.cfg's [galaxy]
-// server_timeout sets the request budget, in the precedence ansible applies
-// to it: --timeout, then its environment spellings, then the file, then the
-// default. It was once read by nothing at all, so a hub configured for 175
-// seconds got 30 here, silently, while ansible-galaxy honored the same file.
-//
-// Each outranking row keeps the file's value in place, so it can only pass by
-// the source it names winning over a file that was read - the first row is
-// what shows the file is read at all. ANSIBLE_GALAXY_SERVER_TIMEOUT gets a row
-// of its own because it is the one that is ansible's order and not merely
-// this tool's.
+// TestAnsibleServerTimeoutIsRead pins ansible's precedence for the request
+// budget: --timeout, then its env spellings, then [galaxy] server_timeout, then
+// the default; each outranking row keeps the file's value in place.
 func TestAnsibleServerTimeoutIsRead(t *testing.T) {
 	t.Run("the file alone sets the timeout", func(t *testing.T) {
 		ansibleCfgWithServerTimeout(t, "175")
@@ -88,15 +79,9 @@ func TestAnsibleServerTimeoutIsRead(t *testing.T) {
 	})
 }
 
-// TestAnsibleServerTimeoutRefusesAMalformedValue pins what a server_timeout
-// the timeout grammar refuses does: it fails the run as the invalid timeout
-// it is, naming the file and the key, rather than falling back to a default
-// the operator never chose - which is what ignoring the key amounted to.
-//
-// The two rows after it bound that refusal to the runs the value could have
-// affected. A flag that outranks the file leaves the file's value unused, and
-// cleanup registers no --timeout and makes no request the budget bounds, so
-// neither may fail over it.
+// TestAnsibleServerTimeoutRefusesAMalformedValue pins that a server_timeout the
+// grammar refuses fails the run naming file and key, but only where it is used:
+// not under an outranking flag, and not for cleanup, which has no --timeout.
 func TestAnsibleServerTimeoutRefusesAMalformedValue(t *testing.T) {
 	for _, value := range []string{"soon", "0", "-5"} {
 		t.Run("install refuses "+value, func(t *testing.T) {

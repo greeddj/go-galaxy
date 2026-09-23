@@ -187,9 +187,8 @@ func TestParsePrefixRefused(t *testing.T) {
 }
 
 // TestPrefixOriginMatchesHelpersOrigin pins the contract the credential match
-// rests on: Prefix.Origin() and helpers.Origin over a request URL of the same
-// origin render byte-identical strings, the IPv6 literal's brackets included
-// (helpers.Origin strips them, so the Prefix side must too).
+// rests on: Prefix.Origin() and helpers.Origin render one origin byte for byte,
+// default port filled in and IPv6 brackets stripped on both sides.
 func TestPrefixOriginMatchesHelpersOrigin(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

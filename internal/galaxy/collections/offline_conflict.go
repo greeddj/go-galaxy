@@ -7,19 +7,14 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/solver"
 )
 
-// offlineConflictNote is appended to a resolution conflict's own message
-// when it happened under --offline: an offline run can only ever see
-// whatever metadata is already cached, so a conflict there may just be an
-// artifact of stale or incomplete cache coverage rather than a genuine,
-// permanent unsatisfiability.
+// offlineConflictNote is appended to a resolution conflict under --offline,
+// where only cached metadata is visible, so the conflict may reflect stale or
+// incomplete cache coverage rather than real unsatisfiability.
 const offlineConflictNote = "note: offline mode restricts resolution to cached metadata; retry without --offline to fetch fresh metadata"
 
-// offlineConflictError wraps a *solver.ConflictError with offlineConflictNote
-// appended to its rendered message, while staying fully transparent to
-// errors.Is/errors.As through Unwrap: callers that check for
-// helpers.ErrNoVersionSatisfiesConstraints or *solver.ConflictError, or that
-// classify it via exitcode.FromError, see exactly the same result as they
-// would for the unwrapped error.
+// offlineConflictError appends offlineConflictNote to a *solver.ConflictError's
+// message and stays transparent through Unwrap, so errors.Is/errors.As and
+// exitcode.FromError classify it exactly as the error it wraps.
 type offlineConflictError struct {
 	inner error
 }
@@ -37,10 +32,9 @@ func (e *offlineConflictError) Unwrap() error {
 	return e.inner
 }
 
-// annotateOfflineConflict returns err unchanged unless cfg is running in
-// --offline mode and err is a *solver.ConflictError, in which case it
-// returns err wrapped in offlineConflictError. Any other error, or a
-// conflict that happened online, passes through untouched.
+// annotateOfflineConflict wraps err in offlineConflictError when cfg is
+// --offline and err is a *solver.ConflictError, and otherwise returns err
+// unchanged.
 func annotateOfflineConflict(cfg *config.Config, err error) error {
 	if err == nil || !cfg.Offline {
 		return err

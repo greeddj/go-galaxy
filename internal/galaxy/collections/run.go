@@ -1,21 +1,6 @@
-// Package collections implements the commands that resolve Galaxy collections
-// and put them where they are wanted: install, warm, lock, and outdated.
-// Resolution turns a requirements file into an exact version per transitive
-// collection, and the install side then downloads, verifies, extracts, and
-// records each one under the configured collections path. A git or url
-// requirement is expanded before the solver runs (expandSourceRoots): its
-// repository or tarball is fetched, its collections become exact-pin roots,
-// and the pin - a commit, or the origin bytes' sha256 - travels in the
-// locator every downstream consumer keys on.
-//
-// install, warm and lock reach the cache backend through one funnel,
-// withBackend: it opens the backend, takes its exclusive lock, and runs the
-// command's own work half under the holder context that lock returns, so a run
-// that stops owning the cache stops writing to it. Splitting each command into
-// a lifecycle half and a work half is also what makes its save-and-report tail
-// reachable from a test holding an already-initialized state, with no
-// production seam. outdated deliberately opens no backend at all, and
-// therefore takes no lock and serves no cached metadata.
+// Package collections implements install, warm, lock and outdated for
+// collections and roles. Cache access funnels through withBackend, whose work
+// runs under the lock's holder context; outdated opens no backend at all.
 package collections
 
 import (
@@ -40,16 +25,14 @@ type installState struct {
 	store        *store.Store
 	release      func() error
 	extractStore *extracted.Store
-	// gitMemo is the run-wide table of discovered git collections; see
-	// gitDiscoveryMemo. It lives on the state rather than on a phase's deps
-	// because the install phase reads what the resolve phase wrote.
+	// gitMemo is the run-wide table of discovered git collections, on the
+	// state because the install phase reads what the resolve phase wrote.
 	gitMemo *gitDiscoveryMemo
 	// roleMemo is gitMemo's counterpart for roles: what the resolve phase
 	// learned about each role, read by the install phase.
 	roleMemo *roleDiscoveryMemo
-	// urlMemo is gitMemo's counterpart for url sources: what the resolve
-	// phase learned about each url requirement, read by the solver and the
-	// install phase.
+	// urlMemo is gitMemo's counterpart for url sources, read by the solver
+	// and the install phase.
 	urlMemo *urlDiscoveryMemo
 }
 
@@ -67,9 +50,8 @@ type installPlan struct {
 	roles    roleResolution
 	prefetch *prefetcher
 	// verify is this run's signature verification state, nil when the run
-	// verifies nothing. It is resolved from the requirements roots, so it
-	// belongs to the plan rather than to the state initInstall builds before
-	// any requirements file has been read.
+	// verifies nothing; it comes from the requirements roots, so it lives on
+	// the plan rather than on the state.
 	verify *verifyContext
 	levels [][]string
 }
@@ -79,42 +61,9 @@ type installPlan struct {
 // backend lifecycle itself - not state.release, not state.backend.Close.
 type stateWork func(ctx context.Context, cfg *config.Config, runtime *infra.Infra, state *installState, start time.Time) error
 
-// withBackend owns the backend lifecycle every collection command shares: it
-// opens the backend, takes its exclusive lock, and registers the release and
-// close defers that must run on every exit path - including one from work,
-// which owns the actual work once state is initialized. That split is what
-// makes each command's save/metrics tail reachable from a test holding an
-// already-initialized state, with no production seam.
-//
-// It also owns the lock-loss verdict. lockCtx is the backend's holder context
-// (see cacheManager.Backend's Lock contract): every piece of real work runs
-// under it, so a run whose lock is stolen mid-flight stops rather than
-// continuing to install, commit, and persist non-exclusively, and both the
-// init error and the work's own return are judged against it through
-// cacheManager.LockLostError. The Close defer keeps the caller's own ctx
-// instead, since it must still run once ownership is gone.
-//
-// "Stops" has a granularity, and on the two commands that have workers it is
-// one unit of work per worker - the same shape runCleanup states for its own
-// loops. A collection whose artifact bytes are already in hand finishes
-// extracting into the collections tree, since neither the untar nor the
-// extracted store's rename is interruptible. What does stop is every write to
-// the shared cache: on the S3 backend, the only one whose lock can be taken
-// away, an artifact commit and the tail SaveStore both run under this context
-// and fail once it ends.
-//
-// Judging through LockLostError is a direct expression rather than a defer
-// for two reasons: nonamedreturns is enabled, so a defer would need a named
-// return this function does not have, and both call sites are single returns
-// where a defer buys nothing anyway. The release defers are deliberately left
-// alone: releasing and closing must happen regardless of the verdict, and the
-// lock-loss error a release closure returns stays a logged line rather than
-// becoming the run's error, since by then the verdict has already been made
-// from the same fact.
-//
-// banner is passed through a constant format string rather than used as one:
-// go vet's printf check refuses a non-constant format, and every caller hands
-// a plain percent-free announcement here rather than something to expand.
+// withBackend opens the backend, takes its exclusive lock, runs work under
+// the holder context and judges both the init error and work's result with
+// cacheManager.LockLostError; Close keeps the caller's ctx to run after loss.
 func withBackend(ctx context.Context, cfg *config.Config, runtime *infra.Infra, banner string, work stateWork) error {
 	runtime.Output.Printf("%s", banner)
 	start := time.Now()
@@ -132,9 +81,8 @@ func withBackend(ctx context.Context, cfg *config.Config, runtime *infra.Infra, 
 	defer func() {
 		_ = state.backend.Close(ctx)
 	}()
-	// A --no-cache run hands git builds and url downloads from discovery to
-	// the install phase through the memos; whatever no install worker took
-	// is removed here.
+	// Removes every --no-cache build or download discovery handed to the
+	// install phase that no install worker took.
 	defer state.gitMemo.cleanup()
 	defer state.roleMemo.cleanup()
 	defer state.urlMemo.cleanup()
@@ -142,49 +90,16 @@ func withBackend(ctx context.Context, cfg *config.Config, runtime *infra.Infra, 
 	return cacheManager.LockLostError(ctx, lockCtx, work(lockCtx, cfg, runtime, state, start))
 }
 
-// initInstall is the single function every collection command that can be in
-// dry-run mode must pass through, so emitting dryRunBanner here makes "no
-// command is in dry-run mode silently" a structural property rather than a
-// per-call-site convention - install, warm, and lock all reach the banner
-// through this one call site, with nothing per-command to remember. The
-// --refresh/--offline warning right below sits on the identical argument:
-// --offline outranks --refresh (see refreshBypassesSnapshot's own doc
-// comment for why), and emitting the disclosure from this one funnel is what
-// makes "no run silently drops a flag" structural here too, rather than a
-// convention install/warm/lock would each have to remember on their own.
-//
-// The returned context is the backend's HOLDER CONTEXT (see
-// cacheManager.Backend's own Lock contract): every step below that runs after
-// the lock is taken uses it rather than ctx, and it is returned on the
-// post-lock failure paths too, not only on success. That matters because the
-// window between acquiring the lock and returning covers sweepDeadRunTemps,
-// LoadStore, clearCacheIfRequested and recordProjectUnlessDryRun - a
-// --clear-cache bulk delete against a large bucket is exactly the kind of
-// work long enough for a heartbeat tick to land inside it - so discarding the
-// holder context there would report a failure CAUSED by the lock being stolen
-// as an ordinary backend failure. backend.Open runs before the lock exists
-// and backend.Close must still run after ownership is gone, so both keep the
-// caller's own ctx.
+// initInstall is the one funnel install, warm and lock pass through, so no
+// command can skip the dry-run banner. It returns the holder context on
+// post-lock failures too, so a stolen lock is reported as such.
 func initInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) (context.Context, *installState, error) {
 	if cfg.DryRun {
 		dryRunBanner(runtime)
 	}
-	// This is not a usage error: --refresh (GO_GALAXY_REFRESH) and --offline
-	// (GO_GALAXY_OFFLINE) both realistically arrive from an ambient CI
-	// environment block, and failing an otherwise-correct offline run over a
-	// flag combination that resolves unambiguously is a worse trade than one
-	// line on stderr. The condition below reads --refresh and --offline only,
-	// deliberately never cfg.Frozen, because --frozen --refresh (without
-	// --offline) must never warn here, for two different reasons depending on
-	// which command it reaches: on install/warm, resolveOrLoadLockfile takes
-	// the cfg.Frozen branch straight to the lockfile and never calls
-	// resolveCollectionsInternal, so --refresh truly has nothing to affect
-	// there - not a case this warning needs to disclose, since nothing is
-	// being silently dropped. On lock, lockWithState always calls
-	// resolveCollectionsInternal regardless of cfg.Frozen, so --refresh keeps
-	// vetoing the resolve snapshot exactly as it does unfrozen - warning
-	// "skipping --refresh" there would be an outright false statement about
-	// what lock --frozen --refresh does.
+	// A warning, not a usage error: both flags often arrive from an ambient CI
+	// environment. cfg.Frozen is deliberately not read, since lock --frozen
+	// --refresh still honors --refresh.
 	if cfg.Refresh && cfg.Offline {
 		runtime.Output.Warnf("--offline: skipping --refresh; cached state is the only source of truth offline")
 	}
@@ -193,32 +108,16 @@ func initInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) 
 	if err != nil {
 		return nil, nil, err
 	}
-	// Every persisted cache-state operation this run makes (LoadStore and
-	// SaveStore below, plus RecordProject inside recordProjectUnlessDryRun)
-	// runs under its own bounded budget from here on: both happen after the
-	// exclusive lock below is acquired, and a stalled read or write there
-	// would otherwise hold that lock - and block every other runner sharing
-	// this backend - for as long as the caller's own context allows. See
-	// cacheManager.WithStateDeadline's own doc comment for why this wraps the
-	// backend once here rather than at each of its several call sites.
-	//
-	// WithCleanSaveSkip wraps outermost, so a save this run never needed
-	// skips before WithStateDeadline would even construct a timer for it: see
-	// its own doc comment (internal/galaxy/cache/dirtyskip.go) for what it
-	// decides and what it deliberately leaves alone.
+	// Every cache-state operation runs under its own budget, so a stall cannot
+	// hold the exclusive lock indefinitely; WithCleanSaveSkip wraps outermost
+	// so an unneeded save is skipped before any timer is built.
 	backend = cacheManager.WithCleanSaveSkip(cacheManager.WithStateDeadline(backend, runtime.StateDeadline()))
 	if err := backend.Open(ctx); err != nil {
 		return nil, nil, err
 	}
-	// One unwind covering every failure path from here on, in place of a
-	// hand-written pair at each of them: a return added later between the
-	// Lock below and the commit at the end gives back whatever this function
-	// had already taken, by construction rather than by the author having
-	// remembered to.
-	//
-	// Registered after a successful Open, deliberately: an Open that failed
-	// closes nothing today, and this unwind keeps that property rather than
-	// quietly changing it.
+	// One unwind for every failure path after a successful Open, so any
+	// return before the commit gives back what was taken; a failed Open
+	// closes nothing.
 	var releaseLock func() error
 	committed := false
 	defer func() {
@@ -234,9 +133,8 @@ func initInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) 
 	}
 
 	extractStore := newExtractStore(cfg)
-	// The exclusive backend lock is held now, so no other go-galaxy process can
-	// be mid-write: every leftover download-temp and extract-temp is a dead-run
-	// orphan and is safe to reclaim.
+	// The exclusive lock is held, so every leftover download or extract temp
+	// is a dead run's orphan and safe to reclaim.
 	sweepDeadRunTemps(lockCtx, runtime, backend, extractStore)
 
 	snapshotStart := time.Now()
@@ -263,18 +161,9 @@ func initInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) 
 	}, nil
 }
 
-// unwindBackend gives back what initInstall had already taken when it fails
-// after the backend was opened: the exclusive lock first, when one was
-// granted, and the backend itself second. That order is the one the
-// hand-written pairs at each failure arm used, and it is deliberately the
-// reverse of the order withBackend's own two defers unwind in - both are kept
-// as they are, since unifying them is a decision about observable behavior
-// rather than about removing duplication.
-//
-// releaseLock is nil when backend.Lock is what failed: there is no lock to
-// give back then, only the backend to close. Every failure of both calls is
-// swallowed on purpose - this runs while a run is already failing, and the
-// error it is failing with is the one the operator needs.
+// unwindBackend releases the lock (nil when Lock itself failed) and then
+// closes the backend after initInstall fails, swallowing both errors so the
+// run's own failure is the one reported.
 func unwindBackend(ctx context.Context, backend cacheManager.Backend, releaseLock func() error) {
 	if releaseLock != nil {
 		_ = releaseLock()
@@ -283,11 +172,8 @@ func unwindBackend(ctx context.Context, backend cacheManager.Backend, releaseLoc
 }
 
 // clearCacheIfRequested honors --clear-cache by wiping the in-memory caches
-// and the cached artifact files on disk, unless a dry run is in effect:
-// --clear-cache is a destructive mutation, so a dry run must never honor it,
-// on top of everything else --dry-run already suppresses. Factored out of
-// initInstall to keep its own branching under the cyclomatic complexity
-// budget.
+// and the cached artifact files, except under --dry-run, which must never
+// perform that destructive mutation.
 func clearCacheIfRequested(
 	ctx context.Context,
 	cfg *config.Config,
@@ -306,18 +192,9 @@ func clearCacheIfRequested(
 	return backend.ClearFiles(ctx)
 }
 
-// recordProjectUnlessDryRun records this project in the persistent project
-// registry, unless a dry run is in effect. initInstall is shared by install,
-// warm, and lock, so this guard applies identically to all three - not just
-// to install. RecordProject is the only persistent, non-cache,
-// non-reconstructible write in initInstall, and it feeds a DESTRUCTIVE
-// command: cleanup walks every registered project's requirements.yml and
-// aborts its whole run if one is unreadable or unparseable. `install
-// --dry-run -r broken.yml` enrolling that project would then abort every
-// cleanup run on every machine sharing this cache, for a project that never
-// actually installed anything. ProjectRecord.LastRun is read by nobody, so
-// there is no cost to simply not writing it here. Factored out of initInstall
-// to keep its own branching under the cyclomatic complexity budget.
+// recordProjectUnlessDryRun records this project in the registry except
+// under --dry-run: a previewed broken requirements file enrolled there would
+// abort every cleanup sharing this cache.
 func recordProjectUnlessDryRun(ctx context.Context, cfg *config.Config, runtime *infra.Infra, backend cacheManager.Backend) {
 	if cfg.DryRun {
 		return
@@ -336,17 +213,9 @@ func newExtractStore(cfg *config.Config) *extracted.Store {
 	return extracted.NewStore(cfg.CacheDir)
 }
 
-// sweepDeadRunTemps reclaims temporary files and directories left behind by a
-// previously killed run, safe to delete because the caller holds the backend's
-// exclusive lock. It is best-effort: each failure is logged and the install
-// proceeds, since leaked temp space is not worth failing an otherwise-valid
-// install over.
-//
-// This runs unconditionally, even under --dry-run, unlike clearCacheIfRequested
-// - deliberately, not by oversight. What it deletes is provably a dead-run
-// orphan (the exclusive lock rules out any live writer), never something a
-// later read treats as an assertion about reality, so it is not the kind of
-// write --dry-run exists to suppress in the first place.
+// sweepDeadRunTemps best-effort reclaims temps a killed run left, safe only
+// under the exclusive lock; it runs even under --dry-run, since an orphan
+// temp asserts nothing a later read relies on.
 func sweepDeadRunTemps(ctx context.Context, runtime *infra.Infra, backend cacheManager.Backend, extractStore *extracted.Store) {
 	if err := backend.SweepTemp(ctx); err != nil {
 		runtime.Output.Warnf("Failed to sweep leftover download temps: %v", err)
@@ -364,12 +233,9 @@ func prepareInstallPlan(
 		return nil, err
 	}
 
-	// Resolved from the roots the requirements file declares, which survive
-	// under --frozen too, since loadRoots runs before resolveOrLoadLockfile
-	// branches. It runs ahead of the prefetcher rather
-	// than beside the install workers so that an unreadable keyring, or
-	// requirements declaring signatures with none configured, fails the run
-	// before a single background download has been scheduled.
+	// Built from the requirements roots, under --frozen too, and ahead of the
+	// prefetcher so a keyring or signatures misconfiguration fails the run
+	// before any background download is scheduled.
 	verify, err := newVerifyContext(cfg, runtime, roots)
 	if err != nil {
 		return nil, err
@@ -380,11 +246,8 @@ func prepareInstallPlan(
 		return nil, err
 	}
 
-	// Roles are resolved here, beside the collections and ahead of the
-	// prefetcher, for the reason newVerifyContext runs where it does: a role
-	// that does not exist, or a repository that refuses, fails the run before
-	// a background download is scheduled. Under --frozen they come from the
-	// lockfile, with no network, as the collections did just above.
+	// Roles resolve ahead of the prefetcher, so a missing role or a refusing
+	// repository fails the run before any background download is scheduled.
 	roles, err := resolveOrLoadRoles(ctx, cfg, runtime, state, roleRoots)
 	if err != nil {
 		return nil, err
@@ -399,10 +262,8 @@ func prepareInstallPlan(
 		return nil, err
 	}
 
-	// Compute install levels before scheduling the prefetcher: a level-build
-	// failure (a dependency cycle) now surfaces before any prefetch worker
-	// exists, and the level assignment lets the prefetch queue be ordered to
-	// match the level-ordered install consumer.
+	// Levels are built before the prefetcher, so a dependency cycle fails
+	// before any prefetch worker exists and the queue follows level order.
 	levelStart := time.Now()
 	levels, err := buildInstallLevels(graph)
 	if err != nil {
@@ -441,10 +302,8 @@ func resolveOrLoadRoles(
 	return resolveRoles(ctx, state.resolveDeps(cfg, runtime), roots)
 }
 
-// resolveOrLoadLockfile chooses between lockfile-driven resolution (when
-// --frozen is set) and the regular API-based resolver. With --frozen, the
-// lockfile is the source of truth: resolved/graph are built from its
-// entries with no network calls.
+// resolveOrLoadLockfile resolves through the solver, or under --frozen
+// builds resolved and graph from the lockfile with no network calls.
 func resolveOrLoadLockfile(
 	ctx context.Context,
 	cfg *config.Config,
@@ -477,11 +336,9 @@ func resolveOrLoadLockfile(
 	return resolved, graph, nil
 }
 
-// loadRoots parses requirements.yml and normalizes its entries into roots.
-// A collection with no explicit source: field is passed through with an
-// empty Source ("" for defaultSource below), deliberately not defaulted to
-// cfg.Server here: an unpinned root walks the whole configured server list
-// at resolve time (see serverCandidates) instead of being nailed to one.
+// loadRoots parses requirements.yml into collection and role roots. A
+// collection without source: keeps an empty Source, so it walks the whole
+// configured server list rather than being nailed to cfg.Server.
 func loadRoots(cfg *config.Config, runtime *infra.Infra) ([]collection, []requirements.RoleRequirement, error) {
 	runtime.Output.Printf("Load collections from requirements file")
 	collectionsDirect, file, err := loadRequirements(cfg.RequirementsFile, "")
@@ -491,9 +348,8 @@ func loadRoots(cfg *config.Config, runtime *infra.Infra) ([]collection, []requir
 	for _, w := range file.Warnings {
 		runtime.Output.Warnf("%s", w)
 	}
-	// The first point in a run where "does this have roles at all" is
-	// answered, and therefore the only place the roles_path warnings config
-	// queued can be judged worth printing - see config.Config.RoleWarnings.
+	// The first point that knows whether the run has roles, and so the only
+	// place the queued roles_path warnings can be judged worth printing.
 	if len(file.Roles) > 0 {
 		runtime.WarnRoleConfig(cfg)
 	}
@@ -505,42 +361,15 @@ func loadRoots(cfg *config.Config, runtime *infra.Infra) ([]collection, []requir
 	return roots, file.Roles, nil
 }
 
-// buildCollectionsMap folds the resolved requirements into a key-addressed
-// map, rejecting three failure shapes before any install work starts: an
-// unsafe namespace/name identifier (ErrUnsafeCollectionIdentifier), a version
-// that is not helpers.IsExactVersion (ErrInvalidCollectionVersion), and a
-// duplicate key (ErrDuplicateCollectionKey). The namespace/name guard exists
-// because helpers.SplitFQDN performs no path-safety validation of its own -
-// see TestSplitFQDNDoesNotValidatePathSafety in helpers - so a namespace or
-// name like "foo/../.." reaches here unvalidated from every caller that only
-// checked it parses as a two-part FQDN. newInstallTarget validates all three
-// components again, later, per collection - keeping this guard here as well
-// is deliberate, matching the pattern writeExtractMarker's own doc comment
-// already documents for this file: a caller's check does not make a callee's
-// own guard redundant.
-//
-// The version check is IsExactVersion rather than a second IsPathElement
-// call, replacing it rather than stacking alongside it:
-// TestIsExactVersionImpliesIsPathElementExhaustive (internal/galaxy/helpers)
-// proves every value IsExactVersion accepts also satisfies IsPathElement -
-// exhaustively over an alphabet covering every character class either
-// vendored semver grammar treats specially, under both settings of
-// semver.CoerceNewVersion, not merely a handful of sampled fixtures - so an
-// IsPathElement check on a version that already passed IsExactVersion could
-// never fire; keeping it would only cost a redundant call, never add
-// coverage. Rejecting it under its own sentinel rather than folding it into
-// ErrUnsafeCollectionIdentifier also gives a poisoned or lockfile-sourced
-// constraint string like "*" its own classification instead of reading as a
-// path-traversal attempt, which it is not: it is syntactically safe as a
-// path element and still not a version anything could install.
+// buildCollectionsMap folds the resolved set into a key-addressed map,
+// refusing an unsafe identifier (helpers.SplitFQDN checks no path safety), an
+// inexact version and a duplicate key before any install work starts.
 func buildCollectionsMap(resolved map[string]collection) (map[string]collection, error) {
 	collections := make(map[string]collection, len(resolved))
 	for _, col := range resolved {
 		if !helpers.IsPathElement(col.Namespace) || !helpers.IsPathElement(col.Name) {
-			// version is reported here as identity context - which collection
-			// this is - never as a checked field: this branch's own condition
-			// never looks at col.Version, so an unsafe namespace or name is
-			// what triggers it regardless of what the version says.
+			// The version is identity context only; this branch fires on
+			// the namespace or name alone.
 			return nil, fmt.Errorf("%w: ns=%q name=%q version=%q",
 				helpers.ErrUnsafeCollectionIdentifier, col.Namespace, col.Name, col.Version)
 		}
@@ -556,24 +385,13 @@ func buildCollectionsMap(resolved map[string]collection) (map[string]collection,
 	return collections, nil
 }
 
-// verifyRootsResolved is a post-condition on resolution: it asserts that
-// every requirements root came back with a resolved version, returning
-// helpers.ErrMissingResolvedRoot naming the first one that did not.
-//
-// This check is redundant on two of the three resolution paths -
-// verifyRootsAgainstLockfile plus materializeLockfile already guarantee it
-// under --frozen, and rootsMatchSnapshot guarantees it on the snapshot-reuse
-// path - but it is load-bearing on the third: solverResultToResolvedGraph
-// builds resolved purely from result.Versions and never cross-checks it
-// against the requirements, so this is the only place a solver that silently
-// drops a root is caught on a fresh solve.
+// verifyRootsResolved fails with helpers.ErrMissingResolvedRoot for the first
+// root left unresolved; on a fresh solve it is the only check that catches a
+// solver silently dropping a root.
 func verifyRootsResolved(roots []collection, resolved map[string]collection) error {
 	for _, col := range roots {
-		// A git root without an explicit name, and every url root, is
-		// verified by discovery (its collections were produced from the
-		// repository or the tarball, or the resolve failed) and, under
-		// --frozen, by verifyRootsAgainstLockfile; it has no fqdn of its own
-		// to look up here.
+		// A nameless git or url root has no fqdn to look up; discovery and,
+		// under --frozen, verifyRootsAgainstLockfile verify it instead.
 		if (col.isGit() || col.isURL()) && col.Namespace == "" && col.Name == "" {
 			continue
 		}
@@ -585,11 +403,9 @@ func verifyRootsResolved(roots []collection, resolved map[string]collection) err
 	return nil
 }
 
-// saveDryRunSnapshotIfPersisted saves state.store only when it was already
-// persisted before this run - see installDryRun's own doc comment for why an
-// unpersisted store must not be saved here. The warning is this guard's only
-// output; the save path itself (SaveStore, or a save failure) speaks for
-// itself the same way it does on every other command.
+// saveDryRunSnapshotIfPersisted saves state.store only when it was persisted
+// before this run, so a dry run never creates a snapshot that cleanup would
+// read as "nothing installed".
 func saveDryRunSnapshotIfPersisted(ctx context.Context, runtime *infra.Infra, state *installState) error {
 	if !state.store.WasPersisted() {
 		runtime.Output.Warnf(
@@ -600,18 +416,9 @@ func saveDryRunSnapshotIfPersisted(ctx context.Context, runtime *infra.Infra, st
 	return state.backend.SaveStore(ctx, state.store)
 }
 
-// annotateSaveFailure folds a snapshot-save failure into a run's primary
-// error. The primary error keeps the classification - errors.Is still matches
-// it, so cmd/go-galaxy/exitcode maps a partially failed run to the install
-// exit class instead of degrading it to the generic one just because the disk
-// also filled up at the tail - while the save failure stays in the message and
-// matchable via errors.Is. Returns primary unchanged when the save succeeded.
-//
-// primary may itself already be a *summaryError joining a headline with N
-// per-collection causes (see failureSummary.wrap); fmt.Errorf's "%w; ...: %w"
-// still folds that in losslessly, since errors.Is walks Unwrap() []error trees
-// depth-first with no first-match-wins shortcut - primary's own headline, its
-// causes, and saveErr all remain independently matchable afterward.
+// annotateSaveFailure folds a snapshot-save failure into the run's primary
+// error, keeping both matchable through errors.Is so the primary failure's
+// exit class is not lost; it returns primary when the save succeeded.
 func annotateSaveFailure(primary, saveErr error) error {
 	if saveErr == nil {
 		return primary

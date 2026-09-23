@@ -13,7 +13,7 @@ import (
 
 // DBs holds the single BoltDB handle backing snapshot storage. All snapshot
 // buckets live in one file so a save is one atomic Bolt transaction instead
-// of nine independent file writes.
+// of one independent file write per bucket.
 type DBs struct {
 	db *bolt.DB
 }
@@ -37,23 +37,9 @@ func (s *DBs) Close() error {
 	return s.db.Close()
 }
 
-// openBolt opens a Bolt database at the given path, bounding how long it
-// waits to acquire the file's flock. A timeout means another process
-// currently holds the file, so it is reported as a busy cache rather than
-// left to hang.
-//
-// A second, mutually exclusive arm below matches a closed set of bbolt's
-// own corruption sentinels - ErrInvalid, ErrVersionMismatch, ErrChecksum -
-// and wraps as helpers.ErrCorruptSnapshotStore: bytes that fail one of
-// these three checks are damaged, not merely momentarily unreadable, and no
-// retry or different reader could make sense of them. The set is closed,
-// not a catch-all else, deliberately: bolterrors.ErrInvalidMapping ("the
-// database isn't correctly mapped") is an mmap failure - an environment
-// problem, not damaged bytes - and every OS-level failure (permission
-// denied, a directory where a file was expected, a missing parent) falls
-// through to the plain error return below, unclassified. Folding those in
-// too would turn an operator's own permissions mistake into "your cache is
-// corrupt, discard it", which is not what either of those failures means.
+// openBolt opens a Bolt database, reporting a flock timeout as ErrCacheBusy and
+// only bbolt's ErrInvalid, ErrVersionMismatch and ErrChecksum as corrupt; an
+// mmap or OS failure such as a permission error stays unclassified.
 func openBolt(path string, timeout time.Duration) (*bolt.DB, error) {
 	db, err := bolt.Open(path, helpers.FileMod, &bolt.Options{Timeout: timeout})
 	if err != nil {

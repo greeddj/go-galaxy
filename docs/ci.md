@@ -160,6 +160,14 @@ snapshot is versioned, and a binary handed a snapshot from a newer one refuses
 it rather than rebuilding. The price is a cold run on the first job after an
 upgrade.
 
+When the action installs the latest release (`@v1` or a branch, with no
+`version` input), it learns which release it got from the first word of
+`go-galaxy --version`: the version, starting with a digit and with any leading
+`v` dropped. That word becomes both the `version` output and the release in the
+cache key, so `--version` has to keep printing the version first. Output that
+does not start that way leaves `version` empty and gives every release one
+shared cache key - the very case the release in the key exists to prevent.
+
 ### Without the action
 
 The same thing by hand, for a runner the action does not cover or a pipeline

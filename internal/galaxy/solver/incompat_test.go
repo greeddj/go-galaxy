@@ -133,11 +133,9 @@ func TestNormalizeTermsKeepsSoleRootTerm(t *testing.T) {
 	}
 }
 
-// TestNormalizeTermsDropsTautologicalTerm pins dropTautological's new
-// definition: N({}) - the always-true negation of an unsatisfiable positive
-// statement - is redundant next to any other term and is removed, while a
-// sole tautological term survives (a single-term incompatibility is never
-// emptied here).
+// TestNormalizeTermsDropsTautologicalTerm pins that N({}) is dropped beside
+// any other term, while a sole tautological term survives so a single-term
+// incompatibility is never emptied.
 func TestNormalizeTermsDropsTautologicalTerm(t *testing.T) {
 	t.Parallel()
 	tautology := term{Package: "bar", Set: emptyVerSet(), Positive: false}

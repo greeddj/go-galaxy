@@ -1,26 +1,8 @@
 package collections_test
 
-// This file (continued from e2e_test.go) covers `install --dry-run` and
-// `warm --dry-run`, and the shared dry-run foundation, end to end against a
-// live fake Galaxy server: nothing is downloaded, nothing lands in the
-// install tree, the artifact cache, or the extracted store, no install or
-// warmed entry is recorded in the reloaded snapshot, and the backend lock is
-// still taken and still held once the run is mid-resolve. The snapshot save
-// itself is conditional: it proceeds when a persisted snapshot already existed
-// (TestInstallDryRunSavesMetadataCachesWhenSnapshotExists - the metadata
-// caches are reconstructible cache, not this command's product) and is
-// skipped when one did not (TestInstallDryRunDoesNotFabricateASnapshot - a
-// cold-cache dry run must not stamp Meta.LastSnapshot for the first time,
-// which cleanup's sweepExtractedStore reads as positive evidence that
-// nothing is installed or warmed anywhere). It also pins that `outdated`
-// (which has no product) is left entirely unaffected by --dry-run.
-//
-// Warm's own settled predicate - artifact cached AND extracted tree
-// materialized under a known sha, not cache presence alone - is pinned here
-// against a live server too (TestWarmDryRunReportsWouldWarmWhenExtractedStoreIsCold),
-// since a fresh runner against a warm S3-backed bucket with a cold local
-// extracted store is exactly the shape a bare "cached" predicate would
-// misreport as nothing to do.
+// End-to-end dry-run tests for install, warm and outdated against a live fake
+// Galaxy: nothing is downloaded, installed, extracted or recorded, the backend
+// lock is still taken, and a cold cache never gains a persisted snapshot.
 
 import (
 	"bytes"
@@ -45,16 +27,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestInstallDryRunAgainstLiveServerDoesNotMutate is the load-bearing e2e
-// proof for `install --dry-run`: a cold-cache dry run against a real fake
-// Galaxy server downloads nothing, creates no install tree, records no
-// install in the reloaded snapshot, and leaves the artifact cache and the
-// extracted content-addressable store untouched. This fixture starts from a
-// genuinely cold cache - no persisted snapshot exists yet - so the save
-// itself is also skipped here (TestInstallDryRunDoesNotFabricateASnapshot
-// covers that guard directly); the positive case, where a persisted snapshot
-// already exists and the dry run's metadata caches ARE saved on top of it,
-// is TestInstallDryRunSavesMetadataCachesWhenSnapshotExists.
+// TestInstallDryRunAgainstLiveServerDoesNotMutate pins that a cold-cache
+// install --dry-run downloads nothing, creates no install tree or cache entry
+// and records no install; with no prior snapshot the save is skipped too.
 func TestInstallDryRunAgainstLiveServerDoesNotMutate(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -68,10 +43,9 @@ func TestInstallDryRunAgainstLiveServerDoesNotMutate(t *testing.T) {
 	assertSnapshotUnpersistedAndRegistryEmpty(t, f.cfg.CacheDir, "acme.app@1.0.0", "acme.lib@1.0.0")
 }
 
-// assertNothingDownloadedOrInstalled checks the three on-disk halves of "a
-// dry run downloaded and installed nothing": no artifact request reached the
-// fake server, the install tree was never created, and neither the artifact
-// cache nor the extracted content-addressable store gained an entry.
+// assertNothingDownloadedOrInstalled checks that no artifact request reached
+// the server and that neither the install tree, the artifact cache nor the
+// extracted store gained an entry.
 func assertNothingDownloadedOrInstalled(t *testing.T, f *e2eFixture) {
 	t.Helper()
 	if got := f.server.Count(fakegalaxy.EndpointArtifact); got != 0 {
@@ -90,15 +64,9 @@ func assertNothingDownloadedOrInstalled(t *testing.T, f *e2eFixture) {
 	assertPathAbsent(t, filepath.Join(f.cfg.CacheDir, extracted.RootDirName))
 }
 
-// TestInstallDryRunDoesNotFabricateASnapshot is the direct proof for the
-// guard itself: against a fresh cache directory - no persisted snapshot
-// exists at all, the same shape a schema bump that drops one, or a missing
-// or expired S3 state object, would also produce - a dry run must not stamp
-// Meta.LastSnapshot for the first time. Every real Save/MarshalSnapshot
-// stamps it unconditionally, so the only way to keep it unset is to skip the
-// save entirely when none was there to begin with. Asserted via
-// WasPersisted(), not file presence: the local backend creates its Bolt file
-// on Open regardless of whether anything was ever saved into it.
+// TestInstallDryRunDoesNotFabricateASnapshot pins that a dry run against a
+// cache with no persisted snapshot leaves none, judged by WasPersisted rather
+// than by the Bolt file, which the backend creates whether or not it saves.
 func TestInstallDryRunDoesNotFabricateASnapshot(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -124,15 +92,9 @@ func TestInstallDryRunDoesNotFabricateASnapshot(t *testing.T) {
 	}
 }
 
-// TestInstallDryRunSavesMetadataCachesWhenSnapshotExists proves the guard is
-// not over-applied into "a dry run never saves": once a persisted snapshot
-// already exists (seeded here by a prior real install), a subsequent dry run
-// still saves its own resolve-side metadata caches on top of it. A second
-// collection is added to requirements.yml between the two runs so the dry
-// run's resolve is a genuinely fresh solve - a different RequirementsHash
-// than what is already on disk - rather than being served verbatim from the
-// snapshot the first run left behind, which would make this test pass
-// vacuously without the dry run's own recordResolution call ever running.
+// TestInstallDryRunSavesMetadataCachesWhenSnapshotExists pins that a dry run
+// over an already persisted snapshot still saves its metadata caches; the
+// added acme.extra forces a fresh solve so the old snapshot cannot pass it.
 func TestInstallDryRunSavesMetadataCachesWhenSnapshotExists(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -170,43 +132,13 @@ func TestInstallDryRunSavesMetadataCachesWhenSnapshotExists(t *testing.T) {
 }
 
 // dryRunLockObservationCeiling is a liveness ceiling, not a timing margin:
-// every assertion in assertDryRunStillTakesBackendLock is made only after an
-// observed event, so a slow machine makes that helper slower, never wrong.
-// The ceiling fires only when the run genuinely never reaches its resolve,
-// and a run that dies before getting there is caught by the done channel
-// instead, in milliseconds.
+// every assertion waits on an observed event, so a slow machine makes the
+// lock helpers slower, never wrong.
 const dryRunLockObservationCeiling = 10 * time.Second
 
-// assertDryRunStillTakesBackendLock proves initInstall's exclusive backend
-// lock is acquired, and is still held once the run is mid-resolve, exactly as
-// it is on a real run of whichever command run drives: a Hang fault on the
-// root-metadata endpoint parks the dry run mid-resolve - well after
-// initInstall's Lock call - one concurrent lock attempt against the same
-// cache directory must fail while the run is parked there, and the lock must
-// be free again once its context is canceled and it unwinds. Those are two
-// sampled points, not a continuum: nothing here observes the interval between
-// them.
-//
-// Waiting for that mid-resolve moment must never touch the lock itself.
-// store.AcquireLock is non-blocking (LOCK_NB) and initInstall makes exactly
-// one Lock attempt with no retry, so an observer holding the lock even
-// momentarily can hold it in the very window initInstall tries - killing the
-// run it exists to observe, which then never takes the lock at all and leaves
-// the observer to conclude that no lock is ever held. The signal used instead
-// is the fake server's own request counter: dispatchRootMetadata increments it
-// before handleRootMetadata applies the Hang fault, and that request is issued
-// from the resolve, downstream of initInstall's Lock. So a count of at least
-// one means the run is past Lock and cannot proceed until its context is
-// canceled: the only production timer that could unpark it is
-// helpers.MetadataFetchDeadline, two minutes, orders above the gap between
-// that signal and the single lock attempt that follows it.
-//
-// The final acquisition, after the run unwinds, is this fixture's positive
-// control: the same store.AcquireLock call on the same cacheDir succeeds, so
-// the mid-resolve refusal is contention with the run rather than a lock path
-// that would fail for any caller. Shared by
-// TestInstallDryRunStillTakesBackendLock and TestWarmDryRunStillTakesBackendLock,
-// which differ only in which collections.* entry point they drive.
+// assertDryRunStillTakesBackendLock parks a dry run mid-resolve on a Hang
+// fault and requires a concurrent lock attempt to fail, then succeed once it
+// unwinds; waiting never probes the lock, since initInstall tries it only once.
 func assertDryRunStillTakesBackendLock(t *testing.T, run func(context.Context, *config.Config, *infra.Infra) error) {
 	t.Helper()
 	root := t.TempDir()
@@ -238,14 +170,9 @@ func assertDryRunStillTakesBackendLock(t *testing.T, run func(context.Context, *
 	runtime := infra.New(noopPrinter{}, s.Client())
 
 	ctx, cancel := context.WithCancel(context.Background())
-	// Deliberately in addition to the explicit cancel() call below, not
-	// instead of it: without this defer, a t.Fatal above (or any future
-	// assertion added ahead of the explicit cancel()) would exit this test
-	// via runtime.Goexit with the Hang-faulted request still parked and
-	// nothing left to ever cancel it, so fakegalaxy's own t.Cleanup
-	// (httptest.Server.Close) would then block forever waiting for that
-	// request to finish - taking down the whole test binary with a
-	// "test timed out" panic instead of a clean, named test failure.
+	// Deferred as well as called below: a t.Fatal before the explicit cancel
+	// would leave the Hang-faulted request parked, and fakegalaxy's cleanup would
+	// then block until the whole test binary times out.
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
@@ -258,10 +185,8 @@ func assertDryRunStillTakesBackendLock(t *testing.T, run func(context.Context, *
 		_ = release()
 		t.Fatal("expected the single concurrent lock attempt to fail while the dry run holds the backend lock, but it succeeded")
 	} else if !errors.Is(err, helpers.ErrAnotherInstanceIsRunning) {
-		// Documentary, not pinned: this line is reachable only when
-		// AcquireLock fails for a reason other than EWOULDBLOCK, which is an
-		// IO failure on the lock path itself rather than anything the code
-		// under test decides. It is kept to tell contention apart from one.
+		// Reachable only on an IO failure of the lock path itself; kept to tell
+		// that apart from contention.
 		t.Fatalf("expected errors.Is ErrAnotherInstanceIsRunning, got %v", err)
 	}
 
@@ -275,14 +200,9 @@ func assertDryRunStillTakesBackendLock(t *testing.T, run func(context.Context, *
 	_ = release()
 }
 
-// waitForResolveInFlight blocks until the fake server has seen the run's
-// root-metadata request, which is the observable proof that the run is past
-// initInstall's Lock and is now parked on the Hang fault. It never touches
-// the backend lock; see assertDryRunStillTakesBackendLock for why an observer
-// that did could kill the run it is observing. A run that returns before
-// reaching its resolve never held the lock at all, so there is nothing left
-// to observe and the caller is told that rather than being left to conclude
-// from a silent timeout that no lock is ever taken.
+// waitForResolveInFlight blocks until the server has seen the run's
+// root-metadata request, proof the run is past initInstall's Lock and parked,
+// and fails by name if the run returns before reaching its resolve.
 func waitForResolveInFlight(t *testing.T, s *fakegalaxy.Server, done <-chan error) {
 	t.Helper()
 	deadline := time.Now().Add(dryRunLockObservationCeiling)
@@ -299,10 +219,8 @@ func waitForResolveInFlight(t *testing.T, s *fakegalaxy.Server, done <-chan erro
 	}
 }
 
-// awaitCanceledRun joins an already-canceled run and requires it to report an
-// error. The join is bounded: an unbounded receive on a run that never
-// unwinds would take the whole test binary down with a "test timed out"
-// panic instead of failing this test by name.
+// awaitCanceledRun joins a canceled run and requires an error; the bounded
+// wait fails this test by name instead of timing out the whole binary.
 func awaitCanceledRun(t *testing.T, done <-chan error) {
 	t.Helper()
 	select {
@@ -322,17 +240,9 @@ func TestInstallDryRunStillTakesBackendLock(t *testing.T) {
 	assertDryRunStillTakesBackendLock(t, collections.Start)
 }
 
-// TestInstallDryRunOfflineReportsWouldFailAndFailsClosed proves a dry run
-// never reports success for a collection a real --offline install would
-// certainly fail to fetch. acme.app's metadata is cached ahead of time via a
-// real Lock run - which resolves and populates the snapshot's metadata
-// caches without ever touching the artifact store or the install tree - so
-// the subsequent dry run's own resolve is served entirely from the snapshot
-// with the network transport hard-disabled, exactly like a real --offline
-// install's resolve step. With no cached artifact and --offline set, a real
-// install would fail fetchArtifact's offline guard (helpers.ErrOfflineMode);
-// this dry run must report and fail the same way instead of claiming it
-// would install.
+// TestInstallDryRunOfflineReportsWouldFailAndFailsClosed pins that an offline
+// dry run with metadata cached by Lock but no artifact cached reports "Would
+// fail:" and returns ErrOfflineMode, as the real offline install would.
 func TestInstallDryRunOfflineReportsWouldFailAndFailsClosed(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -368,11 +278,9 @@ func TestInstallDryRunOfflineReportsWouldFailAndFailsClosed(t *testing.T) {
 	assertPathAbsent(t, installPathFor(f.downloadPath, "lib"))
 }
 
-// TestInstallDryRunBannerSurvivesQuiet proves dryRunBanner's output actually
-// reaches a human even in --quiet mode, against the real progress.Printer
-// (not a test stub): a bare Printf-tier banner would be silently swallowed by
-// quiet mode, which is exactly the failure mode this banner exists to avoid
-// for an env-sourced --dry-run.
+// TestInstallDryRunBannerSurvivesQuiet pins that dryRunBanner reaches stderr
+// under --quiet through the real progress.Printer, since an env-sourced
+// --dry-run must never turn a run into a silent no-op.
 func TestInstallDryRunBannerSurvivesQuiet(t *testing.T) {
 	f := newE2EFixture(t)
 	f.cfg.DryRun = true
@@ -394,23 +302,9 @@ func TestInstallDryRunBannerSurvivesQuiet(t *testing.T) {
 	}
 }
 
-// TestOutdatedDryRunMutatesNothing pins that `outdated` - which writes no
-// product of its own - is left unaffected by --dry-run in every way that
-// matters: the lockfile it reads is untouched, no cache directory is ever
-// created even though one is configured, and toggling cfg.DryRun changes
-// nothing about its result. `outdated` grows no cfg.DryRun branch of its
-// own to produce any of this: the lockfile read and the cache-directory
-// absence are simply true regardless of the flag, since `outdated` opens no
-// cache backend and has nothing else to suppress.
-//
-// The one exception is the metrics file, and it is not evidence of a branch
-// in `outdated` either: it stays unwritten here because writeRunMetrics
-// itself self-suppresses under cfg.DryRun (see its own doc comment) - the
-// identical shared guard install, warm, and lock's own dry runs go through -
-// not because `outdated` treats --metrics-file specially. See
-// TestOutdatedWritesMetricsReport and TestOutdatedDryRunSuppressesMetricsReport
-// in outdated_e2e_test.go for the report itself, honored on a real run and
-// suppressed (with a stderr warning) under --dry-run.
+// TestOutdatedDryRunMutatesNothing pins that outdated under --dry-run leaves
+// the lockfile byte-identical, creates no cache directory, writes no metrics
+// file (writeRunMetrics suppresses it), and succeeds the same without it.
 func TestOutdatedDryRunMutatesNothing(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -474,11 +368,9 @@ func TestOutdatedDryRunMutatesNothing(t *testing.T) {
 	}
 }
 
-// assertSnapshotUnpersistedAndRegistryEmpty reopens the backend at cacheDir
-// and asserts a cold-cache dry run left no persisted snapshot behind
-// (WasPersisted still false), enrolled no project in the registry, and
-// recorded no install for any key in notInstalled - shared by install's and
-// warm's own cold-cache dry-run fixtures.
+// assertSnapshotUnpersistedAndRegistryEmpty reopens the backend and requires
+// that a cold-cache dry run persisted no snapshot, enrolled no project and
+// recorded no install for any key in notInstalled.
 func assertSnapshotUnpersistedAndRegistryEmpty(t *testing.T, cacheDir string, notInstalled ...string) {
 	t.Helper()
 	ctx := context.Background()
@@ -510,11 +402,9 @@ func assertSnapshotUnpersistedAndRegistryEmpty(t *testing.T, cacheDir string, no
 	}
 }
 
-// TestWarmDryRunAgainstLiveServerCachesNothing is the load-bearing e2e proof
-// for `warm --dry-run`: a cold-cache dry run against a real fake Galaxy
-// server downloads nothing, creates no artifact-cache entry, never even
-// creates the extracted store's root directory (lazily created on first
-// ingest), enrolls no project, and leaves the snapshot unpersisted.
+// TestWarmDryRunAgainstLiveServerCachesNothing pins that a cold-cache warm
+// --dry-run downloads nothing, creates no artifact entry or extracted store
+// root, enrolls no project and leaves the snapshot unpersisted.
 func TestWarmDryRunAgainstLiveServerCachesNothing(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -536,13 +426,9 @@ func TestWarmDryRunAgainstLiveServerCachesNothing(t *testing.T) {
 	assertSnapshotUnpersistedAndRegistryEmpty(t, f.cfg.CacheDir)
 }
 
-// TestWarmDryRunWritesNoWarmedEntry proves warm --dry-run never calls
-// recordWarmed: a real install first seeds a persisted snapshot and
-// populates the artifact cache and the extracted store (without ever writing
-// a warmed entry itself - see TestWarmColdCachePopulatesCacheWithoutInstalling's
-// sibling assertion on the install side), so the subsequent dry run's own
-// warmed set is checked against a persisted snapshot rather than a cold one a
-// skipped save would produce vacuously.
+// TestWarmDryRunWritesNoWarmedEntry pins that warm --dry-run never calls
+// recordWarmed; a real install seeds a persisted snapshot first so an empty
+// warmed set is not the vacuous result of a skipped save.
 func TestWarmDryRunWritesNoWarmedEntry(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -570,15 +456,9 @@ func TestWarmDryRunWritesNoWarmedEntry(t *testing.T) {
 	}
 }
 
-// TestWarmDryRunReportsWouldWarmWhenExtractedStoreIsCold pins the corrected
-// completion predicate this command was built around: cache presence alone
-// is not enough, since the artifact store and the extracted store are
-// independent. A real warm first populates both halves for both
-// collections; the extracted root is then wiped entirely (simulating a fresh
-// runner against a warm S3-backed artifact bucket with a cold local
-// extracted store), and a subsequent dry run must report both collections as
-// "would warm" rather than "already warm" - this test must be shown to fail
-// against the recorded (and rejected) "cached implies settled" predicate.
+// TestWarmDryRunReportsWouldWarmWhenExtractedStoreIsCold pins that a cached
+// artifact alone is not "already warm": with the extracted store wiped (a
+// fresh runner over a warm S3 bucket) both collections report "would warm".
 func TestWarmDryRunReportsWouldWarmWhenExtractedStoreIsCold(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -612,10 +492,9 @@ func TestWarmDryRunReportsWouldWarmWhenExtractedStoreIsCold(t *testing.T) {
 	}
 }
 
-// TestWarmDryRunReportsAlreadyWarmWhenFullyWarm asserts the positive
-// counterpart of the cold-extracted-store case above: once both halves of
-// warm's product genuinely exist, a subsequent dry run reports both
-// collections as already warm and never touches the network.
+// TestWarmDryRunReportsAlreadyWarmWhenFullyWarm pins that once both the
+// artifact and its extracted tree exist, the dry run reports "already warm"
+// without any network request.
 func TestWarmDryRunReportsAlreadyWarmWhenFullyWarm(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -650,16 +529,9 @@ func TestWarmDryRunReportsAlreadyWarmWhenFullyWarm(t *testing.T) {
 	}
 }
 
-// TestWarmDryRunUsesLockfilePinAsSHASource proves warmDryRunSHA's precedence:
-// a lockfile pin, not the (here, absent) warmed record, is what the frozen
-// dry run checks the extracted store under. A real install first populates
-// the artifact cache and the extracted store while writing no warmed entry
-// at all (install never calls recordWarmed); the frozen-pin fixture then
-// registers a higher version and pins the lockfile back to the version the
-// install actually produced. If warmDryRunSHA's pin arm were dropped, the
-// probe would fall back to the (empty) warmed map, name no sha at all, and
-// report "would warm" instead - so this must be shown to fail under that
-// mutation.
+// TestWarmDryRunUsesLockfilePinAsSHASource pins warmDryRunSHA's precedence:
+// under --frozen the lockfile pin names the extracted tree to check, so a
+// cache an install populated, with no warmed entry, reports "already warm".
 func TestWarmDryRunUsesLockfilePinAsSHASource(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -688,21 +560,9 @@ func TestWarmDryRunUsesLockfilePinAsSHASource(t *testing.T) {
 	}
 }
 
-// TestWarmDryRunReportsWouldWarmWhenNoSHACanBeNamed pins the pessimistic
-// side of warmDryRunSHA's design rule: the extracted tree for acme.app and
-// acme.lib is genuinely present (a real install populated both the artifact
-// cache and the extracted store), but this run is unfrozen (col.SHA256 is
-// empty) and warm has never run (the warmed set is empty), so no sha can be
-// named without downloading the artifact's bytes to learn one - the cost
-// this preview exists to avoid. warmDryRunSHA must return "" here, and the
-// probe must report "would warm" rather than guess at "already warm".
-//
-// This is the mutation this test exists to catch: a future warmDryRunSHA
-// that added a third fallback - reading the sha off this collection's
-// InstalledEntry.ArtifactSHA256, the way installDryRunProbe does for install
-// - would make this exact case report "Already warm" instead, on a machine
-// where warm has genuinely never run and the warmed set genuinely still
-// needs writing. Every other test in this suite would still pass.
+// TestWarmDryRunReportsWouldWarmWhenNoSHACanBeNamed pins that with no pin and
+// no warmed record warmDryRunSHA names no sha and the probe reports "would
+// warm"; it must never fall back to the installed record's ArtifactSHA256.
 func TestWarmDryRunReportsWouldWarmWhenNoSHACanBeNamed(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -733,12 +593,9 @@ func TestWarmDryRunReportsWouldWarmWhenNoSHACanBeNamed(t *testing.T) {
 	}
 }
 
-// driftCachedTarballBytes overwrites the cached artifact file at
-// cacheDir/artifactKey in place, same path and same length, with every byte
-// flipped - simulating on-disk bit rot or corruption that leaves the file's
-// presence and size looking entirely ordinary to a Has() probe, while its
-// sidecar and any content-addressable tree keyed by the pre-drift hash are
-// left completely untouched (neither lives at this path).
+// driftCachedTarballBytes flips every byte of the cached artifact in place,
+// keeping its path and size, and leaves its sha256 sidecar and extracted tree
+// untouched, so a presence probe still sees an ordinary cache hit.
 func driftCachedTarballBytes(t *testing.T, cacheDir, artifactKey string) {
 	t.Helper()
 	tarPath := filepath.Join(cacheDir, artifactKey)
@@ -755,25 +612,9 @@ func driftCachedTarballBytes(t *testing.T, cacheDir, artifactKey string) {
 	}
 }
 
-// TestWarmDryRunAndRunDisagreeOnAFrozenOfflineDriftedCacheHit pins a known
-// and deliberate limit of this preview, so it is never mistaken for a
-// stronger guarantee than it actually is: a cached artifact whose bytes
-// drift in place, while its sidecar and its extracted tree (keyed by the
-// original sha, unaffected by corrupting a different file in the cache) are
-// left untouched, still names the same sha warmDryRunSHA would name under a
-// pin. The preview therefore reports the drifted collection "Already warm"
-// with a would-fail count of zero, while the real --frozen --offline run
-// re-hashes the actual bytes on disk (resolveArtifactSHA, forced by the
-// non-empty pin), finds them no longer match, and fails closed with
-// helpers.ErrSHA256Mismatch - canRetryCacheHit refuses to evict and refetch
-// while offline, since there is nothing to replace the bad bytes with.
-//
-// Closing this gap is rejected, not overlooked: detecting it needs the
-// artifact's actual bytes, which on the S3 backend means ArtifactStore.Fetch
-// downloading the whole object - exactly the cost this preview exists to
-// avoid - and a recorded sidecar sha cannot substitute, since the sidecar is
-// precisely what the drifted bytes no longer match. See warmDryRunSHA's own
-// doc comment for the same reasoning in the production code.
+// TestWarmDryRunAndRunDisagreeOnAFrozenOfflineDriftedCacheHit pins a disclosed
+// limit: drifted tarball bytes still preview "Already warm", while the real
+// --frozen --offline run re-hashes them and fails; detecting it costs a download.
 func TestWarmDryRunAndRunDisagreeOnAFrozenOfflineDriftedCacheHit(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -819,12 +660,7 @@ func TestWarmDryRunAndRunDisagreeOnAFrozenOfflineDriftedCacheHit(t *testing.T) {
 		f.runtime.Output = printer
 		realErr = collections.Warm(context.Background(), f.cfg, f.runtime)
 	})
-	// warmWithState wraps a per-collection failure as helpers.ErrInstallationFailed
-	// without chaining the underlying cause through errors.Is, so the specific
-	// helpers.ErrSHA256Mismatch this drift produces is only observable on the
-	// error-tier "Failed:" line warmCollections prints, not on the returned
-	// error itself - the same limitation TestWarmFrozenHonorsLockfilePinAndFailsClosedOnCorruption's
-	// corrupted-pin subtest already works within.
+	// The real run fails closed; its "Failed:" line names the checksum mismatch.
 	if !errors.Is(realErr, helpers.ErrInstallationFailed) {
 		t.Fatalf("expected the real --frozen --offline warm to fail with errors.Is ErrInstallationFailed, got %v", realErr)
 	}
@@ -833,15 +669,9 @@ func TestWarmDryRunAndRunDisagreeOnAFrozenOfflineDriftedCacheHit(t *testing.T) {
 	}
 }
 
-// TestWarmDryRunOfflineFailsClosed proves a warm dry run never reports
-// success for a collection a real --offline warm would certainly fail to
-// fetch, mirroring TestInstallDryRunOfflineReportsWouldFailAndFailsClosed on
-// the warm side: a real Lock run first populates the snapshot's metadata
-// caches (never touching the artifact store), so the dry run's own resolve
-// is served entirely from the snapshot with the network transport hard
-// disabled. With no cached artifact and --offline set, a real warm would
-// fail fetchArtifact's own offline guard; this dry run must report and fail
-// the same way instead of claiming it would warm.
+// TestWarmDryRunOfflineFailsClosed pins that an offline warm dry run with no
+// cached artifact reports "Would fail:" and exits ExitInstall with
+// ErrOfflineMode, as the real offline warm would.
 func TestWarmDryRunOfflineFailsClosed(t *testing.T) {
 	f := newE2EFixture(t)
 
@@ -879,19 +709,14 @@ func TestWarmDryRunOfflineFailsClosed(t *testing.T) {
 }
 
 // TestWarmDryRunStillTakesBackendLock is assertDryRunStillTakesBackendLock
-// driven by collections.Warm; see that helper's own doc comment for the
-// property being pinned. TestWarmNoCacheRejectsBeforeResolving's own "no
-// lock" property must not be over-generalized into "a dry run never locks" -
-// --no-cache is rejected before initInstall ever runs, while a --dry-run warm
-// that gets past that guard locks exactly like a real one.
+// driven by collections.Warm: a dry-run warm locks like a real one, unlike
+// --no-cache, which is rejected before initInstall runs.
 func TestWarmDryRunStillTakesBackendLock(t *testing.T) {
 	assertDryRunStillTakesBackendLock(t, collections.Warm)
 }
 
-// TestWarmDryRunSkipsMetrics proves writeRunMetrics's shared cfg.DryRun guard
-// covers warm too: with a configured MetricsFile, a warm dry run never writes
-// it and instead warns, matching install's own behavior since the guard
-// lives inside writeRunMetrics itself.
+// TestWarmDryRunSkipsMetrics pins that writeRunMetrics's dry-run guard covers
+// warm: the configured metrics file is not written and a warning names it.
 func TestWarmDryRunSkipsMetrics(t *testing.T) {
 	f := newE2EFixture(t)
 	f.cfg.MetricsFile = filepath.Join(t.TempDir(), "metrics.json")
@@ -915,12 +740,9 @@ func TestWarmDryRunSkipsMetrics(t *testing.T) {
 	}
 }
 
-// TestWarmDryRunBannerSurvivesQuiet proves dryRunBanner's output actually
-// reaches a human even in --quiet mode for warm, against the real
-// progress.Printer (not a test stub) - mirroring
-// TestInstallDryRunBannerSurvivesQuiet on the warm side, since initInstall
-// emits the banner for every dry-run command rather than installWithState
-// alone.
+// TestWarmDryRunBannerSurvivesQuiet pins that the dry-run banner reaches
+// stderr under --quiet for warm too, since initInstall emits it for every
+// dry-run command.
 func TestWarmDryRunBannerSurvivesQuiet(t *testing.T) {
 	f := newE2EFixture(t)
 	f.cfg.DryRun = true
@@ -942,26 +764,9 @@ func TestWarmDryRunBannerSurvivesQuiet(t *testing.T) {
 	}
 }
 
-// assertFrozenOfflinePinMismatchExitsIntegrity is the fixture and assertion
-// sequence shared by TestInstallDryRunFrozenOfflinePinMismatchExitsIntegrity
-// and TestWarmDryRunFrozenOfflinePinMismatchExitsIntegrity, parametrized only
-// by which collections.* entry point they drive (both commands use it to
-// both seed the cache and run the preview, since a real, non-dry-run call to
-// either one already populates the cache with the real, correctly-hashed
-// artifact).
-//
-// It reproduces the measured pin/digest gap dryRunPinVerdict now closes: the
-// cache holds the real, correctly-hashed artifact, but the lockfile pins a
-// different, well-formed digest (corruptedAppSHA256), under --frozen
-// --offline. A real run fails closed with helpers.ErrSHA256Mismatch there
-// (verifyPinnedSHA/warmVerifyAndEnsure re-hash the actual cached bytes and
-// reject the mismatch); the preview must now report and fail the identical
-// way - "Would fail:", a nonzero would-fail count, and exitcode.ExitIntegrity
-// (7) - rather than the "would install/warm (artifact cached)" it reported
-// before dryRunPinVerdict existed. The positive control, on the same fixture
-// with the pin corrected back to the artifact's real digest, proves the
-// failure above is a genuine refusal: the identical preview then reports the
-// collection normally and a would-fail count of zero.
+// assertFrozenOfflinePinMismatchExitsIntegrity seeds the cache by a real call
+// to run, then under --frozen --offline --dry-run requires a pin that disagrees
+// with the cached digest to fail with ExitIntegrity, and a corrected pin to pass.
 func assertFrozenOfflinePinMismatchExitsIntegrity(t *testing.T, run func(context.Context, *config.Config, *infra.Infra) error) {
 	t.Helper()
 	f := newE2EFixture(t)
@@ -980,10 +785,8 @@ func assertFrozenOfflinePinMismatchExitsIntegrity(t *testing.T, run func(context
 }
 
 // assertFrozenOfflinePreviewFailsOnCorruptedPin corrupts acme.app's pin and
-// asserts the resulting preview fails closed with helpers.ErrSHA256Mismatch,
-// exitcode.ExitIntegrity, a "Would fail:" line, and a nonzero would-fail
-// count. Factored out of assertFrozenOfflinePinMismatchExitsIntegrity purely
-// to keep that function under the cyclomatic-complexity budget.
+// requires the preview to fail with ErrSHA256Mismatch, ExitIntegrity, a
+// "Would fail:" line and a would-fail count of one.
 func assertFrozenOfflinePreviewFailsOnCorruptedPin(
 	t *testing.T, f *e2eFixture, run func(context.Context, *config.Config, *infra.Infra) error, lockPath string, lf *lockfile.File,
 ) {
@@ -1018,11 +821,9 @@ func assertFrozenOfflinePreviewFailsOnCorruptedPin(
 	}
 }
 
-// assertFrozenOfflinePreviewSucceedsOnCorrectedPin is the positive control
-// for assertFrozenOfflinePreviewFailsOnCorruptedPin: on the same fixture,
-// with the pin corrected back to the artifact's real digest, the identical
-// preview must succeed with a would-fail count of zero - proving the failure
-// above is a genuine refusal, not evidence the fixture could never succeed.
+// assertFrozenOfflinePreviewSucceedsOnCorrectedPin is the positive control:
+// with the pin back on the artifact's real digest the same preview succeeds
+// with no would-fail, so the refusal above is genuine.
 func assertFrozenOfflinePreviewSucceedsOnCorrectedPin(
 	t *testing.T, f *e2eFixture, run func(context.Context, *config.Config, *infra.Infra) error, lockPath string, lf *lockfile.File,
 ) {
@@ -1056,18 +857,14 @@ func TestInstallDryRunFrozenOfflinePinMismatchExitsIntegrity(t *testing.T) {
 
 // TestWarmDryRunFrozenOfflinePinMismatchExitsIntegrity is
 // assertFrozenOfflinePinMismatchExitsIntegrity driven by collections.Warm,
-// proving warm's own dryRunPinVerdict call (warmDryRunProbe) closes the
-// identical gap on the warm command.
+// pinning warmDryRunProbe's dryRunPinVerdict call.
 func TestWarmDryRunFrozenOfflinePinMismatchExitsIntegrity(t *testing.T) {
 	assertFrozenOfflinePinMismatchExitsIntegrity(t, collections.Warm)
 }
 
-// driftCachedSidecarDigest overwrites the sha256 sidecar file next to the
-// cached artifact at cacheDir/artifactKey (helpers.ArtifactSHASidecarSuffix)
-// with sha, leaving the tarball's own bytes on disk completely untouched -
-// the recorded-digest-only drift dryRunPinVerdict's own doc comment
-// discloses, as distinct from driftCachedTarballBytes above, which drifts
-// the tarball's bytes and leaves the sidecar alone.
+// driftCachedSidecarDigest overwrites the cached artifact's sha256 sidecar
+// with sha and leaves the tarball bytes untouched: the recorded-digest-only
+// drift, the converse of driftCachedTarballBytes.
 func driftCachedSidecarDigest(t *testing.T, cacheDir, artifactKey, sha string) {
 	t.Helper()
 	sidecarPath := filepath.Join(cacheDir, artifactKey) + helpers.ArtifactSHASidecarSuffix
@@ -1077,22 +874,8 @@ func driftCachedSidecarDigest(t *testing.T, cacheDir, artifactKey, sha string) {
 }
 
 // TestInstallDryRunAndRunDisagreeOnAFrozenOfflineRecordedDigestDrift pins a
-// measured, deliberate, and disclosed honesty inversion - not a bug being
-// locked in, and not evidence that dryRunPinVerdict's verdict should be made
-// optimistic. Only the cached artifact's recorded digest is altered here; the
-// tarball's own bytes on disk, and the lockfile pin, are both left exactly as
-// the seeding warm produced them. Under --frozen --offline, a real install
-// still succeeds: resolveArtifactSHA re-hashes the actual cached bytes
-// whenever the pin is non-empty and never reads the recorded digest at all
-// (internal/galaxy/collections/install.go), so the drifted sidecar is never
-// consulted on the real path. This preview's dryRunPinVerdict, by contrast,
-// compares the pin against exactly that recorded digest and reports a
-// would-fail. Measured directly: the real install returns nil; the preview
-// returns helpers.ErrSHA256Mismatch at exitcode.ExitIntegrity. See
-// dryRunPinVerdict's own doc comment for why the verdict stays in this shape
-// anyway - a cached artifact whose recorded digest disagrees with its own
-// bytes is damaged either way - while no longer describing it as a certain
-// prediction of what the real run will do.
+// disclosed asymmetry: a drifted sidecar fails the preview's dryRunPinVerdict,
+// while the real install re-hashes the bytes under the pin and succeeds.
 func TestInstallDryRunAndRunDisagreeOnAFrozenOfflineRecordedDigestDrift(t *testing.T) {
 	f := newE2EFixture(t)
 

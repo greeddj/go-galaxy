@@ -7,28 +7,15 @@ import (
 const (
 	dirSuffix      = ".cache/go-galaxy"
 	defaultHomeDir = "/root"
-	// defaultTimeout is only what --timeout advertises as its default; the
-	// value the config layer actually falls back to is
-	// galaxyhelpers.FetchDefaultTimeout, so the flag's help text is derived
-	// from that same constant rather than restating it.
+	// defaultTimeout is only what --timeout advertises; it is the constant the
+	// config layer falls back to, so the help cannot disagree with the behavior.
 	defaultTimeout              = galaxyhelpers.FetchDefaultTimeout
 	defaultServerURL            = "https://galaxy.ansible.com"
 	defaultCollectionsPath      = ".collections"
 	defaultRolesPath            = ".roles"
 	defaultRequirementsFilePath = "requirements.yml"
-	// envRequirementsFileAnsible occupies ansible's namespace without being a
-	// name ansible defines. The prefix promises drop-in fidelity, and this one
-	// has nothing to be faithful to: ansible-core declares no
-	// requirements-file option at all, and ansible-galaxy takes that path only
-	// as -r/--role-file (which is why --role-file is accepted here as an alias
-	// of --requirements-file: the flag ports, the variable never had an
-	// original). It is kept
-	// regardless: pipelines already set it, and dropping it would not fail
-	// them, it would silently install whatever requirements.yml the working
-	// directory happens to hold. Nor could a run warn about the change, since
-	// hash, tree and explain never build a *config.Config to warn from. So it
-	// is documented as an extension rather than as parity, and a later reader
-	// must not "restore parity" by deleting it - there is no parity to
-	// restore.
+	// envRequirementsFileAnsible is a go-galaxy extension in ansible's namespace
+	// (ansible-core defines no such option). Pipelines set it, and deleting it
+	// would silently install whatever requirements.yml the directory holds.
 	envRequirementsFileAnsible = "ANSIBLE_GALAXY_REQUIREMENTS_FILE"
 )

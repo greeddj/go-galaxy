@@ -37,10 +37,8 @@ type generatedGraph struct {
 }
 
 // generateGraph builds a deterministic acyclic graph for seed: n packages of
-// 1..maxVersions published versions each, dependencies only from lower to
-// higher package indices (keeping it acyclic), and a single root on the first
-// package. It is a pure function of its arguments - no wall clock, no
-// package-global rand - so every machine reproduces the same corpus.
+// 1..maxVersions versions, dependencies only toward higher indices, and one
+// root on the first package, so every machine reproduces the same corpus.
 func generateGraph(seed int64, n, maxVersions int) generatedGraph {
 	//nolint:gosec // G404: deterministic seeded PRNG for reproducible corpora, not security-sensitive
 	rng := rand.New(rand.NewSource(seed))
@@ -91,13 +89,8 @@ func (g generatedGraph) provider() *fakeProvider {
 	return p
 }
 
-// propCheckConstraintMemo and propCheckVersionMemo cache successful parses
-// across propCheck calls: the oracle's brute-force enumeration re-checks
-// the same few constraint and version strings hundreds of times per seed,
-// and the parse (not Check itself) dominates that cost. Parsed values are
-// immutable and Check is read-only, so sharing them across parallel tests
-// is safe. Membership authority is unchanged: still Masterminds Check,
-// never the resolver's own set algebra.
+// propCheckConstraintMemo and propCheckVersionMemo cache immutable parses
+// for propCheck, whose membership authority stays Masterminds Check.
 //
 //nolint:gochecknoglobals // immutable parse cache shared across parallel tests, not mutable logic state
 var propCheckConstraintMemo sync.Map
@@ -124,10 +117,8 @@ func propCheck(version, constraint string) bool {
 	return c.Check(v)
 }
 
-// memoConstraint returns norm's parsed constraint from the memo, parsing
-// and storing it on first sight; nil means the parse failed (failures are
-// deliberately not cached - they are rare and re-parsing keeps the memo
-// value type uniform).
+// memoConstraint returns norm's parsed constraint, caching it on first parse;
+// nil means the parse failed, and failures are not cached.
 func memoConstraint(norm string) *semver.Constraints {
 	if cached, ok := propCheckConstraintMemo.Load(norm); ok {
 		if c, isConstraint := cached.(*semver.Constraints); isConstraint {
@@ -183,10 +174,9 @@ func (g generatedGraph) constraintViolation(res *Result) string {
 	return ""
 }
 
-// TestPropertyResolutionSatisfiesConstraints is property (i)+(ii): every
-// successful resolution satisfies every constraint that names a resolved
-// package (checked by Masterminds, independent of the resolver), and every
-// failure is a clean *ConflictError, never an internal-invariant error.
+// TestPropertyResolutionSatisfiesConstraints pins that every resolution
+// satisfies every constraint on a resolved package, checked by Masterminds,
+// and that every failure is a *ConflictError, never an internal error.
 func TestPropertyResolutionSatisfiesConstraints(t *testing.T) {
 	t.Parallel()
 	solved, conflicts := 0, 0

@@ -1,12 +1,8 @@
 package collections_test
 
-// This file pins the token-secrecy invariant end-to-end: a Galaxy API token
-// must never reach a human (stdout/stderr, at any verbosity) or a file (the
-// local Bolt snapshot, the S3 snapshot payload, the lockfile, the metrics
-// file, GALAXY.yml). See config.Secret's own doc comment for the design and
-// internal/galaxy/config/servers_test.go for the unit-level redaction table;
-// this file is the integration-level counterpart, run against a real fake
-// Galaxy server, a real fetch.New transport, and the real progress.Printer.
+// These tests pin end to end that a Galaxy token never reaches stdout, stderr
+// or any written file, against fakegalaxy through the real fetch.New
+// transport and progress.Printer.
 
 import (
 	"bytes"
@@ -29,10 +25,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// leakToken is deliberately distinctive - it cannot collide with any
-// generated artifact byte, filename, or protocol keyword the pipeline emits
-// on its own, so any match found by the tests below is unambiguously the
-// token itself, not incidental text.
+// leakToken is distinctive enough that no byte the pipeline emits on its own
+// can match it, so any match is the token itself.
 const leakToken = "tok3n-must-not-appear-anywhere"
 
 // tokenLeakConfig builds a *config.Config for a single fakegalaxy server
@@ -58,10 +52,9 @@ func tokenLeakConfig(t *testing.T, srv *fakegalaxy.Server) *config.Config {
 	}
 }
 
-// tokenLeakRuntime builds an *infra.Infra wired exactly like the CLI's own
-// newHTTPClient (see cmd/go-galaxy/commands/install.go's serverAuths): the
-// real fetch.New transport, so per-origin token attachment is exercised
-// honestly, paired with the printer captured by the caller.
+// tokenLeakRuntime builds an *infra.Infra wired like the CLI's serverAuths:
+// the real fetch.New transport, so per-origin token attachment is exercised
+// for real, paired with the caller's printer.
 func tokenLeakRuntime(cfg *config.Config, printer *progress.Progress) *infra.Infra {
 	auths := make([]fetch.ServerAuth, 0, len(cfg.Servers))
 	for _, s := range cfg.Servers {
@@ -78,12 +71,9 @@ func tokenLeakRuntime(cfg *config.Config, printer *progress.Progress) *infra.Inf
 	return infra.New(printer, fetch.New(cfg.Timeout, auths))
 }
 
-// captureStdIO redirects the process-wide os.Stdout/os.Stderr to pipes for
-// the duration of fn, draining both concurrently (so a chatty fn can never
-// deadlock on a full pipe buffer), and returns everything written to each.
-// This is the only way to observe progress.New's real output: Progress
-// reads the os.Stdout/os.Stderr package vars at construction time, and
-// exports no other way to redirect them.
+// captureStdIO swaps the process-wide os.Stdout/os.Stderr for pipes while fn
+// runs, draining both concurrently so fn cannot block, and returns what each
+// received. progress.New reads those vars at construction, its only seam.
 func captureStdIO(t *testing.T, fn func()) ([]byte, []byte) {
 	t.Helper()
 	origOut, origErr := os.Stdout, os.Stderr
@@ -123,10 +113,8 @@ func captureStdIO(t *testing.T, fn func()) ([]byte, []byte) {
 	return outBuf.Bytes(), errBuf.Bytes()
 }
 
-// assertNoTokenInTree walks every file under root and fails the test if any
-// one of them contains token, reporting the offending path. Walking rather
-// than hardcoding a fixed set of filenames means a future file added under
-// root - a new sidecar, a new bucket - is covered automatically.
+// assertNoTokenInTree fails the test for every file under root that contains
+// token; walking the tree rather than naming files covers any file added later.
 func assertNoTokenInTree(t *testing.T, root, token string) {
 	t.Helper()
 	if _, err := os.Stat(root); err != nil {
@@ -154,10 +142,7 @@ func assertNoTokenInTree(t *testing.T, root, token string) {
 }
 
 // assertNoTokenInFile fails the test if the file at path contains token. A
-// missing file is not itself a failure here - some of this test's callers
-// probe a file that only exists when a particular feature (metrics,
-// lockfile) is configured on, and other tests in this package already cover
-// the "file gets written" behavior on its own.
+// missing file passes: whether it is written at all is other tests' concern.
 func assertNoTokenInFile(t *testing.T, path, token string) {
 	t.Helper()
 	data, err := os.ReadFile(path) //nolint:gosec // path is this test's own fixed cfg field, not user input.
@@ -172,19 +157,9 @@ func assertNoTokenInFile(t *testing.T, path, token string) {
 	}
 }
 
-// TestTokenNeverLeaksDuringVerboseInstall runs a full verbose install
-// against a fake Galaxy server whose token is the distinctive leakToken,
-// then asserts the token appears in none of: stdout, stderr (both captured
-// through the real progress.Printer, the loudest configuration available),
-// the local Bolt snapshot, the metrics file, the lockfile, every GALAXY.yml
-// under the install path, or the store payload the S3 backend would have
-// marshaled for the same run.
-//
-// This test and TestTokenNeverLeaksOnAuthFailure both swap the process-wide
-// os.Stdout/os.Stderr (see captureStdIO) and so deliberately do not run in
-// parallel - with each other, or with any other test in this package: every
-// test that constructs a real progress.Progress (several now live in
-// outdated_e2e_test.go) stays serial for the identical reason.
+// TestTokenNeverLeaksDuringVerboseInstall pins that a verbose install and lock
+// leak the token into no output, cache file, install file, metrics, lockfile
+// or S3 snapshot payload. Serial: captureStdIO swaps process-wide stdio.
 func TestTokenNeverLeaksDuringVerboseInstall(t *testing.T) {
 	srv := fakegalaxy.New(t)
 	srv.RequireAuth("Token " + leakToken)
@@ -202,9 +177,7 @@ func TestTokenNeverLeaksDuringVerboseInstall(t *testing.T) {
 		runtime.WarnConfig(cfg)
 
 		installErr = collections.Start(ctx, cfg, runtime)
-		// Lock reuses the same cache dir and requirements, exercising the
-		// lockfile-writing path (Start alone never writes one) against the
-		// same server and token.
+		// Start never writes a lockfile, so Lock covers that path too.
 		lockErr = collections.Lock(ctx, cfg, runtime)
 	})
 	if installErr != nil {
@@ -228,12 +201,8 @@ func TestTokenNeverLeaksDuringVerboseInstall(t *testing.T) {
 	lockPath := lockfile.ResolveDefaultPath(cfg.RequirementsFile, cfg.LockFile)
 	assertNoTokenInFile(t, lockPath, leakToken)
 
-	// The S3 backend's SaveStore marshals via the same *store.Store.
-	// MarshalSnapshot this local run just persisted (see
-	// internal/cache/s3/backend.go's SaveStore): loading the store this
-	// install actually wrote and re-running that same marshal path asserts
-	// the S3 wire payload is equally token-free, without standing up a real
-	// S3 backend in this test.
+	// The S3 backend's SaveStore sends store.MarshalSnapshot's bytes, so
+	// marshaling the store this run wrote checks the S3 payload without S3.
 	backend, err := cacheBackend.New(cfg, tokenLeakRuntime(cfg, progress.New(false, true)))
 	if err != nil {
 		t.Fatalf("cacheBackend.New: %v", err)
@@ -257,11 +226,9 @@ func TestTokenNeverLeaksDuringVerboseInstall(t *testing.T) {
 	}
 }
 
-// TestTokenNeverLeaksOnAuthFailure is TestTokenNeverLeaksDuringVerboseInstall's
-// failure-path counterpart: a wrong token still must never appear in the
-// error output, even though the whole point of the run is to report that
-// authentication failed. Deliberately not t.Parallel(); see the doc comment
-// on TestTokenNeverLeaksDuringVerboseInstall.
+// TestTokenNeverLeaksOnAuthFailure pins that a rejected token stays out of the
+// output that reports the authentication failure. Serial for the same
+// stdio-swap reason as TestTokenNeverLeaksDuringVerboseInstall.
 func TestTokenNeverLeaksOnAuthFailure(t *testing.T) {
 	srv := fakegalaxy.New(t)
 	srv.RequireAuth("Token correct-token-value")

@@ -23,20 +23,16 @@ const (
 	fieldRepository = "repository"
 )
 
-// comparedFieldCount is the number of per-entry fields Change.Fields() can
-// report (version, source, type, ref, commit, subdir, sha256, deps) - the
-// server field lives at the file level, on Diff.Server, rather than per
-// entry. Used only to pre-size Fields()'s return slice.
+// comparedFieldCount is the number of per-entry fields Change.Fields can
+// report, which pre-sizes its result; Server is file-level, on Diff.Server.
 const comparedFieldCount = 8
 
 // Diff is what Compare(before, after) found: which collections after would
 // add, update, or remove relative to before, plus whether the file-level
 // Server field itself changed.
 type Diff struct {
-	// Server is set only when before and after are both non-nil and their
-	// Server fields differ; nil means the file-level server field is
-	// unchanged (including when either input is nil, since there is then no
-	// pair of file-level values to compare).
+	// Server is set only when both files are non-nil and their Server fields
+	// differ.
 	Server  *FieldChange
 	Added   []Entry
 	Updated []Change
@@ -49,63 +45,24 @@ type Diff struct {
 	RolesRemoved []RoleEntry
 }
 
-// Change is one collection present in both before and after whose pinned
-// fields differ. From and To carry the whole entry, not just the differing
-// fields, so a caller needing a value Compare did not itself compare (an
-// unchanged field, for instance) still has it. Use Fields to see which
-// fields actually differ.
+// Change is one collection in both files whose pinned fields differ. From
+// and To carry whole entries; Fields reports which fields differ.
 type Change struct {
 	From Entry
 	To   Entry
 }
 
-// FieldChange names one field that differs between two values it was
-// derived from, and what it changed from/to. Field is one of "version",
-// "source", "type", "ref", "commit", "subdir", "sha256", "deps" (per-entry,
-// via Change.Fields), or "server" (file-level, via Diff.Server).
+// FieldChange names one differing field and its old and new values: a
+// per-entry field via Change.Fields, or "server" via Diff.Server.
 type FieldChange struct {
 	Field string
 	From  string
 	To    string
 }
 
-// Compare reports how after differs from before, at the granularity of one
-// collection name each: a name only in after is Added, only in before is
-// Removed, and in both but with a differing pinned field is Updated. It is a
-// total function, not an error-returning one, and it never mutates or
-// canonicalizes either argument.
-//
-// Compare(nil, x) reports every collection in x as Added; Compare(x, nil)
-// reports every collection in x as Removed; Compare(nil, nil) is empty
-// (Diff.Empty() == true). A nil before therefore reads as "no collection
-// existed before", which is also what an up-to-date empty file would report:
-// Compare(nil, emptyFile).Empty() is true, so a caller that must distinguish
-// "no lockfile exists yet" from "the lockfile is already empty and up to
-// date" has to make that distinction itself before calling Compare with a
-// nil before - Compare cannot recover it from a nil argument alone.
-//
-// Load returns a file's collections in on-disk order, while Save and Hash
-// canonicalize (sort by name, sort each entry's Deps) before writing or
-// hashing. Compare requires neither: entries are keyed by name here, so
-// collection order never matters, and sameDeps (see Change.Fields) makes Deps
-// order not matter either, while still catching a duplicated dependency -
-// requiring canonical input would report a merely reordered file as changed,
-// which is not the question Compare answers.
-//
-// A duplicate collection name within one file resolves last-entry-wins,
-// matching indexLockfile's own map build in internal/galaxy/collections. This
-// is reachable only through a hand-built *File: Load rejects duplicate names
-// outright, and buildLockfile derives its entries from an fqdn-keyed map, so
-// neither producer can hand Compare a file with one.
-//
-// For two non-nil *File values sharing the same SchemaVersion, Compare(a,
-// b).Empty() is true exactly when a.Hash() == b.Hash(): Updated already
-// covers every per-entry field Hash covers, including Deps, and Server is
-// carried on Diff for the identical reason - without it, a diff could read
-// empty for a file Hash (and therefore a real `lock` run) would still
-// consider different. SchemaVersion itself is deliberately not part of the
-// diff: Load rejects a mismatched schema before Compare ever sees one, so a
-// field for it would have no producer to report.
+// Compare reports how after differs from before, keyed by name and blind to
+// order, never mutating either; a nil file has no entries. Diff.Empty must
+// equal Hash equality, so a field Hash covers must be compared here.
 func Compare(before, after *File) Diff {
 	beforeIdx := indexByName(before)
 	afterIdx := indexByName(after)
@@ -115,17 +72,8 @@ func Compare(before, after *File) Diff {
 	return diff
 }
 
-// diffIndexes builds Added/Updated/Removed from beforeIdx and afterIdx in one
-// pass over their sorted name union, factored out of Compare so each of the
-// two halves of Compare's work - the per-collection diff here and the
-// file-level Server comparison in serverFieldChange - stays independently
-// readable.
-//
-// Added/Updated/Removed are deliberately not pre-sized: they are mutually
-// exclusive per name, so pre-sizing all three to len(names) would
-// over-allocate for the overwhelmingly common case of a small diff against a
-// large, mostly-unchanged file - and this pass runs once per lock run, after
-// the N metadata round trips that built afterIdx.
+// diffIndexes builds Added/Updated/Removed in one pass over the sorted union
+// of the two indexes' names.
 func diffIndexes(beforeIdx, afterIdx map[string]Entry) Diff {
 	var diff Diff
 	for _, name := range unionSortedNames(beforeIdx, afterIdx) {
@@ -146,12 +94,7 @@ func diffIndexes(beforeIdx, afterIdx map[string]Entry) Diff {
 }
 
 // unionSortedNames returns the sorted union of beforeIdx's and afterIdx's
-// keys: afters first, then befores not already present, which dedups for
-// free since a name in both maps is only ever appended once, from afterIdx.
-// Sorted once, after the union is built, rather than merging two
-// already-sorted sequences: File's Collections order is whatever Load
-// returned (on-disk order) or whatever a caller hand-built, neither of which
-// is guaranteed sorted going in.
+// keys, each name once.
 func unionSortedNames(beforeIdx, afterIdx map[string]Entry) []string {
 	names := make([]string, 0, len(beforeIdx)+len(afterIdx))
 	for name := range afterIdx {
@@ -189,16 +132,9 @@ func (d Diff) HasRoles() bool {
 	return len(d.RolesAdded) > 0 || len(d.RolesUpdated) > 0 || len(d.RolesRemoved) > 0
 }
 
-// Fields reports which of c's pinned fields differ between From and To, in a
-// fixed order (version, source, type, ref, commit, subdir, sha256, deps), each carrying its old and new
-// value. It is derived on demand from the same field set sameEntry compares,
-// so "what makes an entry Updated" and "what Fields reports as changed"
-// cannot drift apart - and Diff.Empty stays allocation-free per updated
-// entry, since nothing here runs until a caller asks for it. Deps renders
-// through renderDeps, the same sorted, comma-joined canonical form Save and
-// Hash use - a comparison, not a presentation choice, since two
-// differently-ordered but otherwise identical Deps slices must never appear
-// to differ here.
+// Fields reports which of c's pinned fields differ, in a fixed order, each
+// with its old and new value. It compares what sameEntry compares, so Updated
+// and Fields cannot drift; Deps compare and render order-insensitively.
 func (c Change) Fields() []FieldChange {
 	fields := make([]FieldChange, 0, comparedFieldCount)
 	if c.From.Version != c.To.Version {
@@ -228,11 +164,8 @@ func (c Change) Fields() []FieldChange {
 	return fields
 }
 
-// indexByName builds a name-keyed index of f's collections, pre-sized to its
-// entry count. A nil f yields an empty, non-nil map rather than a nil one,
-// matching Compare's contract of treating a nil *File as "no entries" rather
-// than as an error. A duplicate name resolves last-entry-wins, exactly like
-// indexLockfile's own map build.
+// indexByName builds a name-keyed index of f's collections; a nil f yields an
+// empty map, and a duplicate name resolves last-entry-wins like indexLockfile.
 func indexByName(f *File) map[string]Entry {
 	if f == nil {
 		return map[string]Entry{}
@@ -244,24 +177,17 @@ func indexByName(f *File) map[string]Entry {
 	return idx
 }
 
-// sameEntry reports whether a and b pin the same collection: identical
-// version, source, type, ref, commit, subdir and sha256, and equivalent
-// (order-insensitive) deps. Name is deliberately not compared - sameEntry is
-// only ever called on two entries Compare has already matched by name.
+// sameEntry reports whether a and b pin the same collection: every field but
+// Name, which Compare has already matched.
 func sameEntry(a, b Entry) bool {
 	return a.Version == b.Version && a.Source == b.Source && a.Type == b.Type &&
 		a.Ref == b.Ref && a.Commit == b.Commit && a.Subdir == b.Subdir &&
 		a.SHA256 == b.SHA256 && sameDeps(a.Deps, b.Deps)
 }
 
-// sameDeps reports whether a and b are the same multiset of dependency
-// names: order-insensitive, like canonicalClone's sort makes Hash, but
-// DUPLICATE-SENSITIVE - it sorts, it never deduplicates, so ["x.x", "x.x"]
-// and ["x.x", "y.y"] are never equal even though both have length 2 and share
-// an element. The length check makes the common "nothing changed" case cheap,
-// slices.Equal is the fast path for an already-identically-ordered pair (the
-// typical case, since both sides usually come from the same graph-walk
-// order), and the sorted clones only run when both of those fail.
+// sameDeps reports whether a and b are the same multiset of names, ignoring
+// order but not duplicates, as Hash sorts and never deduplicates. Sorted
+// clones run only when the length and slices.Equal checks cannot decide.
 func sameDeps(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -276,11 +202,9 @@ func sameDeps(a, b []string) bool {
 	return slices.Equal(ac, bc)
 }
 
-// renderDeps renders deps in the same canonical form Save/Hash commit to
-// disk: sorted, comma-joined, with no deduplication - matching sameDeps'
-// own multiset semantics rather than set semantics. An empty or nil deps
-// renders as the empty string, which Change.Fields's caller (quoteEmpty in
-// internal/galaxy/collections/lock.go) turns into "(none)" for display.
+// renderDeps renders deps sorted and comma-joined with duplicates kept, as
+// sameDeps compares them; no deps render as "", shown as "(none)" by the
+// collections package's quoteEmpty.
 func renderDeps(deps []string) string {
 	if len(deps) == 0 {
 		return ""

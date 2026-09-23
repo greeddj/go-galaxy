@@ -15,10 +15,9 @@ import (
 )
 
 const (
-	// linkMaxHops bounds how many symlinks one target may pass through
-	// before the link is refused as a loop. It equals the hop bound
-	// internal/galaxy/manifest follows, so no artifact this package writes
-	// carries a chain that check would refuse.
+	// linkMaxHops bounds the symlinks one target may pass through before it
+	// is refused as a loop; it must equal manifest's chainMaxLinkHops, or a
+	// written artifact could carry a chain that check refuses.
 	linkMaxHops = 8
 
 	modeFile    = 0o644
@@ -27,15 +26,9 @@ const (
 	modeSymlink = 0o777
 )
 
-// Options shapes one plan. Root is the repository path the tree is walked
-// from ("" for the repository root); every planned name is relative to it.
-// Rules is the exclusion list. Reserved is how many entries the caller will
-// write ahead of the tree, charged against the entry budget up front so a
-// tree that fits only without its lead documents is refused as the budget it
-// broke. Digests asks the walk to hash every blob, so Rows carry a digest; a
-// caller that lists nothing leaves it false and the blobs are read once, at
-// write time. Subject names the tree in a skipped-link warning ("the
-// collection", "the role"); empty reads as "the tree".
+// Options shapes one plan: Root is the repository path walked from, Reserved
+// the count of lead documents charged to the entry budget up front, Digests
+// asks for per-blob sha256 in Rows, Subject names the tree in link warnings.
 type Options struct {
 	Root     string
 	Subject  string
@@ -65,9 +58,8 @@ type plannedEntry struct {
 	typeflag byte
 }
 
-// Plan is the decided shape of one artifact: the entries in the order they
-// are written, the rows a listing of them would carry, and the warnings the
-// walk raised. It keeps the Source it was planned from, which Write reads
+// Plan is the decided shape of one artifact: entries in write order, their
+// listing rows and the walk's warnings. It keeps its Source, which Write reads
 // again.
 type Plan struct {
 	src      Source
@@ -253,10 +245,9 @@ func (p *Plan) chargeSize(rel string, size int64) error {
 	return nil
 }
 
-// hashBlob digests the blob at the tree-relative path rel, which must
-// stream exactly the size its tree entry declares. Without Options.Digests
-// it returns "" and reads nothing: Write applies the same size check when
-// it streams the blob.
+// hashBlob digests the blob at rel, which must stream exactly its declared
+// size. Without Options.Digests it returns "" and reads nothing; Write applies
+// the same size check.
 func (p *Plan) hashBlob(rel string, declared int64) (string, error) {
 	if !p.hash {
 		return "", nil
@@ -284,11 +275,9 @@ func (p *Plan) hashBlob(rel string, declared int64) (string, error) {
 	return digest, nil
 }
 
-// addSymlink resolves a link through the tree and records it as the row
-// its final target warrants - a file row carrying the target's digest, or a
-// dir row - with a tar symlink entry pointing straight at that final entry.
-// A link whose target the artifact will not carry is skipped with a
-// warning rather than refused; a dangling or looping one is refused.
+// addSymlink records a link as a tar symlink pointing straight at the final
+// entry its chain resolves to. A target the artifact will not carry is skipped
+// with a warning; a dangling or looping link is refused.
 func (p *Plan) addSymlink(rel string, e Entry) error {
 	res, err := p.resolveLink(rel, e)
 	if err != nil {
@@ -480,10 +469,9 @@ func checkLinkTarget(display string, data []byte) (string, error) {
 	return string(data), nil
 }
 
-// relativeLink renders target, a clean tree-relative path, relative to the
-// directory fromDir (RootName for the root), the way the tar entry's
-// Linkname must read for both the extractor and the chain check to land on
-// target.
+// relativeLink renders target, a clean tree-relative path, relative to
+// fromDir (RootName for the root), as the Linkname must read for both the
+// extractor and the chain check to land on target.
 func relativeLink(fromDir, target string) string {
 	var from []string
 	if fromDir != RootName {

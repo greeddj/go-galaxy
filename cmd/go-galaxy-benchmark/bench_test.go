@@ -81,10 +81,9 @@ func TestTargetCommandArgs(t *testing.T) {
 	}
 }
 
-// TestCommandGivesTheChildNoStdin guards a rule that is invisible in the
-// output it protects. exec turns a nil Stdin into /dev/null, so a measured
-// tool that decides to prompt reads EOF and exits instead of blocking
-// forever, which would be indistinguishable from a hang.
+// TestCommandGivesTheChildNoStdin pins a nil Stdin, which exec turns into
+// /dev/null: a measured tool that prompts reads EOF and exits instead of
+// blocking forever, which would be indistinguishable from a hang.
 func TestCommandGivesTheChildNoStdin(t *testing.T) {
 	opts := options{workDir: t.TempDir(), goGalaxy: "/bin/true"}
 

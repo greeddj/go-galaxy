@@ -5,23 +5,9 @@ import (
 	"testing"
 )
 
-// TestAnsibleSignatureKeysWarningNamesKeysInDeclarationOrder pins the two
-// properties the message itself carries: it names the keys in
-// signatureKeyNames' own order whatever order the file wrote them in, and it
-// carries no value any of them was set to.
-//
-// The order matters because the file's order is chosen by whoever wrote the
-// file, so two ansible.cfg files carrying the same four keys would otherwise
-// produce two different lines for one identical situation.
-//
-// The no-value half is asserted against the parsed file rather than a
-// hand-built Config, so it covers the parser and the renderer together: a
-// parser that started storing values would have to be met by a renderer that
-// refused to print them for this to keep passing.
-//
-// The empty row is the control that keeps the first two meaningful: a file
-// carrying none of these keys produces no line at all, so "it warned" is a fact
-// about the keys rather than about every run.
+// TestAnsibleSignatureKeysWarningNamesKeysInDeclarationOrder pins that the
+// warning names parsed signature keys in signatureKeyNames order, never their
+// values, and that a file carrying none of them produces no warning.
 func TestAnsibleSignatureKeysWarningNamesKeysInDeclarationOrder(t *testing.T) {
 	t.Parallel()
 

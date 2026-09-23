@@ -1,15 +1,6 @@
-// Package s3 implements the cache backend backed by an S3-compatible object
-// store, together with the minimal SigV4-signing HTTP client it speaks to one
-// through - there is no AWS SDK here. Snapshot state and the project registry
-// are each a single gzipped-JSON object, artifacts are objects under their own
-// key prefix, and exclusive access is a distributed lock built on conditional
-// writes plus a heartbeat that renews the holder's TTL and cancels the holder
-// context once another acquirer's token appears. Open refuses a store that
-// does not actually enforce those conditional writes, since the lock's whole
-// mutual-exclusion guarantee rests on them.
-//
-// Which of this package's errors carries which cache-backend failure class is
-// settled by the partition documented in variables.go, not per call site.
+// Package s3 implements the cache backend on an S3-compatible store with its
+// own SigV4 client and no AWS SDK. Its distributed lock rests on conditional
+// writes, so Open refuses a store that does not enforce them.
 package s3
 
 import (
@@ -72,12 +63,9 @@ func New(cfg config.S3CacheConfig, httpClient *http.Client, tempDir string) (*Ba
 	}, nil
 }
 
-// Open initializes the S3 client, ensures the bucket exists, and verifies
-// once that the backend actually enforces conditional PUT (If-None-Match) -
-// the distributed lock's whole mutual-exclusion guarantee rests on that
-// being true, so a backend that silently ignores it and overwrites must
-// fail loudly here rather than let two processes both believe they hold
-// the lock later.
+// Open initializes the S3 client, ensures the bucket exists, and probes that
+// the store enforces the conditional writes the lock needs, so a store that
+// ignores them fails here rather than letting two processes hold the lock.
 func (b *Backend) Open(ctx context.Context) error {
 	if b.client != nil {
 		return nil
@@ -108,11 +96,9 @@ func (b *Backend) Close(_ context.Context) error {
 	return nil
 }
 
-// Lock acquires an S3-based distributed lock. The holder context it returns
-// alongside the release closure is canceled, with a cause matching
-// helpers.ErrCacheLockLost, as soon as the heartbeat sees another acquirer's
-// token on the lock object - see acquireLock and the cacheManager.Backend
-// interface's own contract for Lock.
+// Lock acquires an S3-based distributed lock. The returned holder context is
+// canceled with a cause matching helpers.ErrCacheLockLost as soon as the
+// heartbeat sees another acquirer's token on the lock object.
 func (b *Backend) Lock(ctx context.Context) (context.Context, func() error, error) {
 	if err := b.Open(ctx); err != nil {
 		return nil, nil, err
@@ -121,18 +107,9 @@ func (b *Backend) Lock(ctx context.Context) (context.Context, func() error, erro
 	return b.acquireLock(ctx, lockKey)
 }
 
-// LoadStore loads the snapshot store from S3. It applies the same schema
-// policy as the local backend's Load: a newer-than-current schema version
-// is reported as an error since this binary cannot safely interpret it, an
-// older-than-current version causes the snapshot to be dropped and rebuilt
-// (a fresh empty Store, nil error) rather than partially trusted, and a
-// matching version returns the loaded data as-is. The schema version is
-// checked via a lightweight probe decode of just the meta object before the
-// full payload is unmarshaled into a *store.Store: an outdated schema's data
-// buckets can have a shape the current Store type can no longer decode (as
-// happened across the v3 -> v4 bump), so validating first means that case is
-// dropped and rebuilt like the local backend, instead of failing the full
-// unmarshal.
+// LoadStore loads the snapshot from S3: a newer schema is an error, an older
+// one is dropped and rebuilt. The schema is probed before the full decode,
+// since an outdated snapshot's buckets may no longer decode into *store.Store.
 func (b *Backend) LoadStore(ctx context.Context) (*store.Store, error) {
 	if err := b.Open(ctx); err != nil {
 		return nil, err
@@ -166,11 +143,9 @@ func (b *Backend) LoadStore(ctx context.Context) (*store.Store, error) {
 	return st, nil
 }
 
-// SaveStore persists the snapshot store to S3. It marshals via
-// Store.MarshalSnapshot rather than json.Marshal directly, since st may
-// still be concurrently mutated by other goroutines: MarshalSnapshot takes
-// the store's RLock and deep-copies before encoding, so this never races on
-// the live maps.
+// SaveStore persists the snapshot to S3 as gzipped JSON. It must marshal via
+// Store.MarshalSnapshot, which copies under the store's RLock, since other
+// goroutines may still be mutating st.
 func (b *Backend) SaveStore(ctx context.Context, st *store.Store) error {
 	if st == nil {
 		return nil
@@ -226,12 +201,9 @@ func (b *Backend) RecordProject(ctx context.Context, requirementsFile, downloadP
 	return b.saveProjectRegistry(ctx, registry)
 }
 
-// LoadProjectRegistry loads the project registry from S3. A missing object
-// is treated as an empty, freshly-initialized registry, but an object that
-// exists and fails to decode is reported as an error rather than silently
-// replaced by an empty registry: cleanup relies on the registry to compute
-// which installed collections are still reachable, so an empty registry
-// would make it believe nothing is reachable and delete everything.
+// LoadProjectRegistry loads the project registry from S3. A missing object is
+// an empty registry, but one that fails to decode is an error: read as empty,
+// it would make cleanup treat nothing as reachable and delete everything.
 func (b *Backend) LoadProjectRegistry(ctx context.Context) (*store.ProjectRegistry, error) {
 	if err := b.Open(ctx); err != nil {
 		return nil, err
@@ -260,28 +232,15 @@ func (b *Backend) Artifacts() cacheManager.ArtifactStore {
 	return b.artifacts
 }
 
-// SweepTemp is a no-op for the S3 backend: its artifact download temps are
-// created under the OS temp directory (os.TempDir() or a configured base),
-// which the operating system reclaims, not under the shared cache, so there
-// is nothing in the backend's own storage to sweep.
+// SweepTemp is a no-op for the S3 backend: its download temps live under the
+// OS temp directory or a configured base, never in the shared cache.
 func (b *Backend) SweepTemp(_ context.Context) error {
 	return nil
 }
 
-// probeConditionalPut verifies that the configured backend actually enforces
-// the conditional writes the lock protocol relies on, before it is allowed to
-// rely on them. It writes a small, per-process-unique probe object under the
-// locks prefix with a create-if-absent PUT (which must succeed since the key is
-// new), then repeats the same create-if-absent PUT against the same
-// now-existing key: a conforming backend must reject the second write with a
-// precondition-failed error. If it instead reports success, the backend
-// silently overwrote the object despite If-None-Match, meaning it cannot be
-// trusted to enforce the create-if-absent semantics the lock depends on.
-//
-// It owns the probe object's whole lifetime, including for the compare-and-swap
-// half it hands off to probeCompareAndSwap once create-if-absent has been
-// proven: one object, one deferred cleanup, and the swap probe inherits an
-// object that demonstrably exists.
+// probeConditionalPut writes a unique probe object with If-None-Match: * and
+// requires a second such write to be refused, then hands the object to
+// probeCompareAndSwap; it owns the object's cleanup for both probes.
 func (b *Backend) probeConditionalPut(ctx context.Context) error {
 	suffix, err := generateLockToken()
 	if err != nil {
@@ -315,29 +274,9 @@ func (b *Backend) probeConditionalPut(ctx context.Context) error {
 	}
 }
 
-// probeCompareAndSwap verifies that the backend honors If-Match against an
-// ETag, the second conditional write the lock protocol is built on: it is how
-// reclaimIfExpired takes over an expired holder's object, and the only thing
-// that arbitrates between two acquirers doing so at once. It runs against the
-// probe object probeConditionalPut has already created, and that object's own
-// deferred cleanup covers it.
-//
-// Three answers are required, and each rules out a different non-conforming
-// backend. The HEAD must name an ETag at all, since a backend that omits it
-// leaves nothing to condition a swap on. A swap against a stale ETag must be
-// refused, since a backend that accepts it arbitrates nothing and lets two
-// reclaimers both believe they won. And a swap against the CURRENT ETag must
-// succeed, which is the check with the least obvious failure mode: a backend
-// that refuses every If-Match alike would pass the first two and then fail
-// every reclaim at runtime, turning one dead holder's lock object into a
-// permanent one - the acquirers waiting on it would each read the refusal as
-// another acquirer winning the race, which is indistinguishable from ordinary
-// contention and would never resolve.
-//
-// The stale ETag is this package's own literal rather than a real earlier
-// version of the object: a value no backend can have minted is exactly what
-// must not match, and using one avoids depending on whether the endpoint
-// changes an ETag when identical bytes are rewritten.
+// probeCompareAndSwap verifies If-Match, which reclaimIfExpired relies on: the
+// HEAD must name an ETag, a swap on staleProbeETag must be refused, and one on
+// the current ETag must succeed, or a dead holder's lock is never reclaimed.
 func (b *Backend) probeCompareAndSwap(ctx context.Context, key string, body []byte) error {
 	headers, err := b.client.headObject(ctx, key)
 	if err != nil {
@@ -369,12 +308,9 @@ func (b *Backend) probeCompareAndSwap(ctx context.Context, key string, body []by
 	}
 }
 
-// readObject downloads a cache-state object (the S3 snapshot or the project
-// registry) and transparently inflates gzip data if needed, bounding both the
-// raw and inflated size so a planted oversized or high-ratio gzip object
-// cannot be buffered whole into memory. A size-ceiling failure is reported to
-// the caller as helpers.ErrStateObjectTooLarge, not readAllCapped's own
-// helpers.ErrResponseTooLarge - see the reclassification below for why.
+// readObject downloads a cache-state object (snapshot or project registry),
+// inflating gzip if needed under size caps on both sides. An oversized object
+// or an empty gzip member is reclassified as corrupt cache state.
 func (b *Backend) readObject(ctx context.Context, key string) ([]byte, error) {
 	resp, err := b.client.getObject(ctx, key)
 	if err != nil {
@@ -386,39 +322,16 @@ func (b *Backend) readObject(ctx context.Context, key string) ([]byte, error) {
 	data, err := readAllCapped(ctx, resp.Body, resp.Header, key,
 		helpers.StateObjectMaxCompressedSize, helpers.StateObjectMaxDecompressedSize)
 	if err != nil {
-		// Reclassify the size ceiling into its own state-object sentinel,
-		// deliberately breaking the errors.Is chain to
-		// helpers.ErrResponseTooLarge: readAllCapped's cap failure carries
-		// that sentinel only because it is built on the same sizeLimitedReader
-		// every capped response uses, but a state object is not a response
-		// body this program streams to a consumer - it is persisted state
-		// this program must be able to read back. Leaving both sentinels
-		// reachable here would let this error carry two exit classes at once
-		// - ExitCacheCorrupt from the state-object sentinel and ExitNetwork
-		// from the response one - leaving exitcode.FromError's own check
-		// order to decide which wins rather than what the error means.
-		// (Neither sentinel belongs to the three cache-backend classes
-		// variables.go's partition governs; this is FromError's rule, not
-		// that one.) The cause is rendered with %v, not %w, so only
-		// errors.Is matching against helpers.ErrResponseTooLarge is dropped;
-		// the "read N bytes, limit is M" detail readAllCapped's own error
-		// carries still renders into the message.
+		// The cause is %v, not %w, to drop helpers.ErrResponseTooLarge: kept
+		// reachable, the error would match ExitNetwork and ExitCacheCorrupt at
+		// once and exitcode.FromError's check order would pick the exit code.
 		if errors.Is(err, helpers.ErrResponseTooLarge) {
 			//nolint:errorlint // deliberately %v, not %w: see the comment above.
 			return nil, fmt.Errorf("%w: state object %s: %v", helpers.ErrStateObjectTooLarge, key, err)
 		}
-		// A gzip member producing no bytes says the object is not the gzipped
-		// JSON this backend writes, so it is reclassified here into the same
-		// unusable-state class the ceiling above lands in: a state object
-		// nobody can read back, whose remedy is discarding it. It is done at
-		// this producer rather than by adding helpers.ErrEmptyGzipMember to an
-		// exitcode predicate, because that sentinel's other readers - the
-		// download shape probe and the per-collection install aggregation -
-		// already classify correctly without one and would be dragged along
-		// (see the sentinel's own doc comment). The cause keeps its %w, unlike
-		// the ceiling above: helpers.ErrEmptyGzipMember belongs to no
-		// predicate, so leaving it reachable adds no second exit class to the
-		// tree and keeps the message's own cause matchable.
+		// An empty gzip member means this is not what SaveStore writes. It is
+		// reclassified here, not in an exitcode predicate, since the sentinel's
+		// other readers must keep their own class; %w is safe as it has none.
 		if errors.Is(err, helpers.ErrEmptyGzipMember) {
 			return nil, fmt.Errorf("%w: state object %s: %w", helpers.ErrCorruptStateObject, key, err)
 		}
@@ -427,35 +340,9 @@ func (b *Backend) readObject(ctx context.Context, key string) ([]byte, error) {
 	return data, nil
 }
 
-// readAllCapped reads an object body into memory, transparently inflating
-// gzip, while bounding both the compressed read (so an oversized object
-// cannot be buffered whole) and the decompressed size (so a gzip bomb cannot
-// inflate without bound). Either ceiling being crossed surfaces
-// helpers.ErrResponseTooLarge. Gzip detection mirrors readObject's own
-// pre-cap logic (isGzip/isGzipStream), so the caps are layered on top of the
-// existing decision of whether to gunzip rather than changing it.
-//
-// It inflates through internal/gzipstream, the same seam the collection
-// artifact readers use, and this is the reader that made the shared seam worth
-// having: the state object is fetched with the distributed lock already held,
-// so a member-flood object crashing this read holds up every runner sharing
-// the bucket for a full lockTTL rather than failing one install. The
-// compressed cap is no defense against that shape, since it sits at 256 MiB
-// and the flood measured on go1.26.6, darwin/arm64 (Apple M3 Pro) needed only
-// 64 MB - see internal/gzipstream's own package comment.
-//
-// This package imports pgzip under its own name, and reaches only its writer
-// (SaveStore compressing the snapshot it is about to upload). The name is a
-// rule rather than a preference: an alias - `gzip "github.com/klauspost/pgzip"`
-// being the natural one - makes a pgzip reader on this seam read like the
-// standard library's, which is how the reader below stayed unnoticed through a
-// review that found every other one. internal/gzipstream's gate resolves the
-// import path rather than the identifier so that no alias can hide the next
-// one, and the plain name is what a human reading this file needs.
-//
-// ctx bounds the inflate on the compressed side. It is the caller's own
-// context rather than a budget of this function's making, so a state-object
-// read stays governed by helpers.StateObjectDeadline exactly as before.
+// readAllCapped reads a body, inflating gzip through internal/gzipstream under
+// ctx and capping both sizes with helpers.ErrResponseTooLarge: the read runs
+// under the distributed lock, so a hostile object would stall every runner.
 func readAllCapped(
 	ctx context.Context,
 	body io.Reader,

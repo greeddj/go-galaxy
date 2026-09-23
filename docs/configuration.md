@@ -18,13 +18,43 @@ taken as written, so `[galaxy] # prod` is the `[galaxy]` section, while
 `[ galaxy ]` is a section named ` galaxy ` that neither ansible nor go-galaxy
 reads as `[galaxy]`.
 
+The parser follows `configparser` in a few more details. Whitespace is
+whatever Python's `str.isspace` accepts, which adds the information
+separators U+001C to U+001F to the usual set, and that one rule both trims
+lines, keys and values and decides whether a `;` follows whitespace. A line
+that reads as a section header stays one even with a delimiter after it, so
+`[galaxy] = x` opens `[galaxy]`. Keys are lowercased while section names are
+matched as written.
+
+Unlike `configparser`, go-galaxy never refuses a file for its content. A
+repeated key keeps its last value; a line that is neither a comment, a header
+nor a key line is skipped, and such a line that opens with `[` also ends the
+current section, so the keys below it are not read into the section above; a
+leading UTF-8 byte order mark is stripped, where ansible refuses such a file
+with `File contains no section headers`. The only parse failure is a read
+error, a line longer than 64 KiB included, which exits `1` like an unreadable
+file.
+
 Discovery keeps one of ansible's exceptions too: `./ansible.cfg` is not
 considered at all when the current directory is world-writable, since any
-other user on the machine could put a file there, and the run says so on
-stderr rather than skipping it silently. The remaining candidates are still
-tried. A container CI job whose workspace is `0777` therefore stops picking up
-a workspace `ansible.cfg`; pass `--ansible-config` (or `$ANSIBLE_CONFIG`) to
-name it explicitly, or tighten the directory's mode.
+other user on the machine could put a file there - one that sets
+`collections_path`, `cache_dir` (the tree go-galaxy removes entries beneath)
+and the servers a run fetches from. The sticky bit is no exemption, as in
+ansible: it stops another user replacing an existing file but not creating a
+new one, so a world-writable `/tmp` is skipped too. The run says so on stderr
+rather than skipping the file silently, and says so whether or not an
+`ansible.cfg` is there, since checking for the file first would keep every
+run silent up to the one where it is planted. The remaining candidates are
+still tried, and a current directory that cannot be resolved or examined
+keeps the candidate.
+
+A container CI job whose workspace is `0777` therefore stops picking up a
+workspace `ansible.cfg`; pass `--ansible-config` (or `$ANSIBLE_CONFIG`) to
+name it explicitly, or tighten the directory's mode. Only the implicit
+candidate is dropped: a file named explicitly is read even when it is that
+same file, a relative `ANSIBLE_CONFIG=ansible.cfg` included. The warning
+states the rule rather than the outcome, so in that case only the `--verbose`
+debug lines show which file a setting came from.
 
 | Setting                            | Environment                                                   |
 |:-----------------------------------|:--------------------------------------------------------------|
@@ -86,7 +116,13 @@ and `/etc/ssh/ssh_known_hosts` otherwise), and `SSL_CERT_FILE`/`SSL_CERT_DIR`
 supply a private CA for an https repository exactly as they do for a Galaxy
 server (replacing the default trust store, see
 [TLS: validate_certs](servers-and-auth.md#tls-validate_certs)).
-`~/.ssh/config` is not read. A Galaxy role is fetched from
+`~/.ssh/config` is not read. An ssh repository is dialed through
+`ALL_PROXY`/`all_proxy` as well: a `socks5://` or `socks5h://` value sends
+every ssh fetch through that SOCKS proxy, except to a host
+`NO_PROXY`/`no_proxy` matches, while any other scheme, or a value that does
+not parse, means a direct connection. Both are read once per process, and the
+repository host's key is still checked against known_hosts, since the ssh
+handshake runs over the proxied connection. A Galaxy role is fetched from
 `https://github.com/<user>/<repo>` by the same git client, so a
 `GO_GALAXY_GIT_<ID>_URL=https://github.com` binding, when one is configured,
 applies to it as well; the Galaxy token never does.
@@ -105,6 +141,29 @@ relax in the first place, while for a `[galaxy_server.<id>]` section either
 refusal lifts only when that same section also supplied the token - see
 [Galaxy servers and authentication](servers-and-auth.md#galaxy-servers-and-authentication) for
 the full table, token precedence, and TLS.
+
+### Environment variables and flags
+
+Most `GO_GALAXY_*` variables, and several `ANSIBLE_*` and `AWS_*` ones, are
+environment sources of a command-line flag, listed beside each flag in the
+[CLI reference](cli.md). A value on the command line outranks them all, and
+when a flag has several variables the first one that is set wins: a
+`GO_GALAXY_` name comes ahead of an `ANSIBLE_` or `AWS_` one, and where a
+flag has two `GO_GALAXY_` names, the one spelled after the flag itself comes
+second, so `--timeout` reads `GO_GALAXY_SERVER_TIMEOUT`, then
+`GO_GALAXY_TIMEOUT`, then `ANSIBLE_GALAXY_SERVER_TIMEOUT`. An integer flag's
+variable exported empty counts as set but is not parsed, so
+`GO_GALAXY_WORKERS=` leaves `--workers` at its default rather than failing
+the run.
+
+Two ansible variables are read apart from the flag they correspond to, since
+a flag source would change their meaning. `ANSIBLE_GALAXY_SERVER` as a
+source of `--server` would count as an explicit `--server` and collapse a
+configured `server_list` to one server, where ansible treats it as the
+`[galaxy] server` fallback (see [Precedence](servers-and-auth.md#precedence)).
+`ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` takes ansible's boolean spellings, which
+a flag source would refuse (see
+[Turning it on](signatures.md#turning-it-on)).
 
 ## requirements.yml
 
@@ -185,6 +244,15 @@ A bare top-level list is a list of collections here, where `ansible-galaxy`
 reads it as the legacy roles format; roles always go under a `roles:` key. A
 `src:` or `scm:` key inside a `collections:` entry is refused with a message
 naming the `roles:` key, rather than silently installing nothing.
+
+A requirements file names each collection once, across every source kind.
+Two entries with the same `namespace.name`, or the same git or url source,
+are refused as a duplicate collection requirement with the usage code (`2`).
+A git or url entry has no name until its `galaxy.yml` or `MANIFEST.json` is
+read, so the check runs again once discovery has named every entry: a
+`namespace.name` that two repositories produce, or a repository and a Galaxy
+or url entry, is refused the same way rather than one of them silently
+winning.
 
 ### roles
 

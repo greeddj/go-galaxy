@@ -12,10 +12,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// TestURLBindingsRevealsPlaintext pins the one place a url token Secret is
-// revealed: every field of config.URLCredential reaches fetch.URLBinding in
-// the clear, the origin in helpers.Origin form, and a nil config yields no
-// bindings rather than a panic.
+// TestURLBindingsRevealsPlaintext pins that urlBindings reveals every
+// config.URLCredential field into fetch.URLBinding, the origin in helpers.Origin
+// form, and that a nil config yields no bindings rather than a panic.
 func TestURLBindingsRevealsPlaintext(t *testing.T) {
 	t.Parallel()
 

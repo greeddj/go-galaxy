@@ -1,10 +1,7 @@
 package collections
 
-// This file pins signatureDeadlineError's classification table, and one thing
-// above all: the %v-not-%w rendering that keeps a spent signature budget from
-// classifying as a caller's own Ctrl-C. It is modeled on
-// internal/galaxy/cache/deadline_test.go's TestDeadlineErrorClassification,
-// which pins the identical rule for the metadata and state-object budgets.
+// Tests for signatureDeadlineError, above all its %v-not-%w rendering, which
+// keeps a spent signature budget from classifying as the caller's own Ctrl-C.
 
 import (
 	"context"
@@ -21,12 +18,9 @@ import (
 // decides a verdict; it only has to appear in the rendered message.
 const signatureBudget = time.Second
 
-// The two shapes a gather really produces once its budget expires: the
-// signature fetcher wraps whatever ended the transfer behind
-// helpers.ErrSignatureSourceUnavailable, and what it wraps is
-// context.DeadlineExceeded in the ordinary case or context.Canceled when a
-// watchdog's own derived cancel wins the race. Declared as package-level vars,
-// per err113, rather than built inline in the table.
+// The two errors a gather produces once its budget expires: the cause behind
+// helpers.ErrSignatureSourceUnavailable is context.DeadlineExceeded, or
+// context.Canceled when a watchdog's derived cancel wins the race.
 var (
 	errSignatureCauseDeadline = fmt.Errorf("%w: %q: %w",
 		helpers.ErrSignatureSourceUnavailable, "https://sigs.example/a.asc", context.DeadlineExceeded)
@@ -56,12 +50,8 @@ func liveParent() (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.Background())
 }
 
-// signatureDeadlineCases is TestSignatureFetchDeadlineClassification's table,
-// hoisted to package level so the test function stays within the length
-// budget. The first two rows are the positive control every "unchanged" row
-// below depends on: they prove this exact parent/sigCtx pair is capable of
-// normalizing at all, so an "unchanged" verdict later is a real refusal rather
-// than a fixture that could never accept.
+// signatureDeadlineCases is TestSignatureFetchDeadlineClassification's table;
+// the first two rows show the fixture can normalize at all.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state.
 var signatureDeadlineCases = []signatureDeadlineCase{
@@ -129,18 +119,9 @@ var signatureDeadlineCases = []signatureDeadlineCase{
 	},
 }
 
-// TestSignatureFetchDeadlineClassification walks signatureDeadlineCases,
-// asserting for every normalized row that the sentinel is reachable and that
-// neither context sentinel is - the %v-not-%w contract, which is what keeps a
-// hostile or degraded signature host from being reported as a caught Ctrl-C.
-//
-// KILLING MUTATION, run and reverted: the %v in signatureDeadlineError's final
-// fmt.Errorf changed to %w. Both normalized rows fail; the first reads:
-//
-//	verify_deadline_test.go:171: signatureDeadlineError = collection
-//	signature fetch deadline exceeded after 1s: collection signature source
-//	unavailable: "https://sigs.example/a.asc": context deadline exceeded,
-//	must not match context.DeadlineExceeded
+// TestSignatureFetchDeadlineClassification pins that a normalized error matches
+// helpers.ErrSignatureFetchDeadline and neither context sentinel, so a slow
+// signature host is never reported as a caught Ctrl-C.
 func TestSignatureFetchDeadlineClassification(t *testing.T) {
 	t.Parallel()
 	for _, tc := range signatureDeadlineCases {
@@ -180,16 +161,9 @@ func TestSignatureFetchDeadlineClassification(t *testing.T) {
 	}
 }
 
-// TestSignatureDeadlineErrorIsIdempotent asserts a second normalization pass
-// over an already-normalized error returns the same message rather than
-// doubling the sentinel into it.
-//
-// The fixture deliberately re-wraps the sentinel AND context.DeadlineExceeded
-// with %w - a shape no producer here builds, mirroring
-// internal/galaxy/cache/deadline_test.go's own isolating fixture - because that
-// is what actually isolates the idempotence check: the real shape's cause is
-// rendered with %v, so a second pass over it carries no reachable context
-// sentinel to re-wrap in the first place.
+// TestSignatureDeadlineErrorIsIdempotent pins that re-normalizing leaves the
+// message unchanged; the fixture wraps context.DeadlineExceeded with %w so a
+// second pass would have a context sentinel to re-wrap.
 func TestSignatureDeadlineErrorIsIdempotent(t *testing.T) {
 	t.Parallel()
 	parent, parentCancel := liveParent()

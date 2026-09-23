@@ -1,22 +1,8 @@
 package collections
 
-// This file proves the extract-marker tally (marker.go): that a valid marker
-// round-trips in the exact pinned wire format, that it detects a file being
-// added, removed, or resized under an install tree, that it deliberately
-// misses a same-length in-place edit (the documented limit, not a bug), that
-// a legacy or garbage marker invalidates quietly while a genuine tally
-// mismatch warns loudly, that a stray same-prefixed sibling file never skews
-// the tally, and that scanTree itself never follows a symlink. It also proves
-// the prefetch scan still uses the cheap installRecordMatches check rather
-// than the strict tally, and ships the benchmark that puts a real number on
-// the cost this unit adds.
-//
-// Most tests here drive marker.go's functions directly against a "flat"
-// installTarget (newFlatInstallTarget: rel = ".", the tree's own root) rather
-// than the ansible_collections/<ns>/<name> layout a real install produces -
-// these are marker-level unit tests, not install-pipeline tests, and a flat
-// target keeps every filepath.Join in this file's own assertions
-// byte-identical to what target.path already is.
+// Unit tests for the extract-marker tally, driven against a flat installTarget
+// (newFlatInstallTarget, rel ".") rather than the ansible_collections layout,
+// so every expected path equals target.path.
 
 import (
 	"bytes"
@@ -41,13 +27,9 @@ import (
 // without caring what content it is a hash of.
 const validMarkerSHA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-// seedValidExtractMarker writes a syntactically and semantically valid
-// extract-done marker for target by calling writeExtractMarker itself, so
-// every test that seeds an "already installed" tree gets a tally that
-// actually matches the tree on disk (entries=0 dirs=0 bytes=0 for an empty
-// tree): canSkipInstall's tally-checking gate rejects a marker that merely
-// exists but does not carry a matching tally, so a placeholder that only has
-// to be found by a Stat is not enough here.
+// seedValidExtractMarker writes a real marker for target through
+// writeExtractMarker, so its tally matches the tree: canSkipInstall rejects a
+// marker that merely exists.
 func seedValidExtractMarker(t *testing.T, target installTarget, sha string) {
 	t.Helper()
 	// extractTree creates the marker's directory before it writes the
@@ -68,11 +50,8 @@ func mustMkdirAll(t *testing.T, path string) {
 	}
 }
 
-// buildFixedMarkerTree creates a small, deterministic file tree - one root
-// file, two files under one subdirectory, one file under a nested
-// subdirectory - and returns a flat installTarget rooted at it plus the exact
-// treeTally it must produce, so marker tests can assert against known numbers
-// instead of just round-tripping scanTree's own output back on itself.
+// buildFixedMarkerTree creates a small deterministic tree and returns a flat
+// installTarget at it plus the exact treeTally it must produce.
 func buildFixedMarkerTree(t *testing.T) (installTarget, treeTally) {
 	t.Helper()
 	root := t.TempDir()
@@ -87,10 +66,9 @@ func buildFixedMarkerTree(t *testing.T) (installTarget, treeTally) {
 	return newFlatInstallTarget(t, root), treeTally{Entries: 4, Dirs: 3, Bytes: 23}
 }
 
-// TestExtractMarkerRoundTrip pins the exact on-disk marker format, not just
-// that writing and then verifying agree with each other: a format
-// regression that both writes and parses consistently would still pass a
-// round-trip-only test.
+// TestExtractMarkerRoundTrip pins the exact on-disk marker bytes as well as the
+// round trip, since a format change made on both the write and parse sides
+// would still round-trip.
 func TestExtractMarkerRoundTrip(t *testing.T) {
 	t.Parallel()
 	target, want := buildFixedMarkerTree(t)
@@ -117,9 +95,8 @@ func TestExtractMarkerRoundTrip(t *testing.T) {
 }
 
 // extractMarkerMutationCase is one row of TestExtractMarkerMutationCases: a
-// single mutation applied to a freshly seeded install tree, the verdict
-// verifyExtractMarker must return for it, and an optional extra check for a
-// row that asserts more than that verdict alone.
+// mutation of a freshly seeded tree, the expected verifyExtractMarker verdict,
+// and an optional extra check.
 type extractMarkerMutationCase struct {
 	mutate     func(t *testing.T, target installTarget)
 	extraCheck func(t *testing.T, target installTarget, sha string, printer *capturingPrinter)
@@ -127,19 +104,13 @@ type extractMarkerMutationCase struct {
 	wantVerify bool
 }
 
-// extractMarkerMutationCases enumerates one row per post-extraction mutation
-// the tally is meant to catch, plus the one it deliberately does not. Every
-// row uses validMarkerSHA: each gets its own tree from buildFixedMarkerTree,
-// so the sha only has to pass helpers.IsSHA256Hex, never tell one row's
-// marker apart from another's.
+// extractMarkerMutationCases lists the post-extraction mutations the tally
+// must catch, plus the equal-size edit it deliberately misses.
 func extractMarkerMutationCases() []extractMarkerMutationCase {
 	return []extractMarkerMutationCase{
 		{
-			// Proves a file removed from the install tree after extraction is
-			// caught: the entry count drops, the tally no longer matches, and
-			// the rejection is reported at Warnf (a live integrity signal)
-			// with the marker removed so no second walk is needed on the next
-			// check.
+			// A deleted file drops the entry count; the rejection warns and
+			// removes the marker.
 			name: "deletes a file",
 			mutate: func(t *testing.T, target installTarget) {
 				t.Helper()
@@ -179,14 +150,8 @@ func extractMarkerMutationCases() []extractMarkerMutationCase {
 			wantVerify: false,
 		},
 		{
-			// Pins the documented limit of the tally check: an in-place edit
-			// that preserves the edited file's exact byte length is invisible
-			// to it, since the tally only tracks counts and a byte sum, never
-			// content. This is an accepted tradeoff (see verifyExtractMarker's
-			// doc comment) - a full re-hash would close it, but at the cost
-			// this unit exists specifically to avoid paying on every warm
-			// install - and this row exists so nobody later assumes
-			// verifyExtractMarker is a stronger guarantee than it actually is.
+			// Pins the tally's documented limit: a same-length in-place edit
+			// is invisible, since only counts and sizes are compared.
 			name: "misses an equal-size edit",
 			mutate: func(t *testing.T, target installTarget) {
 				t.Helper()
@@ -198,12 +163,9 @@ func extractMarkerMutationCases() []extractMarkerMutationCase {
 	}
 }
 
-// TestExtractMarkerMutationCases drives each post-extraction mutation against
-// its own freshly seeded tree and asserts the verdict verifyExtractMarker
-// reaches for it. A row's extraCheck is where anything beyond that verdict
-// goes: only the deletion row has one, pinning a rejection's two observable
-// effects - the marker removed, a Warnf line emitted - once rather than on
-// every rejecting row.
+// TestExtractMarkerMutationCases checks verifyExtractMarker's verdict for each
+// mutation on its own tree; only the deletion row also checks the marker's
+// removal and the Warnf line.
 func TestExtractMarkerMutationCases(t *testing.T) {
 	t.Parallel()
 
@@ -226,13 +188,9 @@ func TestExtractMarkerMutationCases(t *testing.T) {
 	}
 }
 
-// TestExtractMarkerLegacyFormatInvalidates proves the pre-tally sentinel
-// content ("ok", written by every extractCollection before this unit) is
-// treated as unparseable rather than crashing or being misread, and that
-// this specific case - expected on every upgrade, for every previously
-// installed collection - logs at Debugf only, not Warnf: a warning here
-// would be a one-time storm for every user upgrading past the marker format
-// change.
+// TestExtractMarkerLegacyFormatInvalidates pins that the legacy "ok" marker is
+// rejected and removed with a Debugf line only, since every upgraded install
+// carries one and a warning would storm.
 func TestExtractMarkerLegacyFormatInvalidates(t *testing.T) {
 	t.Parallel()
 	target, _ := buildFixedMarkerTree(t)
@@ -253,11 +211,8 @@ func TestExtractMarkerLegacyFormatInvalidates(t *testing.T) {
 	assertPathAbsent(t, marker)
 }
 
-// TestExtractMarkerOversizedAndGarbageInvalidate proves two more unparseable
-// shapes are both rejected without panicking: a marker well past the bounded
-// read cap (rejected without the reader ever learning its true length), and
-// a truncated marker that starts with the right version tag but never
-// reaches a complete field set.
+// TestExtractMarkerOversizedAndGarbageInvalidate pins that an oversized marker
+// and a truncated one are both rejected quietly and removed.
 func TestExtractMarkerOversizedAndGarbageInvalidate(t *testing.T) {
 	t.Parallel()
 
@@ -289,11 +244,8 @@ func TestExtractMarkerOversizedAndGarbageInvalidate(t *testing.T) {
 	}
 }
 
-// TestExtractMarkerIgnoresSiblingMarkers proves a stray top-level file that
-// merely shares the marker prefix - a different sha's marker, most plausibly
-// left behind by a previous version of the same collection - never
-// contributes to the tally, in either direction: scanTree must produce the
-// identical result whether or not that sibling is present.
+// TestExtractMarkerIgnoresSiblingMarkers pins that a top-level file carrying
+// the marker prefix, such as another sha's marker, never changes the tally.
 func TestExtractMarkerIgnoresSiblingMarkers(t *testing.T) {
 	t.Parallel()
 	target, want := buildFixedMarkerTree(t)
@@ -317,12 +269,9 @@ func TestExtractMarkerIgnoresSiblingMarkers(t *testing.T) {
 	}
 }
 
-// TestScanTreeDoesNotFollowSymlinks proves a symlink at the top level of the
-// tree - even one pointing at a directory outside the tree entirely -
-// contributes exactly one non-directory entry to the tally and is never
-// descended into. Without this, a symlink loop could hang the walk, and a
-// symlink to a large external directory could silently inflate (or, if the
-// target later changes, silently destabilize) the tally.
+// TestScanTreeDoesNotFollowSymlinks pins that a symlink to an outside
+// directory counts as one entry and is never descended into, so a loop cannot
+// hang the walk and a link cannot inflate the tally.
 func TestScanTreeDoesNotFollowSymlinks(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -353,13 +302,9 @@ func TestScanTreeDoesNotFollowSymlinks(t *testing.T) {
 	}
 }
 
-// TestExtractMarkerOutcomeZeroValueFailsClosed proves a zero-value
-// extractMarkerOutcome{} - the shape a future error path might return by
-// mistake, e.g. a bare `return extractMarkerOutcome{}` - never satisfies
-// matches(): extractMarkerUnknown is deliberately the zero value of
-// extractMarkerStatus, so a construction site that forgets to set status
-// explicitly fails closed (treated as invalid) rather than silently
-// reporting a valid marker.
+// TestExtractMarkerOutcomeZeroValueFailsClosed pins that a zero
+// extractMarkerOutcome never matches, so a path that forgets to set status
+// forces re-extraction.
 func TestExtractMarkerOutcomeZeroValueFailsClosed(t *testing.T) {
 	t.Parallel()
 	if (extractMarkerOutcome{}).matches() {
@@ -367,27 +312,17 @@ func TestExtractMarkerOutcomeZeroValueFailsClosed(t *testing.T) {
 	}
 }
 
-// TestCheckExtractMarkerScanFailedAndMissing covers two checkExtractMarker
-// outcomes no other test in this file reaches directly: a scanTree failure
-// (the installed tree becomes unreadable after a valid marker was already
-// written) and a marker that is simply absent (the shape of every
-// first-ever extraction, before writeExtractMarker has ever run). Both
-// subtests also prove checkExtractMarker itself never touches the marker -
-// unlike verifyExtractMarker, exercised here for the exact messages, tiers,
-// and best-effort cleanup its own doc comment promises. Each subtest's body
-// lives in its own named function, kept out of this dispatcher, to stay
-// under the cognitive-complexity budget.
+// TestCheckExtractMarkerScanFailedAndMissing covers a scan failure and an
+// absent marker: checkExtractMarker leaves the marker alone, while
+// verifyExtractMarker logs at Debugf and removes it.
 func TestCheckExtractMarkerScanFailedAndMissing(t *testing.T) {
 	t.Run("scan failed", testCheckExtractMarkerScanFailed)
 	t.Run("missing", testCheckExtractMarkerMissing)
 }
 
-// testCheckExtractMarkerScanFailed makes the installed tree itself
-// unreadable after seeding a valid marker, so scanTree's own fs.WalkDir
-// fails, and proves checkExtractMarker reports that failure faithfully
-// (status, scanErr, no removal) while verifyExtractMarker logs it at Debugf
-// (never Warnf - a scan failure is not a confirmed tally mismatch) and still
-// performs its best-effort removal.
+// testCheckExtractMarkerScanFailed makes the tree unreadable after seeding a
+// marker and pins that the scan failure is reported, logged at Debugf rather
+// than Warnf, and the marker still removed.
 func testCheckExtractMarkerScanFailed(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root; permission-based read guard cannot be tested")
@@ -398,14 +333,8 @@ func testCheckExtractMarkerScanFailed(t *testing.T) {
 	seedValidExtractMarker(t, target, sha)
 	markerPath := filepath.Join(installPath, helpers.ExtractMarkerPrefix+sha)
 
-	// 0o311 (write+execute, no read): a directory missing the read bit still
-	// fails a directory listing - so scanTree's fs.WalkDir fails, as required -
-	// but keeping the write bit lets the directory entry for the marker
-	// actually be unlinked afterward (verified empirically: a bare
-	// execute-only 0o111 blocks Remove outright on this filesystem, which
-	// would make the removal assertion below untestable rather than
-	// genuinely exercised). Deliberately more permissive than 0600 for that
-	// reason, not an oversight.
+	// 0o311 (no read bit) makes scanTree's listing fail while the write bit
+	// still lets the marker be unlinked, so the removal assertion is real.
 	//nolint:gosec // G302: 0o311 is this test's own fixture permission; see comment above.
 	if err := os.Chmod(installPath, 0o311); err != nil {
 		t.Fatalf("chmod installPath: %v", err)
@@ -441,10 +370,8 @@ func assertScanFailedOutcome(t *testing.T, outcome extractMarkerOutcome, markerP
 	}
 }
 
-// assertVerifyExtractMarkerScanFailed calls verifyExtractMarker for the
-// scan-failed scenario and checks its return value, its Debugf-tier message
-// (and the absence of a Warnf line - a scan failure is not a confirmed tally
-// mismatch), and that its best-effort removal actually removed the marker.
+// assertVerifyExtractMarkerScanFailed checks that verifyExtractMarker rejects
+// the scan-failed tree with a Debugf line and no Warnf, and removes the marker.
 func assertVerifyExtractMarkerScanFailed(t *testing.T, target installTarget, sha, markerPath string) {
 	t.Helper()
 	printer := &capturingPrinter{}
@@ -463,11 +390,9 @@ func assertVerifyExtractMarkerScanFailed(t *testing.T, target installTarget, sha
 	}
 }
 
-// testCheckExtractMarkerMissing leaves installPath with no marker at all -
-// the shape of every first-ever extraction - and proves checkExtractMarker
-// and verifyExtractMarker both treat that identically to any other
-// unverifiable marker: reported, not removed by the former (nothing to
-// remove), logged at Debugf by the latter.
+// testCheckExtractMarkerMissing pins that an absent marker, the first-ever
+// extraction's shape, is reported by checkExtractMarker and logged at Debugf
+// by verifyExtractMarker.
 func testCheckExtractMarkerMissing(t *testing.T) {
 	installPath := t.TempDir()
 	target := newFlatInstallTarget(t, installPath)
@@ -498,15 +423,9 @@ func testCheckExtractMarkerMissing(t *testing.T) {
 	}
 }
 
-// TestPrefetchScanUsesCheapCheck proves shouldSchedulePrefetch calls
-// installRecordMatches - the cheap check, which roots the marker path through
-// markerRel and only asks target.root.Stat whether it is there, without
-// reading it, before reading the sidecar - rather than
-// canSkipInstall's strict tally verification: a seeded install whose marker
-// is in the legacy "ok" format (which canSkipInstall rejects) must
-// still make the prefetch scan report "already installed", so the prefetch
-// scan never pays the cost or the strictness that belongs to
-// installCollection alone.
+// TestPrefetchScanUsesCheapCheck pins that shouldSchedulePrefetch uses
+// installRecordMatches (marker presence only), not canSkipInstall's tally: a
+// legacy "ok" marker still reads as installed there.
 func TestPrefetchScanUsesCheapCheck(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -535,32 +454,9 @@ func TestPrefetchScanUsesCheapCheck(t *testing.T) {
 	}
 }
 
-// buildTraversalFixture builds an installPath four real path elements deep
-// under a "containment" directory (collections/ansible_collections/ns/name -
-// the exact shape a real install produces), itself nested one level inside a
-// t.TempDir() sandbox, keeping every path this fixture's tests can possibly
-// reach - including an unbounded escape - inside the sandbox this test owns
-// and t.TempDir() cleans up, never a real host path. The traversal counts
-// below are load-bearing: six ".." segments (no leading dot) exactly cancel
-// the four real installPath elements plus the one pop that only undoes the
-// ".extract-done.." literal filename the join produces (never a real ".."
-// token on its own), landing the escape exactly at containment - the same
-// arithmetic a real root/home/ci/.ssh/authorized_keys escape would require.
-// A leading "./" on that same six-segment sha adds one more real pop with no
-// corresponding cancellation, landing one level further out, at sandbox
-// itself - the unbounded property: capping ".." tokens at installPath's own
-// component count would not have stopped this, since the leading "./"
-// buys an extra pop for free.
-//
-// These tests drive markerRel/verifyExtractMarker/writeExtractMarker/
-// checkExtractMarker directly against a flat installTarget (rel = "."), not
-// through newInstallTarget/cfg.DownloadPath - the guard under test here is
-// markerRel's own sha validation, unconditional and independent of the root
-// boundary, which is why a traversal sha is refused before any path is ever
-// joined regardless of what target.rel is.
-//
-// Returns sandbox, containment, installPath, in that order (unnamed, per
-// nonamedreturns).
+// buildTraversalFixture returns sandbox, containment and an installPath four
+// elements below it: a naive join of six ".." (one fused into the prefix, one
+// canceling it) lands at containment, and a leading "./" reaches sandbox.
 func buildTraversalFixture(t *testing.T) (string, string, string) {
 	t.Helper()
 	sandbox := t.TempDir()
@@ -570,15 +466,9 @@ func buildTraversalFixture(t *testing.T) (string, string, string) {
 	return sandbox, containment, installPath
 }
 
-// TestVerifyExtractMarkerRefusesTraversalSHA proves verifyExtractMarker
-// rejects a traversal sha before ever computing a marker path from it: a
-// victim seeded at exactly the location a naive join (installPath plus
-// ".extract-done." plus the raw sha) would reach
-// (containment/home/ci/.ssh/authorized_keys, six ".." segments popping
-// installPath's four real elements plus the one that only cancels the
-// ".extract-done.." literal name) survives byte-identical, and exactly one
-// Warnf line is emitted - never a Debugf, since an unsafe sha is a live
-// integrity signal, not an expected upgrade artifact.
+// TestVerifyExtractMarkerRefusesTraversalSHA pins that a traversal sha is
+// refused before any path is built: the victim a naive join would reach
+// survives, and exactly one Warnf and no Debugf is emitted.
 func TestVerifyExtractMarkerRefusesTraversalSHA(t *testing.T) {
 	t.Parallel()
 	_, containment, installPath := buildTraversalFixture(t)
@@ -603,13 +493,8 @@ func TestVerifyExtractMarkerRefusesTraversalSHA(t *testing.T) {
 	}
 }
 
-// TestVerifyExtractMarkerRefusesUnboundedTraversalSHA covers the leading
-// "./" variant: the same six ".." segments as
-// TestVerifyExtractMarkerRefusesTraversalSHA, but with one more real pop
-// than that capped case buys for free, landing one level past containment
-// (at sandbox itself, standing in for a real /etc/passwd escape past the
-// test root entirely). Nothing under sandbox - not just
-// under installPath - may be touched.
+// TestVerifyExtractMarkerRefusesUnboundedTraversalSHA covers the leading "./"
+// variant, whose naive join escapes one level past containment to sandbox.
 func TestVerifyExtractMarkerRefusesUnboundedTraversalSHA(t *testing.T) {
 	t.Parallel()
 	sandbox, _, installPath := buildTraversalFixture(t)
@@ -631,12 +516,9 @@ func TestVerifyExtractMarkerRefusesUnboundedTraversalSHA(t *testing.T) {
 	}
 }
 
-// TestWriteExtractMarkerRefusesTraversalSHA proves writeExtractMarker - the
-// hard-error side of this guard, since it runs only after a real extraction
-// - refuses the same traversal sha before scanTree, Remove, or WriteFile
-// ever run: the victim survives untouched, no marker is created anywhere
-// under installPath, and the returned error wraps
-// helpers.ErrMalformedArtifactSHA256.
+// TestWriteExtractMarkerRefusesTraversalSHA pins that writeExtractMarker
+// refuses a traversal sha with helpers.ErrMalformedArtifactSHA256 before
+// touching the filesystem.
 func TestWriteExtractMarkerRefusesTraversalSHA(t *testing.T) {
 	t.Parallel()
 	_, containment, installPath := buildTraversalFixture(t)
@@ -649,10 +531,8 @@ func TestWriteExtractMarkerRefusesTraversalSHA(t *testing.T) {
 
 	const traversalSHA = "../../../../../../home/ci/.ssh/authorized_keys"
 	err := writeExtractMarker(target, traversalSHA)
-	// t.Errorf, not t.Fatalf: the victim-survival and empty-installPath
-	// assertions below must still run even if this one fails, so a mutation
-	// that returns the wrong error class but still touches the filesystem is
-	// caught by those, not masked by an early abort here.
+	// t.Errorf, not t.Fatalf: the filesystem assertions below must still run
+	// when the error class is wrong.
 	if !errors.Is(err, helpers.ErrMalformedArtifactSHA256) {
 		t.Errorf("writeExtractMarker error = %v, want errors.Is helpers.ErrMalformedArtifactSHA256", err)
 	}
@@ -667,10 +547,8 @@ func TestWriteExtractMarkerRefusesTraversalSHA(t *testing.T) {
 	}
 }
 
-// TestCheckExtractMarkerReportsUnsafeSHA proves the pure predicate side of
-// this guard: checkExtractMarker reports extractMarkerUnsafeSHA (never
-// matches()) for a traversal sha, and never touches installPath at all -
-// consistent with it being a pure read on every other status.
+// TestCheckExtractMarkerReportsUnsafeSHA pins that checkExtractMarker reports
+// extractMarkerUnsafeSHA for a traversal sha and leaves installPath untouched.
 func TestCheckExtractMarkerReportsUnsafeSHA(t *testing.T) {
 	t.Parallel()
 	_, _, installPath := buildTraversalFixture(t)
@@ -699,10 +577,8 @@ func TestCheckExtractMarkerReportsUnsafeSHA(t *testing.T) {
 	}
 }
 
-// TestMarkerRelRejectsNonDigest is markerRel's own table: it must return
-// ok=false for anything that is not exactly 64 lowercase hex characters -
-// including short-but-hex, uppercase, a multi-element path, and both dot
-// forms - and ok=true with the exact expected join for one real digest.
+// TestMarkerRelRejectsNonDigest pins that markerRel accepts only 64 lowercase
+// hex characters and joins a valid digest under target.rel.
 func TestMarkerRelRejectsNonDigest(t *testing.T) {
 	t.Parallel()
 	installPath := filepath.Join(t.TempDir(), "ansible_collections", "ns", "name")
@@ -739,13 +615,8 @@ func TestMarkerRelRejectsNonDigest(t *testing.T) {
 	}
 }
 
-// BenchmarkScanTree measures one scanTree pass over a single
-// collection-sized tree: 500 files spread across 50 subdirectories at ~2000
-// bytes each, matching the per-collection shape behind a fleet-scale
-// measurement (100 such trees - 50,000 files, 100 MB total, APFS, warm -
-// costing 0.56 ms serially per tree, 222 ms total serially, 73 ms at 8
-// workers). This keeps that number reproducible in the repository rather
-// than living only in a report.
+// BenchmarkScanTree times one scanTree pass over a collection-sized tree: 500
+// files of about 2000 bytes across 50 subdirectories.
 func BenchmarkScanTree(b *testing.B) {
 	root := b.TempDir()
 	const subdirs = 50
@@ -781,10 +652,9 @@ func BenchmarkScanTree(b *testing.B) {
 	}
 }
 
-// collectionMarkerPath is where a collection installed at installPath - the
-// ansible_collections/<namespace>/<name> directory - keeps its extract marker
-// for sha: the version's .info directory beside the namespace, not the
-// install directory itself.
+// collectionMarkerPath is where a collection at installPath keeps its marker
+// for sha: the version's .info directory under ansible_collections, not the
+// install directory.
 func collectionMarkerPath(installPath string, col collection, sha string) string {
 	infoDir := filepath.Join(filepath.Dir(filepath.Dir(installPath)), col.Namespace+"."+col.Name+"-"+col.Version+infoDirSuffix)
 	return filepath.Join(infoDir, helpers.ExtractMarkerPrefix+sha)

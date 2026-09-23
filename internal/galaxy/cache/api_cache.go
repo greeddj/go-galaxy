@@ -20,10 +20,9 @@ func apiCacheKey(url string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// FetchJSONWithCachePolicy fetches JSON with cache policy and unmarshals into
-// out. budget bounds the underlying fetchJSONBody call end to end (see its
-// own doc comment); non-positive means helpers.MetadataFetchDeadline, so a
-// bad value degrades structurally rather than by caller convention.
+// FetchJSONWithCachePolicy fetches JSON under policy and unmarshals it into
+// out. budget bounds the network fetch end to end; non-positive means
+// helpers.MetadataFetchDeadline.
 func FetchJSONWithCachePolicy(
 	ctx context.Context,
 	client *http.Client,
@@ -50,16 +49,9 @@ func FetchJSONWithCachePolicy(
 	return fetchAndStore(ctx, client, url, st, key, out, policy, budget)
 }
 
-// tryServeFromCache attempts to serve from cache and reports if handled.
-// The cached body is decoded into out exactly once, right here: that single
-// decode is also the corruption check. A body that fails to unmarshal -
-// whether freshly written or long expired - is corrupt, and the false return
-// sends the caller (FetchJSONWithCachePolicy) into fetchAndStore, which
-// issues an unconditional fetch (nil validators) and overwrites the entry
-// with fresh bytes. Routing a corrupt entry through revalidateCache's
-// conditional GET instead would be wrong: the server would see the same
-// ETag/Last-Modified it already served, reply 304, and hand the exact same
-// unusable bytes straight back, so the entry would never heal.
+// tryServeFromCache serves url from the cache and reports whether it did. A
+// body that fails to decode is a miss, refetched unconditionally: revalidating
+// it would get a 304 and keep the corrupt bytes forever.
 func tryServeFromCache(
 	ctx context.Context,
 	client *http.Client,
@@ -77,18 +69,12 @@ func tryServeFromCache(
 	if err := json.Unmarshal(entry.Body, out); err != nil {
 		return false, nil
 	}
-	// A FetchedAt in the future cannot come from this program - every writer
-	// stamps time.Now().UTC() - so it is a corrupt or clock-skewed entry, not a
-	// fresh one. time.Since is negative for it, which would otherwise pass the
-	// TTL test forever and pin the entry as permanently fresh; treat it as
-	// expired and revalidate. Both sides are wall-clock only (.UTC() strips the
-	// monotonic reading, and a decoded stamp never had one).
+	// A FetchedAt in the future is corrupt or clock-skewed, not fresh: its
+	// negative age would pass the TTL test forever, so it is revalidated.
 	age := time.Since(entry.FetchedAt)
 	if policy.TTL != 0 && (age > policy.TTL || age < 0) {
-		// Accepted micro-cost: on the rare TTL-expired-and-changed path, the
-		// stale (but valid) body decoded above into out is simply overwritten
-		// by revalidateCache's fresh decode below. This second decode is
-		// bounded by a network round trip, so it is negligible next to it.
+		// On a changed response revalidateCache decodes again over out,
+		// replacing the stale body decoded above.
 		return revalidateCache(ctx, client, url, st, key, entry, out, policy, budget)
 	}
 	return true, nil
@@ -101,10 +87,8 @@ func isValidCacheEntry(ok bool, entry store.APICacheEntry, url string) bool {
 	return true
 }
 
-// revalidateCache issues a conditional GET for an entry that tryServeFromCache
-// already decoded into out and found expired. On a 304, that decode is still
-// valid - the server confirmed the bytes are unchanged - so the response is
-// reported as handled without re-unmarshaling the same bytes a second time.
+// revalidateCache issues a conditional GET for an expired entry already
+// decoded into out; a 304 keeps that decode rather than unmarshaling again.
 func revalidateCache(
 	ctx context.Context,
 	client *http.Client,
@@ -153,30 +137,9 @@ func fetchAndStore(
 	return json.Unmarshal(body, out)
 }
 
-// newAPICacheEntry builds a cache entry from response data. Body is stored
-// verbatim - byte for byte what the server sent, with no cut applied
-// anywhere in this package.
-//
-// For a version-detail document, that body includes download_url, which on
-// an object-storage-backed Galaxy NG or Automation Hub deployment is a
-// presigned URL whose query string is a time-limited bearer capability (see
-// helpers.WithoutQuery's own doc comment for what that means). It is stored
-// uncut here, unlike GALAXY.yml's own copy of the same value
-// (buildGalaxyYAML, internal/galaxy/collections/galaxy_info.go): that
-// sidecar is written for an operator to read, while this entry is read back
-// and its URL is fetched by this program itself - cutting it here would turn
-// every cache-served download into a 403 against a presign that no longer
-// names anything.
-//
-// The exposure window this leaves is bounded by the presign's own expiry,
-// not by anything this program controls: neither the entry's own TTL nor
-// helpers.CacheEntryMaxAge, both of which govern how long the entry survives
-// in the persisted snapshot rather than how long the URL inside it stays
-// live. A principal who can read the shared cache - the trust boundary
-// Backend.LoadStore/LoadProjectRegistry document - gets a working capability
-// only while the presign it names is still live, and gets a fresh one every
-// time this entry is refreshed, exactly the capability a legitimate fetch
-// through this cache would use regardless.
+// newAPICacheEntry builds a cache entry storing body verbatim. A presigned
+// download_url in it keeps its query: this program fetches it back, and a cut
+// one would 403 on every cache-served download.
 func newAPICacheEntry(url string, body []byte, etag, lastModified string, ttl time.Duration) store.APICacheEntry {
 	return store.APICacheEntry{
 		URL:          url,
@@ -200,53 +163,9 @@ func refreshAPICacheEntry(entry store.APICacheEntry, etag, lastModified string) 
 	return entry
 }
 
-// fetchJSONBody fetches JSON bytes and validation headers for a URL,
-// retrying a transient failure (a retryable HTTP status or a stalled body
-// read, per fetchRetryable) up to helpers.FetchRetryPolicy's bound. Each
-// attempt builds a fresh request and resends any conditional headers, so a
-// retry is never served a stale If-None-Match/If-Modified-Since pair. A 304
-// is treated as success and returned immediately, never retried.
-//
-// budget bounds the whole call - build+Do+status-classify+io.ReadAll, and
-// every retry attempt and backoff sleep in the helpers.Retry loop below - as
-// one shared budget established ONCE here, around the outer loop, rather
-// than re-derived per attempt: a non-positive value (in particular the zero
-// value every existing caller in this package's own test suite passes)
-// structurally falls back to helpers.MetadataFetchDeadline via
-// metadataBudget. This is deliberately not established one layer up, in
-// internal/galaxy/collections/fetchpolicy.go's thin wrapper: the precedent this
-// follows (helpers.ArtifactDownloadDeadline, established in
-// downloadCollectionToCache) is "the budget is established by the code that
-// owns the unit of work, and never behind the Backend seam". This function
-// owns one metadata request - build, Do, status-classify, ReadAll, retry -
-// exactly the unit the budget bounds; internal/galaxy/cache is on the
-// business-logic side of the Backend seam (it is not internal/cache/*), so
-// establishing the budget here does not cross it. Establishing it one layer
-// up in collections/fetchpolicy.go instead would put the budget in a pass-through
-// wrapper that owns nothing, would leave fetchRetryable unable to see the
-// sentinel it must classify terminal (see fetchRetryable's own doc comment),
-// and would let a future direct caller of the exported
-// FetchJSONWithCachePolicy escape the budget entirely.
-//
-// A pure cache hit (tryServeFromCache returning true without revalidating)
-// never reaches this function at all, so it never pays for a timer. The
-// budget also deliberately does not cover the caller's json.Unmarshal: that
-// is local CPU work on bytes already fully read, not a network operation a
-// hostile or degraded endpoint can stall.
-//
-// One benign race worth naming here, since it is easy to mistake for a bug
-// later: a retryable 5xx whose backoff sleep is cut short by this budget
-// surfaces to the caller as helpers.ErrMetadataFetchDeadline, not as the
-// *HTTPStatusError that triggered the retry in the first place. This is a
-// property of helpers.Retry itself - its backoff wait races ctx.Done()
-// against the jittered timer and, on losing, returns a bare ctx.Err()
-// straight from that select, discarding the status error the closure last
-// produced - not of anything specific to this call site. On the root-metadata
-// path this means a retryable-status server that keeps failing until the
-// budget runs out aborts with helpers.ErrMetadataFetchDeadline instead of
-// tryServerRootMetadata's usual helpers.ErrGalaxyServerUnavailable wrap; both
-// still abort the whole server-list walk, and both still classify
-// ExitNetwork, so only the operator-facing message differs.
+// fetchJSONBody fetches JSON bytes and validators for url, retrying transient
+// failures with fresh conditional headers. One budget, set here by the owner of
+// the request, covers every attempt and backoff; a 304 is success, not retried.
 func fetchJSONBody(
 	ctx context.Context,
 	client *http.Client,
@@ -274,10 +193,8 @@ func fetchJSONBody(
 	return body, etag, lastModified, notModified, nil
 }
 
-// metadataBudget returns budget when it is a positive duration, or
-// helpers.MetadataFetchDeadline otherwise, so a non-positive value (the zero
-// value included) degrades structurally to the real constant rather than by
-// caller convention.
+// metadataBudget returns budget when positive, else
+// helpers.MetadataFetchDeadline, so a zero value degrades to the real ceiling.
 func metadataBudget(budget time.Duration) time.Duration {
 	if budget <= 0 {
 		return helpers.MetadataFetchDeadline
@@ -285,19 +202,9 @@ func metadataBudget(budget time.Duration) time.Duration {
 	return budget
 }
 
-// fetchJSONBodyOnce performs a single build+Do+status-classify+io.ReadAll
-// cycle for url, the one attempt fetchJSONBody's retry loop repeats on a
-// transient failure. The response body is always closed before returning,
-// since every path here either reads it to completion or (on a 304) never
-// needed it in the first place.
-//
-// Three of its failure returns are decided by what a message may name as much
-// as by what went wrong, and each is argued at the site that raises it below:
-// a request net/http refuses to build becomes
-// helpers.ErrMetadataRequestBuildFailed, which names no part of url; a
-// transport failure is re-rendered over url's cut form by
-// helpers.CutTransportURL; and a non-200 response becomes an
-// *HTTPStatusError carrying that same cut form.
+// fetchJSONBodyOnce performs one request-and-read attempt for url. No error it
+// returns names url's credentials: a build failure names no part of url, and a
+// transport or status failure carries its userinfo- and query-cut form.
 func fetchJSONBodyOnce(
 	ctx context.Context,
 	client *http.Client,
@@ -306,12 +213,8 @@ func fetchJSONBodyOnce(
 ) ([]byte, string, string, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
-		// The build error is dropped rather than returned or wrapped, and no
-		// part of url is rendered in its place: it is a *url.Error naming the
-		// whole raw value, password included, and the population reaching this
-		// arm is exactly the set url.Parse refuses. See
-		// helpers.ErrMetadataRequestBuildFailed, which holds the argument for
-		// naming the failure instead of the value.
+		// The build error is dropped: it is a *url.Error naming the whole raw
+		// value, password included (see helpers.ErrMetadataRequestBuildFailed).
 		return nil, "", "", false, helpers.ErrMetadataRequestBuildFailed
 	}
 	if entry != nil {
@@ -324,19 +227,9 @@ func fetchJSONBodyOnce(
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		// helpers.CutTransportURL, not err as it came: net/http masks a
-		// password while composing its *url.Error and leaves everything else,
-		// so a query a Galaxy server declared survives its own redaction whole.
-		// That wrapper holds the rest of the argument. Unwrap keeps this a
-		// rendering change and nothing else, which this path depends on twice:
-		// fetchRetryable reads helpers.ErrReadStalled, the two context
-		// sentinels and *HTTPStatusError out of the tree, and deadlineError
-		// reads the context sentinels, all through errors.Is and errors.As.
-		//
-		// This arm is reached without any server having to answer - a refused
-		// dial, a DNS failure, a TLS handshake error all land here - so it is
-		// the shape a CI meets first when a metadata endpoint is wrong or
-		// unreachable.
+		// net/http masks only a password, leaving a declared query whole, so the
+		// error is re-rendered over the cut URL; it still unwraps, which
+		// fetchRetryable and deadlineError classify through.
 		return nil, "", "", false, helpers.CutTransportURL(url, err)
 	}
 	defer func() {
@@ -347,21 +240,9 @@ func fetchJSONBodyOnce(
 		return nil, resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"), true, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		// The cut is applied here, where production code builds the only
-		// *HTTPStatusError there is, rather than inside Error(), and what
-		// makes that free is a condition rather than an accident: nothing
-		// reads HTTPStatusError.URL. Every consumer of this type, in this
-		// package and in internal/galaxy/collections alike, routes on Code,
-		// and Status is read only by the type's own Error() - so the field can
-		// hold the cut form at no cost, and a future consumer that renders it
-		// directly cannot reopen a capability the struct no longer carries. A
-		// consumer that genuinely needs the whole URL is the moment to add a
-		// second field, not a reason to keep this one whole.
-		//
-		// Both cuts are composed, not the query one alone that a metadata URL
-		// most often carries: userinfo is unreachable at this site only
-		// because collections.normalizeVersionsURL refuses it upstream, and
-		// nothing enforces that ordering from here.
+		// Cut at construction, so no consumer rendering URL can leak a
+		// capability; both cuts, since userinfo is kept out only upstream, by
+		// collections.normalizeVersionsURL.
 		return nil, "", "", false, &HTTPStatusError{
 			URL:    helpers.WithoutCredentials(url),
 			Status: resp.Status,
@@ -371,11 +252,8 @@ func fetchJSONBodyOnce(
 
 	body, err := io.ReadAll(helpers.NewSizeLimitedReader(resp.Body, helpers.MetadataMaxSize))
 	if err != nil {
-		// NewSizeLimitedReader's helpers.ErrResponseTooLarge is a bare size
-		// ceiling shared with two other surfaces (an artifact download, an S3
-		// listing or batch-delete response), so it is wrapped here naming this
-		// one - a Galaxy metadata document - to keep errors.Is matching intact
-		// while telling an operator which response actually overran.
+		// helpers.ErrResponseTooLarge is shared with other surfaces; the wrap
+		// names the metadata document while keeping errors.Is intact.
 		return nil, "", "", false, fmt.Errorf("galaxy metadata document: %w", err)
 	}
 	return body, resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"), false, nil
@@ -383,10 +261,8 @@ func fetchJSONBodyOnce(
 
 // HTTPStatusError describes a non-200 HTTP response.
 type HTTPStatusError struct {
-	// URL is the fetched URL with both of its credential-bearing parts
-	// already cut; fetchJSONBodyOnce, the only place production code builds
-	// one of these, holds the argument for cutting there rather than at a
-	// render.
+	// URL is the fetched URL with its userinfo and query already cut by
+	// fetchJSONBodyOnce, the only production constructor.
 	URL    string
 	Status string
 	Code   int

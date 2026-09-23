@@ -17,18 +17,14 @@ import (
 // gitDirName is the one directory name the build excludes at every depth.
 const gitDirName = ".git"
 
-// installInfoPattern is the one file the build leaves out of the artifact:
-// ansible-galaxy's own install record at the role root, which a repository
-// commits by accident often enough. The install writes its own record after
-// materialization, and a committed one in the artifact would be the
+// installInfoPattern is ansible-galaxy's install record, left out of the
+// artifact: the install writes a fresh one, and a committed one would be a
 // read-only hard link that write has to replace.
 const installInfoPattern = "meta/.galaxy_install_info"
 
-// Build turns the role at the root of src into a tar.gz artifact written
-// into the file tempFile supplies. The metadata is read first, so a tree
-// that is not a role is refused before the walk; the tree is then planned
-// and written with no lead documents. The result's Cleanup removes the file
-// and is idempotent; on any error the file is already gone.
+// Build turns the role at the root of src into a tar.gz in the file tempFile
+// supplies, reading the metadata first so a non-role is refused before the
+// walk. The result's Cleanup is idempotent; on any error the file is gone.
 func Build(ctx context.Context, src treearchive.Source, tempFile TempFileFunc) (Built, error) {
 	if tempFile == nil {
 		return Built{}, fmt.Errorf("%w: no temp file supplier", helpers.ErrConfigIsNil)
@@ -75,12 +71,9 @@ func Build(ctx context.Context, src treearchive.Source, tempFile TempFileFunc) (
 	}, nil
 }
 
-// selfCheck probes the artifact's outer shape the way the extractor will.
-// Any failure is this package's defect, rendered with %v rather than %w so
-// it never classifies as an integrity failure of the remote's bytes - see
-// helpers.ErrGitArtifactSelfCheck. The caller's own cancellation, which the
-// probe returns unchanged, is passed through unchanged too: it is not a
-// defect of the artifact.
+// selfCheck probes the artifact the way the extractor will. A failure is a
+// builder defect, rendered with %v under helpers.ErrGitArtifactSelfCheck so it
+// never classifies as the remote's integrity failure; cancellation passes as is.
 func selfCheck(ctx context.Context, artifactPath string) error {
 	err := archive.ProbeTarGz(ctx, artifactPath)
 	switch {
@@ -94,11 +87,9 @@ func selfCheck(ctx context.Context, artifactPath string) error {
 	}
 }
 
-// readMeta locates and parses the role's metadata: meta/main.yml (else
-// meta/main.yaml) for the dependencies and role name, then
-// meta/requirements.yml (else .yaml) whose list is appended behind them. A
-// meta directory that is absent, or that lists neither main file as a regular
-// file, makes the tree not a role.
+// readMeta reads meta/main.yml (else .yaml) for dependencies and role name,
+// then appends meta/requirements.yml's list. No meta directory, or no main
+// file there as a regular file, makes the tree not a role.
 func readMeta(src treearchive.Source) (Meta, error) {
 	root, err := src.ReadDir("")
 	if err != nil {
@@ -156,10 +147,9 @@ func readRequirements(src treearchive.Source, entries []treearchive.Entry) ([]gi
 	return parseMetaRequirements(data, p)
 }
 
-// pickOne returns whichever of the two spellings entries list as a regular
-// file, "" when neither is listed, and a refusal when both are: ansible would
-// read the first and ignore the second, and a role whose two spellings
-// disagree has no one answer.
+// pickOne returns whichever spelling entries list as a regular file, "" for
+// neither, and a refusal for both: ansible would read the first, and two
+// spellings that disagree have no one answer.
 func pickOne(entries []treearchive.Entry, yml, yaml string) (string, error) {
 	hasYML := listsFile(entries, yml)
 	hasYAML := listsFile(entries, yaml)

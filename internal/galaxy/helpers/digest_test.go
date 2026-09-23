@@ -9,10 +9,8 @@ import (
 // "hello world"), used as the one accepted shape in TestIsSHA256Hex.
 const validSHA256Hex = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
-// TestIsSHA256Hex pins the exact shape IsSHA256Hex accepts - and rejects,
-// including the traversal-adjacent shapes ("..", ".") that make it the
-// chokepoint markerRel relies on to close the path-traversal defect this
-// predicate exists for.
+// TestIsSHA256Hex pins the exact shape IsSHA256Hex accepts and rejects,
+// including the ".." and "." shapes markerRel relies on it to refuse.
 func TestIsSHA256Hex(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

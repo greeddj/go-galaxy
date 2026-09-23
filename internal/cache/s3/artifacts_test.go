@@ -13,12 +13,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// TestVerifyArtifactSHAWrapsBothSentinels proves that a read-time sha256
-// mismatch wraps both errArtifactSHA256Mismatch - so any existing match
-// against the package-local sentinel still holds - and
-// helpers.ErrSHA256Mismatch, so the collections layer can classify the
-// failure as recoverable without importing s3-specific error types. It also
-// proves a matching sum still passes cleanly.
+// TestVerifyArtifactSHAWrapsBothSentinels proves a read-time sha256 mismatch
+// wraps both errArtifactSHA256Mismatch and helpers.ErrSHA256Mismatch, and that
+// a matching sum passes.
 func TestVerifyArtifactSHAWrapsBothSentinels(t *testing.T) {
 	t.Parallel()
 
@@ -43,14 +40,8 @@ func TestVerifyArtifactSHAWrapsBothSentinels(t *testing.T) {
 }
 
 // TestVerifyArtifactSHARejectsCaseOnlyDifference proves the comparison is
-// exact (==), not strings.EqualFold: an expected digest that differs from
-// the actual, real sha256 only by case is rejected as
-// helpers.ErrSHA256Mismatch, not silently accepted as an equivalent
-// spelling. Lowercase hex is the only shape this program ever writes, so an
-// uppercase (or mixed-case) expected value can only mean a non-canonical
-// metadata sidecar - exactly the condition the local backend has always
-// refused via its own IsSHA256Hex gate, and that a case-insensitive
-// comparison here would let through instead.
+// exact, not EqualFold: a recorded digest differing only by case is a
+// non-canonical sidecar and is rejected as helpers.ErrSHA256Mismatch.
 func TestVerifyArtifactSHARejectsCaseOnlyDifference(t *testing.T) {
 	t.Parallel()
 
@@ -68,27 +59,8 @@ func TestVerifyArtifactSHARejectsCaseOnlyDifference(t *testing.T) {
 }
 
 // TestFetchRefusesAnObjectWhoseRecordedDigestDisagreesWithItsBytes proves
-// Fetch re-verifies the object's recorded digest against the freshly
-// downloaded bytes before returning the file, rather than trusting the
-// caller to notice the mismatch itself - the mechanism dryRunPinVerdict's own
-// doc comment (internal/galaxy/collections/dryrun.go) cites for the S3
-// backend's half of the recorded-digest asymmetry. It also proves the
-// refused download leaves no temp file behind under tmpBase, pinning the
-// cleanupIfNeeded call on that same refusal arm.
-//
-// KILLING MUTATION, run and reverted: dropping Fetch's own verifyArtifactSHA
-// call, so a downloaded object is returned without its recorded digest ever
-// being checked against the bytes, makes this test fail with:
-//
-//	artifacts_test.go:110: expected Fetch to refuse an object whose recorded
-//	digest disagrees with its bytes
-//
-// Dropping only that same arm's cleanupIfNeeded call, leaving the refusal
-// itself intact, instead fails the leftover-temp assertion below it, which is
-// what proves that assertion is load-bearing rather than decorative:
-//
-//	artifacts_test.go:115: expected no leftover temp file under tmpBase after
-//	a refused Fetch, found [- .artifact-<random>]
+// Fetch checks the recorded digest against the downloaded bytes before
+// returning the file, and that the refusal leaves no temp file under tmpBase.
 func TestFetchRefusesAnObjectWhoseRecordedDigestDisagreesWithItsBytes(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -114,10 +86,7 @@ func TestFetchRefusesAnObjectWhoseRecordedDigestDisagreesWithItsBytes(t *testing
 	}
 	assertNoLeftoverTempFiles(t, b.artifacts.tmpBase)
 
-	// Positive control: the identical fixture, with the object's recorded
-	// digest matching its own bytes, must be accepted - proving the refusal
-	// above is a real refusal of a genuine mismatch, not evidence Fetch can
-	// never succeed against this fixture at all.
+	// Positive control: the same fixture with a matching digest is accepted.
 	correctSum := sha256.Sum256(body)
 	putArtifactWithRecordedDigest(ctx, t, b, key, body, hex.EncodeToString(correctSum[:]))
 
@@ -135,11 +104,8 @@ func TestFetchRefusesAnObjectWhoseRecordedDigestDisagreesWithItsBytes(t *testing
 	file.Cleanup()
 }
 
-// putArtifactWithRecordedDigest stores body under key with a single
-// x-amz-meta-sha256 header set to digest, failing the test on any put
-// error. Factored out of the digest-mismatch test above solely to keep that
-// test's own cyclomatic complexity under the linter's ceiling - it has no
-// behavior of its own beyond the one putObject call.
+// putArtifactWithRecordedDigest stores body under key with x-amz-meta-sha256
+// set to digest, failing the test on any put error.
 func putArtifactWithRecordedDigest(ctx context.Context, t *testing.T, b *Backend, key string, body []byte, digest string) {
 	t.Helper()
 	if err := b.client.putObject(ctx, b.artifacts.objectKey(key), bytes.NewReader(body), int64(len(body)),

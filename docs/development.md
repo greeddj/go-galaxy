@@ -111,18 +111,18 @@ against `.goreleaser.yml`.
 
 ## The repository audits itself
 
-Six gates are ordinary tests, run by `go test ./...` like anything else. Three
-live in test-only packages - `internal/proseaudit`, `internal/lockaudit`,
-`internal/ciaudit` - that hold no production code and that nothing imports; the
-other three are audit files sitting inside the package they gate. Either way
-they need no Justfile target and no CI step, and the only cost they carry is
-three depguard entries for `go/ast`, `go/parser` and `go/token`.
+Every gate is an ordinary test, run by `go test ./...` like anything else. Three
+test-only packages - `internal/proseaudit`, `internal/lockaudit`,
+`internal/ciaudit` - hold nothing but gates, and nothing imports them; three
+more gates are audit files sitting inside the package they gate.
+Either way they need no Justfile target and no CI step, and the only cost they
+carry is three depguard entries for `go/ast`, `go/parser` and `go/token`.
 
 They are also **anti-vacuous**: a gate that names a function or a file fails
 when it cannot find it, rather than skipping, so a rename can never quietly
-disable one. There is one deliberate exception - the dash gate skips when `git`
-cannot enumerate the tree, since a module extracted into the build cache has no
-committed text to check.
+disable one. There is one deliberate exception - the dash gate and the
+comment-length gate skip when `git` cannot enumerate the tree, since a module
+extracted into the build cache has no committed text to check.
 
 These are the checks that fail a build in a way the error message alone does not
 explain, so each is worth knowing before it fires.
@@ -147,13 +147,21 @@ that legitimately needs one of the two characters spells it as bytes or as a
 A comment anywhere in the module may cite a test file's line
 (`foo_test.go:NNN`) only when that line is one `go test` could attribute a
 failure to, and may never cite a production file's line at all - reference
-production code by identifier instead.
+production code by identifier instead. The cited file is resolved by its base
+name in the citing file's own directory, never in another package, and for a
+range every line must qualify. Unlike the dash gate, this one walks the
+filesystem rather than asking `git`, skipping only `vendor/`, `testdata/` and
+dot-directories: an untracked `.go` file is audited too, and every `.go` file
+must parse.
 
 A failure-attributable line is one of exactly three shapes: a call to
 `Fatal`/`Error`/`Log`/`Skip` and their formatting variants on a testing value,
 matched across the whole call so any line of a multi-line call qualifies; a call
 to a same-package helper that calls `t.Helper()`; or any function's declaration
-line.
+line. That leaves one known blind spot: a citation that drifted onto an argument
+line of a multi-line failure call still passes. Narrowing the match would fail
+correct prose, because the line `go test` reports for such a call depends on
+its layout.
 
 The consequence that catches contributors out: adding an import or a helper to a
 test file shifts its line numbers and breaks citations elsewhere in the same
@@ -163,6 +171,26 @@ re-run and update the number, or replace the citation with an identifier.
 
 Note the interaction with `fieldalignment`: a `just fix` rewrite can reorder
 struct fields in a test file and shift the very lines other comments cite.
+
+### `internal/proseaudit` - comment blocks of at most three lines
+
+No comment block in a tracked Go file, shell script, YAML file, `Justfile`,
+`Dockerfile` or `.gitignore` may run past three lines. In a Go file a block is
+a comment group as `go/ast` reads it - consecutive comment lines with no blank
+line or code between them, blank `//` separator lines included, and a `/* */`
+comment counting every line it spans. In the others it is a run of consecutive
+`#` lines; a `#!` shebang on the first line is not a comment. Directive lines
+are read by tools rather than people and do not count: `//go:...`,
+`//nolint:...` and any other `//name:` directive, and gosec's `// #nosec`. The
+blank `//` line gofmt puts between a doc comment and a directive that ends it
+does count, so a doc comment followed by `//nolint` has room for two lines of
+text.
+
+The limit applies to package doc comments and to tests as much as to anything
+else. Reasoning that needs more than three lines belongs here in `docs/`: how a
+package works in [How it works](architecture.md), the boundary it enforces in
+[Security](security.md). Splitting one long comment into several short blocks
+passes the gate and defeats it; don't.
 
 ### `internal/lockaudit` - the holder context
 
@@ -181,6 +209,13 @@ Both tables are closed: **adding or renaming such a command means editing them**
 That is the gate's one acknowledged gap - nothing detects a third lifecycle
 function, or a fourth collection command, that was never added. It is
 deliberately not a general context-threading linter.
+
+It reads source because the seam cannot be driven at runtime: the lifecycle
+functions construct the backend themselves, so no test can inject one able to
+lose its lock, and the local backend's `Lock` hands back the caller's own
+context and never loses one. The gate therefore proves the calls are composed,
+not that the composition behaves; `LockLostError`'s own decision table is
+pinned by its tests in `internal/galaxy/cache`.
 
 ### `internal/ciaudit` - the linter version
 
@@ -216,13 +251,56 @@ Its scope is one file, which is stated rather than implied: a mutator added
 elsewhere is covered only by a hand-maintained table in the same package, so a
 new mutator needs a row there too.
 
+`Dirty` means "this process called a mutator since the store was loaded or
+built", never "the store differs from what the backend holds": every mutator
+sets it unconditionally, even when the value did not change, and nothing clears
+it, because a false positive costs one redundant save while a false negative
+silently drops state.
+`cache.WithCleanSaveSkip` is what skips the save of a clean store, which is also
+why a run that saves nothing never applies the persist-time eviction and
+redaction.
+
+A new bucket touches several places that only tests tie together: the `Store`
+field with its json tag; `New` and `ensureMaps`, because an explicit JSON
+`null` in an S3 snapshot nils a map, and a write into a nil map panics in a
+worker goroutine and kills the process with the S3 lock still held, stalling
+every other run on the bucket until the lock's ten-minute TTL; `snapshotData`,
+its copy and `MarshalSnapshot`'s field-by-field assignment; a
+`helpers.StoreBucket*` name and a `jsonBuckets` entry, appended rather than
+inserted, since the save-rollback test depends on that order; the schema
+version bump; and the dirty flag in each mutator. A bucket recording content on
+disk is counted by `hasContentEntries` and survives `ClearCaches`; one holding
+an answer from a remote is reset by it.
+
 ### `internal/galaxy/archive` - the probe decompressor
 
 The tar.gz shape probe must reach its decompressor through the bounded
 constructor and through nothing else, and must spell both sizing arguments as
 the named constants rather than as inline literals - a call handed literals is a
 call those constants no longer govern. One companion test bounds both constants,
-so what is gated is the byte budget rather than a constructor's name.
+so what is gated is the byte budget rather than a constructor's name: the block
+size must stay above 512 bytes, because pgzip silently turns 512 or less into
+its 1 MiB default, and the reservation must stay within 256 KiB, which the
+extractor's four 1 MiB blocks would fail. The gate reads source because the
+reservation cannot be observed from outside.
+
+The probe's decompressed budget, `helpers.ArchiveProbeMaxBytes`, has a floor of
+4,196,352 bytes: the most `archive/tar` can be made to read before `Next`
+returns its first header - a 512-byte block plus a body of up to 1 MiB for each
+of the `x`, `L` and `K` meta headers, then the returned header's block and a
+sparse map of up to 1 MiB. A budget under that floor refuses archives
+`archive/tar` accepts, with `ErrArtifactTarHeaderNotFound`, which the download
+path treats as terminal. `TestArchiveProbeMaxBytesClearsTheMetaHeaderCeiling`
+holds the constant between that floor and 16 MiB, and
+`TestMetaHeaderCeilingIsWhatArchiveTarReads` builds the composite and asserts
+`archive/tar` reads exactly that much. A toolchain whose `archive/tar` reads a
+different amount fails only the second test; re-derive the figure then and
+update it in both tests and in the constant's comment. The 5 MiB cap stops
+short of 5,245,440 bytes, where a fourth meta body would end; that body carries
+nothing new, since a repeated meta kind replaces the earlier one, and is refused
+on purpose. A floor grown by one more term lands exactly on that figure, and a
+budget set to meet it admits the redundant body too - so re-derive the floor
+rather than rounding the budget up.
 
 ### `internal/gzipstream` - the pgzip monopoly
 
@@ -258,7 +336,11 @@ module does not), `klauspost/pgzip`, `psvmcc/hub`, `urfave/cli/v3`,
 `fieldalignment` runs in both `just check` and CI, so struct field order is not
 a style choice: a layout that wastes memory through padding fails the build,
 test-only structs included. Run `just fix` to reorder in place, then re-run
-`just check`.
+`just check`. For the same reason, do not respell a dependency's anonymous
+struct type as a local literal to build values assignable to it: `just fix`
+may reorder the local copy but never the dependency's declaration, and the
+assignment stops compiling. Append a zero element whose type is inferred from
+the target slice instead, as fakegalaxy's `appendRow` does.
 
 Almost every `//nolint` in this codebase carries a reason after it, and the
 handful that do not are worth fixing rather than copying. Nothing enforces it:
@@ -271,12 +353,61 @@ Tests sit beside the code, in the same package by default. The exceptions are
 the `internal/galaxy/collections` end-to-end suite and a few files in
 `internal/galaxy/cache` and `internal/galaxy/fetch`, which are
 `package <pkg>_test` so they drive the public API from outside; the
-`testpackage` linter is disabled so both styles are legal.
+`testpackage` linter is disabled so both styles are legal. In
+`internal/galaxy/cache` it is also the only way to use a real backend, since
+`internal/cache/local` imports that package and an in-package test importing it
+back would be a cycle.
 
-Test comments state the property being pinned, and often quote the killing
-mutation and the exact output it produced. Positive controls are treated as
-mandatory rather than optional - a detector that finds nothing passes a monopoly
-gate perfectly.
+A test's comment states the property being pinned, in at most three lines.
+Positive controls are treated as mandatory rather than optional - a detector
+that finds nothing passes a monopoly gate perfectly.
+
+Expected values are spelled as literals rather than derived from the production
+constant they check - the archive boundary sizes and probe ceiling, the manifest
+chain's document names and caps, the signature framing's octets and messages -
+because an expectation computed from the constant under test moves with it and
+can never fail. Changing such a constant therefore fails the suite until the
+literals are updated deliberately; do not refactor them into references.
+
+Some fixtures pass vacuously in ways worth knowing before writing one:
+
+- **Offline.** For Galaxy API traffic, `--offline` is enforced by the
+  network-refusing client `fetch.NewOffline`, which the command wiring selects
+  when `cfg.Offline` is set. A test proving an offline path touches no network
+  runs over that client and starts from cleared metadata caches
+  (`Store.ClearCaches`); one that sets `cfg.Offline` over a live fakegalaxy
+  client, or with a warm API cache, passes with the offline check broken.
+- **Secrets in JSON.** `encoding/json` escapes `&`, `<` and `>`, so a needle
+  spanning the `&` between two query parameters never matches serialized
+  bytes, even when the secret leaked. Search for a single parameter
+  (`X-Amz-Signature=...`) and pair the absence with a positive control.
+- **Hand-assembled tar.** A fixture built from raw 512-byte blocks, for the
+  entry kinds `tar.Writer` refuses to encode, must end with the two zero
+  trailer blocks; without them a short final read produces the error on its
+  own, and a refusal test passes without the rule it tests.
+- **Config.** A test that builds a `Config` hides `./ansible.cfg` and
+  `~/.ansible.cfg` (`neutralizeAnsibleDiscovery`), but
+  `/etc/ansible/ansible.cfg` stays reachable on the machine running the
+  suite. Assert only values an explicit flag or environment source set, which
+  outrank the file; make them differ from the flag defaults, so a row cannot
+  pass with no source read; and keep `:` out of a path value, since config
+  splits collections and roles paths as a POSIX search list and keeps only the
+  first entry.
+
+Two kinds of test must never call `t.Parallel`: those in the collections suite
+that call `captureStdIO`, which swaps the process-wide `os.Stdout` and
+`os.Stderr` because `progress.New` reads them at construction and has no other
+output seam; and those in `internal/galaxy/signature` that measure allocation
+through `runtime.MemStats.TotalAlloc` or wall-clock time, both process-wide.
+
+The solver's tests gate completeness as well as soundness.
+`TestOracleMembership` brute-forces every assignment of small generated graphs
+and fails when `Solve` rejects a graph the oracle can solve, accepts one it
+cannot, or returns anything but a closed minimal resolution; `FuzzSolve`
+applies the same checks to graphs under `fuzzOracleCap`. The oracle judges
+membership through Masterminds' `Check`, never through the solver's own set
+algebra, so the two stay independent. Lowering `oracleSeedCount` weakens the
+gate.
 
 **Nothing in the suite dials a real host.** Galaxy API paths go through
 `internal/testing/fakegalaxy`, an in-memory Galaxy v3 API double that also
@@ -289,13 +420,22 @@ modification time, never the clock - and offers:
 - **content**: add a version with its dependencies and get back the digest, so
   no test hardcodes a checksum; render its manifest; sign it.
 - **fault injection**, per endpoint and per collection: a status code, a hang
-  until the request context ends, a stall after N bytes, or a byte-drip that
-  writes one byte per interval forever - which is how a read-inactivity
-  watchdog gets tested. A well-formed fault sets exactly one of those. A test
-  arming a hang, a stall or a drip must abort the request itself, or shutdown
-  blocks.
+  until the request context ends, a stall after N bytes, or a byte-drip. They
+  exercise different deadlines and are not interchangeable. A stall (artifact
+  and tarball routes only) flushes a real prefix and then blocks - the shape a
+  read-inactivity watchdog must catch. A drip never stops making progress, so
+  it defeats that watchdog and only a whole-transfer or metadata deadline ends
+  it: on the download routes it writes the real bytes one per interval,
+  cycling forever, and on a JSON route it answers `{` and then one space per
+  interval, a document that never parses. A well-formed fault sets exactly one
+  of those. A `Count` of zero never fires, a positive one is spent per
+  matching request, a negative one fires forever. A test arming a hang, a
+  stall or a drip must abort the request itself, or shutdown blocks.
 - **request counting** per endpoint, which is how "this path makes no metadata
-  request" is asserted rather than assumed.
+  request" is asserted rather than assumed. Every route counts first, checks
+  auth second and enacts an armed fault third, so a request that an auth
+  failure, a fault or a 404 ended is still counted, and a fault can never mask
+  a missing or wrong header. A route added to the double keeps that order.
 - **auth**: require a value, choose the failure status, and capture the header
   actually received.
 - **roles**: `AddRole` registers `owner.name` as imported from a GitHub user
@@ -309,9 +449,24 @@ modification time, never the clock - and offers:
   them, which is how a server without a role API (an Automation Hub) is
   modeled.
 
-Its constructor takes a `testing.TB`, deliberately: that is the one interface
+The constructor fixes the deployment shape. `New` is galaxy.ansible.com, with
+collections under `/api/v3`; `NewAtBasePath` is a Galaxy NG or Automation Hub,
+with `v3` directly under the base path (an empty one is a hub at the root) and
+`/api/v3` answering 404, so a client's API-root probing meets what a real hub
+answers. Every URL the double generates for itself carries the base path.
+
+Both constructors take a `testing.TB`, deliberately: that is the one interface
 implementable only by the standard testing package, so the double can never be
-reached from production code.
+reached from production code. The one exported entry without it is
+`BuildArtifact`, which touches no server state and returns the bytes and digest
+`AddVersion` would serve, for doubles that fabricate an artifact themselves.
+
+A double never takes its wire shape from the code it tests. fakegalaxy spells
+`MANIFEST.json`, `FILES.json`, the `sha256` checksum type and the `signature`
+key as local literals: a shared constant would change on both sides at once,
+and a defect in the manifest reader could cancel a matching one in the
+generator. Its artifact is a closed chain `manifest.VerifyChain` accepts end to
+end, so a signature over `ManifestJSON` verifies against the bytes served.
 
 Git paths go through `internal/testing/fakegit`, its sibling for a git remote:
 an in-process smart-HTTP server over `httptest` and an ssh listener over
@@ -329,8 +484,24 @@ against every shape, which is what keeps the wire framing honest. A test that
 uses the ssh half sets `SSH_KNOWN_HOSTS`, `SSH_AUTH_SOCK` or `HOME` through
 `t.Setenv` and therefore runs serially; the agent socket lives in a short
 `os.MkdirTemp` directory rather than under `t.TempDir`, because darwin caps a
-unix socket path at 104 bytes. The collections suite drives its pipeline
-through an in-memory `gitsource.Client` double with no transport at all
+unix socket path at 104 bytes.
+
+fakegit owns only the server side and validates nothing a repository carries:
+`RawTreeCommit` encodes `..`, `.git`, `a/b`, duplicates and submodules, and
+`Symlink` records any target verbatim, because refusing a hostile shape is the
+code under test's job - which is also why its pack walk is hand-written rather
+than go-git's, whose tree walker refuses those entries. The trees `AddCollection`
+and `AddRole` write are literals, not imports from the builders. Unlike
+fakegalaxy, it counts a request and captures its credential, then lets an armed
+fault answer, and only then applies `RequireAuth`, so a fault is observable even
+on a request that would fail auth. Faults win in the order redirect, status,
+hang, stall; over ssh only a hang, a stall and `ServeCommit` apply. In the
+zero-value `Capabilities` a deepen is a bad request and a want that is not an
+advertised tip gets an `ERR` line, never a silently served full pack. A test
+arming a hang or a stall must end the request itself, as with fakegalaxy.
+
+The collections suite drives its pipeline through an in-memory
+`gitsource.Client` double with no transport at all
 (`git_fake_client_test.go`, with `git_fake_roles_test.go` supplying
 `AcquireRole` over role trees built from `internal/testing/faketree`), and
 leaves the transport to `internal/galaxy/gitfetch`'s own tests against fakegit,
@@ -348,9 +519,59 @@ override for the budget tests. `internal/galaxy/treearchive`,
 `internal/galaxy/galaxyv1` each carry their own tests beside the code; none of
 the six source audits changed for roles.
 
+**The S3 lock tests wait on events, never on elapsed time.** `testLockTiming`
+shrinks the lock's own intervals, but the client's retry policy cannot be
+shrunk, and one jittered backoff can outlast a heartbeat, so a test waits on
+something observable - `waitForLockEvent` over the fake's request count, or the
+holder context closing - and every wait ceiling is a liveness bound, so a slow
+machine only slows a test down. A fault meant to reach a caller's error branch
+is armed with `failNext` for `s3RetryMaxAttempts` requests or indefinitely
+(`-1`); a smaller one is absorbed by the retry, and the test passes with the
+branch untested. Race tests force their interleavings rather than sample them:
+the interference runs inside the handler after the fake has written its
+response, and the fake never flushes a HEAD response, so the client sees it
+strictly afterwards; the one statistical race test carries a positive control,
+so a machine whose timing falls outside its sweep fails instead of passing. A
+transport that strips cancellation (`answeredDespiteCancelTransport`) belongs
+only on a fixture that answers every request: on one that hangs a request on
+purpose, the caller's cancellation is the only thing that ends it. `fakeS3`
+never verifies SigV4, so signing correctness rests on
+`TestRequestURLSignedPathMatchesSentPath` and `TestAwsURIEncodeMatchesS3`.
+
 There is exactly one `testdata` directory, under `internal/galaxy/signature`,
 holding keyrings and a family of detached signatures covering the valid,
-expired, revoked, outsider and malformed cases.
+expired, revoked, outsider and malformed cases. It is committed gpg 2.5.21
+output, never generated at test time (key generation is slow and needs
+gpg-agent), made in throwaway `GNUPGHOME`s with `--batch`, loopback pinentry
+and an empty passphrase. It holds public material only, with one exception:
+`secret.gpg`, `secret.asc` and `secret-public.asc` are a discardable key that
+signs nothing, is trusted by nothing, and exists only to prove `LoadKeyring`
+refuses secret key material.
+
+Every key is `gpg --quick-generate-key '<uid>' ed25519 sign never`, except the
+expired one (`sign seconds=10`). `public.asc` and `second.asc` are exports of
+two separate keys, and `two-keys.asc` is the two concatenated, which relies on
+gpg's trailing newline. The signatures are `gpg -u <key> --detach-sign
+[--armor]` over `manifest-a.json` or `manifest-b.json`, which differ only in
+their declared version; `sig-a-badarmor.asc` and `sig-a-badbase64.asc` are
+edited copies of `sig-a-valid.asc` rather than signatures. A regenerated
+set must keep what the tests read from the bytes: the expired key signs and is
+exported inside its ten-second window, and `sig-a-expsig.asc` carries a
+five-second signature expiry, so `EXPKEYSIG` and `EXPSIG` do not depend on the
+test machine's clock; the revoked key has its revocation certificate imported
+before export; `keyring.asc` holds the signer, second signer, expired and
+revoked keys but not the outsider, which is what produces `NO_PUBKEY`; and
+`signing-subkey.asc`, a key given a signing subkey by `gpg --quick-add-key`, is
+the only material carrying an embedded primary-key-binding signature. Shapes
+gpg does not write are spelled in `verify_test.go`'s `synthesizedBlobs` instead
+of committed.
+
+Adding a packet-bearing fixture also means listing it in `framing_test.go`'s
+`gatedFixtures` and restating `committedPacketMeasurements` there, plus
+`largestFixtureHeaderSection` when the fixture carries armor header lines.
+The fuzz target caps allocation at a floor plus a per-byte ratio of the input;
+if a legitimate input ever exceeds it, raise the constant and record the
+measurement, never add a special case for the input.
 
 ## The benchmark harness
 
@@ -378,7 +599,6 @@ scenarios are dropped with a warning, rather than failing the run,
 when the endpoint does not answer, so the local scenarios still run on a machine
 with no container runtime.
 
-
 Knobs and defaults: `RUNS=5`, `WARMUP=1`, `SIZES="1 10 100"`,
 `SCENARIOS="cold warm frozen s3-cold s3-warm s3-frozen roles-cold roles-warm"`,
 `S3_ENDPOINT=http://127.0.0.1:9000`, plus the bucket and credentials.
@@ -399,8 +619,8 @@ recorded. See [Benchmarks](benchmarks.md) for the published numbers.
 `cmd/go-galaxy-benchmark` is the same comparison as a Go binary, narrowed to
 collections in `cold` and `warm` with no S3. What it measures and what its
 output looks like is written up once, in
-[Benchmarks](benchmarks.md#go-galaxy-benchmark); what follows is only how to
-run it from a checkout.
+[Benchmarks](benchmarks.md#go-galaxy-benchmark); what follows is how to run it
+from a checkout and what a run does with its environment and its failures.
 
 ```bash
 just build
@@ -415,6 +635,15 @@ dist/go-galaxy-benchmark show --report /var/tmp/gg-bench/report.json --format sv
 
 `--work-dir` should be on real disk. The workload is mostly inode creation, and
 a run on tmpfs describes no storage anyone deploys on.
+
+The harness overrides only the variables it sets itself - `GO_GALAXY_CACHE_DIR`
+and `TMPDIR` for go-galaxy - so any other `GO_GALAXY_*` in your shell still
+reaches the measured binary: an exported `GO_GALAXY_S3_BUCKET` turns the run
+into an S3 run. Every measured command gets a closed stdin, so a tool that
+prompts exits on EOF instead of looking hung. A failing run is counted in the
+report's `failed` field, with its `last_error`, and left out of `samples_ms`
+rather than ending the series; an interrupt ends the whole measurement and
+writes no report.
 
 ## Dependencies
 
@@ -445,10 +674,87 @@ tidy` is the one whose absence is deliberate rather than incidental: a release
 must build the dependency set that was committed and reviewed, and tidy would
 rewrite it in the one build that gets published.
 
+**A Go toolchain bump can fail tests with no code change.** `compress/flate`
+output is outside Go's compatibility promise, so `collectionbuild`'s
+`TestBuildGoldenDigest`, the one test pinning the gzip header and the lead
+documents' encoding, can move on its own. If `TestBuildStructure` and
+`rolebuild`'s `TestBuildArtifactShape` still pass, only the deflate bytes moved
+and the new digest is the fix; if they fail too, the writer changed the
+artifact's shape. A change in what `archive/tar` reads before its first header
+fails the [probe ceiling test](#internalgalaxyarchive---the-probe-decompressor)
+instead.
+
+**The solver mirrors Masterminds/semver.** `internal/galaxy/solver`'s
+`versetbuild.go` replicates the pinned release's constraint grammar - its
+regexes, range rewriting and each comparator's branch structure, quirks
+included - while
+`semver.NewConstraint` stays the sole accept/reject authority. After a semver
+bump, `TestVerSetDifferentialAgainstCheck` and `TestVerSetGroundTruthRows` hold
+set membership to bug-for-bug agreement with `Check`; a divergence is a builder
+bug to fix in `versetbuild.go`, never a reason to weaken the test's authority.
+
+**The signature framing gate rests on go-crypto behavior**, which
+`framing_test.go` measures rather than assumes: every packet is read to exactly
+the end the gate computes, even on a failed parse; its length encodings agree
+with go-crypto's header reader; an MPI stays sized by its two-octet bit length;
+and allocation stays linear in the packet. After a go-crypto bump, a failure
+there means a premise of the gate changed - investigate it before moving any
+ceiling constant. v5 signatures and v5 secret keys are refused before a length
+is read only because go-crypto's `!v5` build constraint sets
+`packet.V5Disabled`, so
+go-galaxy must never be built with `-tags v5` (`TestV5ParsingStaysDisabled`).
+
+## Sentinel errors and exit codes
+
+`cmd/go-galaxy/exitcode` picks the [exit code](exit-codes.md) by matching
+sentinels with `errors.Is`, class by class, and checks cancellation before
+anything else. Which sentinel a producer wraps with `%w` therefore decides the
+class.
+
+A sentinel naming a condition this program or a remote drove - a stalled read,
+the artifact, metadata, state-object and signature-fetch deadlines, a lost cache
+lock - renders its context cause with `%v`, never `%w`. That cause is usually
+`context.Canceled`, since the read watchdog cancels its own context to unblock a
+read and a lost lock cancels the holder context, and wrapping it would report a
+stalled server or a stolen lock as a Ctrl-C. `ErrSignatureSourceUnavailable`,
+which wraps its transport cause with `%w`, is the one deliberate exception. A
+deadline sentinel is applied only when the parent context is live and the
+operation's own budget expired; the metadata and state-object deadlines also
+require the error to carry a context error, so an HTTP status error that raced
+the budget keeps its identity.
+
+Several reclassifications are deliberate. `ErrEmptyGzipMember` belongs to no
+predicate: each reader wraps it into its own class - the shape probe's
+`ErrArtifactNotTarGz`, the install aggregation's exit 5, the S3 backend's
+`ErrCorruptStateObject` - and claiming it in the artifact-shape predicate would
+report a corrupt S3 snapshot as an install failure on a run that installed
+nothing. The S3 backend renders `ErrResponseTooLarge` with `%v` when it reports
+an oversized state object, which would otherwise match exit 4 and exit 9 at
+once, and `ErrGitArtifactSelfCheck` carries its cause as text so a builder
+defect is not reported as the remote's integrity failure.
+
+The exit-code tests are closed tables, and nothing enumerates the sentinels in
+`helpers`: a new sentinel needs both a predicate and a row in the matching
+table, or it silently exits 1. Those deliberately left at 1 are listed in
+`genericSentinels` with their reason. The sentinels `internal/galaxy/extracted`
+exports are not classified by name either, because every path that raises one
+runs inside an install or warm worker, whose failures arrive behind
+`ErrInstallationFailed`; one raised outside a worker would exit 1. The tables
+build the `%v`-rendered shapes themselves, so a producer switching to `%w` is
+caught only by the producer's own tests
+(`TestMixedDripAndStallDoesNotClassifyAsInterrupt`, `TestLockLostError`).
+
+The index `go-galaxy --help` prints uses the leading phrase of each class's row
+in [Exit codes](exit-codes.md). Its test derives the codes from the `exitcode`
+constants, so a renumbering fails it, but the phrases are literals nothing
+compares with the document: changing a row's leading phrase means editing the
+root command's description and that test by hand.
+
 ## Conventions
 
-- Package doc comments here are load-bearing and unusually thorough. Read the
-  package comment before editing a package, and keep it true afterwards.
+- A comment is at most three lines, package doc comments included; the
+  reasoning behind a package lives in [How it works](architecture.md) and
+  [Security](security.md). Keep both true after a change.
 - Comments state constraints and reasons, not narration.
 - Only hyphen-minus, everywhere, enforced by test.
 - `README.md` is an index; reference material lives in `docs/`. A behavior

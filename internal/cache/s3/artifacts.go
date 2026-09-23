@@ -22,11 +22,9 @@ type Artifacts struct {
 	tmpBase string
 }
 
-// Meta returns key's cached metadata via a single HEAD request, without ever
-// downloading the artifact body - see cacheManager.ArtifactStore's own doc
-// comment for the tri-state contract this implements. It shares its HEAD
-// with Has via headArtifact, so presence has exactly one implementation on
-// this backend, and only Meta itself pays for parsing the response headers.
+// Meta returns key's cached metadata from one HEAD request, never the body,
+// per cacheManager.ArtifactStore's tri-state contract. It shares headArtifact
+// with Has so presence has one implementation on this backend.
 func (s *Artifacts) Meta(ctx context.Context, key string) (map[string]string, bool, error) {
 	headers, found, err := s.headArtifact(ctx, key)
 	if err != nil || !found {
@@ -35,22 +33,17 @@ func (s *Artifacts) Meta(ctx context.Context, key string) (map[string]string, bo
 	return metaFromHeaders(headers), true, nil
 }
 
-// Has reports whether the artifact exists in S3, sharing headArtifact with
-// Meta so presence has exactly one implementation on this backend: a caller
-// that only needs presence (isCacheHit, the prefetch scan) pays for the same
-// one HEAD Meta issues, without also paying for the metadata-header parse
-// only Meta's own caller needs - an unconditional map allocation plus a
-// strings.ToLower per response header, on a hot path both isCacheHit and the
-// prefetch scan run for every collection.
+// Has reports whether the artifact exists in S3 with the same single HEAD
+// Meta issues, skipping the header parse: isCacheHit and the prefetch scan
+// call it for every collection.
 func (s *Artifacts) Has(ctx context.Context, key string) (bool, error) {
 	_, found, err := s.headArtifact(ctx, key)
 	return found, err
 }
 
 // Fetch downloads an artifact from S3 into a temporary file. The returned
-// file's SHA carries the sha256 this method computed over the downloaded
-// bytes while writing them - the same digest verifyArtifactSHA checks against
-// the object's metadata sidecar.
+// SHA is computed over the downloaded bytes and checked by verifyArtifactSHA
+// against the object's recorded sha256.
 func (s *Artifacts) Fetch(ctx context.Context, key string) (cacheManager.ArtifactFile, error) {
 	if s.client == nil {
 		return cacheManager.ArtifactFile{}, errS3ClientNil
@@ -81,32 +74,9 @@ func (s *Artifacts) Fetch(ctx context.Context, key string) (cacheManager.Artifac
 	}, nil
 }
 
-// verifyArtifactSHA compares a fetched object's real sha256 (computed by this
-// process, hence hex.EncodeToString - always lowercase) against the object's
-// metadata sidecar. The comparison is exact (==), not strings.EqualFold: a
-// case-only difference is a rejection, not a match. Lowercase hex is the
-// only shape anything in this program ever writes - hex.EncodeToString at
-// every producer, including this package's own Commit and hashReader - and
-// the local backend (local.Artifacts.Fetch) requires exactly that shape on
-// its own sidecar too, so this exact comparison is what keeps this backend
-// from being the only place in the program still willing to accept a second,
-// uppercase spelling. That spelling has nowhere to go: helpers.IsSHA256Hex
-// gates resolveArtifactSHA, so a digest accepted here but rejected there
-// fails the install with helpers.ErrMalformedArtifactSHA256, which is
-// deliberately outside the evict-and-refetch class - every run against such
-// an object would fail identically, with no recovery. Rejecting it here
-// instead is what turns that dead end into the recoverable path described
-// below. The exact comparison is also the only place in this file where the
-// case distinction matters: an uppercase actual can never happen (this
-// process's own hex.EncodeToString), so the entire discriminating power is on
-// expected, the metadata read back from the object.
-//
-// The rejection is deliberately still classified as helpers.ErrSHA256Mismatch,
-// not helpers.ErrMalformedArtifactSHA256: prepareWithRecovery's
-// prepareInstall-error arm retries exactly on ErrSHA256Mismatch, so a
-// case-only mismatch evicts the object and refetches it, and the refetch
-// re-commits canonical lowercase metadata via this package's own Commit -
-// clearing the condition in one online run instead of failing forever.
+// verifyArtifactSHA compares the fetched bytes' lowercase sha256 exactly (not
+// EqualFold) with the recorded one; a mismatch, case-only included, is
+// ErrSHA256Mismatch, which install recovers by evicting and refetching.
 func verifyArtifactSHA(meta map[string]string, sum []byte) error {
 	if meta == nil {
 		return nil
@@ -119,10 +89,8 @@ func verifyArtifactSHA(meta map[string]string, sum []byte) error {
 	if actual == expected {
 		return nil
 	}
-	// Wrap both the package-local sentinel (kept for any existing callers
-	// that already match on it) and helpers.ErrSHA256Mismatch, so the
-	// collections layer can classify this as a recoverable cache-integrity
-	// failure without importing s3-specific error types.
+	// helpers.ErrSHA256Mismatch lets the collections layer classify this as
+	// recoverable without importing s3-specific error types.
 	return fmt.Errorf("%w: %w: %s != %s", errArtifactSHA256Mismatch, helpers.ErrSHA256Mismatch, actual, expected)
 }
 
@@ -252,14 +220,9 @@ func (s *Artifacts) downloadToFile(ctx context.Context, key string, file *os.Fil
 	writer := io.MultiWriter(file, hasher)
 	limited := helpers.NewSizeLimitedReader(resp.Body, helpers.ArtifactMaxDownloadSize)
 	if _, err := io.Copy(writer, limited); err != nil {
-		// helpers.ErrResponseTooLarge is a bare size ceiling shared with three
-		// other capped surfaces, so it is wrapped here naming this one. Without
-		// the wrap this is the only capped body that does not identify itself,
-		// leaving an operator to infer it from the absence of the other labels -
-		// which fails exactly where it matters, since a metadata re-resolution
-		// inside an install worker prints under the same per-collection line.
-		// Deliberately uncovered: ArtifactMaxDownloadSize is 4 GiB, so tripping
-		// the ceiling end to end is impractical rather than merely inconvenient.
+		// helpers.ErrResponseTooLarge is shared by several capped surfaces, so
+		// the wrap names this one; the 4 GiB ceiling is too large to trip in a
+		// test.
 		return nil, nil, fmt.Errorf("cached artifact object: %w", err)
 	}
 	return metaFromHeaders(resp.Header), hasher.Sum(nil), nil

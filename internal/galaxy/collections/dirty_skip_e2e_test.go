@@ -1,11 +1,8 @@
 package collections_test
 
-// This file proves the WIRING of the clean-save skip decorator through
-// collections.Start's real initInstall, end to end against a real local
-// backend and a real fake Galaxy server. Nothing in internal/galaxy/store's
-// or internal/galaxy/cache's own unit tests for the flag and the decorator
-// drives Start at all, so nothing there proves initInstall actually wraps
-// its backend with cacheManager.WithCleanSaveSkip.
+// Proves collections.Start's initInstall really wraps its backend with
+// cacheManager.WithCleanSaveSkip, end to end against a real local backend;
+// the store and cache unit tests never drive Start.
 
 import (
 	"context"
@@ -16,11 +13,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/collections"
 )
 
-// reloadLastSnapshot opens a fresh local backend against cacheDir, loads the
-// persisted store, and returns its Meta.LastSnapshot, closing the backend
-// before returning. It never reuses a backend collections.Start itself
-// touched, so each call is an independent observation of what is actually on
-// disk after that run finished.
+// reloadLastSnapshot returns Meta.LastSnapshot as persisted in cacheDir,
+// through a fresh local backend so each call observes what is on disk.
 func reloadLastSnapshot(t *testing.T, cacheDir string) time.Time {
 	t.Helper()
 	ctx := context.Background()
@@ -37,17 +31,9 @@ func reloadLastSnapshot(t *testing.T, cacheDir string) time.Time {
 	return st.MetaSnapshot().LastSnapshot
 }
 
-// TestIdleInstallDoesNotRewriteTheSnapshot proves that a second install run
-// against an already-fully-satisfied cache leaves the persisted snapshot's
-// LastSnapshot untouched, and that a run which genuinely has something new to
-// resolve still advances it. A first install populates the cache and stamps
-// a LastSnapshot; a second, entirely idle install - identical
-// requirements.yml, identical server, nothing left to resolve or install -
-// must leave that stamp exactly as it was; the positive control - a real
-// requirements.yml change that forces a fresh resolve - must advance it,
-// proving the unchanged stamp above is a genuine observation of "this run
-// wrote nothing", not an artifact of the snapshot never being reloaded at
-// all.
+// TestIdleInstallDoesNotRewriteTheSnapshot pins that an idle second install
+// leaves the persisted LastSnapshot untouched, while a real requirements
+// change, the positive control, advances it.
 func TestIdleInstallDoesNotRewriteTheSnapshot(t *testing.T) {
 	f := newE2EFixture(t)
 

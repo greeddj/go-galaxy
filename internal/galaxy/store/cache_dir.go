@@ -35,13 +35,9 @@ func ClearCacheFiles(cacheDir string) error {
 	return nil
 }
 
-// SweepDownloadTemps removes leftover download-temp files
-// (helpers.ArtifactDownloadTempPrefix) from the top level of cacheDir. These
-// are created by the local artifact store's TempFile during a download and
-// removed by its cleanup on success or failure; only a hard-killed run leaves
-// them behind. It matches the temp prefix exclusively, so committed .tar.gz
-// artifacts, sidecars, the Bolt databases, and the lock file are never
-// touched. A missing cacheDir is not an error.
+// SweepDownloadTemps removes the download-temp files a hard-killed run left at
+// the top level of cacheDir. It matches helpers.ArtifactDownloadTempPrefix only,
+// so artifacts, sidecars, the Bolt database and the lock file are never touched.
 func SweepDownloadTemps(cacheDir string) error {
 	entries, err := os.ReadDir(cacheDir)
 	if err != nil {
@@ -78,16 +74,9 @@ func shouldDeleteCacheFile(name string) bool {
 		strings.HasSuffix(name, helpers.ArtifactSHASidecarSuffix)
 }
 
-// isDeleteCacheName reports whether name is a file that is always safe to
-// remove on --clear-cache. This is the nine per-bucket snapshot files from
-// the pre-consolidation layout: the snapshot store now lives entirely in
-// the single Bolt database named by helpers.StoreDBLocal, so these nine
-// legacy files are never opened anymore and any that remain on disk are
-// orphans from an older binary that can be reclaimed unconditionally. The
-// active lock file is deliberately excluded: unlinking a lock file while
-// another process still holds its flock lets a third process create a new
-// inode at the same path and flock it too, so two processes would both
-// believe they hold the lock.
+// isDeleteCacheName reports whether name is one of the nine per-bucket snapshot
+// files an older binary wrote, orphans that --clear-cache always reclaims. The
+// lock file is not one: unlinking it while flocked lets two runs hold the lock.
 func isDeleteCacheName(name string) bool {
 	deleteList := []string{
 		helpers.StoreSnapshotMeta,
@@ -103,10 +92,9 @@ func isDeleteCacheName(name string) bool {
 	return slices.Contains(deleteList, name)
 }
 
-// isKeepCacheName reports whether name is a live artifact of the current
-// (consolidated) cache layout that --clear-cache must never remove: the
-// single Bolt snapshot database, the active lock file, and the project
-// registry that cleanup relies on.
+// isKeepCacheName reports whether name is a live file --clear-cache must never
+// remove: the Bolt snapshot, the lock file (see isDeleteCacheName) and the
+// project registry cleanup relies on.
 func isKeepCacheName(name string) bool {
 	keepList := []string{
 		helpers.StoreDBLocal,

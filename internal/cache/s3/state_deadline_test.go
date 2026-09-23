@@ -1,44 +1,8 @@
 package s3
 
-// This file covers cacheManager.WithStateDeadline against this package's own
-// backend and fake: a numeric relation pin between helpers.StateObjectDeadline
-// and this package's lock timings, and the only end-to-end evidence
-// available that the decorator actually bounds a real *Backend.LoadStore
-// against a dripping GET.
-//
-// Each test below was verified against a real revert of the production
-// change it pins, and this comment quotes the actual observed output:
-//
-//   - TestStateDeadlineBoundsADrippingSnapshotRead, calling b.LoadStore(ctx)
-//     directly instead of through cacheManager.WithStateDeadline, hangs
-//     rather than fails - run with a bounded -timeout so the harness kills
-//     it instead of blocking the suite forever, observed as:
-//     "panic: test timed out after 5s
-//     running tests:
-//     TestStateDeadlineBoundsADrippingSnapshotRead (5s)"
-//     with the stuck goroutine's frame at
-//     "github.com/greeddj/go-galaxy/internal/cache/s3.(*fakeS3).driveDripGet(...)"
-//     serving the never-ending drip, reached through
-//     "github.com/greeddj/go-galaxy/internal/cache/s3.(*Backend).readObject(...)"
-//     and "github.com/greeddj/go-galaxy/internal/cache/s3.(*Backend).LoadStore(...)"
-//     in the same trace.
-//
-// DELIBERATELY NOT TESTED here, and said so rather than hidden: the
-// fleet-level consequence of a stalled state read (every other runner
-// sharing the bucket locked out until its own lockWaitCeiling wait expires)
-// is the motivation for this whole item, not an assertable behavior in a unit
-// or integration test - TestStateObjectDeadlineFitsInsideTheLockTimings pins
-// its numeric form instead. Also deliberately not tested: whether
-// s3Retryable needs a change for a budget expiry inside getObject's own
-// retry loop. It does not, and this was verified by reading rather than by
-// adding a duplicate test: a budget expiry there fires while req.Context()
-// already reports the expired budget, so Client.do returns the raw
-// context-carrying error unlabeled rather than wrapped as errS3TransportFailed
-// (see Client.do's own "one race is resolved deliberately" paragraph), and
-// s3Retryable's default-deny - it matches none of ErrReadStalled,
-// ErrResponseTooLarge, errS3TransportFailed, or *retryableStatusError - treats
-// an unlabeled error as terminal, so a state-object deadline expiring
-// mid-retry cannot cause getObject to spend a second attempt.
+// These tests pin cacheManager.WithStateDeadline against this package's
+// backend: its relation to the lock timings, and that it bounds a real
+// LoadStore against a dripping GET.
 
 import (
 	"context"
@@ -56,32 +20,13 @@ import (
 const stateDeadlineDripBudget = 300 * time.Millisecond
 
 // stateDeadlineCompletionMargin is the budget the positive control's whole
-// LoadStore has to fit inside, which is not one round trip: a lazy Open's
-// bucket HEAD and both halves of its conditional-PUT probe, then the object GET
-// and the inflate behind it. That is why it is larger than this package's other
-// completion margins rather than equal to them. freshCreateCompletionMargin
-// holds why a budget that must fire and a budget a call must fit inside cannot
-// be one constant.
+// LoadStore must fit inside: a lazy Open's bucket HEAD and conditional-PUT
+// probe, then the GET and inflate, so it exceeds the other completion margins.
 const stateDeadlineCompletionMargin = 30 * time.Second
 
-// TestStateObjectDeadlineFitsInsideTheLockTimings is a relation pin, not a
-// behavior test: it asserts the numeric ordering
-// helpers.StateObjectDeadline's own doc comment claims relative to this
-// package's lock timings - StateObjectDeadline < heartbeatInterval < lockTTL,
-// and 3*StateObjectDeadline < lockWaitCeiling, where 3 is the number of state
-// operations one run performs while holding the lock on either path: install
-// spends LoadStore (initInstall) + RecordProject (recordProjectUnlessDryRun)
-// + SaveStore (finalizeInstall); cleanup spends LoadStore + LoadProjectRegistry
-// (both in initCleanup) + SaveStore (finalizeCleanup) - three either way. This
-// undercounts one verb, deliberately: Backend.RecordProject itself calls
-// LoadProjectRegistry internally before its own PUT, so the single
-// WithStateDeadline budget wrapping one RecordProject call actually covers a
-// GET+PUT pair, not one verb - correct as designed (the whole point of one
-// budget per Backend-seam call, not per HTTP verb), but worth remembering
-// here since it means the real per-call-site cost this 3x/60s arithmetic
-// bounds can include two S3 round trips under a single "operation". A
-// violation of the assertions below would mean the state-object budget could
-// itself starve the lock protocol it exists to protect.
+// TestStateObjectDeadlineFitsInsideTheLockTimings pins StateObjectDeadline <
+// heartbeatInterval < lockTTL and 3*StateObjectDeadline < lockWaitCeiling, 3
+// being how many state operations a locked install or cleanup performs.
 func TestStateObjectDeadlineFitsInsideTheLockTimings(t *testing.T) {
 	t.Parallel()
 	if helpers.StateObjectDeadline >= heartbeatInterval {
@@ -97,16 +42,9 @@ func TestStateObjectDeadlineFitsInsideTheLockTimings(t *testing.T) {
 	}
 }
 
-// TestStateDeadlineBoundsADrippingSnapshotRead stands up a real *Backend
-// against this package's in-memory fake, seeds a real store object, then
-// arms a drip on that object's GET body: cacheManager.WithStateDeadline
-// turns the resulting hang into helpers.ErrStateObjectDeadline (matching
-// neither context sentinel through errors.Is) instead of blocking for as
-// long as the caller's own context allows. This is the only end-to-end
-// evidence available for this decorator against a real S3 backend, since
-// this package's fake is unexported and unreachable from
-// internal/galaxy/collections - the same limitation
-// s3_cache_recovery_test.go records for its own fixture.
+// TestStateDeadlineBoundsADrippingSnapshotRead pins that WithStateDeadline
+// turns a real LoadStore hung on a dripping GET into ErrStateObjectDeadline,
+// which matches neither context sentinel.
 func TestStateDeadlineBoundsADrippingSnapshotRead(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -128,11 +66,8 @@ func TestStateDeadlineBoundsADrippingSnapshotRead(t *testing.T) {
 	}
 }
 
-// TestStateDeadlineBoundsADrippingSnapshotReadPositiveControl is the
-// positive control for the test above: the identical fake with no drip
-// armed decodes a real store through the same wrapper and the same budget,
-// proving the budget is not itself what would fail an ordinary load against
-// this fixture.
+// TestStateDeadlineBoundsADrippingSnapshotReadPositiveControl pins that the
+// same fake with no drip armed loads a real store through the same wrapper.
 func TestStateDeadlineBoundsADrippingSnapshotReadPositiveControl(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)

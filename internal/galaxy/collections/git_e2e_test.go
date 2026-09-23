@@ -25,12 +25,9 @@ const (
 	gitNoCommit = ""
 )
 
-// gitFixture is the collections suite's git scenario: a fakegalaxy for
-// transitive Galaxy dependencies, an in-memory git client with one
-// single-collection repository (acme.app, depending on acme.lib from Galaxy)
-// and one multi-collection repository (acme.one and acme.two under
-// collections/), and a config pointing at a requirements file the test
-// writes.
+// gitFixture is the suite's git scenario: a fakegalaxy serving acme.lib, a fake
+// git client holding acme.app (depending on acme.lib) and a repository with
+// acme.one and acme.two under collections/, and a config over them.
 type gitFixture struct {
 	galaxy       *fakegalaxy.Server
 	git          *fakeGitClient
@@ -120,11 +117,9 @@ func (f *gitFixture) mustInstall(t *testing.T) {
 	}
 }
 
-// TestGitInstallFromRepository proves the whole pipeline for one git root:
-// discovery resolves HEAD, the built artifact is committed under its locator
-// key, the collection and its Galaxy dependency install, the record and the
-// sidecar carry the git provenance, and a rerun replays the pin without
-// touching the remote and skips the install.
+// TestGitInstallFromRepository asserts the whole pipeline for one git root:
+// artifact under its locator key, record and sidecar with git provenance,
+// Galaxy dependency installed, and a rerun that never touches the remote.
 func TestGitInstallFromRepository(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)
@@ -183,10 +178,9 @@ func TestGitRefShapes(t *testing.T) {
 	}
 }
 
-// TestGitMultiCollectionRepository proves a repository whose collections sit
-// in immediate children expands into every one of them, with an
-// intra-repository dependency resolved from the pins and no Galaxy call for
-// it, and that naming one of them installs that one alone.
+// TestGitMultiCollectionRepository asserts a repository with collections in
+// immediate children installs all of them with no Galaxy call for their
+// mutual dependency, and that naming one installs that one alone.
 func TestGitMultiCollectionRepository(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)
@@ -211,10 +205,9 @@ func TestGitMultiCollectionRepository(t *testing.T) {
 	}
 }
 
-// TestGitRootOwnsTheFQDN proves the git pin is the single candidate for its
-// fqdn: a Galaxy dependency constraint it satisfies is met from git with no
-// Galaxy lookup for that fqdn, and one it cannot satisfy is a resolution
-// failure with a proof, never a silent substitution from Galaxy.
+// TestGitRootOwnsTheFQDN asserts the git pin is the single candidate for its
+// fqdn: a Galaxy dependency constraint it satisfies is met from git, and one it
+// cannot is a resolution failure, never a substitution from Galaxy.
 func TestGitRootOwnsTheFQDN(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)
@@ -301,10 +294,9 @@ func assertFrozenMissRefetchesPin(t *testing.T, f *gitFixture) {
 	}
 }
 
-// TestGitOfflineAndRefresh proves --offline replays a recorded pin and fails
-// a cold one, and that --refresh re-advertises a branch: unchanged, the pin
-// stands without a fetch; moved, the new commit is acquired and installed
-// over the old tree.
+// TestGitOfflineAndRefresh asserts --offline replays a recorded pin and fails a
+// cold one, and --refresh re-advertises a branch: unmoved, the pin stands with
+// no fetch; moved, the new commit is acquired and installed.
 func TestGitOfflineAndRefresh(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)
@@ -406,11 +398,9 @@ func TestGitFailuresKeepTheirClass(t *testing.T) {
 	}
 }
 
-// TestGitExplicitNameDoesNotPinSiblings proves a repository's other
-// collections stay out of the solver when the requirements file names one of
-// them: a Galaxy root with a sibling's fqdn resolves from Galaxy, with the
-// version Galaxy holds, rather than being silently satisfied from the
-// repository.
+// TestGitExplicitNameDoesNotPinSiblings asserts that naming one collection of a
+// repository keeps its siblings out of the solver: a Galaxy root for a
+// sibling's fqdn resolves from Galaxy rather than from the repository.
 func TestGitExplicitNameDoesNotPinSiblings(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)

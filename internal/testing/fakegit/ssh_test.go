@@ -15,10 +15,9 @@ import (
 // does not check it.
 const sshUser = "git"
 
-// sshFixture stands the ssh half up for one test, authorizes a fresh key
-// and points SSH_KNOWN_HOSTS at the listener's host key. It uses t.Setenv,
-// so its tests cannot run in parallel; ALL_PROXY is cleared because go-git
-// dials ssh through golang.org/x/net/proxy, which honors it.
+// sshFixture stands the ssh half up with a fresh authorized key. It sets
+// SSH_KNOWN_HOSTS through t.Setenv, so its tests run serially, and clears
+// ALL_PROXY since go-git dials ssh through golang.org/x/net/proxy.
 type sshFixture struct {
 	signer ssh.Signer
 	ssh    *SSHServer

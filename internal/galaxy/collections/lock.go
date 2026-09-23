@@ -14,10 +14,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// buildLockfile assembles a lockfile from a resolved set and its graph.
-// Artifact SHAs come from version metadata which the resolver has already
-// cached, so this only does a metadata fetch (likely a 304 ETag hit) per
-// collection rather than downloading tarballs.
+// buildLockfile assembles a lockfile from a resolved set and its graph. A
+// Galaxy entry's sha256 comes from version metadata the resolver already
+// cached, so each costs a metadata fetch (likely a 304), never a tarball.
 func buildLockfile(
 	ctx context.Context,
 	deps collectionDeps,
@@ -32,21 +31,9 @@ func buildLockfile(
 	}
 	entries := make([]lockfile.Entry, 0, len(resolved))
 	for fqdn, col := range resolved {
-		// col.Version crosses the identical snapshot trust boundary the sha
-		// guard below does: it comes from a resolved map that a fresh solve
-		// always fills with an exact version, but can also come from a
-		// persisted snapshot's ResolvedEntry (see buildResolvedSnapshot,
-		// deliberately left lenient) reused across a run with an unchanged
-		// requirements hash. Rejecting a non-exact value here, before it is
-		// ever written to the lockfile, means a poisoned snapshot can never
-		// get a constraint string like "*" committed as a pin every later
-		// --frozen install would then treat as an unresolved collection and
-		// silently install the server's highest version instead. Checked
-		// before loadCollectionMetadata, not after: buildCollectionsMap's own
-		// validate-before-you-act ordering applies here too, since col.Version
-		// is already known and does not need a network round trip to check -
-		// a poisoned snapshot entry buys no metadata fetches, under the
-		// backend's whole-run exclusive lock, before this fails closed.
+		// col.Version may come from a reused, lenient snapshot entry; a pin
+		// like "*" would make --frozen install the server's highest. Checked
+		// before any metadata fetch, so a poisoned entry buys no request.
 		if !helpers.IsExactVersion(col.Version) {
 			return nil, fmt.Errorf("lockfile: %s: %w: %q", fqdn, helpers.ErrInvalidCollectionVersion, col.Version)
 		}
@@ -61,20 +48,9 @@ func buildLockfile(
 		if err != nil {
 			return nil, fmt.Errorf("lockfile: %s: %w", fqdn, err)
 		}
-		// A non-empty sha here is raw Galaxy API JSON a server controls, the
-		// same trust boundary resolveArtifactSHA validates - and lock is the
-		// command that manufactures the pin every later --frozen install
-		// trusts. Rejecting a non-canonical value here, before it is ever
-		// written to the lockfile, means a poisoned or lying server can
-		// never get its bad digest committed to version control in the
-		// first place; catching it only at install time would still be
-		// fail-closed, but with the wrong error class for what actually
-		// went wrong. An empty sha is left alone: verifyPinnedSHA treats an
-		// empty pin as no pin at all, which is what keeps a server that
-		// does not publish digests usable, and weakening that here would
-		// break every such server. This guard cannot be hoisted above
-		// loadCollectionMetadata the way the version guard above was: sha
-		// comes from meta, which the network call itself produces.
+		// The sha is server-controlled and becomes the pin --frozen trusts, so
+		// a non-canonical one is refused before it is written. An empty sha is
+		// kept: verifyPinnedSHA reads it as no pin, for digest-less servers.
 		sha := strings.TrimSpace(meta.Artifact.Sha256)
 		if sha != "" && !helpers.IsSHA256Hex(sha) {
 			return nil, fmt.Errorf("lockfile: %s: %w: %q", fqdn, helpers.ErrMalformedArtifactSHA256, sha)
@@ -111,12 +87,9 @@ func sourceLockfileEntry(fqdn string, col collection, graph map[string][]string)
 	}
 }
 
-// gitLockfileEntry renders a git collection's pin: the repository URL as its
-// source, the ref the requirements file asked for, the commit it resolved to
-// and the subdir it was built from, and no sha256 (see lockfile.Entry for
-// why). The locator is taken apart rather than written as-is so the file a
-// human reviews names the repository, not an internal key. No metadata fetch
-// happens: everything a git entry records was settled at discovery.
+// gitLockfileEntry renders a git collection's pin: repository URL, the ref as
+// asked, commit and subdir, and no sha256 (see lockfile.Entry). The locator is
+// taken apart so the reviewed file names the repository, not an internal key.
 func gitLockfileEntry(fqdn string, col collection, graph map[string][]string) (lockfile.Entry, error) {
 	loc, err := col.gitLocator()
 	if err != nil {
@@ -143,12 +116,9 @@ func gitLockfileEntry(fqdn string, col collection, graph map[string][]string) (l
 	}, nil
 }
 
-// urlLockfileEntry renders a url collection's pin: the tarball URL as its
-// source and the origin bytes' sha256 - a real digest, required where a git
-// entry's is refused (see lockfile.Entry). The locator is taken apart rather
-// than written as-is so the file a human reviews names the URL, not an
-// internal key. No metadata fetch happens: everything a url entry records
-// was settled at discovery.
+// urlLockfileEntry renders a url collection's pin: the tarball URL and the
+// origin bytes' sha256, required where a git entry's is refused (see
+// lockfile.Entry). Everything it records was settled at discovery.
 func urlLockfileEntry(fqdn string, col collection, graph map[string][]string) (lockfile.Entry, error) {
 	loc, err := urlSourceOf(col)
 	if err != nil {
@@ -280,15 +250,9 @@ func materializeLockfile(byFQDN map[string]lockfile.Entry) (map[string]collectio
 	return resolved, graph, nil
 }
 
-// verifyGitRootAgainstLockfile checks one git root, as the requirements file
-// wrote it, against the lockfile: at least one git entry must come from the
-// same repository URL under the root's subdir (the root's own directory, or
-// an immediate child of it, which is how a multi-collection repository
-// expands), every such entry must have been locked from the same ref, and a
-// root that names its collection must find that very fqdn among them. A ref
-// change is a mismatch even when the commit happens to be the same: the
-// lockfile records what was asked for, and --frozen means "what was asked for
-// has not changed".
+// verifyGitRootAgainstLockfile requires a git entry from the root's repository
+// under its subdir, every such entry locked from the root's ref (a changed ref
+// is a mismatch even at the same commit), and a named root's own fqdn.
 func verifyGitRootAgainstLockfile(root collection, byFQDN map[string]lockfile.Entry) error {
 	loc, err := root.gitLocator()
 	if err != nil {
@@ -318,10 +282,9 @@ func lockedFromGitRoot(entry lockfile.Entry, loc gitsource.Locator) bool {
 	return entry.IsGit() && entry.Source == loc.URL && subdirWithin(entry.Subdir, loc.Subdir)
 }
 
-// gitRootUnmatched is verifyGitRootAgainstLockfile's verdict once the scan
-// found no entry naming the root's own fqdn: no entry at all from the
-// repository is a mismatch, so is a named root whose fqdn is absent, and an
-// unnamed root is satisfied by any matched entry.
+// gitRootUnmatched decides a git root whose own fqdn no entry carried: no entry
+// from the repository is a mismatch, so is a named root, and an unnamed root is
+// satisfied by any matched entry.
 func gitRootUnmatched(root collection, display string, matched int) error {
 	switch {
 	case matched == 0:
@@ -334,10 +297,9 @@ func gitRootUnmatched(root collection, display string, matched int) error {
 	}
 }
 
-// verifyURLRootAgainstLockfile checks one url root, as the requirements file
-// wrote it, against the lockfile: exactly the entry locked from the same URL
-// must be present, and a version: the root asserted must be the version it
-// was locked as - --frozen means "what was asked for has not changed".
+// verifyURLRootAgainstLockfile requires the entry locked from the root's URL,
+// and a version: the root asserts must equal the locked version, since
+// --frozen means what was asked for has not changed.
 func verifyURLRootAgainstLockfile(root collection, byFQDN map[string]lockfile.Entry) error {
 	loc, err := root.urlLocator()
 	if err != nil {
@@ -385,33 +347,9 @@ func lockfileDepsToKeys(deps []string, byFQDN map[string]lockfile.Entry) []strin
 	return out
 }
 
-// lockDryRunBaseline loads the lockfile already on disk at path, to serve as
-// the "before" side of the diff a dry run reports against a fresh resolve. It
-// returns nil - "no baseline" - both when the file does not exist yet and
-// when it exists but cannot be loaded, and never fails the run either way.
-//
-// An absent file is silent: "no lockfile yet" is the ordinary first-lock
-// case, and the resulting all-Added report already says so on its own.
-//
-// A present but unusable file - a bad schema version, unparseable YAML,
-// duplicate names, or any other lockfile.Load failure - is warned about
-// before being treated as no baseline, because a silent all-Added report
-// against a corrupt file would be indistinguishable from one against a
-// project that genuinely has no lockfile yet; the warning is what keeps that
-// report honest. It is not, however, a reason to fail the preview: a real
-// `lock` run never reads this file at all, it only ever overwrites it, so a
-// preview refusing to proceed here would invent a failure class the command
-// it previews does not have. Warnf, not Printf: it must survive --quiet and
-// reach stderr, matching every other dry-run disclosure in this package.
-//
-// This is `lock`'s own preview policy, specific to a command whose product is
-// to replace this file wholesale - it is deliberately not shared with
-// lockFrozen, which consumes this same on-disk file instead of previewing a
-// replacement for it: a command that only ever overwrites the lockfile can
-// treat an unusable one as "no baseline yet" without misleading anyone, while
-// a command whose entire verdict depends on what is already there cannot -
-// see lockFrozen's own doc comment for why it fails closed on the identical
-// failure this function forgives.
+// lockDryRunBaseline loads the lockfile at path as a dry run's "before" side,
+// or nil when it is absent or unloadable (warned, never fatal, since a real
+// lock only overwrites it). lockFrozen, whose verdict is that file, fails closed.
 func lockDryRunBaseline(runtime *infra.Infra, path string) *lockfile.File {
 	lf, err := lockfile.Load(path)
 	if err == nil {
@@ -423,61 +361,16 @@ func lockDryRunBaseline(runtime *infra.Infra, path string) *lockfile.File {
 	return nil
 }
 
-// dryRunDiffPrefix and frozenDiffPrefix are reportLockfileDiff's two callers'
-// own leading terms for its trailing summary: "Dry run: lockfile would
-// change; ..." for lockDryRun's preview, "Frozen: lockfile would change; ..."
-// for lockFrozen's drift gate. Declared once here rather than left as bare
-// literals at each call site, since both name the same summary line under a
-// different mode.
+// dryRunDiffPrefix and frozenDiffPrefix lead reportLockfileDiff's summary line
+// for lockDryRun's preview and lockFrozen's drift gate.
 const (
 	dryRunDiffPrefix = "Dry run"
 	frozenDiffPrefix = "Frozen"
 )
 
-// reportLockfileDiff prints what `lock` would write for lf at path: the
-// file-level server line first (if any), then one line per changed
-// collection, then a single trailing summary carrying the caller-supplied
-// prefix - and nothing else on a diff with no changes at all.
-//
-// prefix names only the trailing summary's leading term, never a per-entry
-// line: every "Would add/update/remove/change" line above it reads
-// identically regardless of which caller is asking, because the fact each
-// one states - what a real `lock` run would do to this collection - is the
-// same fact in both registers. Only the summary's own framing differs:
-// lockDryRun's "Dry run: ..." states what a real run would additionally do
-// on top of this one, while lockFrozen's "Frozen: ..." states what makes
-// this run itself fail. Baking the prefix into a shared per-entry line would
-// make it counterfactual in one of the two registers.
-//
-// Every per-entry line goes through Okf, matching classifyDryRun's own
-// register: a server change, an add, an update, and a removal are all work
-// the command would do, not a failure - Errorf would misstate that. The
-// trailing summary goes through PersistentPrintf, exactly like
-// classifyDryRun's own "Dry run: ..." line, with the same counts-first shape
-// so the two commands' summaries are eyeball-comparable. Both tiers survive
-// --quiet, which is what keeps the preview usable from a job that otherwise
-// silences ordinary output.
-//
-// The summary's verdict term is derived from diff.Empty() itself, never from
-// the counts: "lockfile would change" unless diff.Empty() is true, in which
-// case "lockfile is up to date". This is deliberately not "any count is
-// nonzero", because diff.Empty() also covers diff.Server - a change to lf's
-// file-level Server field with every collection otherwise untouched leaves
-// every count at its unchanged value, and a verdict built from the counts
-// alone would report "up to date" for a run that would still rewrite the
-// file. Deriving the verdict from Empty() instead means any future field
-// Diff gains cannot reintroduce that bug: whatever makes Empty() false also
-// flips the verdict, by construction, with no second place to remember to
-// update. This is also why lockFrozen's own drift error carries no counts of
-// its own: a server-only change leaves every count at zero, which the counts
-// alone would misreport as "nothing changed".
-//
-// The unchanged count is derived - len(lf.Collections) minus the added and
-// updated counts - rather than carried on Diff itself. That subtraction is
-// exact only because lf is always buildLockfile's own output: its entries
-// come from an fqdn-keyed map, so a name can never repeat within lf, and
-// every one of lf's entries is therefore counted by Compare as exactly one of
-// Added, Updated, or neither (unchanged) - never more than once.
+// reportLockfileDiff prints the server change, one Okf line per changed
+// collection and a summary whose verdict is diff.Empty(), since a server-only
+// change leaves every count zero. The unchanged count needs unique names in lf.
 func reportLockfileDiff(runtime *infra.Infra, lf *lockfile.File, path, prefix string, diff lockfile.Diff) {
 	if diff.Server != nil {
 		runtime.Output.Okf("Would change: %s", renderFieldChange(*diff.Server))
@@ -503,11 +396,9 @@ func reportLockfileDiff(runtime *infra.Infra, lf *lockfile.File, path, prefix st
 	)
 }
 
-// reportRoleDiff renders the roles half of a diff - one line per role, and
-// a roles summary - only when the file or the diff has a role, so a
-// collections-only run reads exactly as it did before roles existed. The
-// unchanged count derives the way the collection count does: lf's roles
-// come from a name-keyed map, so each is counted once.
+// reportRoleDiff renders the roles half of a diff only when the file or the
+// diff has a role, so a collections-only report carries no roles lines; lf's
+// roles come from a name-keyed map, so the unchanged count counts each once.
 func reportRoleDiff(runtime *infra.Infra, lf *lockfile.File, prefix string, diff lockfile.Diff) {
 	if len(lf.Roles) == 0 && !diff.HasRoles() {
 		return
@@ -533,11 +424,9 @@ func renderFieldChange(f lockfile.FieldChange) string {
 	return fmt.Sprintf("%s %s -> %s", f.Field, quoteEmpty(f.From), quoteEmpty(f.To))
 }
 
-// renderFieldChanges renders one updated entry's changed fields as
-// "version 0.9.0 -> 1.0.0; sha256 (none) -> c101ba4c...". Values are never
-// abbreviated, unlike that example: a truncated sha256 can make two different
-// digests look identical, which is exactly the difference this report exists
-// to surface.
+// renderFieldChanges joins an entry's changed fields with "; ". Values are
+// never abbreviated: a truncated sha256 can make two different digests look
+// identical, the very difference this report exists to surface.
 func renderFieldChanges(fields []lockfile.FieldChange) string {
 	parts := make([]string, 0, len(fields))
 	for _, f := range fields {

@@ -24,24 +24,9 @@ const (
 	RoleTypeURL    = "url"
 )
 
-// RoleEntry is a single pinned role in the lockfile. Name is the directory
-// the role installs into under roles_path. Type is galaxy, git or url.
-// Version is the concrete version installed - a tag, a branch name, the
-// commit the requirement spelled, or a url role's label - and is not an
-// exact version in the semver sense, since a branch is a legal role version.
-// For a Galaxy role, Galaxy is the Galaxy name (owner.role), Source the
-// Galaxy server it was looked up on and Repository the git repository that
-// server pointed at; for a git role, Source is the repository URL and
-// Repository and Galaxy are empty; for a url role, Source is the tarball
-// URL. Ref is the ref the requirement asked for and Commit the commit it
-// resolved to, which is what a frozen install fetches when the artifact is
-// not cached; a url role carries neither, and pins the origin bytes by
-// SHA256 instead. Deps are the install names of the roles this role's meta
-// depends on that the run installed. A git or Galaxy role entry carries no
-// sha256 for the reason Entry gives for a git entry - its artifact is
-// rebuilt from the commit, and the bytes of a rebuild depend on the
-// toolchain - while a url role's sha256 is over the origin's own bytes,
-// which no toolchain touches, so it is required there.
+// RoleEntry is one pinned role; Name is its directory under roles_path and
+// Version is not semver, since a branch is a legal role version. A git or
+// Galaxy role pins Commit with no SHA256, a url role the origin's SHA256.
 type RoleEntry struct {
 	Name       string   `yaml:"name"`
 	Type       string   `yaml:"type"`
@@ -71,14 +56,9 @@ func (e RoleEntry) RepositoryURL() string {
 	return e.Repository
 }
 
-// validateRoles judges every role entry: a unique install name in the role
-// alphabet, a type, a version in the persisted-version shape, the pin the
-// type calls for (a canonical ref and full commit, or a url role's sha256),
-// a canonical repository or tarball URL where one belongs and none where it
-// does not, no userinfo in the source, dependency names in the alphabet, and
-// a file whose schema admits the entry at all - a schema-1 or schema-2 file
-// carrying a role, or a schema-3 file carrying a url role, has been edited
-// by hand, since the schema is what tells an older binary to stop.
+// validateRoles judges every role entry's name, version, pin, sources and
+// deps, and refuses a role in a file below schema 3, or a url role below 4:
+// the schema is what tells an older binary to stop.
 func (f *File) validateRoles() error {
 	seen := make(map[string]struct{}, len(f.Roles))
 	for _, e := range f.Roles {
@@ -104,9 +84,7 @@ func (f *File) validateRoles() error {
 }
 
 // roleEntryProblem returns why a role entry is refused, or "" when every
-// field is canonical. The source and repository are re-parsed rather than
-// trusted, since a lockfile is repository content: anything a later run
-// connects to has to pass the grammar a requirements entry does.
+// field is canonical. Sources are re-parsed: a lockfile is repository content.
 func roleEntryProblem(e RoleEntry) string {
 	if !helpers.IsRoleVersion(e.Version) {
 		return fmt.Sprintf("version %q is not a role version", e.Version)

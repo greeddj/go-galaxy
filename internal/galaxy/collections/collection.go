@@ -7,16 +7,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// collection represents a resolved collection with metadata. For a Galaxy
-// collection Source is the server base that owns it; for a git collection it
-// is the gitsource locator (git+<url>#<subdir>@<commit>) and for a url
-// collection the urlsource locator (url+<url>#sha256:<hex>), which is what
-// every downstream consumer keys on - the artifact cache, the installed
-// record, the resolved snapshot - so a commit or content change reads as a
-// source change everywhere without any of them knowing what the source kind
-// is. Type survives resolution for every kind; Ref is set only for a git
-// collection and is the ref the requirements file asked for, carried to the
-// lockfile.
+// collection is a resolved collection. Source is the owning server base, or
+// the git or url locator every consumer keys on, so a new commit or content
+// reads as a source change; Ref is the requested git ref, for the lockfile.
 type collection struct {
 	Namespace  string `yaml:"namespace"`
 	Name       string `yaml:"name"`
@@ -26,9 +19,7 @@ type collection struct {
 	Type       string `yaml:"-"`
 	Ref        string `yaml:"-"`
 	// SHA256 is the artifact pin the install enforces byte for byte: the
-	// frozen-lockfile pin (see materializeLockfile), and for a url collection
-	// the locator's own digest, stamped on every resolution. It is a
-	// runtime-only value and is never (de)serialized.
+	// frozen-lockfile pin, or a url collection's locator digest; never serialized.
 	SHA256     string   `yaml:"-"`
 	Signatures []string `yaml:"signatures"`
 }
@@ -50,9 +41,8 @@ func (c collection) key() string {
 }
 
 // isGit reports whether the collection comes from a git source. It reads the
-// Source prefix rather than Type because Type is not carried through every
-// path a collection value travels (a lockfile entry, a snapshot entry), while
-// the locator is.
+// Source prefix, not Type, because lockfile and snapshot entries carry the
+// locator but not Type.
 func (c collection) isGit() bool {
 	return gitsource.IsLocator(c.Source)
 }

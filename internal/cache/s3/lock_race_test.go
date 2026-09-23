@@ -12,20 +12,12 @@ import (
 )
 
 const (
-	// lockRaceIterations is how many acquire/steal/release cycles the race
-	// below runs. It is a budget for hitting a window, not a duration: the
-	// whole loop takes well under a second because every cycle is bounded by
-	// one heartbeat interval plus a handful of in-process round trips.
+	// lockRaceIterations is a budget for hitting the release/tick window, not
+	// a duration: each cycle is one heartbeat interval plus a few round trips.
 	lockRaceIterations = 300
-	// lockRaceSpreadSteps and lockRaceSpreadUnit sweep the release call
-	// across the window between the heartbeat's HEAD leaving the fake and
-	// that tick acting on the answer. Measured on this repository's fake
-	// (in-process httptest, no network), that gap ran 18-74us with a median
-	// near 35us, so 48 steps of 2us cover it end to end with margin at both
-	// ends. Both numbers are a sweep range, never a timing assumption: a
-	// machine where the gap sits outside this range loses detections, which
-	// the positive control below turns into a loud failure rather than a
-	// silently vacuous pass.
+	// lockRaceSpreadSteps and lockRaceSpreadUnit sweep release across the
+	// window between a heartbeat HEAD leaving the fake and the tick acting on
+	// it; a machine outside that range loses detections, which fails loudly.
 	lockRaceSpreadSteps = 48
 	lockRaceSpreadUnit  = 2 * time.Microsecond
 	// lockRaceEventCeiling is a LIVENESS bound on waiting for a heartbeat
@@ -34,13 +26,9 @@ const (
 	lockRaceEventCeiling = 2 * time.Second
 )
 
-// lockRaceTiming is deliberately not testLockTiming: that one's 30ms
-// heartbeat interval would make 300 cycles take ten seconds, and its
-// intervals are sized for tests that synchronize on whole heartbeat ticks
-// rather than on the inside of one. ttl is short so the loop is
-// self-healing - a cycle that somehow leaves a live lock object behind is
-// reclaimed by the next acquisition instead of stalling it until the wait
-// ceiling.
+// lockRaceTiming uses a 1ms heartbeat so the cycles stay fast, and a short
+// ttl so a cycle that leaves a live lock object is reclaimed by the next one
+// instead of stalling it until the wait ceiling.
 func lockRaceTiming() lockTiming {
 	return lockTiming{
 		ttl:                100 * time.Millisecond,
@@ -53,46 +41,9 @@ func lockRaceTiming() lockTiming {
 	}
 }
 
-// TestReleaseRacingTheTickKeepsTheLossCause pins the one ordering inside
-// startHeartbeat's release closure that no other test in this package can
-// see: release must join the heartbeat goroutine (<-done) BEFORE it cancels
-// the holder context, so that a tick which is mid-decision has already
-// finished - and already recorded its loss cause - by the time release's own
-// nil cause reaches a first-cancel-wins context.
-//
-// The property is stated as an implication plus a positive control, which is
-// what makes it neither flaky nor vacuous:
-//
-//   - whenever release() reports errS3LockLost, context.Cause(holderCtx) must
-//     match helpers.ErrCacheLockLost. A cycle where release reports no loss is
-//     not a failure and asserts nothing: the release's own hbCancel can abort
-//     the heartbeat's in-flight HEAD, in which case that tick reports a
-//     transient error and never declares anything, which is correct behavior.
-//   - at least one cycle must have reported a loss. Without this clause a
-//     build where NO cycle ever detects would pass while proving nothing.
-//     Measured here: 45 of 300 cycles detected.
-//
-// The window is reached through the fake's own request counter. countRequest
-// runs at the top of handleHead, before the response is built, so observing
-// that counter move puts this goroutine a full HTTP round trip ahead of the
-// tick's decision - the only signal available that is EARLIER than the
-// decision rather than simultaneous with it. Each cycle then spins a
-// different slice of that gap (see lockRaceSpreadSteps) before releasing, so
-// the loop sweeps the whole window instead of sampling one point in it.
-//
-// One fake and one backend serve every cycle: the foreign token is seeded
-// with an already-elapsed deadline, so the next acquisition reclaims it
-// immediately rather than contending, and the test needs no second httptest
-// server per cycle.
-//
-// KILLING MUTATION, run and reverted: moving `holderCancel(nil)` above the
-// `<-done` join in startHeartbeat's release closure - the edit that removes
-// the happens-before while leaving first-cancel-wins intact, so every
-// existing test in this package stays green. Six runs against this file failed
-// six times, at cycles 13, 27, 28, 29, 30 and 32 - what was measured, never a
-// bound. The first of them:
-//
-//	lock_race_test.go:105: cycle 29: release reported the lock lost, context.Cause(holderCtx) = context canceled
+// TestReleaseRacingTheTickKeepsTheLossCause pins that release joins the
+// heartbeat before canceling the holder context: whenever release reports
+// errS3LockLost the cause must be ErrCacheLockLost, and some cycle must detect.
 func TestReleaseRacingTheTickKeepsTheLossCause(t *testing.T) {
 	t.Parallel()
 	fake := newFakeS3()
@@ -121,10 +72,8 @@ func lockRaceCycle(t *testing.T, b *Backend, fake *fakeS3, key string, cycle int
 	if err != nil {
 		t.Fatalf("cycle %d: Lock: %v", cycle, err)
 	}
-	// An unconditional overwrite carrying another acquirer's token and an
-	// already-elapsed deadline: the heartbeat's next verifyOwner sees a
-	// foreign token and declares the loss, and whatever this cycle leaves
-	// behind is reclaimable by the next one.
+	// A foreign token with an elapsed deadline: the next heartbeat declares
+	// the loss, and the next cycle can reclaim what this one leaves behind.
 	if err := b.putLock(ctx, key, foreignToken, time.Now().UTC().Add(-b.lock.ttl), putCondition{}); err != nil {
 		t.Fatalf("cycle %d: seed foreign takeover: %v", cycle, err)
 	}
@@ -140,20 +89,9 @@ func lockRaceCycle(t *testing.T, b *Backend, fake *fakeS3, key string, cycle int
 	return true
 }
 
-// waitForHeartbeatHead blocks until the fake has begun serving a heartbeat
-// HEAD issued after the seed above, busy-polling rather than sleeping because
-// the whole point is to act inside a window measured in microseconds - a
-// sleep with a millisecond floor would step straight over it.
-//
-// It also returns once the holder context has ended, and that arm is
-// required rather than defensive: the tick that detects the loss may be one
-// whose HEAD was already counted before this function read its baseline, in
-// which case no further HEAD is ever served (the heartbeat goroutine exits on
-// a detected loss) and waiting for one would hang until the ceiling.
-//
-// holderErr is passed as a function rather than the context itself so
-// *testing.T stays the first parameter without tripping revive's
-// context-as-argument rule.
+// waitForHeartbeatHead busy-polls until the fake serves a new heartbeat HEAD,
+// or until the holder context ends, as the detecting tick's HEAD may predate
+// the baseline; a sleep would step over the microsecond window.
 func waitForHeartbeatHead(t *testing.T, fake *fakeS3, key string, cycle int, holderErr func() error) {
 	t.Helper()
 	before := fake.requestCount(key, http.MethodHead)
@@ -169,10 +107,8 @@ func waitForHeartbeatHead(t *testing.T, fake *fakeS3, key string, cycle int, hol
 	}
 }
 
-// spinFor busy-waits for d, yielding rather than sleeping: the durations here
-// are single-digit microseconds, well below what a timer can resolve, and the
-// yield keeps the heartbeat goroutine and the fake's own handler runnable
-// while this one waits.
+// spinFor busy-waits for d, yielding rather than sleeping: microsecond waits
+// are below timer resolution, and yielding keeps the heartbeat runnable.
 func spinFor(d time.Duration) {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {

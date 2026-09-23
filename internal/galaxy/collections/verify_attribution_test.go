@@ -1,13 +1,8 @@
 package collections
 
-// This file pins the binding between a verified signature and the collection it
-// was verified FOR, plus the two message bounds that keep an attacker-chosen
-// string out of an operator's terminal at scale.
-//
-// Every artifact here is internally perfect - the signature verifies, the chain
-// walks, the bytes hash - and differs from a legitimate one in exactly one way:
-// the identity its signed manifest declares. That is the whole point. A
-// verification step that never compares those three fields accepts all of them.
+// Tests binding a verified signature to the collection it was verified for, and
+// bounding the manifest- and server-chosen strings its messages render. Every
+// artifact here verifies and walks; only its declared identity differs.
 
 import (
 	"context"
@@ -20,24 +15,9 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
-// TestSignedManifestMustNameTheCollection is the load-bearing proof that a
-// signature is bound to what it vouches for.
-//
-// The first two rows are the two shapes measured before the check existed, both
-// of which installed with a nil error: a signed artifact for an entirely
-// different collection, and a signed OLDER version of the right one - a signed
-// downgrade, which is the shape with a CVE behind it, recorded as the resolved
-// version in the store, the lockfile and GALAXY.yml.
-//
-// The third row is the positive control on the identical fixture builder: the
-// same signing key, the same chain, the same policy, with the manifest naming
-// the collection actually being installed, must install. Without it, the two
-// refusals would be indistinguishable from a fixture nothing accepts.
-//
-// KILLING MUTATION, run and reverted: the checkManifestAttribution call deleted
-// from verifyCollectionSignatures. Both refusal rows fail; the first reads:
-//
-//	verify_attribution_test.go:73: verifyCollectionSignatures() = <nil>, want errors.Is helpers.ErrSignatureAttributionMismatch
+// TestSignedManifestMustNameTheCollection pins that a verified signature over a
+// manifest naming another collection, or an older version of this one (a signed
+// downgrade), is refused; the last row is the accepting control.
 func TestSignedManifestMustNameTheCollection(t *testing.T) {
 	t.Parallel()
 
@@ -82,21 +62,9 @@ func TestSignedManifestMustNameTheCollection(t *testing.T) {
 	}
 }
 
-// TestAttributionIsNotCheckedWithoutAVerifiedSignature states the placement of
-// the check as a decision rather than an accident: it runs inside the arm where
-// at least one signature verified, so a run that verified nothing does not
-// consult it.
-//
-// The reason is that the comparison is worth exactly what the signature is
-// worth. On an unsigned manifest an attacker chooses both sides of it - the
-// document declaring the identity and the artifact carrying the document - so
-// refusing there would manufacture assurance rather than establish any, and
-// would additionally fail an ordinary unsigned install for a mismatch nobody
-// vouched for either way.
-//
-// The fixture is the same mis-attributed artifact the rows above refuse, handed
-// over with nothing to gather: the default count passes vacuously, and the
-// mismatch goes unremarked.
+// TestAttributionIsNotCheckedWithoutAVerifiedSignature pins that attribution is
+// checked only once a signature verified: on an unsigned manifest an attacker
+// chooses both sides of the comparison, so refusing there would prove nothing.
 func TestAttributionIsNotCheckedWithoutAVerifiedSignature(t *testing.T) {
 	t.Parallel()
 	tarPath, _ := buildSignedArtifactAs(t, "trusted", "lib", "2.0.0", false)
@@ -108,15 +76,9 @@ func TestAttributionIsNotCheckedWithoutAVerifiedSignature(t *testing.T) {
 	}
 }
 
-// TestAttributionMessageIsBounded pins the ceiling on the one message that
-// renders a manifest-declared value: those three strings come out of an
-// archive-chosen document bounded only by helpers.ManifestScanMaxBytes, so
-// without a cap a mis-attributed artifact chooses how many bytes reach an
-// operator's terminal.
-//
-// The assertion is on both halves of what helpers.TruncateForMessage promises: the
-// message stays small, and it says the value was cut rather than shortening it
-// silently.
+// TestAttributionMessageIsBounded pins that the refusal truncates a
+// manifest-declared value, which only helpers.ManifestScanMaxBytes bounds, and
+// says that it did.
 func TestAttributionMessageIsBounded(t *testing.T) {
 	t.Parallel()
 	huge := strings.Repeat("n", 64<<10)
@@ -136,17 +98,9 @@ func TestAttributionMessageIsBounded(t *testing.T) {
 	}
 }
 
-// TestServerBlobOriginIsBounded pins the same ceiling on the other
-// attacker-influenced string this file guards: a version-metadata href, which
-// is copied onto every blob gathered for a collection and rendered once per
-// non-ignored failure by signature.verificationError.
-//
-// The href here is small next to the 8 MiB the real amplification was measured
-// on - what matters is crossing the ceiling, and a fixture that has to allocate
-// megabytes to prove a bound of 512 bytes buys nothing.
-//
-// The second half is the positive control: an ordinary href passes through
-// untouched, so the cap is a cap rather than a mangling of every origin.
+// TestServerBlobOriginIsBounded pins the same cap on a version-metadata href,
+// which is copied onto every gathered blob and rendered once per failure; an
+// ordinary href passes through unchanged.
 func TestServerBlobOriginIsBounded(t *testing.T) {
 	t.Parallel()
 
@@ -171,10 +125,8 @@ func TestServerBlobOriginIsBounded(t *testing.T) {
 	}
 }
 
-// blobOriginSignatures is the one shape-valid signature entry the origin tests
-// below need: what serverSignatureBlobs gathers is irrelevant to them, only
-// that it gathers something, so a blob is produced for its Origin to be read
-// off.
+// blobOriginSignatures is one shape-valid server signature entry, enough for
+// serverSignatureBlobs to produce a blob whose Origin a test reads.
 func blobOriginSignatures() []any {
 	return []any{map[string]any{"signature": "-----BEGIN PGP SIGNATURE-----\nx\n-----END PGP SIGNATURE-----"}}
 }
@@ -193,31 +145,9 @@ func originOf(t *testing.T, href string) string {
 	return blobs[0].Origin
 }
 
-// TestServerBlobOriginCutsCredentials pins the other rule this value is
-// subject to, alongside the cap TestServerBlobOriginIsBounded pins. A
-// version-metadata href is a server-supplied URL this run renders rather than
-// requests - it is copied onto every gathered blob and rendered %q by
-// signature.verificationError, once per non-ignored failure - so it goes
-// through helpers.WithoutCredentials before it becomes an Origin. The cut belongs
-// here, at the producer, because internal/galaxy/signature reports Origin back
-// verbatim by contract and must keep doing so.
-//
-// The last check is the positive control: an Origin that had dropped the URL
-// altogether would satisfy the three negative ones and would tell an operator
-// nothing about which source produced the failing signature.
-//
-// Killing mutation, run: restoring the bare meta.Href in serverBlobOrigin
-// fails all four checks - the three negative ones on the value it now renders,
-// and the positive one because an origin with the userinfo spliced back in no
-// longer contains the clean prefix that check looks for. The acceptance half
-// this fixture cannot show lives next door: TestServerBlobOriginIsBounded's
-// second half passes an ordinary href through untouched. The first of the four
-// lines reads:
-//
-//	verify_attribution_test.go:230: blob origin carries the password:
-//	https://u:sup3rsecret@galaxy.example/api/v3/collections/acme/app/versions/1.0.0/?X-Amz-Signature=deadbeefcafe
-//
-// The other three label that same rendered value differently.
+// TestServerBlobOriginCutsCredentials pins that a blob Origin drops the href's
+// userinfo and query yet still names the metadata document; the cut sits at the
+// producer because internal/galaxy/signature reports Origin verbatim.
 func TestServerBlobOriginCutsCredentials(t *testing.T) {
 	t.Parallel()
 
@@ -240,30 +170,9 @@ func TestServerBlobOriginCutsCredentials(t *testing.T) {
 	}
 }
 
-// TestServerBlobOriginCutsBeforeTruncating proves the composition order
-// serverBlobOrigin documents is load-bearing rather than stylistic, on the one
-// fixture where the two orders disagree: a credential long enough that the
-// "@" ending it falls past helpers.MessageValueMaxLen. Truncating first drops
-// that "@", after which helpers.WithoutUserinfo's authority scan finds no
-// userinfo at all and returns the value untouched - so the rendered Origin
-// would carry the first MessageValueMaxLen bytes of the password.
-//
-// A short credential would not separate the orders: the "@" survives the
-// truncation and either order cuts it. That is why this fixture is built
-// around the cap rather than around a realistic href.
-//
-// Both assertions report a position and a size rather than echoing the origin:
-// the value under test is over half a kilobyte of one repeated byte, so a
-// message quoting it would be unreadable in a test log and unquotable in this
-// comment.
-//
-// Killing mutation, run: swapping the composition in serverBlobOrigin to
-// helpers.WithoutCredentials(helpers.TruncateForMessage(meta.Href)) fails both,
-// the second one included - a value truncated inside its own credential never
-// reaches the host at all:
-//
-//	verify_attribution_test.go:274: blob origin carries the truncated password at byte 10 of 527
-//	verify_attribution_test.go:277: blob origin (527 bytes) does not name the metadata document it came from
+// TestServerBlobOriginCutsBeforeTruncating pins cut-then-truncate in
+// serverBlobOrigin: truncating first drops the "@" of a credential longer than
+// helpers.MessageValueMaxLen, so nothing is cut and the password prefix shows.
 func TestServerBlobOriginCutsBeforeTruncating(t *testing.T) {
 	t.Parallel()
 
@@ -278,14 +187,9 @@ func TestServerBlobOriginCutsBeforeTruncating(t *testing.T) {
 	}
 }
 
-// TestMetadataUnavailableIsADifferentLine pins the distinction the operator
-// acts on: "this collection carries no signatures" and "this run could not
-// learn whether it does" are two different facts, and a vacuous pass reports
-// which one it was.
-//
-// Both rows gather nothing and both pass, so the verdict is identical and only
-// the line differs - which is exactly why the fact has to be carried on the
-// payload rather than inferred from meta being nil.
+// TestMetadataUnavailableIsADifferentLine pins that a vacuous pass says whether
+// the collection carried no signatures or its metadata could not be loaded; the
+// verdict is identical, so the fact rides on the payload, not on a nil meta.
 func TestMetadataUnavailableIsADifferentLine(t *testing.T) {
 	t.Parallel()
 	tarPath, _ := buildSignedArtifact(t, false)
@@ -324,13 +228,8 @@ type foldingBypass struct {
 	manifest string
 }
 
-// foldingBypassShapes enumerates the ways a document can declare its identity
-// more than once. Each was measured accepted, with a nil error, against a
-// struct decode of the same document - which is what readIdentityObject
-// replaced.
-//
-// The last row is the one a top-level-only fix leaves open: encoding/json folds
-// an inner field name exactly as readily as an outer one.
+// foldingBypassShapes enumerates manifests declaring their identity more than
+// once, each of which a struct decode accepts, including one level down.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state.
 var foldingBypassShapes = []foldingBypass{
@@ -355,32 +254,17 @@ var foldingBypassShapes = []foldingBypass{
 		manifest: `{"collection_info":{"namespace":"evil","NAMESPACE":"acme","name":"app","version":"1.0.0"}`,
 	},
 	{
-		// The row that proves the refusal is the DECODE rather than the
-		// comparison: every value here matches the collection being installed,
-		// so a reader that resolved the duplicate any way at all would accept
-		// it. What is wrong with the document is that it names its identity
-		// twice, which makes that identity a function of the parser.
+		// Every value matches, so only the decode can refuse it: an identity
+		// named twice is a function of the parser, whatever the values say.
 		name: "a folded shadow whose values all match",
 		manifest: `{"collection_info":{"namespace":"acme","name":"app","version":"1.0.0"},` +
 			`"COLLECTION_INFO":{"namespace":"acme","name":"app","version":"1.0.0"}`,
 	},
 }
 
-// TestFoldedIdentityKeysAreRefused pins the decode half of the attribution
-// check: a manifest this tool cannot read ONE identity out of has failed to
-// attribute itself, whatever the values involved say.
-//
-// Every fixture here is otherwise perfect - signed by a key the keyring holds,
-// with a chain that walks - so the only thing under test is how the identity is
-// read. TestSignedManifestMustNameTheCollection's own accepting row is the
-// positive control that the same builder produces documents this check accepts.
-//
-// KILLING MUTATION, run and reverted: checkManifestAttribution's
-// readIdentityObject/readIdentityField calls replaced by the struct decode they
-// were written to replace (a json.Unmarshal into a collection_info struct with
-// three string fields). Four of the five rows fail; the first reads:
-//
-//	verify_attribution_test.go:397: verifyCollectionSignatures() = <nil>, want errors.Is helpers.ErrSignatureAttributionMismatch
+// TestFoldedIdentityKeysAreRefused pins the decode half of attribution: a
+// signed manifest this tool cannot read one identity out of is refused, however
+// its values compare.
 func TestFoldedIdentityKeysAreRefused(t *testing.T) {
 	t.Parallel()
 
@@ -400,10 +284,9 @@ func TestFoldedIdentityKeysAreRefused(t *testing.T) {
 	}
 }
 
-// TestAttributionMessageQuotesTheDeclaredIdentity pins the %q rendering: a
-// manifest choosing its own version string chooses bytes that reach an
-// operator's terminal, and internal/safeout deliberately passes a newline
-// through. Quoted, it renders as an escape and cannot forge a line of its own.
+// TestAttributionMessageQuotesTheDeclaredIdentity pins the %q rendering of a
+// declared identity: internal/safeout passes a newline through, so an unquoted
+// version string could forge an output line of its own.
 func TestAttributionMessageQuotesTheDeclaredIdentity(t *testing.T) {
 	t.Parallel()
 	tarPath, manifestJSON := buildSignedArtifactAs(t, "acme", "app", "9.9.9\nSuccessfully installed acme.app@1.0.0", false)

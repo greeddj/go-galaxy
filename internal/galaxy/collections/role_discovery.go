@@ -6,13 +6,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 )
 
-// rolePin is what discovery learned about one role, in the shape the install
-// phase consumes: the pinned locator (git+<url>#@<commit>), the repository
-// it names, the ref the requirement asked for, the concrete version (a tag,
-// a branch name, or what HEAD resolved to), the Galaxy server that answered
-// for a Galaxy role, the dependencies its meta declared for the dependency
-// walk, and - under --no-cache only - the artifact discovery built, handed to
-// the install phase so the repository is not fetched a second time.
+// rolePin is what discovery learned about one role, as the install phase
+// consumes it; prebuilt is set only under --no-cache, handing the install
+// phase the artifact discovery built so the repository is not fetched twice.
 type rolePin struct {
 	prebuilt   *downloadResult
 	locator    string
@@ -33,10 +29,9 @@ type rolePin struct {
 	deps   []gitsource.RoleDependency
 }
 
-// roleDiscoveryMemo is the run-wide table of discovered roles, keyed by
-// install name. It is created once per run (initInstall) and shared by the
-// resolve and install phases, which is what lets the install phase pick up a
-// --no-cache build the resolve phase left for it.
+// roleDiscoveryMemo is the run-wide table of discovered roles by install
+// name, shared by the resolve and install phases so the install phase can
+// pick up a --no-cache build the resolve phase left for it.
 type roleDiscoveryMemo struct {
 	pins map[string]rolePin
 	mu   sync.Mutex

@@ -24,10 +24,9 @@ func roleLockfile() *lockfile.File {
 	}
 }
 
-// TestPrintRoleTreeRendersRoles pins the roles half of tree's output: a
-// header of its own, one tree per requirements root, each dependency with
-// its provenance, a missing one named as such, and nothing at all for a
-// lockfile without roles.
+// TestPrintRoleTreeRendersRoles pins the roles half of tree's output: its own
+// header, one tree per root, provenance on each dependency, a missing one named,
+// and nothing for a lockfile without roles.
 func TestPrintRoleTreeRendersRoles(t *testing.T) {
 	t.Parallel()
 	var buf strings.Builder

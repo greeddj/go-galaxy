@@ -1,15 +1,8 @@
 package store
 
-// This file is a structural, source-auditing test, the same shape
-// internal/proseaudit and internal/lockaudit already use elsewhere in this
-// module: it parses snapshot.go itself and checks a property of its AST
-// rather than driving the code at runtime. It gates exactly one type, one
-// file, one field - it does not generalize into a linter over the whole
-// package or the whole module, and it does not catch a mutator added outside
-// snapshot.go (a new file in this package with its own *Store method that
-// takes the write lock and forgets to set dirty is invisible to it; only
-// TestEveryMutatorMarksDirty in dirty_test.go, kept in sync by hand, covers
-// that case).
+// This file audits snapshot.go's AST rather than running code. It gates one
+// type, one file and one field: a *Store mutator added in another file is
+// covered only by the hand-kept table in TestEveryMutatorMarksDirty.
 
 import (
 	"go/ast"
@@ -20,21 +13,14 @@ import (
 	"testing"
 )
 
-// dirtyAuditExemptMethod is the sole method this gate excuses from carrying
-// an `s.dirty = true` assignment: UnmarshalJSON is a load, not a write, and
-// setting the flag there would make every S3-backed run dirty on arrival,
-// defeating the point of the flag entirely (see UnmarshalJSON's own doc
-// comment). The exemption is a literal name, not a pattern, so it excuses
-// exactly one method and nothing that merely resembles it.
+// dirtyAuditExemptMethod is the one method excused from setting s.dirty: an
+// unmarshal is a load, and marking it would make every S3-backed run dirty on
+// arrival. It is a literal name, so it excuses nothing that merely resembles it.
 const dirtyAuditExemptMethod = "UnmarshalJSON"
 
-// TestEveryWriteLockedStoreMethodMarksDirty parses snapshot.go and asserts
-// that every method with receiver *Store whose body takes the write lock
-// (s.mu.Lock()) also assigns s.dirty = true somewhere in its body, with
-// exactly one named exemption. A method this gate cannot find - because the
-// exemption was renamed out from under it - is a failure, not a silent
-// no-op: without that check, renaming dirtyAuditExemptMethod's target would
-// turn this whole gate green while auditing nothing.
+// TestEveryWriteLockedStoreMethodMarksDirty pins that every *Store method in
+// snapshot.go taking s.mu.Lock() also sets s.dirty = true, bar one exemption;
+// an exemption it cannot find fails, so a rename cannot turn the gate green.
 func TestEveryWriteLockedStoreMethodMarksDirty(t *testing.T) {
 	t.Parallel()
 
@@ -63,11 +49,9 @@ func TestEveryWriteLockedStoreMethodMarksDirty(t *testing.T) {
 	}
 }
 
-// auditDirtyMutators walks file's top-level declarations and reports whether
-// dirtyAuditExemptMethod was found among file's *Store methods, alongside the
-// name of every OTHER write-locked *Store method that never sets
-// dirty = true. Split out of TestEveryWriteLockedStoreMethodMarksDirty purely
-// to stay under this repository's cyclomatic-complexity budget.
+// auditDirtyMutators reports whether dirtyAuditExemptMethod is among file's
+// *Store methods, and names every other write-locked *Store method that never
+// sets dirty = true.
 func auditDirtyMutators(file *ast.File) (bool, []string) {
 	exemptFound := false
 	var problems []string

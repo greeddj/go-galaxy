@@ -25,16 +25,9 @@ const (
 	incContradicted
 )
 
-// relation answers whether the partial solution satisfies, contradicts, or
-// is inconclusive for term. With exact signed accumulations the answer is
-// exact from the first assignment on and never consults a package's
-// published universe - matching the reference algorithm, where
-// unsatisfiability against the published universe enters the derivation
-// graph only through decision making's no-versions incompatibilities,
-// never through relation itself. A package with no assignments at all is
-// inconclusive: its vacuous N({}) seed would judge negative terms
-// satisfied by nothing, and the reference semantics require a real
-// assignment before anything is derived about it.
+// relation relates term to the partial solution from its exact signed
+// accumulation, never a published universe. A package with no assignment is
+// inconclusive: its vacuous N({}) seed must not satisfy a negative term.
 func relation(term term, ps *partialSolution) termRelation {
 	p, ok := ps.packages[term.Package]
 	if !ok || len(p.indices) == 0 {
@@ -43,10 +36,8 @@ func relation(term term, ps *partialSolution) termRelation {
 	return relateAccum(p.accum, term)
 }
 
-// relate answers whether the partial solution satisfies, contradicts, is
-// inconclusive for, or almost satisfies inc (all terms but one are
-// satisfied, the remaining one inconclusive - that remaining term is
-// returned alongside).
+// relate relates inc to the partial solution; when inc is almost satisfied
+// (one inconclusive term, the rest satisfied) that term is returned too.
 func relate(inc *incompatibility, ps *partialSolution) (incRelation, term) {
 	var unsat term
 	hasUnsat := false
@@ -70,13 +61,9 @@ func relate(inc *incompatibility, ps *partialSolution) (incRelation, term) {
 	return incAlmostSatisfied, unsat
 }
 
-// unitPropagation derives new assignments from pkg's incompatibilities until
-// no more can be found, resolving any conflict it encounters along the way.
-// changed's pop order is deterministic (ascending package name), and each
-// package's incompatibilities are scanned newest to oldest, since conflict
-// resolution tends to produce more general incompatibilities later on.
-// Propagation performs no I/O: term arithmetic is exact without any
-// universe, so the provider is reached only from decision making.
+// unitPropagation derives assignments from pkg's incompatibilities until
+// none remain, resolving conflicts as found. It pops changed packages in name
+// order and does no I/O: the provider is reached only from decision making.
 func (s *solveState) unitPropagation(pkg string) error {
 	changed := map[string]bool{pkg: true}
 	for len(changed) > 0 {
@@ -88,12 +75,9 @@ func (s *solveState) unitPropagation(pkg string) error {
 	return nil
 }
 
-// propagatePackage scans p's incompatibilities newest to oldest, folding any
-// derivations into changed. If it hits a satisfied incompatibility it
-// resolves the conflict, replaces changed with the resulting derivation's
-// package, and reports conflicted = true so the caller re-enters the outer
-// while loop instead of continuing this scan (the partial solution just
-// backtracked, so the remaining incompatibilities in this scan are stale).
+// propagatePackage scans p's incompatibilities newest first. On a satisfied
+// one it resolves the conflict and returns conflicted = true, since the
+// backtrack left the rest of this scan stale.
 func (s *solveState) propagatePackage(p string, changed map[string]bool) (bool, error) {
 	for _, idx := range s.store.byPackageNewestFirst(p) {
 		inc := s.store.all[idx]
@@ -113,12 +97,8 @@ func (s *solveState) propagatePackage(p string, changed map[string]bool) (bool, 
 	return false, nil
 }
 
-// deriveOnce derives term (caused by causeIdx) and marks its package changed,
-// unless an equivalent assignment for that package already exists. This is
-// a defensive dedup, not a correctness crutch: deriving a content-identical
-// fact twice is always sound to skip (a repeated derivation never carries
-// new information), so this guard costs nothing and catches any accidental
-// re-derivation regardless of cause.
+// deriveOnce derives term and marks its package changed unless an identical
+// assignment already exists, a sound skip that guards against re-derivation.
 func (s *solveState) deriveOnce(term term, causeIdx int, changed map[string]bool) {
 	if s.ps.hasEquivalentAssignment(term) {
 		return
@@ -127,30 +107,9 @@ func (s *solveState) deriveOnce(term term, causeIdx int, changed map[string]bool
 	changed[term.Package] = true
 }
 
-// resolveAndDerive runs resolveConflict on the satisfied incompatibility at
-// idx and derives the resulting root cause's almost-satisfied term's
-// negation into changed. Under signed exact terms the root cause a backjump
-// returns is ALMOST_SATISFIED by construction, exactly as the reference
-// algorithm states: the backtrack keeps every assignment at or below the
-// previous satisfier's level, which keeps every non-satisfier term
-// satisfied, while the satisfier's own term is neither satisfied (the
-// satisfier, the first assignment to complete it, is dropped) nor
-// contradicted (a prefix that contradicted it could never have been
-// completed into satisfaction without the accumulation reaching the
-// unsatisfiable P({}), which no derivation or decision can produce - a
-// derivation's negation is only ever folded into an accumulation it was
-// inconclusive against, and a decision is always drawn from the allowed
-// candidates).
-//
-// Any other relation therefore signals a defect in this package's own
-// bookkeeping, presented as a clean resolution failure rather than a panic
-// or a hang: buildConflictError hands back whatever invariant violation the
-// report walk recorded, and a plain *ConflictError when it recorded none.
-// That is deliberate for the CI consumer this tool serves - a loud refusal
-// costs a pipeline one red run, while a panic or a hang costs it the
-// diagnosis - and it ends the run in an error rather than in an install of
-// something the solver never proved.
-// TestNonConvergingConflictIsCleanFailure pins that presentation.
+// resolveAndDerive resolves the conflict at idx and derives the negation of
+// the almost-satisfied term of the returned root cause. Any other relation is
+// a defect, ended as a clean failure (TestNonConvergingConflictIsCleanFailure).
 func (s *solveState) resolveAndDerive(idx int, changed map[string]bool) error {
 	rootIdx, rootCause, err := s.resolveConflict(idx)
 	if err != nil {

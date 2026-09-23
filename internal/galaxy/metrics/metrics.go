@@ -9,39 +9,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// Report captures a single run's outcome.
-//
-// CacheHits, CacheMisses, and BytesDownloaded are artifact-level, never
-// collection-level: a HIT is one artifact whose bytes came from the artifact
-// cache (one successful ArtifactStore.Fetch), a MISS is one artifact whose
-// bytes came from the origin (one successful, retry-bounded acquisition -
-// a retried 5xx still counts one miss, not one per attempt), and
-// BytesDownloaded is every byte read from a Galaxy origin's artifact
-// response body, counted per download attempt including a failed, retried
-// one. A cache hit contributes zero bytes here, including an S3 hit: that
-// object transfer is a real network round trip to the cache backend, but it
-// is not artifact-download traffic, so it is deliberately excluded.
-// Consequently CacheHits+CacheMisses counts artifact acquisitions, not
-// collections, and can exceed Collections: the bounded evict-and-refetch
-// recovery path (see the collections package's prepareWithRecovery) makes
-// one collection contribute both one hit (the cache-resident artifact that
-// turned out corrupt) and one miss (the refetch that replaced it), and a
-// collection skipped by canSkipInstall touches no artifact at all, counting
-// as neither. BytesDownloaded is therefore not derivable from CacheMisses
-// alone. None of the three carries `omitempty`: a consumer must be able to
-// tell "zero hits" apart from "field absent" (an older binary that predates
-// these counters).
-//
-// Frozen reports whether the run actually honored --frozen, not merely
-// whether the flag was passed - though for every command that reads it, the
-// two coincide. For install and warm, honoring it means resolution came
-// from the lockfile instead of the network. For lock it means something
-// different in mechanism but identical in kind: lock always resolves fresh,
-// --frozen or not, so honoring the flag means that fresh resolve was gated
-// against the lockfile already on disk - refusing to overwrite it on any
-// disagreement - rather than lock's ordinary behavior of writing over it
-// unconditionally. Offline is configuration-wide - it governs the HTTP
-// transport for every command - and is reported as configured.
+// Report captures a single run's outcome. The three cache counters are
+// artifact-level and carry no omitempty, so a consumer can tell zero from a
+// report that predates them; Frozen reports whether --frozen was honored.
 type Report struct {
 	StartedAt       time.Time     `json:"started_at"`
 	FinishedAt      time.Time     `json:"finished_at"`
@@ -60,11 +30,9 @@ type Report struct {
 	Offline         bool          `json:"offline,omitempty"`
 }
 
-// Write marshals the report and writes it to path. If path is empty this
-// is a no-op so callers can pass cfg.MetricsFile unconditionally. The write
-// is atomic (see helpers.WriteFileAtomic): a CI consumer never observes a
-// truncated report, and a symlink planted at the operator-specified path is
-// replaced rather than followed.
+// Write marshals r to path atomically through helpers.WriteFileAtomic, so a
+// planted symlink is replaced rather than followed; an empty path is a no-op,
+// letting callers pass cfg.MetricsFile unconditionally.
 func Write(path string, r Report) error {
 	if path == "" {
 		return nil

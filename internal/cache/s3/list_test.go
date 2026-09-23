@@ -11,17 +11,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// TestListObjectsRejectsOversizedResponse proves listObjectsPage's read of a
-// ListObjectsV2 XML page is bounded by helpers.S3ListMaxSize: a response that
-// streams well past the cap must fail with helpers.ErrResponseTooLarge naming
-// this surface - an S3 listing response - rather than surfacing that sentinel
-// bare, since the same sentinel is also raised for an artifact download and a
-// Galaxy metadata document. The endpoint must also receive exactly one
-// request, proving the failure is terminal (via s3Retryable's existing
-// ErrResponseTooLarge arm) rather than retried.
-// TestListObjectsAcceptsNormalResponse below is the positive control on the
-// same fixture: it proves the identical listObjects path, kept under the
-// cap, still returns every key correctly.
+// TestListObjectsRejectsOversizedResponse pins that a ListObjectsV2 page past
+// helpers.S3ListMaxSize fails with ErrResponseTooLarge naming the s3 listing
+// response, after exactly one request: the overrun is terminal, not retried.
 func TestListObjectsRejectsOversizedResponse(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -45,13 +37,9 @@ func TestListObjectsRejectsOversizedResponse(t *testing.T) {
 	}
 }
 
-// TestListObjectsAcceptsNormalResponse confirms wrapping listObjectsPage's
-// XML read in helpers.NewSizeLimitedReader does not disturb an ordinary,
-// well-under-cap ListObjectsV2 response: every key put into the fake is
-// still returned correctly. TestOpenProbePassesOnConformingBackend already
-// drives this same normal list path (via Open's probe cleanup check), so
-// this test's narrower purpose is to prove the size cap introduced above is
-// a no-op for a realistic multi-object page.
+// TestListObjectsAcceptsNormalResponse is the positive control for the list
+// size cap: an ordinary multi-object ListObjectsV2 page still returns every
+// key.
 func TestListObjectsAcceptsNormalResponse(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)

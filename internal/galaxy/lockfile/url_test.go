@@ -37,10 +37,9 @@ func urlRoleEntry() RoleEntry {
 	}
 }
 
-// TestSchemaFollowsURLEntries pins the max-of-features rule around schema 4:
-// a url collection alone is schema 4 with no roles list, a url role beside
-// git entries is schema 4, roles without a url entry stay schema 3, and a
-// file that drops its last url entry goes back down.
+// TestSchemaFollowsURLEntries pins schema 4 ranking over the rest: a url
+// collection alone or a url role beside git entries is 4, roles without a
+// url entry stay 3, and dropping the last url entry goes back down.
 func TestSchemaFollowsURLEntries(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -28,11 +28,9 @@ func newSigningKeyTestClient(t *testing.T) *Client {
 	return c
 }
 
-// TestSigningKeyMemoizedEqualsFreshDerivation proves the memoized lookup
-// returns the byte-identical key a fresh deriveSigningKey call produces for
-// the same date, region, and secret - the core correctness invariant for
-// this cache: a lookup must never diverge from what an unmemoized call would
-// have signed with.
+// TestSigningKeyMemoizedEqualsFreshDerivation pins that the memoized lookup
+// returns the key a fresh deriveSigningKey call produces for the same date,
+// region and secret.
 func TestSigningKeyMemoizedEqualsFreshDerivation(t *testing.T) {
 	t.Parallel()
 	c := newSigningKeyTestClient(t)
@@ -45,13 +43,9 @@ func TestSigningKeyMemoizedEqualsFreshDerivation(t *testing.T) {
 	}
 }
 
-// TestSigningKeyRecomputesOnDateChange proves three things about the cache's
-// lifecycle: repeated calls for the same date return the identical
-// underlying slice (proving the second call hit the cache rather than
-// re-deriving), a call for a new date produces a different key matching a
-// fresh derivation (proving the rollover recomputes), and a subsequent call
-// back to the original date recomputes again rather than serving the stale
-// cached slice from the intervening date.
+// TestSigningKeyRecomputesOnDateChange pins that a same-date call hits the
+// cache, a new date recomputes, and a return to the earlier date recomputes
+// rather than serving the intervening date's key.
 func TestSigningKeyRecomputesOnDateChange(t *testing.T) {
 	t.Parallel()
 	c := newSigningKeyTestClient(t)
@@ -83,12 +77,9 @@ func TestSigningKeyRecomputesOnDateChange(t *testing.T) {
 	}
 }
 
-// TestSigningKeyConcurrent drives signingKeyForDate from many goroutines
-// across a mix of two dates and asserts every result matches its fresh
-// derivation - proving the mutex serializes the date-compare-and-swap
-// correctly under -race with no torn or cross-contaminated reads, which
-// matters because one Client is shared across prefetch and install worker
-// goroutines.
+// TestSigningKeyConcurrent pins that signingKeyForDate stays correct under
+// -race across two dates, since one Client is shared by the prefetch and
+// install workers.
 func TestSigningKeyConcurrent(t *testing.T) {
 	t.Parallel()
 	c := newSigningKeyTestClient(t)

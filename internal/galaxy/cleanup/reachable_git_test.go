@@ -23,10 +23,8 @@ type gitSubdirWithinCase struct {
 	within bool
 }
 
-// gitSubdirWithinCases pins the two shapes a git requirement expands into -
-// the subdir itself and its immediate children - and refuses the rest: a
-// grandchild, a sibling, and an entry at the root when the requirement
-// names a subdir.
+// gitSubdirWithinCases admits the subdir itself and its immediate children,
+// and refuses a grandchild, a sibling, and a root entry under a subdir root.
 func gitSubdirWithinCases() []gitSubdirWithinCase {
 	return []gitSubdirWithinCase{
 		{name: "root to root", entry: "", root: "", within: true},
@@ -52,20 +50,9 @@ func TestGitSubdirWithin(t *testing.T) {
 	}
 }
 
-// gitKeysStore builds the on-disk index and the store the gitRootKeys rows
-// share. Installed (on disk and recorded) under the repository:
-//
-//   - acme.one@0.1.0 at collections/one and acme.two@0.2.0 at
-//     collections/two, both at gitKeysCommit, which is what the pin (when
-//     the row sets one) records;
-//   - acme.two@0.9.0 at collections/two from an older commit, which only a
-//     locator scan can see, since no pin names it;
-//   - acme.deep@1.0.0 at collections/two/deep, a grandchild, which neither
-//     branch reaches;
-//   - acme.foreign@1.0.0 from another repository.
-//
-// acme.ghost@1.0.0 is in the pin but not installed anywhere, so the pin
-// branch must drop it rather than keep a key nothing holds.
+// gitKeysStore builds the index and store the gitRootKeys rows share: pinned
+// installs, an older commit only the locator scan sees, a grandchild, a foreign
+// repository, and a pinned acme.ghost that nothing installed.
 func gitKeysStore(withPin bool) (*store.Store, map[string][]installedCollection) {
 	st := store.New()
 	record := func(key, url, subdir, commit string) {
@@ -101,10 +88,9 @@ type gitRootKeysCase struct {
 	withPin   bool
 }
 
-// gitRootKeysCases pins which branch answers and what each keeps: the pin
-// when one is recorded (its identities alone, ghost dropped), the locator
-// scan otherwise (every commit under the subdir or its children, sorted),
-// and in both the narrowing an explicit name applies.
+// gitRootKeysCases pins the pin branch (its installed identities alone), the
+// locator fallback (every commit under the subdir or its children, sorted),
+// and the narrowing an explicit name applies to both.
 func gitRootKeysCases() []gitRootKeysCase {
 	return []gitRootKeysCase{
 		{name: "pin present", withPin: true, want: []string{"acme.one@0.1.0", "acme.two@0.2.0"}},

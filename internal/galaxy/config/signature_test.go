@@ -27,10 +27,9 @@ func signatureEnvNames() []string {
 	}
 }
 
-// clearSignatureEnv removes every signature variable from this test's
-// environment, so a row's verdict is a function of the row rather than of the
-// machine it runs on. t.Setenv is called first purely for the restore it
-// registers; there is no t.Unsetenv to do the same.
+// clearSignatureEnv unsets every signature variable, so a row's verdict does
+// not depend on the machine; t.Setenv runs first only for the restore it
+// registers, since there is no t.Unsetenv.
 func clearSignatureEnv(t *testing.T) {
 	t.Helper()
 	for _, name := range signatureEnvNames() {
@@ -41,13 +40,9 @@ func clearSignatureEnv(t *testing.T) {
 	}
 }
 
-// newSignatureCmd builds a *cli.Command carrying the four signature flags in
-// the shape cmd/go-galaxy/cliflags declares them: the count's default Value
-// and, for each flag, go-galaxy's own environment spelling. It is a hand-built
-// copy because this package cannot import the command layer, so the real flag
-// wiring is pinned at the command level instead - the same split
-// TestWorkersEnvShapes (cmd/go-galaxy/commands) already documents. What this
-// fixture pins is the resolution, not the declaration.
+// newSignatureCmd builds a command carrying the four signature flags shaped as
+// cliflags declares them, with go-galaxy's own env spellings. It is a hand-built
+// copy, since this package cannot import the command layer: it pins resolution.
 func newSignatureCmd(t *testing.T, args []string) *cli.Command {
 	t.Helper()
 
@@ -80,10 +75,8 @@ func newSignatureCmd(t *testing.T, args []string) *cli.Command {
 	return captured
 }
 
-// signatureRow is one resolution scenario: which environment variable is
-// exported and with what, and what the command line says. A row leaving both
-// empty is the "nobody supplied a value" case, whose answer is the flag's own
-// default.
+// signatureRow is one resolution scenario: an exported variable and a command
+// line; a row leaving both empty expects the flag's own default.
 type signatureRow struct {
 	name     string
 	envName  string
@@ -114,11 +107,9 @@ type keyringRow struct {
 	row  signatureRow
 }
 
-// TestApplySignatureConfigKeyringPrecedence pins the keyring's precedence: an
-// explicitly set flag beats an environment variable, which beats the flag's own
-// default. The rows are cumulative - the last adds the higher-precedence source
-// on top of the one below - so its assertion also proves the lower source was
-// present and lost.
+// TestApplySignatureConfigKeyringPrecedence pins that a set flag beats the
+// environment, which beats the default; each row adds the higher source on top
+// of the lower one, so a pass also proves the lower source was present and lost.
 func TestApplySignatureConfigKeyringPrecedence(t *testing.T) {
 	rows := []keyringRow{
 		{row: signatureRow{name: "nothing supplies it"}, want: ""},
@@ -155,10 +146,8 @@ type countRow struct {
 }
 
 // TestApplySignatureConfigRequiredCountPrecedence pins the count spec's
-// precedence, in the same cumulative shape as the keyring rows above. The
-// values are deliberately different spellings of the grammar rather than
-// different numbers, so a row cannot pass on a value some other source
-// happened to supply.
+// precedence like the keyring rows, using distinct spellings of the grammar so
+// no row can pass on a value another source supplied.
 func TestApplySignatureConfigRequiredCountPrecedence(t *testing.T) {
 	rows := []countRow{
 		{row: signatureRow{name: "nothing supplies it"}, want: helpers.DefaultRequiredValidSignatureCount},
@@ -196,9 +185,8 @@ type codesRow struct {
 }
 
 // TestApplySignatureConfigIgnoreStatusCodesPrecedence pins the ignore list's
-// precedence, and one thing besides: the environment row's value carries a
-// space after its separator, which arrives unchanged, so the row also states
-// that this layer hands the elements on exactly as the CLI library split them.
+// precedence, and that elements are handed on exactly as the CLI library split
+// them: the space after the environment value's comma survives.
 func TestApplySignatureConfigIgnoreStatusCodesPrecedence(t *testing.T) {
 	rows := []codesRow{
 		{row: signatureRow{name: "nothing supplies it"}, want: nil},
@@ -238,17 +226,9 @@ type disableRow struct {
 	unsetEnv bool
 }
 
-// TestApplySignatureConfigDisableAnsibleEnv pins the ansible spelling of the
-// disable switch, which this layer reads itself rather than handing to the
-// flag. The four rows that matter are ansible's own boolean vocabulary beyond
-// Go's: yes, no, on and off each resolve here, where a urfave/cli bool source
-// would abort the command over them.
-//
-// The true/false row is the control that the reading happens at all rather than
-// this being a table of values nothing consults, and the unparseable row states
-// that a value outside the vocabulary is refused rather than guessed. An empty
-// value reads as absent, matching what the go-galaxy spelling of the same flag
-// does with one.
+// TestApplySignatureConfigDisableAnsibleEnv pins that this layer reads the
+// ansible variable in ansible's vocabulary (yes/no/on/off included, which a
+// urfave/cli bool source would abort on), empty as absent, anything else refused.
 func TestApplySignatureConfigDisableAnsibleEnv(t *testing.T) {
 	rows := []disableRow{
 		{name: "unset is false", unsetEnv: true},
@@ -288,10 +268,9 @@ func TestApplySignatureConfigDisableAnsibleEnv(t *testing.T) {
 	}
 }
 
-// TestApplySignatureConfigDisableFlagOutranksAnsibleEnv states the precedence
-// between the two spellings of the switch, which the table above cannot: the
-// flag wins whenever some source set it, and the row makes the two disagree so
-// that only reading the flag produces the expected answer.
+// TestApplySignatureConfigDisableFlagOutranksAnsibleEnv pins that the flag wins
+// over the ansible variable whenever some source set it; the two disagree, so
+// only reading the flag passes.
 func TestApplySignatureConfigDisableFlagOutranksAnsibleEnv(t *testing.T) {
 	clearSignatureEnv(t)
 	t.Setenv(envDisableGPGVerifyAnsible, "no")
@@ -305,14 +284,9 @@ func TestApplySignatureConfigDisableFlagOutranksAnsibleEnv(t *testing.T) {
 	}
 }
 
-// TestExpandHome pins the whole rule and nothing beyond it: "~" and a "~/"
-// prefix are expanded, and every other shape - including the "~user" form a
-// shell would expand and a tilde that is not the first element - is returned
-// unchanged.
-//
-// $HOME is redirected so the expansion has a value this test knows; the rows
-// asserting no expansion are what keep "expanded" distinguishable from
-// "returned whatever it was given".
+// TestExpandHome pins the whole rule: "~" and a "~/" prefix expand, every other
+// shape ("~user", a tilde past the first element) is returned unchanged. $HOME
+// is redirected so the expansion has a value this test knows.
 func TestExpandHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -349,20 +323,8 @@ type validationRow struct {
 }
 
 // TestApplySignatureConfigValidation pins that a signature setting no consumer
-// could act on is refused where it is configured, under a named sentinel,
-// rather than reaching an install worker.
-//
-// The last row is the positive control, and it is the same fixture shape as the
-// two above it with valid values in place of the malformed ones: without it,
-// "refused" would be indistinguishable from a fixture that never reaches the
-// check at all.
-//
-// KILLING MUTATION, run and reverted: deleting the validateSignatureConfig call
-// from applySignatureConfig, so it returns nil in its place. Both refusal rows
-// fail:
-//
-//	signature_test.go:396: applySignatureConfig() error = <nil>, want invalid required valid signature count
-//	signature_test.go:396: applySignatureConfig() error = <nil>, want unknown signature status code
+// could act on is refused at config time under a named sentinel; the last row,
+// the same fixture with valid values, is the control that the check is reached.
 func TestApplySignatureConfigValidation(t *testing.T) {
 	rows := []validationRow{
 		{
@@ -409,19 +371,9 @@ type emptyValueRow struct {
 	setEmpty bool
 }
 
-// TestApplySignatureConfigRefusesEmptyValues pins the difference between
-// omitting a setting and supplying it as an expression that evaluated to
-// nothing. The shape this exists for is a CI block writing a secret into an
-// environment variable on a fork's pull request, where secrets are withheld: an
-// empty keyring would read as "verify nothing", and an empty count would
-// silently replace a configured "+all" with the default.
-//
-// The rows come in pairs. Each refusal is set through the environment and
-// through the flag, since only IsSet distinguishes them from an omission, and
-// the two omission rows are the control - without them, "empty is refused"
-// could not be told from "this fixture refuses everything". The last two rows
-// are the negative half of the predicate: the switch and the list have a
-// well-defined empty meaning in the safe direction and must keep resolving.
+// TestApplySignatureConfigRefusesEmptyValues pins that a keyring or count set
+// empty by flag or environment (a withheld CI secret) is refused, unlike an
+// omission, while an empty switch or ignore list, safe in meaning, resolves.
 func TestApplySignatureConfigRefusesEmptyValues(t *testing.T) {
 	rows := []emptyValueRow{
 		{name: "an empty keyring flag is refused", args: []string{"--keyring="}, wantErr: true},
@@ -461,10 +413,9 @@ func TestApplySignatureConfigRefusesEmptyValues(t *testing.T) {
 	}
 }
 
-// TestApplySignatureConfigEmptyCountKeepsNoDefault states what the refusal
-// above buys, which the refusal rows themselves do not: an empty count must not
-// resolve to the default, because the value it would replace is a stricter
-// policy the operator configured and the substitution would be silent.
+// TestApplySignatureConfigEmptyCountKeepsNoDefault pins that an empty count is
+// refused rather than silently replaced by the default, which could weaken a
+// stricter policy the operator configured.
 func TestApplySignatureConfigEmptyCountKeepsNoDefault(t *testing.T) {
 	clearSignatureEnv(t)
 	t.Setenv("GO_GALAXY_REQUIRED_VALID_SIGNATURE_COUNT", "")
@@ -487,13 +438,9 @@ type warningRow struct {
 	wantWarning bool
 }
 
-// TestApplySignatureConfigDisabledWithKeyringWarning pins the one warning this
-// surface produces: verification switched off while a keyring is configured is
-// a run that verifies nothing with a configuration that says it should.
-//
-// The two silent rows are the control. Without them, "it warned" could not be
-// told from "it warns on every run", which is the failure mode that would make
-// the warning worthless in the case it exists for.
+// TestApplySignatureConfigDisabledWithKeyringWarning pins the warning for
+// verification switched off while a keyring is configured; the two silent rows
+// keep "it warned" distinguishable from "it warns on every run".
 func TestApplySignatureConfigDisabledWithKeyringWarning(t *testing.T) {
 	rows := []warningRow{
 		{
@@ -519,10 +466,8 @@ func TestApplySignatureConfigDisabledWithKeyringWarning(t *testing.T) {
 	}
 }
 
-// newFlaglessCmd builds a *cli.Command registering no flags at all, which is
-// what a command that does not verify looks like to this resolution - cleanup,
-// lock and outdated among them: each signature flag reads the Go zero value of
-// an unknown flag name there.
+// newFlaglessCmd builds a command registering no flags, which is how a command
+// that does not verify (cleanup, lock, outdated) looks to this resolution.
 func newFlaglessCmd(t *testing.T) *cli.Command {
 	t.Helper()
 
@@ -540,24 +485,9 @@ func newFlaglessCmd(t *testing.T) *cli.Command {
 	return captured
 }
 
-// TestApplySignatureConfigCountFallback pins the fallback that lets a command
-// registering none of these flags build a config at all: with no flag to read a
-// default from, the count still resolves to the default spec rather than to the
-// empty string no grammar accepts.
-//
-// The expected value is spelled out rather than taken from
-// helpers.DefaultRequiredValidSignatureCount, so that changing that constant is
-// a decision this test reports instead of one it silently follows.
-//
-// The error check sits after the value check on purpose: the refusal an empty
-// spec produces renders the whole grammar, which says less about what broke than
-// the resolved value does. It is documentary rather than pinned - on this
-// fixture nothing can fail it while the assertion above passes.
-//
-// KILLING MUTATION, run and reverted: deleting the empty-value fallback from
-// resolveRequiredCount, so it returns whatever the flag lookup produced:
-//
-//	signature_test.go:567: RequiredCount = "", want "1"
+// TestApplySignatureConfigCountFallback pins that a command registering none of
+// these flags still resolves the count to the default spec, not to "". The
+// literal "1" makes changing the default a decision this test reports.
 func TestApplySignatureConfigCountFallback(t *testing.T) {
 	clearSignatureEnv(t)
 

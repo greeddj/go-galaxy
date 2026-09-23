@@ -4,10 +4,8 @@ import (
 	"testing"
 )
 
-// constraintCase mirrors the row shape of
-// internal/galaxy/collections/semver_semantics_test.go's constraintCase, so
-// the same ground-truth semantics rows can drive the exact set builder here
-// (TestVerSetGroundTruthRows in versetbuild_test.go consumes them).
+// constraintCase mirrors the collections package's constraintCase rows, so
+// the same ground-truth semver semantics drive TestVerSetGroundTruthRows.
 type constraintCase struct {
 	name       string
 	constraint string
@@ -16,12 +14,9 @@ type constraintCase struct {
 	wantErr    bool
 }
 
-// symbolicSemanticsCases reuses the pinned semver semantics rows: basic
-// operators, x-ranges, tilde, caret (stable and zero-major), prerelease
-// exclusion/inclusion, the "==" -> "=" rewrite, and the over-normalization
-// guards. newVerSet must agree with every row, since Masterminds'
-// NormalizeConstraint -> NewConstraint -> Check pipeline is the membership
-// authority the exact sets are differentially tested against.
+// symbolicSemanticsCases are the pinned semver semantics rows: operators,
+// x-ranges, tilde, caret, prerelease gating, the "==" rewrite and parse-error
+// guards. newVerSet must agree with every row.
 func symbolicSemanticsCases() []constraintCase {
 	return []constraintCase{
 		{name: "bare exact match", constraint: "1.2.3", version: "1.2.3", wantMatch: true},
@@ -77,10 +72,8 @@ func buildTestUniverse(t *testing.T, raw ...string) []Version {
 	return buildUniverse(versions)
 }
 
-// TestUniverseTotalOrder pins the two-level total order: semver precedence
-// descending, tie-broken by the original string byte-wise descending - the
-// case a single-level precedence comparator gets wrong (equal precedence,
-// different original strings).
+// TestUniverseTotalOrder pins the universe order: precedence descending, then
+// original string descending, which separates equal-precedence spellings.
 func TestUniverseTotalOrder(t *testing.T) {
 	t.Parallel()
 	got := buildTestUniverse(t, "1.0.0", "2.0.0", "1.0.0+build", "1.5.0")
@@ -137,10 +130,9 @@ func termAlgebraProbes(t *testing.T) []Version {
 	return out
 }
 
-// TestTermIntersectPointwise property-checks the signed conjunction table
-// against direct membership: for every sign/set combination and probe,
-// selecting v keeps the conjunction true exactly when it keeps both
-// conjuncts true.
+// TestTermIntersectPointwise pins the signed conjunction table: for every
+// sign/set pair and probe, the conjunction permits v exactly when both terms
+// do.
 func TestTermIntersectPointwise(t *testing.T) {
 	t.Parallel()
 	sets := termAlgebraSets(t)
@@ -165,10 +157,8 @@ func TestTermIntersectPointwise(t *testing.T) {
 	}
 }
 
-// TestTermIntersectIdentitySeed pins the N({}) identity: folding any term
-// over the seed returns that term verbatim, cosmetic carriers included -
-// which is what lets a single "=X" assignment keep its pinned version
-// visible through the accumulation.
+// TestTermIntersectIdentitySeed pins that folding a term over the N({}) seed
+// returns it verbatim, so an "=X" assignment keeps its pinned version.
 func TestTermIntersectIdentitySeed(t *testing.T) {
 	t.Parallel()
 	pinned := term{Package: "foo", Set: mustSet(t, "=1.2.3"), Positive: true}

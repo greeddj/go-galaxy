@@ -10,16 +10,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/safeout"
 )
 
-// The spinner's whole vocabulary: how often a frame is drawn, the glyphs it
-// cycles through, and the escape sequences that surround one frame.
-//
-// spinnerFrames is a string rather than a slice because this package keeps no
-// package-level variables and a []string cannot be a constant; newSpinner
-// turns it into runes once per spinner.
-//
-// The two wrap sequences bracket one frame rather than one run: they are
-// written by writeFrameLocked, not by spinnerEnterSeq and spinnerLeaveSeq,
-// so autowrap is off only for the bytes of the frame that needs it off.
+// The spinner's delay, glyphs and escape sequences. spinnerFrames is a string
+// because a []string cannot be constant; the wrap sequences bracket one frame
+// in writeFrameLocked, not the run, so autowrap is off only for those bytes.
 const (
 	spinnerDelay      = 100 * time.Millisecond
 	spinnerFrames     = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -40,36 +33,9 @@ const (
 	dumbTerminal = "dumb"
 )
 
-// spinner draws a one-line activity indicator on w, redrawing it every delay
-// until it is stopped.
-//
-// The lifecycle has exactly one invariant, and every guard in this file is a
-// spelling of it: stopCh is non-nil exactly while a render goroutine is the
-// current one. A render goroutine is handed the channel it was started with,
-// so one that wins the mutex after a stop already ran sees a field that is no
-// longer its own channel and writes nothing - which is what keeps a stale
-// frame from landing on top of the sequence that restored the terminal.
-//
-// Two decisions about how a frame occupies the screen are accepted here
-// rather than solved. A frame is one physical line by construction: autowrap
-// is off for exactly the bytes of one frame, and the suffix is cut at its
-// first newline, which together are what make a one-line erase enough to
-// clear the whole frame - \n is the only line-affecting character that
-// survives safeout.Clean, since \r and ESC are both C0 and become U+FFFD.
-// What that gives up is a suffix wider than the terminal, which is truncated
-// at the right margin instead of wrapping, and a multi-line suffix, which
-// shows its first line only. And autowrap-off degrades rather than breaks: a
-// terminal that ignores DECAWM wraps as it always did and a one-line erase
-// leaves a tail behind there, which is the naive behavior and never worse
-// than it.
-//
-// Holding that mode for one write rather than for the run is what keeps an
-// abnormal exit harmless. A run killed between frames leaves the terminal as
-// the cursor-hide sequence alone would, because the last frame restored
-// autowrap in the same write that turned it off. That matters for the exit
-// this program deliberately does not catch: an unhandled SIGQUIT runs no
-// deferred Close, and the goroutine dump it exists to produce is printed to
-// the very terminal a run-scoped mode would have left unable to wrap it.
+// spinner redraws a one-line indicator on w every delay until stopped. stopCh
+// is non-nil exactly while a render goroutine is current; a goroutine holding
+// a stale channel writes nothing, so no frame lands after the restore.
 type spinner struct {
 	w       io.Writer
 	stopCh  chan struct{}
@@ -82,17 +48,9 @@ type spinner struct {
 	colored bool
 }
 
-// newSpinner builds a spinner drawing on w. render decides whether it draws
-// at all and colorAllowed whether its frames carry color, which a TERM of
-// "dumb" takes away even from a destination that otherwise accepts color.
-//
-// render is decided by the caller, and the check available to it is a
-// character-device test rather than a real terminal probe. One configuration
-// gets a spinner it would not have had otherwise: a run whose stdout is
-// redirected to the null device draws frames into it, invisibly, at the cost
-// of one write every delay. Closing that would mean a real tty check, which is
-// a dependency this package does not carry; the same imprecision already
-// governs colorEnabled, so such a run already emits colored markers there.
+// newSpinner builds a spinner drawing on w. render is the caller's
+// character-device verdict (so a stdout on the null device draws there unseen);
+// TERM=dumb takes color away even when colorAllowed.
 func newSpinner(w io.Writer, render, colorAllowed bool) *spinner {
 	return &spinner{
 		w:       w,
@@ -103,12 +61,8 @@ func newSpinner(w io.Writer, render, colorAllowed bool) *spinner {
 	}
 }
 
-// start hides the cursor and begins redrawing frames. It is a no-op for a
-// spinner that does not render or that is already running.
-//
-// The first frame is written synchronously, before the render goroutine
-// exists, so a caller observes a drawn spinner as soon as start returns
-// instead of one tick later.
+// start hides the cursor, draws the first frame synchronously and starts the
+// render goroutine. It is a no-op when not rendering or already running.
 func (s *spinner) start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,15 +75,9 @@ func (s *spinner) start() {
 	go s.run(s.stopCh, s.delay)
 }
 
-// stop erases the current frame and restores the cursor. It is a no-op when
-// no render goroutine is current, which makes it idempotent and safe on a
-// spinner that never started. Autowrap needs nothing here, since every frame
-// already restored it before this one was drawn.
-//
-// It does not wait for the render goroutine to exit, and must not: it holds
-// the mutex that goroutine takes to draw a frame, so waiting here would
-// deadlock. Clearing stopCh is what makes the wait unnecessary - the goroutine
-// still in flight can no longer write anything.
+// stop erases the frame and restores the cursor, idempotently. It must not wait
+// for the render goroutine, which takes s.mu to draw, or it would deadlock;
+// clearing stopCh already keeps that goroutine from writing.
 func (s *spinner) stop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -148,10 +96,8 @@ func (s *spinner) restart() {
 	s.start()
 }
 
-// run redraws a frame on every tick until stop is closed. Both the channel and
-// the period are parameters rather than fields so this goroutine reads neither
-// through the mutex it must take anyway, and so the identity check below
-// compares against the channel this goroutine was started with.
+// run redraws a frame on every tick until stop is closed, drawing only while
+// s.stopCh is still the channel this goroutine was started with.
 func (s *spinner) run(stop chan struct{}, delay time.Duration) {
 	ticker := time.NewTicker(delay)
 	defer ticker.Stop()
@@ -169,13 +115,9 @@ func (s *spinner) run(stop chan struct{}, delay time.Duration) {
 	}
 }
 
-// setSuffix replaces the text drawn to the right of the frame glyph.
-//
-// The safeout.Text parameter is a structural check rather than a proof. A
-// value of any other type cannot be passed without an explicit conversion,
-// so any suffix that arrived here at run time has been cleaned or
-// deliberately cast; an untyped string constant, wherever it is written, is
-// still assignable - see safeout.Text's own doc comment for that gap.
+// setSuffix replaces the text drawn right of the frame glyph. safeout.Text
+// makes an uncleaned string need an explicit conversion, though an untyped
+// string constant is still assignable.
 func (s *spinner) setSuffix(text safeout.Text) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,22 +131,9 @@ func (s *spinner) suffixText() safeout.Text {
 	return s.suffix
 }
 
-// writeFrameLocked draws one frame - autowrap off, erase, glyph, suffix,
-// autowrap on - as a single write, and advances to the next glyph. s.mu must
-// be held by the caller.
-//
-// The single write is a property callers depend on and not an incidental
-// consequence of using a builder: the escape sequences here are only ever
-// handed to the writer whole, so no reader of that writer can observe a
-// half-written one. The two wrap sequences are the reason the window is this
-// narrow - opening and closing it around these bytes alone leaves the mode
-// untouched for everything else that reaches the terminal, including whatever
-// is printed after this process is gone.
-//
-// The frame is composed in a local builder rather than in a buffer reused
-// across ticks: at ten frames a second the one allocation that costs is
-// noise, and handing a Write call a buffer this struct keeps aliasing would
-// be a contract worth more than it saves.
+// writeFrameLocked draws one frame (wrap off, erase, glyph, suffix, wrap on) as
+// a single write, so no reader sees half an escape sequence and autowrap is off
+// for these bytes alone, then advances the glyph. s.mu must be held.
 func (s *spinner) writeFrameLocked() {
 	var frame strings.Builder
 	frame.Grow(frameBufSize)

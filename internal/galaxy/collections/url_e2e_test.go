@@ -25,10 +25,8 @@ const (
 	urlKafkaVersion = "0.24.0"
 )
 
-// urlFixture is the collections suite's url scenario: a fakegalaxy serving
-// both the v3 API (for the transitive Galaxy dependency) and the registered
-// tarball path, a real url download client wired onto the runtime, and a
-// config pointing at a requirements file the test writes.
+// urlFixture is the url scenario: a fakegalaxy serving the v3 API for the
+// Galaxy dependency and the tarball path, with a real url download client.
 type urlFixture struct {
 	galaxy       *fakegalaxy.Server
 	cfg          *config.Config
@@ -104,12 +102,9 @@ func (f *urlFixture) lockfile(t *testing.T) *lockfile.File {
 	return lf
 }
 
-// TestURLInstallFromTarball proves the whole pipeline for one url root:
-// discovery downloads the tarball once, reads the identity out of its
-// MANIFEST.json, commits the artifact under its pinned locator key, the
-// collection and its Galaxy dependency install with the url provenance on
-// the record and the sidecar, and a rerun replays the pin without touching
-// the origin.
+// TestURLInstallFromTarball pins one url root end to end: one download, the
+// artifact under its locator key, url provenance on the record and sidecar,
+// the Galaxy dependency installed, and a rerun that never reaches the origin.
 func TestURLInstallFromTarball(t *testing.T) {
 	t.Parallel()
 	f := newURLFixture(t)
@@ -141,13 +136,9 @@ func TestURLInstallFromTarball(t *testing.T) {
 	}
 }
 
-// TestURLCachingProxyPathInstallsAndLocks proves the caching-proxy URL shape
-// end to end: a requirement whose path embeds the canonical upstream URL -
-// http://front/<upstream-url>, the nginx-cache pattern where the front host
-// reads the rest of its request path as the URL it fetches and caches -
-// installs through the ordinary url pipeline, keeps the full proxy URL as its
-// identity (locator, installed record, lockfile source), and replays its pin
-// without touching the origin again.
+// TestURLCachingProxyPathInstallsAndLocks pins the http://front/<upstream-url>
+// shape: it installs, keeps the full proxy URL as locator, record and lockfile
+// source, and replays its pin without reaching the origin again.
 func TestURLCachingProxyPathInstallsAndLocks(t *testing.T) {
 	t.Parallel()
 	f := newURLFixture(t)
@@ -176,10 +167,9 @@ func TestURLCachingProxyPathInstallsAndLocks(t *testing.T) {
 	assertURLLockEntries(t, f)
 }
 
-// TestURLVersionAssert pins the version: key's assert-must-match semantics
-// on both the fresh path and the pin replay: a matching assertion installs,
-// a mismatched one fails with the resolution class, and editing the
-// assertion after a successful install is judged again on the next run.
+// TestURLVersionAssert pins that a version: key is judged against the manifest
+// on both the fresh path and the pin replay: a match installs, and a mismatch,
+// even one edited in after an install, fails ErrURLCollectionVersionMismatch.
 func TestURLVersionAssert(t *testing.T) {
 	t.Parallel()
 	f := newURLFixture(t)
@@ -212,10 +202,9 @@ func TestURLRootOwnsTheFQDN(t *testing.T) {
 	}
 }
 
-// TestURLLockAndFrozenInstall proves the lockfile half: lock writes a
-// schema-4 url entry pinned by sha256, a frozen install replays it from the
-// cache, a frozen cache miss re-downloads the URL and verifies the pin, and
-// an origin now serving different bytes fails the integrity class.
+// TestURLLockAndFrozenInstall pins a schema-4 url lock entry and a frozen
+// install that replays it, re-downloads on a cache miss, and fails with
+// ErrSHA256Mismatch once the origin serves different bytes.
 func TestURLLockAndFrozenInstall(t *testing.T) {
 	t.Parallel()
 	f := newURLFixture(t)
@@ -278,10 +267,9 @@ func (f *urlFixture) evictURLArtifactAndTree(t *testing.T) {
 	}
 }
 
-// TestURLOfflineAndRefresh proves --offline replays a recorded pin and fails
-// a cold one, and that --refresh re-downloads: unchanged bytes keep the
-// locator and the installed tree, changed bytes become a new pin and a new
-// install.
+// TestURLOfflineAndRefresh pins that --offline replays a recorded pin and
+// fails a cold one, and that --refresh re-downloads: unchanged bytes keep the
+// install, changed bytes become a new pin and a new install.
 func TestURLOfflineAndRefresh(t *testing.T) {
 	t.Parallel()
 	f := newURLFixture(t)
@@ -475,9 +463,8 @@ func TestURLOutdatedIsCurrentByConstruction(t *testing.T) {
 }
 
 // TestURLUppercaseManifestIdentityInstalls pins the relaxed url identity
-// alphabet end to end: a real-world artifact whose MANIFEST.json declares a
-// mixed-case namespace installs, records and locks under it, as
-// ansible-galaxy installs it.
+// alphabet: a MANIFEST.json declaring a mixed-case namespace installs,
+// records and locks under it, as ansible-galaxy installs it.
 func TestURLUppercaseManifestIdentityInstalls(t *testing.T) {
 	t.Parallel()
 	f := newURLFixture(t)

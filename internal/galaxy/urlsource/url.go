@@ -15,10 +15,9 @@ const (
 	schemeHTTP  = "http"
 )
 
-// URL is a parsed, canonical tarball URL. Scheme is https or http; Host is
-// lower-cased, an IPv6 literal kept in brackets; Port is empty when it is the
-// scheme's default; Path is the escaped path exactly as written after
-// validation; Query is the raw query string, part of the source's identity.
+// URL is a parsed, canonical tarball URL: lower-cased host (IPv6 bracketed),
+// Port empty when it is the scheme default, Path escaped as written, and the
+// raw Query, which is part of the source's identity.
 type URL struct {
 	Scheme string
 	Host   string
@@ -48,11 +47,9 @@ func IsHTTPURL(value string) bool {
 	return strings.HasPrefix(lower, schemeHTTPS+"://") || strings.HasPrefix(lower, schemeHTTP+"://")
 }
 
-// ParseURL parses raw as a tarball URL and returns its canonical form. It
-// accepts absolute https:// and http:// URLs and refuses everything else with
-// helpers.ErrInvalidURLRequirement; a credential in the URL is
-// helpers.ErrURLRequirementUserinfo. See the package comment for why the path
-// is validated as strictly as it is.
+// ParseURL parses raw as an absolute http(s) tarball URL in canonical form.
+// Anything else is helpers.ErrInvalidURLRequirement, and a credential in the
+// URL is helpers.ErrURLRequirementUserinfo.
 func ParseURL(raw string) (URL, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -89,12 +86,9 @@ func ParseURL(raw string) (URL, error) {
 	}, nil
 }
 
-// ParsePrefix parses raw as a credential binding: an https or http origin
-// with an optional path prefix. The path may be empty (the binding then
-// covers the whole origin) and loses its trailing slashes; a query, fragment
-// or userinfo is never part of a binding. Every refusal is
-// helpers.ErrURLCredentialInvalid, because the value reaches this function
-// only from a GO_GALAXY_URL_<ID>_URL variable.
+// ParsePrefix parses a GO_GALAXY_URL_<ID>_URL binding: an http(s) origin with
+// an optional path prefix, trailing slashes cut, never a query, fragment or
+// userinfo. Every refusal is helpers.ErrURLCredentialInvalid.
 func ParsePrefix(raw string) (Prefix, error) {
 	parsed, scheme, err := parsePrefixShape(strings.TrimSpace(raw))
 	if err != nil {
@@ -162,17 +156,9 @@ func parseSchemeHost(trimmed string) (*url.URL, string, error) {
 	return parsed, scheme, nil
 }
 
-// checkSourcePath judges a requirement URL's path. The plain form follows
-// checkPath below. The one structural form it admits beyond that is an
-// embedded absolute http(s) URL - the caching-proxy shape
-// http://front/<upstream-url>, where a front host reads the rest of the
-// request path as the URL it fetches and caches. The segments before the
-// embedded URL follow the plain rule, and the embedded URL must itself parse
-// as a url source and be spelled byte for byte in its canonical form, so one
-// upstream artifact has one spelling, one pin and one credential-match
-// reading. Under that rule the only empty segment such a path can carry is
-// the embedded scheme's own "//" separator; every other empty segment, and
-// every dot segment anywhere, stays refused.
+// checkSourcePath judges a requirement URL's path by checkPath, admitting one
+// embedded upstream URL (the caching-proxy shape) only in canonical spelling,
+// so its "//" is the one empty segment and each artifact has one pin.
 func checkSourcePath(path string) error {
 	head, embedded := splitEmbeddedPath(path)
 	if embedded == "" {
@@ -194,12 +180,9 @@ func checkSourcePath(path string) error {
 	return nil
 }
 
-// splitEmbeddedPath splits path at the first embedded absolute http(s) URL,
-// returning the leading segments (empty when the URL starts the path) and
-// the URL itself, without the "/" that ends the head; the URL half is empty
-// when the path carries none. Only the canonical lower-case scheme spelling
-// is recognized, and only on a "/" boundary - anything else falls through to
-// the plain-segment rule and its refusals.
+// splitEmbeddedPath splits path before the first "/http(s)://" into the head
+// and the embedded URL ("" when none). Only the lower-case scheme on a "/"
+// boundary counts; anything else falls to the plain-segment refusals.
 func splitEmbeddedPath(path string) (string, string) {
 	idx := len(path)
 	for _, marker := range []string{"/" + schemeHTTPS + "://", "/" + schemeHTTP + "://"} {
@@ -213,14 +196,9 @@ func splitEmbeddedPath(path string) (string, string) {
 	return path[:idx], path[idx+1:]
 }
 
-// checkPath refuses a path this tool will not send or match on: a rune
-// outside the conservative alphabet below (which keeps quotes, whitespace,
-// control runes and shell metacharacters out of every rendered message and
-// out of the credential prefix match; anything else stays expressible
-// percent-encoded), and a dot or empty segment (see the package comment). A
-// binding prefix reaches this with its trailing slashes already cut, a
-// requirement URL as written; both share one rule so the match and the
-// request can never read one path differently.
+// checkPath refuses a rune outside isPathRune and, past a bare root, any empty
+// or dot segment, "%2e" included. Prefixes and requirement URLs share this rule
+// so the credential match and the request never read one path differently.
 func checkPath(path string, prefix bool) error {
 	for _, r := range path {
 		if !isPathRune(r) {
@@ -240,10 +218,8 @@ func checkPath(path string, prefix bool) error {
 	return nil
 }
 
-// checkQuery bounds the query string to the path alphabet plus the runes a
-// query needs ("&", "?", ";"). A query is served back to exactly one host, so
-// the concern is rendering and nothing else; helpers.URLForMessage cuts it
-// from every message regardless.
+// checkQuery bounds the query to the path alphabet plus "&", "?" and ";". A
+// query reaches only its own host, so the concern is rendering alone.
 func checkQuery(parsed *url.URL) error {
 	for _, r := range parsed.RawQuery {
 		if !isPathRune(r) && r != '&' && r != '?' && r != ';' {
@@ -254,10 +230,9 @@ func checkQuery(parsed *url.URL) error {
 	return nil
 }
 
-// isPathRune is the url-source path alphabet. It extends the git path
-// alphabet with the sub-delims real release paths carry - parentheses,
-// commas, "=", ":" and "!" - and admits nothing that needs quoting in a
-// terminal or a shell.
+// isPathRune is the url-source path alphabet: the git path alphabet plus the
+// sub-delims release paths carry, and nothing that needs quoting in a terminal
+// or a shell.
 func isPathRune(r rune) bool {
 	switch {
 	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
@@ -300,9 +275,8 @@ func defaultPort(scheme string) string {
 	}
 }
 
-// String renders the canonical spelling: scheme://host[:port]path[?query].
-// A URL never carries userinfo or a fragment, so the result is always safe to
-// persist; messages still render it through helpers.URLForMessage, which cuts
+// String renders the canonical spelling scheme://host[:port]path[?query],
+// safe to persist; messages still go through helpers.URLForMessage, which cuts
 // the query.
 func (u URL) String() string {
 	var b strings.Builder
@@ -335,10 +309,9 @@ func (p Prefix) String() string {
 	return b.String()
 }
 
-// Origin is scheme://host:port with the default port filled in, rendered
-// exactly as helpers.Origin renders a request URL's origin - an IPv6 literal
-// without its brackets - because the credential match compares the two
-// byte for byte.
+// Origin is scheme://host:port with the default port filled in and an IPv6
+// literal unbracketed; it must render exactly as helpers.Origin does, since the
+// credential match compares the two byte for byte.
 func (p Prefix) Origin() string {
 	port := p.Port
 	if port == "" {
@@ -347,10 +320,9 @@ func (p Prefix) Origin() string {
 	return p.Scheme + "://" + strings.Trim(p.Host, "[]") + ":" + port
 }
 
-// IsLoopback reports whether the host is a loopback address literal or
-// "localhost", the one case a plaintext http credential is tolerated for.
-// Only a literal counts: a DNS name such as "127.example.com" resolves
-// wherever its owner points it, so it earns no exemption.
+// IsLoopback reports whether the host is "localhost" or a loopback IP literal,
+// the one case a plaintext http credential is tolerated for; a DNS name never
+// earns the exemption.
 func (p Prefix) IsLoopback() bool {
 	host := strings.Trim(p.Host, "[]")
 	if host == "localhost" {

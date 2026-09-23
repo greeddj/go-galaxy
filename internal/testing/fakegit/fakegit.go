@@ -1,34 +1,6 @@
-// Package fakegit provides an in-process git remote test double: the smart
-// HTTP upload-pack service (GET info/refs and POST git-upload-pack, protocol
-// v0) over httptest, the same exchange over an ssh listener answering the
-// "git-upload-pack '<path>'" exec a git client issues, an ssh agent on a unix
-// socket, a known_hosts writer for the listener's host key, and an in-memory
-// repository builder whose every object is stamped with one fixed time so a
-// fixture's hashes are identical on every run. It exists so that nothing in
-// this module's tests reaches a real git host, a real ssh-agent or the
-// user's own key material.
-//
-// The double owns the server side of the exchange and nothing more: it does
-// not validate tree entry names, symlink targets or collection metadata, so
-// a repository built with RawTreeCommit or Symlink carries exactly the
-// hostile shape a test put there and the code under test is what has to
-// refuse it. Per repository, Capabilities decides whether shallow fetches and
-// wants by reachable sha are advertised and honored - the zero value is the
-// minimal server - and Fail scripts faults (a status, a hang before any byte,
-// a stall after a prefix of the pack, a pack built from a different commit
-// than the one wanted, a redirect of the advertisement) with the same Count
-// grammar fakegalaxy uses. Requests are counted per Endpoint and the
-// Authorization header (or, over ssh, the fingerprint of the key that
-// authenticated) of each endpoint's latest request is captured, before any
-// fault or auth check can answer it.
-//
-// Like fakegalaxy, the server and the repository builder can only be
-// constructed from a test: New, NewRepo, StartAgent and GenerateKey take
-// testing.TB, an interface implementable exclusively by the stdlib testing
-// package, so nothing here can be reached from production code. Shutdown is
-// registered via tb.Cleanup. A test that arms Hang or StallAfterBytes must
-// abort the request it provokes - by a context deadline or by closing the
-// client - since a blocked handler holds the server open until then.
+// Package fakegit is an in-process git remote test double: smart-HTTP and ssh
+// upload-pack over deterministic in-memory repositories, with fault injection.
+// Constructors take testing.TB so no production code can reach it.
 package fakegit
 
 import (
@@ -59,10 +31,8 @@ const (
 // per-endpoint arrays.
 const endpointCount = 3
 
-// Path pieces of the smart-HTTP routes: a repository lives at
-// "/<name>.git", its advertisement at "/<name>.git/info/refs" (with
-// ?service=git-upload-pack) and its upload-pack at
-// "/<name>.git/git-upload-pack".
+// Path pieces of the smart-HTTP routes: a repository lives at "/<name>.git",
+// with "/info/refs?service=git-upload-pack" and "/git-upload-pack" beneath it.
 const (
 	repoSuffix     = ".git"
 	infoRefsPath   = "/info/refs"
@@ -78,44 +48,16 @@ const (
 )
 
 // Capabilities are the per-repository toggles of what the server advertises
-// and honors. The zero value is the minimal server: agent, ofs-delta,
-// no-progress and a symref for HEAD are always advertised, nothing else.
-// Shallow adds the shallow capability and honors a deepen of exactly 1 for
-// a single want; without it a deepen is answered with 400, so a client that
-// asks for a depth the server never offered fails rather than being served
-// a full pack. AllowReachableSHA1 adds allow-reachable-sha1-in-want and
-// accepts a want that is reachable from an advertised tip; without it a want
-// that is not a tip is refused with an ERR line.
+// and honors. In the zero value a deepen is a bad request, never a silent full
+// pack, and a want that is not an advertised tip is refused with an ERR line.
 type Capabilities struct {
 	Shallow            bool
 	AllowReachableSHA1 bool
 }
 
-// Fault describes a scripted failure for one armed Fail rule. Count bounds
-// how many matching requests it affects, exactly as in fakegalaxy: a
-// positive Count is decremented on each match until it reaches zero, a
-// negative Count matches indefinitely, and a zero Count (the zero value)
-// never matches, so a Fault must set a positive or negative Count to fire.
-//
-// Status, if nonzero, answers a matching HTTP request with that status and
-// an empty body. Redirect, if non-empty, answers a matching info/refs request
-// with 302 and that absolute URL as Location, the shape a host uses to move
-// a repository - and the shape under which a client must not forward its
-// Authorization header to the new host. Hang blocks a matching request until
-// its context is done (over ssh, until the connection or the server closes)
-// and writes nothing. StallAfterBytes, on upload-pack only, writes the
-// shallow update and NAK, then exactly that many bytes of the packfile,
-// flushes them onto the wire and blocks like Hang - a mid-pack stall, distinct
-// from Hang's before-any-byte stall. ServeCommit, on upload-pack only, serves
-// a pack built from that commit instead of the wanted one, so the client
-// receives a well-formed pack that does not contain what it asked for.
-//
-// Precedence when several are set on one Fault: Redirect, then Status, then
-// Hang, then StallAfterBytes; ServeCommit composes with the others only in
-// that it changes what a served pack holds. Over ssh only Hang, StallAfterBytes
-// and ServeCommit apply; there is no status line or Location to carry the
-// other two, so a Fault arming only those is a no-op there beyond consuming
-// one Count.
+// Fault is a scripted failure for one Fail rule; Count works as in fakegalaxy
+// and a zero Count never fires. Redirect, Status, Hang and StallAfterBytes win
+// in that order; ssh honors only Hang, StallAfterBytes and ServeCommit.
 type Fault struct {
 	Redirect        string
 	Status          int
@@ -205,24 +147,17 @@ func (s *Server) SetCapabilities(name string, c Capabilities) {
 	s.caps[name] = c
 }
 
-// Fail arms a fault rule: the next requests to ep for the repository name
-// (an exact match, or every repository when name is empty) are affected by
-// f. Rules are scanned in the order Fail registered them and each is
-// independent.
+// Fail arms a fault rule for requests to ep on the repository name, or on
+// every repository when name is empty. Rules are scanned in registration order.
 func (s *Server) Fail(ep Endpoint, name string, f Fault) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.faults = append(s.faults, faultRule{name: name, ep: ep, fault: f})
 }
 
-// RequireAuth demands an exact Authorization header value on every HTTP
-// request, e.g. "Basic " followed by the base64 of "user:pass". The empty
-// string, the default, means anonymous. A request whose header is missing or
-// differs is answered with http.StatusUnauthorized (or what AuthFailStatus
-// set) and an empty body - after its header was captured for SeenAuth and
-// after any armed fault had its chance, so a redirect or a hang is observed
-// even on an unauthenticated request. The ssh half authenticates by key and
-// ignores this setting.
+// RequireAuth demands an exact Authorization header on every HTTP request; ""
+// means anonymous. The check runs after auth capture and armed faults, so a
+// redirect or hang is observed even unauthenticated; ssh ignores it.
 func (s *Server) RequireAuth(expected string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -237,11 +172,9 @@ func (s *Server) AuthFailStatus(status int) {
 	s.authFailStatus = status
 }
 
-// SeenAuth reports what ep's most recent request authenticated with and
-// whether it authenticated at all: over HTTP the Authorization header value
-// and its presence, over ssh the SHA256 fingerprint of the public key the
-// session was accepted with. It reports ("", false) for an endpoint that has
-// not received any request.
+// SeenAuth reports what ep's latest request authenticated with: the HTTP
+// Authorization header and its presence, or over ssh the accepted key's SHA256
+// fingerprint. It reports ("", false) before any request.
 func (s *Server) SeenAuth(ep Endpoint) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -288,14 +221,9 @@ func (s *Server) Close() {
 	s.srv.Close()
 }
 
-// ServeHTTP routes the two smart-HTTP endpoints. The path must be
-// "/<name>.git/info/refs" with ?service=git-upload-pack, or
-// "/<name>.git/git-upload-pack"; anything else, including a receive-pack
-// service, is 404. Each matched route is counted first, then its
-// Authorization header is captured, then armed faults run, then the auth
-// check, then the exchange itself - so Count and SeenAuth reflect every
-// request whatever answered it, and a fault is observable on a request that
-// would have failed auth.
+// ServeHTTP routes info/refs and git-upload-pack; anything else, receive-pack
+// included, is 404. A request is counted and its auth captured before faults
+// and the auth check run, so Count and SeenAuth reflect every request.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, infoRefsPath):
@@ -340,11 +268,9 @@ func (s *Server) handleInfoRefs(w http.ResponseWriter, r *http.Request, name str
 	}
 }
 
-// handleUploadPack answers one upload-pack request for name. The request
-// body is read in full before anything else happens: net/http only watches a
-// connection for the client going away once the body has been consumed, so
-// a Hang that blocked with the body unread would never see the request
-// context end when the client gives up, and would hold the server open.
+// handleUploadPack answers one upload-pack request for name. The body is read
+// first: net/http notices a client going away only once the body is consumed,
+// so a Hang over an unread body would hold the server open.
 func (s *Server) handleUploadPack(w http.ResponseWriter, r *http.Request, name string) {
 	s.incr(EndpointUploadPack)
 	s.captureHeader(r, EndpointUploadPack)
@@ -460,10 +386,9 @@ func (s *Server) consumeFault(ep Endpoint, name string) (Fault, bool) {
 	return Fault{}, false
 }
 
-// enactHTTPFault carries out the before-any-byte part of fault against w/r:
-// Redirect, Status and Hang, in that precedence. It reports whether it
-// answered the request; StallAfterBytes and ServeCommit are left to the
-// upload-pack handler, which needs the pack to enact them.
+// enactHTTPFault enacts Redirect, Status or Hang, in that precedence, and
+// reports whether it answered; StallAfterBytes and ServeCommit need the pack
+// and are left to the upload-pack handler.
 func (s *Server) enactHTTPFault(w http.ResponseWriter, r *http.Request, fault Fault) bool {
 	switch {
 	case fault.Redirect != "":

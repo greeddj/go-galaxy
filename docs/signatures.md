@@ -37,6 +37,75 @@ since none were read; `lock`, `outdated`, `cleanup`, `hash`, `tree` and
 `explain` never emit this warning, since none of them verify anything it
 could apply to.
 
+The refusal covers every `ansible.cfg`, however it was found, because no
+test of who wrote the file holds up. A repository can ship `./ansible.cfg`; a
+workflow's `ANSIBLE_CONFIG` usually names a repository-relative path, so the
+operator picks the variable while the checkout picks the content; a
+repository that also ships the workflow picks both; and on a self-hosted
+runner one job can leave `~/.ansible.cfg` behind for every later job. Keying
+on the discovery slot misses the `ANSIBLE_CONFIG` case, keying on the path
+lying under the working directory misses a symlinked target and a run whose
+working directory is not the checkout, and keying on file ownership misses
+the runner case, since the earlier job wrote the file as the same user. An
+environment variable is set by whoever configured the run rather than by the
+checkout, so the flags and their variables stay the only source of a setting
+that can relax verification.
+
+An explicitly supplied but empty `--keyring` or
+`--required-valid-signature-count` - the flag or any of its variables set to
+the empty string - is refused (exit `2`) rather than read as unset. That is
+what a CI job produces when it interpolates a secret that is withheld, as on
+a pull request from a fork: an empty keyring would silently verify nothing,
+and an empty count would silently replace a stricter configured value such
+as `+all` with the default `1`. The other two settings accept an empty
+value, since each empty meaning already keeps verification on: an empty
+disable switch is false and an empty ignore list tolerates nothing.
+
+`ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` takes ansible's boolean spellings -
+`true`/`false`, `yes`/`no`, `on`/`off` and `1`/`0`, case-insensitive and with
+surrounding whitespace ignored - and is read only when neither the flag nor
+`GO_GALAXY_DISABLE_GPG_VERIFY` set the switch. Empty reads as absent; any
+other value is refused (exit `2`) rather than guessed. It is read apart from
+the flag because the flag's own variable takes Go's boolean spellings, which
+refuse `yes` and `off` by aborting the command: an environment already
+exporting `no` for ansible would otherwise fail every `install` and `warm`.
+
+## Keyring and signature file formats
+
+The keyring's format is judged from its bytes, never its file name. A GnuPG
+keybox is recognized by its `KBXf` magic at byte offset 8. A file carrying a
+`-----BEGIN PGP PUBLIC KEY BLOCK-----` (or `PRIVATE KEY BLOCK`) header
+anywhere, behind a leading comment included, is read as armor, and anything
+else as binary packets. Every armor block contributes its keys, so
+`cat teamA.asc teamB.asc > keyring.asc` trusts both teams; each export has to
+end with a newline (gpg's does), and an armor opening line that does not
+start a line of its own - two exports glued together - is refused with that
+remedy. The load also refuses a file over 64 MiB rather than truncating it,
+which would silently drop keys; an armor block that is not key material,
+named by its type rather than skipped; any secret key material, naming
+`gpg --export --armor` as the fix; and a file that parses to no keys at all.
+
+What may sit in the file is decided by packet tag, never by whether the
+parser could read the packet. A keyring may hold only what a transferable
+public key is made of - public keys and subkeys, user IDs and user
+attributes, and signatures - plus GnuPG's ring-trust packet, so a raw
+`pubring.gpg` loads, and RFC 9580 padding. A secret key or subkey packet
+refuses the file even where the parser would have skipped it, and so does a
+marker packet. The file may hold at most 4096 packets across all of its
+armor blocks, each block also counting as one before it is decoded: a
+minimal three-packet key exported on its own costs four, so 1024 such
+exports concatenated load and 1025 do not. That is sized for a collection
+publisher's keyring, not a distribution's, and a file past it is refused
+whole. The framing check leaves a v3 signature alone, so a keyring carrying
+the certifications PGP 2.x and GnuPG 1.x made on long-lived keys is not
+refused for them.
+
+A detached signature may hold signature packets and nothing else, at most 64
+of them (one per signer), so a public key export offered as a signature is
+refused. That limit counts packets inside one signature; the cap of 64
+described below counts signatures gathered for one collection, and the two
+only happen to agree.
+
 ## Required count and the vacuous pass
 
 `--required-valid-signature-count` (default `"1"`) accepts four spellings: a
@@ -47,7 +116,14 @@ because neither spelling asks for a floor an empty set can fail. Only the `+`
 marker closes that: `+N` additionally requires at least one signature to
 have verified, and `+all` requires the same on top of every checked signature
 verifying. An operator who needs a signature actually required writes `+1`
-or higher.
+or higher. The vacuous pass is ansible-galaxy's own verdict, kept on
+purpose; go-galaxy departs from it only by warning (below).
+
+The whole value has to match, the way ansible's own pattern requires:
+nothing is trimmed and nothing is case-folded, so a count with a space
+around it, `+ 1`, `++1`, `1all` and `ALL` are all refused, and only ASCII
+digits make a count. Accepting a spelling ansible-galaxy refuses would let a
+configuration work here and then fail under ansible-galaxy.
 
 What the number counts is **distinct signing keys**, not signature files: two
 signatures made by the same key count once, so `2` asks for two independent
@@ -55,7 +131,13 @@ signers and the same signature supplied twice can never stand in for a second
 one. A counted spelling, bare or `+`, also stops the walk at its Nth distinct
 signer, so signatures past that point are never checked and cannot fail the
 run. `all` is the spelling with no such cutoff - it is the one that checks
-every gathered signature.
+every gathered signature, and the only one under which a signature that
+fails with a status this run does not tolerate fails the run. The `+` marker
+adds its one clause and nothing more: under a counted spelling, bare or `+`,
+a failure beside enough verified signers does not fail the run (`+1` with
+two failures and one success passes, as in ansible). Making it fatal there
+would pass or fail a run depending on where the bad signature sits in the
+list, since the walk stops at its Nth signer.
 
 Two spellings are traps rather than choices. `+0` can never pass, under any
 outcome: it is refused the moment nothing verifies (the strict clause) and
@@ -101,6 +183,23 @@ codes are ignored - only the keyring path and the required count - and the
 six inert codes are accepted with no warning of their own, since tolerating
 a failure that cannot occur changes nothing either way.
 
+Each configured code is matched with surrounding whitespace trimmed and case
+ignored, so the comma-separated
+`ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES="BADSIG, NO_PUBKEY"` works as
+written.
+
+Because the ignore list keys on status, which status a failure gets is part
+of the contract, and no failure is steered onto a status configured for
+something else. A blank blob, or a well-formed armor envelope holding
+nothing, is `NODATA`, where the OpenPGP library would report the empty
+packet stream as an unknown issuer, an ignorable-looking `NO_PUBKEY`.
+`BADARMOR` is only armor the decoder itself could not read. This tool's own
+refusals - malformed packet framing, a packet that is not a signature, an
+oversized armor header, an armored block of another type - are `ERRSIG`, and
+so is any error it does not recognize: an unanticipated failure makes a
+signature fail, never verify, and an entry written to tolerate `BADARMOR`
+never stretches to cover these.
+
 ## `signatures:` in requirements.yml
 
 A collection entry may declare `signatures:` as a single source string or a
@@ -127,10 +226,24 @@ another host or a relative path), one embedding a credential in its userinfo
 string nor a list of strings, or more than 64 sources declared for one
 collection, each fail the load. A source's own query string is still sent on
 the request - it may be a presigned capability the source needs to be
-fetchable at all - but it is never persisted: it is cut from every source
-before the resolved requirements spec reaches the store, so an `install
---frozen` run, which never rebuilds that spec, does not silently keep
-re-persisting an old, uncut entry.
+fetchable at all - but it is cut from every message naming the source and
+never persisted: it is cut from every source before the resolved
+requirements spec reaches the store, and cut again whenever the snapshot is
+saved, so an entry an older binary persisted uncut, which an
+`install --frozen` run carries forward without rebuilding it, loses its
+query on the next save. A run with nothing to save leaves such an entry as
+it was.
+
+A source is fetched over a client of its own, built with no server
+configuration: it attaches no Galaxy token and relaxes no certificate check
+for any origin, even one a configured server shares. A `signatures:` value is
+written by whoever can commit to the repository, not by the operator, so a
+client that attached credentials by origin would hand a hostile requirements
+file a token-bearing request to a path of its choosing, or unverified TLS on
+an origin the operator relaxed for their own server. This matches ansible,
+which sends no credential and forces certificate validation when it fetches a
+signature. Redirects are followed, with the `Referer` header dropped on
+every hop, so a presigned query does not reach the redirect target.
 
 Declaring `signatures:` with no keyring configured is a hard error (exit
 `2`) naming the first such collection - the verdict earned by a requirements
@@ -158,6 +271,29 @@ sources will not be checked.
   on a miss. Under `--frozen` or `--no-deps`, where nothing else would have
   fetched that document, turning on `--keyring` means paying one metadata
   request per collection that did not exist before.
+- **A server's signatures are only as fresh as its cached metadata.** They
+  travel only on the collection's version-detail document, which reaches
+  verification for a dependency just as it does for a root, so a transitive
+  dependency no requirements file names has its server's signatures checked
+  too. For an
+  exact version that document is read through the API cache, where it never
+  expires and `--refresh` does not bypass it: once cached, a rerun or `warm`
+  re-verifies against the same signatures without asking the server, and a
+  signature a server adds or withdraws later is seen only under `--no-cache`
+  or after `--clear-cache`.
+- **Each declared network source gets one attempt.** An `http`/`https`
+  source is fetched once, with no retry: one that never accepts the
+  connection costs at most the 10-second dial timeout, and one that accepts
+  and never answers costs `--timeout`. All of a collection's sources share
+  the one 1-minute signature phase described under
+  [install options](cli.md#install-options), and time rather than size is
+  what spends it - 64 blobs at the 1 MiB maximum fit at about 1.1 MiB/s - so
+  a raised `--timeout` lets a single unresponsive source spend the whole
+  phase and leave the rest unfetched. A non-200 answer is reported by its
+  status code alone and its body is never read; a 200 body past 1 MiB is
+  refused, and none is sized from `Content-Length`. Blobs are gathered and
+  checked one at a time, so a worker holds one in memory rather than up to
+  64 MiB.
 - **Nothing about a verification verdict is written anywhere** - not the
   snapshot, not the extract marker, not the lockfile, not `GALAXY.yml`. This
   project's trust model already treats the cache as attacker-writable, so a
@@ -223,6 +359,11 @@ chain check below, which the builder runs on every artifact it produces.
 
 ## Manifest chain check
 
+The `MANIFEST.json` the signatures are checked over has to sit within the
+first 64 MiB of the artifact's decompressed stream, and an empty one counts
+as missing, since a detached signature over empty bytes verifies while
+saying nothing about the artifact.
+
 Once at least one signature verifies, the artifact is checked against
 `MANIFEST.json` in both directions: every file, symlink and hardlink entry
 the archive carries must be listed in `FILES.json` (a directory entry is
@@ -238,9 +379,63 @@ can only ever fail, because the manifest's own bytes carry the listing's
 digest, so no listing can name the manifest's digest without predicting
 bytes that depend on it.
 
+The check reads the archive a second time, apart from the manifest read,
+and treats the tar stream as hostile even after a signature verified:
+whoever controls the server or the cache can staple a legitimately signed
+`MANIFEST.json` onto a tarball of their choosing, and the artifact's
+declared sha256 comes from that same server. The chain proves only that an
+archive agrees with a manifest, so it binds the two first: the archive's own
+`MANIFEST.json` entry must be a regular file hashing to exactly the bytes
+the signature was verified over. Each remaining rule closes a way an archive
+could show the listing one thing and the extractor another:
+
+- Two file or link entries whose cleaned paths collide are refused, with no
+  exemption for `MANIFEST.json` or `FILES.json`: the manifest reader takes
+  the first entry of a name, so a duplicate could show the signature one
+  document and the chain walk another.
+- A row with an `ftype` other than `file` over a path the archive carries as
+  a regular file is refused, or that content would count as listed without
+  ever being hashed. "Listed" means appearing in `files` at all, which is
+  how a symlink to a directory, listed with `ftype: dir`, is covered.
+- A symlink target that is absolute, or resolves to the archive root or
+  above, is refused. A hardlink target is resolved against the archive root,
+  as both the extractor and Python's `tarfile` read it. A listed link
+  carries its target's content digest and is followed through at most 8
+  links, which is also the cycle guard.
+- An entry whose name normalizes to the archive root (`.`, `foo/..`) is
+  skipped, as the extractor skips it.
+- An unlisted entry is reported by the first one in stream order, so the
+  message is the same on every run.
+
+`FILES.json` itself is read more strictly than `encoding/json` would read
+it, refusing shapes that another JSON reader, Python's `json.loads` among
+them, could read differently: a top-level value that is not an object, a
+`files` value that is not an array (`null` included), a second `files` key,
+content after the top-level object, a name listed twice, a file row whose
+`chksum_type` is not `sha256`, and a row that fails to decode, a type error
+included. Any other key, such as `format`, is skipped, and a document with
+no `files` key is an empty listing, so every entry the archive carries
+besides `MANIFEST.json` and `FILES.json` is then refused as unlisted. A
+listing is capped at 100,000 rows, the archive's own entry ceiling, and
+every refusal of the listing's content, a listed name outside the archive
+included, is a chain mismatch (exit `7`).
+
 The signed manifest's declared `namespace`, `name` and `version` are also
-checked against the collection this run actually resolved - a signature
-that verifies but names a different collection (a downgrade, a substitution)
-fails the same way a manifest whose identity cannot be read unambiguously
-does (two conflicting spellings of the same JSON key, for instance). See
-[Exit codes](exit-codes.md#exit-codes) for how both classify.
+checked against the collection this run actually resolved, byte for byte and
+with no normalization, since a normalizing comparison is the one a
+lookalike identity would be aimed at. A signature that verifies but names a
+different collection (a downgrade, a substitution) fails the same way a
+manifest whose identity cannot be read unambiguously does. The identity is
+read key by key rather than decoded into a struct: `encoding/json` matches a
+key case-insensitively and lets the last match win, while ansible-galaxy's
+Python reader matches it exactly, so a `COLLECTION_INFO` shadowing
+`collection_info`, or a `NAMESPACE` inside it, would declare one identity
+here and another there. Exactly one key at each level may match the wanted
+name case-insensitively, and it must be spelled exactly; a duplicate is
+refused even when both carry the same value, and a value that is not a JSON
+string is refused rather than coerced. The refusal quotes the declared
+identity as one value, so a hostile version string cannot forge a line of
+output. Like the chain check, this runs only once a signature verified,
+since without one it would lend assurance to a document nobody vouched for.
+See [Exit codes](exit-codes.md#exit-codes) for how each of these refusals
+classifies.

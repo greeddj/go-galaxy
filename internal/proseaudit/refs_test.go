@@ -14,12 +14,9 @@ import (
 	"testing"
 )
 
-// citationPattern matches a `file.go:NNN` or `file.go:NNN-MMM` reference,
-// with NNN and MMM real numbers - this package spells its own examples with
-// placeholders so that the gate needs no exemption for the file defining it.
-// The leading path is matched and then discarded down to its base name, so a
-// citation copied verbatim out of a stack frame (`.../failures.go:NNN +0x104`)
-// is recognized rather than skipped for the noise around it.
+// citationPattern matches a `file.go:NNN` or `file.go:NNN-MMM` reference with
+// real numbers. The leading path is matched and later cut to its base name, so
+// a citation copied out of a stack frame is still recognized.
 var citationPattern = regexp.MustCompile(`([\w./-]+\.go):(\d+)(?:-(\d+))?`)
 
 // citation is one line reference read out of one comment.
@@ -35,28 +32,13 @@ type citation struct {
 	last  int
 }
 
-// pkgFiles is one directory's parsed Go files, keyed by base name. Files of a
-// directory's `foo` and `foo_test` packages are deliberately held together:
-// helper resolution has to see across that split, and this repository keeps
-// its tests in-package anyway.
+// pkgFiles is one directory's parsed Go files by base name, its `foo` and
+// `foo_test` packages held together so helper resolution sees across the split.
 type pkgFiles map[string]*ast.File
 
-// TestCommentLineReferencesResolve is the gate. Every `file.go:NNN` in every
+// TestCommentLineReferencesResolve is the gate: every `file.go:NNN` in every
 // comment in the module must name a line `go test` could report a failure on,
 // in a test file of the same package.
-//
-// Run against a real one-line drift and back: rewriting one accurate citation
-// in internal/galaxy/lockfile/lockfile_test.go to name the line above its
-// assertion instead made this test fail with
-//
-//	refs_test.go:78: stale or forbidden line citations:
-//
-// followed by one line naming that file, the comment's own line, and the
-// cited line that is not one go test could report a failure on; restoring the
-// digit made it pass again. That offending citation is described rather than
-// reproduced here on purpose - this gate reads comments, so a bad citation
-// quoted verbatim inside one is audited as a citation and fails the very gate
-// quoting it.
 func TestCommentLineReferencesResolve(t *testing.T) {
 	t.Parallel()
 
@@ -79,12 +61,9 @@ func TestCommentLineReferencesResolve(t *testing.T) {
 	}
 }
 
-// TestAuditReportsAStaleLineCitation is the gate's positive control. The same
-// fixture is audited twice, differing only in the cited number: with the
-// citation on the assertion's own line it must produce nothing, and one line
-// past that assertion it must be reported. Without the first half, "the audit
-// found nothing" would be indistinguishable from "the audit never reached the
-// check".
+// TestAuditReportsAStaleLineCitation pins the stale-line check with a positive
+// control: one fixture passes citing its assertion's own line and is reported
+// citing the line after it.
 func TestAuditReportsAStaleLineCitation(t *testing.T) {
 	t.Parallel()
 
@@ -103,12 +82,9 @@ func TestAuditReportsAStaleLineCitation(t *testing.T) {
 	}
 }
 
-// TestAuditReportsACitationIntoAProductionFile pins the production-file ban,
-// and pins it as a ban rather than as a line check: the cited line is a real,
-// existing line of the production file, so a build that reported nothing here
-// would be one that had silently downgraded the rule to "the line must
-// exist". The control is the same fixture with the citation replaced by the
-// identifier the rule asks for.
+// TestAuditReportsACitationIntoAProductionFile pins the production-file ban as
+// a ban, not a line check: the cited production line exists and is still
+// reported, while naming the identifier instead passes.
 func TestAuditReportsACitationIntoAProductionFile(t *testing.T) {
 	t.Parallel()
 
@@ -131,12 +107,9 @@ func TestAuditReportsACitationIntoAProductionFile(t *testing.T) {
 	}
 }
 
-// TestAuditAcceptsAHelperCallAndADeclarationLine covers the two accepting
-// branches the module's own citations reach least often, so that neither can
-// rot into an accept-everything. Each is checked against its own negative: a
-// call to a same-package function that does not call t.Helper() is not a
-// failure site, and a line inside a function body that holds no assertion is
-// not one either.
+// TestAuditAcceptsAHelperCallAndADeclarationLine pins the helper-call and
+// declaration-line accepting branches, each against a negative (a plain call,
+// a line with no assertion), so neither can rot into accepting everything.
 func TestAuditAcceptsAHelperCallAndADeclarationLine(t *testing.T) {
 	t.Parallel()
 
@@ -200,10 +173,8 @@ func auditPackage(fset *token.FileSet, files pkgFiles) []string {
 }
 
 // auditFile reports the bad citations carried by one file's comments. Only
-// *ast.Comment nodes are read, so a citation inside a string literal or a
-// testdata fixture is out of scope by construction rather than by heuristic -
-// which is also what keeps this file's own fixtures, which are string
-// literals holding exactly such citations, from being audited as prose.
+// *ast.Comment nodes are read, so string literals, this file's own fixtures
+// included, are out of scope by construction.
 func auditFile(fset *token.FileSet, name string, file *ast.File, targets map[string]map[int]bool) []string {
 	var problems []string
 	for _, group := range file.Comments {
@@ -253,15 +224,9 @@ func parseCitation(text string, span []int) (citation, bool) {
 	}, true
 }
 
-// checkCitation returns the problem with one citation, or "" when it is
-// sound.
-//
-// The production-file ban is checked first and without consulting the file at
-// all, because it is not a claim about the cited line: a line number into
-// production code is unverifiable in principle once the reason it was quoted
-// is gone - a stack frame from a mutated tree, say - and it is strictly less
-// informative than the identifier that sits there, which survives every edit
-// above it.
+// checkCitation returns the problem with one citation, or "" when it is sound.
+// A production file is refused without reading its lines: the identifier at
+// that line survives edits above it, and the number does not.
 func checkCitation(cited citation, targets map[string]map[int]bool) string {
 	if !strings.HasSuffix(cited.target, "_test.go") {
 		return cited.raw + " cites a production file; name the identifier instead of a line"
@@ -287,33 +252,9 @@ type failureSites struct {
 	lines   map[int]bool
 }
 
-// failureLines returns every line of file that `go test` could attribute a
-// failure to. Three shapes qualify, and together they are the predicate "a
-// line a failure could be reported on", not a list of conveniences:
-//
-//   - a call to Fatal/Fatalf/Error/Errorf/Log/Logf/Skip/Skipf on a value bound
-//     to a *testing.T (or *testing.B, *testing.F, testing.TB) - matched over
-//     the call's whole Lparen..Rparen span, so a multi-line call matches on
-//     any of its lines, which is where the reported number often lands;
-//   - a call to a same-package function whose body calls t.Helper(), since
-//     that is exactly the construct that makes `go test` report the caller's
-//     line instead of the assertion's own;
-//   - a function's declaration line, for the "see that test" citation, which
-//     names a test rather than a failure.
-//
-// The span rule is an over-approximation, and its cost is worth naming rather
-// than leaving to be discovered: a citation that drifts into the middle of a
-// multi-line helper call - onto one of its argument lines - still lands inside
-// that call's span and is accepted, even though the number no longer names the
-// assertion the comment quotes. Measured on this repository, an edit shifting
-// one test file by 67 lines produced four citations this gate caught and three
-// it accepted for exactly that reason. Narrowing the span to the call's first
-// and last lines would trade those false negatives for false positives, since
-// the line `go test` reports for a multi-line call depends on the call's
-// layout. The gate deliberately does not read the quoted message either: those
-// are rendered format strings, so matching them against source would be
-// fuzzy - and a gate that fails on correct prose is worse than one that misses
-// some incorrect prose.
+// failureLines returns every line of file `go test` could attribute a failure
+// to: each function's declaration line, and every line an assertion or helper
+// call spans, since the line reported for a multi-line call depends on layout.
 func failureLines(fset *token.FileSet, file *ast.File, helpers map[string]bool) map[int]bool {
 	sites := &failureSites{fset: fset, helpers: helpers, lines: make(map[int]bool)}
 	for _, decl := range file.Decls {
@@ -327,10 +268,8 @@ func failureLines(fset *token.FileSet, file *ast.File, helpers map[string]bool) 
 	return sites.lines
 }
 
-// scan walks one function body, marking every failure site in it. outer
-// carries the testing identifiers visible from an enclosing function, so a
-// subtest closure rebinding t is read with its own binding rather than the
-// parent's.
+// scan marks every failure site in one function body; outer carries the
+// testing identifiers visible from enclosing functions, for subtest closures.
 func (s *failureSites) scan(body *ast.BlockStmt, params *ast.FieldList, outer map[string]bool) {
 	if body == nil {
 		return
@@ -489,10 +428,8 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// goDirs returns every directory under root holding at least one .go file.
-// vendor/ is skipped because it is not this repository's prose, testdata/
-// because its contents are fixtures rather than code, and dot-directories
-// because they hold tooling rather than the module.
+// goDirs returns every directory under root holding a .go file, skipping
+// vendor/, testdata/ fixtures and dot-directories of tooling.
 func goDirs(t *testing.T, root string) []string {
 	t.Helper()
 
@@ -555,10 +492,8 @@ func parseDir(t *testing.T, fset *token.FileSet, dir string) pkgFiles {
 	return files
 }
 
-// Fixture names and the placeholder the fixture builders substitute a
-// computed line number into. The placeholder keeps the built source
-// line-for-line identical to the source the line numbers were computed
-// against, which is the same discipline the citations themselves are held to.
+// Fixture names, and the placeholder the builders replace with a computed line
+// number, so the built source stays line-for-line the one that was measured.
 const (
 	fixtureName        = "fixture_test.go"
 	productionName     = "thing.go"

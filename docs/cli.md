@@ -1,7 +1,7 @@
 # CLI reference
 
 This page lists what each command and option does; [Command flows](commands.md)
-draws how each command runs, with a branch for every flag that changes its path.
+draws how each command runs and which flags change its path.
 
 ## Usage
 
@@ -32,7 +32,7 @@ is refused as a usage error (`2`) the same way.
 
 - `install` (`i`) - install the collections and the roles of `requirements.yml`, as `ansible-galaxy install -r` does; there is no separate role subcommand. Collections go under `--download-path`, roles under `--roles-path` (see [install options](#install-options)). Roles install after the collections and only when every collection level succeeded, so a collection failure never leaves roles half-installed against a broken tree; a run with no `roles:` entries never creates the roles directory. Each role is reported on its own line (`Installed: role <name> == <version>`, `Skipping install, already installed: role <name>@<version>`, `Failed: role <name> == <version> error: ...`), and the completion line counts roles only when the run had any, so a collections-only run reads as it always did.
 - `lock` (`l`) - resolve and write `galaxy.lock` for reproducible CI. See [lock](#lock) below for its `--frozen` drift gate and its `--dry-run` preview.
-- `warm` (`w`) - populate the artifact + extracted caches without installing (for CI image bake). A role is warmed like a collection - its artifact into the artifact cache and its tree into the extracted store, recorded in the warmed set under `role:<name>@<version>` so a role and a collection sharing a `name@version` never overwrite each other's entry - and reported as `Cached: role <name> == <version>`, the shape a collection's own `Cached: <namespace>.<name> == <version>` line takes. No roles directory is touched. Requires a cache: `--no-cache` is rejected as a usage error rather than downloading everything and discarding it. A warmed collection's extracted tree is protected from `cleanup` for 30 days after its last warm, so a machine that warms and then stops warming eventually reclaims the space. Under `--dry-run`, `warm` reports per collection whether it is already warm or would be warmed, downloads no artifact, and writes no warmed entry; it still rejects `--no-cache` as a usage error regardless of `--dry-run`, since `--no-cache` leaves warm nothing to do either way - see [install options](#install-options) for the full `--dry-run` semantics.
+- `warm` (`w`) - populate the artifact + extracted caches without installing (for CI image bake). A role is warmed like a collection - its artifact into the artifact cache and its tree into the extracted store, recorded in the warmed set under `role:<name>@<version>` so a role and a collection sharing a `name@version` never overwrite each other's entry - and reported as `Cached: role <name> == <version>`, the shape a collection's own `Cached: <namespace>.<name> == <version>` line takes. No roles directory is touched. Requires a cache: `--no-cache` is rejected as a usage error rather than downloading everything and discarding it. A warmed collection's extracted tree is protected from `cleanup` for 30 days after its last warm, so a machine that warms and then stops warming eventually reclaims the space. Under `--dry-run`, `warm` reports per collection whether it is already warm or would be warmed, downloads no Galaxy artifact, and writes no warmed entry; it still rejects `--no-cache` as a usage error regardless of `--dry-run`, since `--no-cache` leaves warm nothing to do either way - see [install options](#install-options) for the full `--dry-run` semantics.
 - `hash` (`h`) - print a deterministic cache key (`sha256:…`) for use as a CI cache key.
 - `tree` (`t`) - print the resolved dependency tree from the lockfile, rooted at the entries of `requirements.yml`. A git entry prints its repository, subdir and commit beside its version, and a git requirement's roots are whatever entries the lockfile holds from that repository under its subdir. When the lockfile or the requirements file has roles, a second group follows under a `roles:` header, one tree per `roles:` root through the dependencies the lockfile recorded: a git role prints as `<name> <version> (git <repository> @<commit>)`, a Galaxy role as `<name> <version> (galaxy <owner.role> via <repository> @<commit>)`, a dependency already printed as `(*)`, and a root the lockfile lacks as `(missing in lockfile)`; nothing is printed for a file without roles. It needs both files, not just the lockfile: a missing lockfile fails with the lockfile code (`6`), while a missing or unparseable requirements file fails with the usage code (`2`), since the roots to walk from are read from it. Only lockfile entries reachable from a requirements root are printed, so an entry no root reaches is silently omitted, and a root with no lockfile entry prints as `(missing in lockfile)`.
 - `explain` (`why`) - takes `<namespace.name>` or a role's install name or Galaxy name (`owner.role`); prints the locked version, source, and sha256 (for a git entry: type, source, ref, commit and subdir; for a role: `role <name> <version>`, then type, galaxy, source, repository, ref and commit), what requires it, and what it depends on. A name that is both a collection and a role prints both sections, the collection first; a name that is neither fails with `collection or role not found in lockfile`. Every line comes from the lockfile except one: the `requirements.yml (root)` entry under `required by` is decided by the requirements file, and unlike `tree`, `explain` discards that file's load error rather than failing on it - so with the requirements file missing or unparseable a genuine top-level collection prints as an orphan with no parents instead.
@@ -240,8 +240,8 @@ two-flag set of their own, listed under
   rule for its ref, and a Galaxy role additionally asks the v1 API again which tag is highest. Unlike a collection
   pinned to an exact version, a role naming an explicit tag is re-asked too, since a tag is still a
   name the repository can move; the recorded commit is kept when it has not.
-- `--clear-cache` (`$GO_GALAXY_CLEAR_CACHE`) - also forgets every recorded git pin and role pin, so the
-  next resolve asks each repository, and the Galaxy v1 API, again; the records of installed roles
+- `--clear-cache` (`$GO_GALAXY_CLEAR_CACHE`) - also forgets every recorded git, url and role pin, so the
+  next resolve asks each repository and URL, and the Galaxy v1 API, again; the records of installed roles
   survive, as the records of installed collections do.
 - `--no-deps` (`$GO_GALAXY_NO_DEPS`) - for roles, stops the dependency walk at the `roles:` entries:
   nothing a role's `meta/main.yml` or `meta/requirements.yml` names is installed.
@@ -281,21 +281,24 @@ S3 cache options (if `--s3-bucket` is set, S3 backend is used):
 #### --dry-run
 
 - `--dry-run` (`$GO_GALAXY_DRY_RUN`) - report what `install`, `warm`, or `lock` would do, without
-  downloading any artifact, creating any install tree or extracted tree, recording any install,
+  downloading any Galaxy artifact, creating any install tree or extracted tree, recording any install,
   writing any warmed entry, writing any lockfile, registering the project, honoring
   `--clear-cache`, or writing the metrics report. It still takes the exclusive cache lock. It
   updates the resolve-side metadata caches, but only when a persisted snapshot already existed for
   this cache; against a cache that was never saved before, the run saves nothing and prints a
   stderr warning that the caches it built are discarded - a preview must never leave behind a
   persisted-and-empty snapshot that a later `cleanup` would read as evidence that nothing is
-  installed or warmed anywhere.
+  installed or warmed anywhere. That save is not best-effort: a failed save fails the preview
+  exactly as it fails a real run, and a would-fail verdict or `lock --frozen` drift keeps its own
+  code with the save error appended (see [Exit codes](exit-codes.md)).
   For `install` and `warm`, each collection is reported as would install/would warm, already up to
   date/already warm, or would fail; each role the same, with the kind named - `Would install (role)`,
   `Up to date (role)`, `Would warm (role)`, `Already warm (role)` - followed by a roles summary line
-  printed only when the run has roles. A dry run still fetches a role's repository, as it does a git
-  collection's (the role's dependencies cannot be known otherwise), commits nothing to the cache, and
-  never creates the roles directory; a role whose directory exists and was installed neither by this
-  tool nor by `ansible-galaxy` is a would-fail with the install-failure code (`5`), the same refusal
+  printed only when the run has roles. A dry run still fetches a role's or a git collection's
+  repository, and downloads a url source's tarball, whenever the source has no usable recorded pin,
+  since only the fetched content tells its identity and dependencies; it discards what it fetched,
+  commits nothing to the cache, and never creates the roles directory. A role whose directory
+  exists and was installed neither by this tool nor by `ansible-galaxy` is a would-fail with the install-failure code (`5`), the same refusal
   a real install makes before fetching anything. A would-fail verdict covers, for both commands, the artifact
   not being cached while `--offline` forbids downloading it (exits with the install-failure code,
   `5`), or the cached artifact's own recorded digest - itself well-formed - disagreeing with the
@@ -336,6 +339,13 @@ S3 cache options (if `--s3-bucket` is set, S3 backend is used):
   install skips such a collection without ever opening its tarball. The run prints a one-time
   stderr warning whenever both flags are set together, naming this narrower residual; it is a
   disclosure, not a fix.
+  A cached artifact alone does not make `warm` report `Already warm`: the artifact cache (possibly
+  a shared S3 bucket) and the local extracted store are independent, so the extracted tree must
+  also be ready under the sha256 the collection is pinned to (by the lockfile, or by a url
+  source), or, without a pin, the one its warmed entry from the last 30 days records. A fresh runner over a warm bucket therefore reports
+  `Would warm (artifact cached)`, and so does a collection with neither a pin nor a warmed entry,
+  even when an `install` already extracted its tree - the preview never fetches an artifact just
+  to learn its sha256.
   For `lock`, a dry run builds the lockfile in memory from a fresh resolve, loads whatever
   lockfile is already on disk, and reports how the two differ instead of writing anything. A
   `Would change: server <from> -> <to>` line prints first when the file-level `server` field
@@ -388,7 +398,9 @@ S3 cache options (if `--s3-bucket` is set, S3 backend is used):
   addressing (`<bucket>.<endpoint>/<key>`). Path style (`<endpoint>/<bucket>/<key>`) is the default,
   which is what the flag disables.
 
-`cleanup` aborts with a non-zero exit and deletes nothing if a recorded project's `requirements.yml` fails to load for any reason other than the file no longer existing at all, with one exception: a file whose `collections:` list reads and whose `roles:` list this tool refuses (an `include:`, a local-path `src:`, any other entry ansible accepts and this tool does not) is read for its collections, reported with a warning naming the project, and every role installed under that project's recorded `roles_path` is kept this run, since an unknown set of role roots could have been protecting any of them - so one such file never poisons every cleanup against a shared cache. A recorded requirements file that no longer exists at all is treated differently: it is a tolerated stale registry entry, reported with a single warning naming the project and contributing no reachability roots this run, rather than a load failure. A project whose `ansible_collections` entry does not resolve to a real directory inside its collections path - most commonly because that entry itself is a symlink escaping that path - is skipped for scanning instead, with its own warning naming the project: nothing under it is scanned or removed, and every other project's cleanup still proceeds unless some recorded project's `requirements.yml` fails to load for any reason other than the file no longer existing at all, which aborts the whole run for every project at once. A skipped project's `requirements.yml` is still resolved against every other recorded project's installed collections, though, so its roots can keep another project's on-disk copy alive even though nothing under the skipped project itself was scanned or removed this run; `--dry-run` still never previews a removal for the skipped project's own collections, since a real run could not perform one there either. Within a project that does get scanned, an individual collection whose `MANIFEST.json` is not a regular file - a symlink, a directory, or anything else in its place - is skipped with its own warning naming the path, while the rest of that project's collections are still scanned and cleaned up normally.
+`cleanup` aborts with a non-zero exit and deletes nothing if a recorded project's `requirements.yml` fails to load for any reason other than the file no longer existing at all, with one exception: a file whose `collections:` list reads and whose `roles:` list this tool refuses (an `include:`, a local-path `src:`, any other entry ansible accepts and this tool does not) is read for its collections, reported with a warning naming the project, and every role installed under that project's recorded `roles_path` is kept this run, since an unknown set of role roots could have been protecting any of them - so one such file never poisons every cleanup against a shared cache. A recorded requirements file that no longer exists at all is treated differently: it is a tolerated stale registry entry, reported with a single warning naming the project and contributing no reachability roots this run, rather than a load failure. A project whose `ansible_collections` entry does not resolve to a real directory inside its collections path - most commonly because that entry itself is a symlink escaping that path - is skipped for scanning instead, with its own warning naming the project: nothing under it is scanned or removed, and every other project's cleanup still proceeds unless some recorded project's `requirements.yml` fails to load for any reason other than the file no longer existing at all, which aborts the whole run for every project at once. A skipped project's `requirements.yml` is still resolved against every other recorded project's installed collections, though, so its roots can keep another project's on-disk copy alive even though nothing under the skipped project itself was scanned or removed this run; `--dry-run` still never previews a removal for the skipped project's own collections, since a real run could not perform one there either. Within a project that does get scanned, an individual collection whose `MANIFEST.json` is not a regular file (a symlink, a directory, or anything else in its place), does not parse, or names an unsafe namespace, name or version is skipped with its own warning naming the path and is neither a root nor a removal candidate, while the rest of that project's collections are still scanned and cleaned up normally; a directory with no `MANIFEST.json` at all is not a collection and is skipped silently. Any other I/O error reading a collections tree, such as a directory it may not read, aborts the run before anything is deleted, and a failure removing an unreachable install aborts it too rather than being reported as removed - see [the cleanup flow](commands.md#scan-every-recorded-projects-installs).
+
+A git `collections:` requirement keeps alive the installed collections its recorded pin names. With no pin - a `--clear-cache` run forgot it, or a schema bump dropped the snapshot - it keeps every installed collection recorded from the same repository at its subdir or an immediate child, whatever the commit, since a destructive pass errs toward keeping; a url requirement falls back the same way to every install recorded from its URL, whatever the sha256. Either way, a git requirement that names its collection keeps only that one. A copy recorded from another repository is not kept by it, so unless another root reaches it, its tree, its artifact and any Galaxy dependency only it kept alive are removed.
 
 `cleanup`'s extracted-cache sweep keeps a collection warmed within the last 30 days even if no project currently installs it, so a `warm`-only machine does not lose the extracted trees it exists to produce; a warmed entry that goes stale (no warm run for 30 days) is swept like any other unreferenced entry.
 

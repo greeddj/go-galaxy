@@ -1,14 +1,8 @@
 package collections
 
-// This file is the end-to-end proof for the second defect a poisoned
-// snapshot's resolved version can cause, independent of any lockfile:
-// buildResolvedSnapshot (resolve.go) only rejects an entry.Version that is
-// empty, deliberately leaving a constraint string like "*" to reach the
-// pipeline unchanged - see its own doc comment for why that leniency is
-// deliberate rather than an oversight. buildCollectionsMap's own
-// helpers.IsExactVersion guard is what actually stops it: a snapshot whose
-// Resolved bucket carries "*" for a collection, with a matching Graph
-// entry, must never install anything.
+// Tests that a snapshot whose Resolved bucket carries "*" installs nothing:
+// snapshot replay refuses only an empty version, so buildCollectionsMap's
+// helpers.IsExactVersion guard is what stops it.
 
 import (
 	"context"
@@ -51,16 +45,9 @@ func poisonedVersionFixture(t *testing.T) (*config.Config, *fakegalaxy.Server) {
 	return cfg, srv
 }
 
-// seedResolvedSnapshot writes a persisted store, through the real local
-// backend, whose Resolved bucket pins acme.widgets at version with a
-// matching Graph entry, and whose Meta.RequirementsHash is computed the
-// identical way resolveCollectionsInternal computes it for cfg's own
-// requirements file - so a later collections.Start against the same cfg
-// takes the snapshot-reuse path (loadResolvedFromSnapshot) instead of
-// resolving fresh. version is deliberately unvalidated here: this is the
-// seeding mechanism for both the poisoned ("*") and the unpoisoned
-// (testVersion100) case, and the point of the poisoned case is that nothing
-// upstream of buildCollectionsMap rejects it.
+// seedResolvedSnapshot persists a store pinning acme.widgets at the
+// unvalidated version, with the requirements hash cfg would compute, so a
+// later Start against cfg takes the snapshot-reuse path.
 func seedResolvedSnapshot(t *testing.T, runtime *infra.Infra, cfg *config.Config, version string) {
 	t.Helper()
 	roots, _, err := loadRoots(cfg, runtime)
@@ -95,17 +82,9 @@ func widgetsManifestPath(cfg *config.Config) string {
 	return filepath.Join(cfg.DownloadPath, "ansible_collections", "acme", "widgets", "MANIFEST.json")
 }
 
-// TestPoisonedResolvedSnapshotVersionRejectsInstall proves a poisoned
-// persisted snapshot's resolved version can never install: seeding the
-// exact shape described in this file's own header, then driving the real
-// Start entry point, fails with helpers.ErrInvalidCollectionVersion before
-// any per-collection install work starts (never joined behind
-// helpers.ErrInstallationFailed, so it is not folded into an install-failure
-// count), and installs nothing.
-//
-// TestPoisonedResolvedSnapshotVersionAcceptsInstall below is this test's
-// positive control on the same fixture and seeding mechanism: an unpoisoned
-// snapshot (a real exact version) installs cleanly.
+// TestPoisonedResolvedSnapshotVersionRejectsInstall pins that Start fails a
+// "*" snapshot version with helpers.ErrInvalidCollectionVersion before any
+// worker runs, not joined behind ErrInstallationFailed, and installs nothing.
 func TestPoisonedResolvedSnapshotVersionRejectsInstall(t *testing.T) {
 	t.Parallel()
 	cfg, srv := poisonedVersionFixture(t)
@@ -129,10 +108,8 @@ func TestPoisonedResolvedSnapshotVersionRejectsInstall(t *testing.T) {
 	}
 }
 
-// TestPoisonedResolvedSnapshotVersionAcceptsInstall is
-// TestPoisonedResolvedSnapshotVersionRejectsInstall's positive control: the
-// identical seeding mechanism, with an exact version in place of "*",
-// reaches a real install through the same snapshot-reuse path.
+// TestPoisonedResolvedSnapshotVersionAcceptsInstall is the positive control:
+// the same seeding with an exact version installs through snapshot reuse.
 func TestPoisonedResolvedSnapshotVersionAcceptsInstall(t *testing.T) {
 	t.Parallel()
 	cfg, srv := poisonedVersionFixture(t)

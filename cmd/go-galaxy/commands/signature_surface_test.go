@@ -11,22 +11,16 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// signatureSurfaceFlags is the flag set a command that verifies signatures
-// really mounts, taken from the command itself rather than reassembled here.
-// A union rebuilt in this file would pass every test below while the shipped
-// command mounted something else entirely, which is the one failure these
-// tests exist to make impossible.
-//
-// install is the representative: it and warm are the two commands that verify,
-// and both compose the same three sets in the same order.
+// signatureSurfaceFlags is the flag set a verifying command really mounts,
+// taken from Install() rather than reassembled here, since a rebuilt union
+// would pass while the shipped command mounted something else.
 func signatureSurfaceFlags() []cli.Flag {
 	return Install().Flags
 }
 
-// TestSignatureFlagsRoundTrip pins that every value the four signature flags
-// accept reaches the matching Config field, driven through the real flag
-// declarations rather than a hand-built copy of them - which is the half
-// internal/galaxy/config cannot cover, since it cannot import this layer.
+// TestSignatureFlagsRoundTrip pins that every signature flag value reaches its
+// Config field through the real flag declarations, which internal/galaxy/config
+// cannot import.
 func TestSignatureFlagsRoundTrip(t *testing.T) {
 	neutralizeAnsibleDiscovery(t)
 
@@ -50,12 +44,8 @@ func TestSignatureFlagsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestKeyringEnvNames pins the keyring flag's two environment spellings and
-// their order. The first row is the convention this repository states on its
-// timeout and download-path flags - every flag accepts GO_GALAXY_<FLAG_NAME> -
-// and a new flag arriving without one would be a fresh exception to it. The
-// second row is what makes the first a statement about precedence rather than
-// about membership.
+// TestKeyringEnvNames pins the keyring flag's env spellings in order:
+// GO_GALAXY_KEYRING is read, and it outranks ANSIBLE_GALAXY_GPG_KEYRING.
 func TestKeyringEnvNames(t *testing.T) {
 	t.Run("the go-galaxy spelling is read", func(t *testing.T) {
 		neutralizeAnsibleDiscovery(t)
@@ -81,17 +71,9 @@ func TestKeyringEnvNames(t *testing.T) {
 	})
 }
 
-// TestIgnoreStatusCodesEnvSplit pins third-party behavior this surface is
-// built on, measured against urfave/cli v3.10.1: a StringSliceFlag fed from
-// an environment variable splits the value on "," and does NOT trim the
-// elements, so the second element here arrives with the space that followed
-// the separator.
-//
-// That is why signature.ParseStatusCodes trims each element itself, and why
-// removing that trim as redundant would break exactly this shape - the one an
-// operator writes when they space out a list for readability. The value is
-// spelled with a space for that reason: a list written without one would pass
-// either way and prove nothing about the composition.
+// TestIgnoreStatusCodesEnvSplit pins that urfave/cli splits an env list on ","
+// without trimming, which is why signature.ParseStatusCodes trims each element;
+// the value carries a space so the untrimmed element is observable.
 func TestIgnoreStatusCodesEnvSplit(t *testing.T) {
 	neutralizeAnsibleDiscovery(t)
 	t.Setenv("ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES", "BADSIG, NO_PUBKEY")
@@ -126,14 +108,9 @@ func runCommandWith(t *testing.T, name string, flags []cli.Flag, args []string) 
 	return app.Run(context.Background(), append([]string{"go-galaxy", name}, args...))
 }
 
-// TestSignatureFlagsAreNotPartOfCollectionFlags pins the split: the signature
-// flags are their own constructor, so a command mounting CollectionFlags alone
-// does not silently advertise settings it cannot honor.
-//
-// The second row is the positive control on the same harness and the same
-// argument: the flag set install really mounts makes the identical command
-// line parse, so the refusal above is the flag set's doing rather than the
-// harness rejecting everything.
+// TestSignatureFlagsAreNotPartOfCollectionFlags pins that CollectionFlags alone
+// refuses --keyring as undefined, while install's real flag set accepts the
+// same command line as the positive control.
 func TestSignatureFlagsAreNotPartOfCollectionFlags(t *testing.T) {
 	neutralizeAnsibleDiscovery(t)
 
@@ -154,21 +131,9 @@ func TestSignatureFlagsAreNotPartOfCollectionFlags(t *testing.T) {
 	})
 }
 
-// TestVerifyingCommandsMountTheSignatureFlags pins the mount itself, on both
-// commands that verify: cliflags.SignatureFlags' own rule is that a command
-// mounts this set exactly when it verifies, and install and warm are the two
-// that do. Driven through each real command rather than through a rebuilt
-// union, so a mount deleted from either one fails here.
-//
-// warm is checked as well as install rather than assumed to follow it, because
-// the two are separate constructors: an operator scripting both commands with
-// one flag block is exactly who a missing mount on either would break, with
-// "flag provided but not defined" rather than an ignored setting.
-//
-// KILLING MUTATION, run and reverted: the SignatureFlags append deleted from
-// Warm (cmd/go-galaxy/commands/warm.go). Only the warm row fails:
-//
-//	signature_surface_test.go:176: warm does not mount --keyring
+// TestVerifyingCommandsMountTheSignatureFlags pins that install and warm, the
+// two verifying commands, each mount every signature flag, checked through each
+// real constructor so a mount deleted from either one fails.
 func TestVerifyingCommandsMountTheSignatureFlags(t *testing.T) {
 	for _, cmd := range []*cli.Command{Install(), Warm()} {
 		t.Run(cmd.Name, func(t *testing.T) {
@@ -193,12 +158,9 @@ func mountsFlag(cmd *cli.Command, name string) bool {
 	})
 }
 
-// TestCleanupSignatureDefaults pins the resolution for a command that registers
-// none of these flags. cleanup is one such command - lock and outdated are the
-// others - and the shape it stands for is every command that does not verify.
-// The count must still be a spec the grammar accepts, since
-// BuildCollectionConfig validates it for every command regardless of which
-// flags that command declared.
+// TestCleanupSignatureDefaults pins that a command registering no signature
+// flags, like cleanup, still resolves a valid count, since BuildCollectionConfig
+// validates it for every command.
 func TestCleanupSignatureDefaults(t *testing.T) {
 	neutralizeAnsibleDiscovery(t)
 
@@ -211,11 +173,9 @@ func TestCleanupSignatureDefaults(t *testing.T) {
 	assertConfigField(t, "Signature.KeyringPath", cfg.Signature.KeyringPath, "")
 }
 
-// TestWarmParsesTheSignatureFlags is the parse-level half of warm's mount: an
-// operator scripting install and warm with one flag block must not have warm
-// die with "flag provided but not defined". It drives the real Warm().Flags
-// through a no-op action, so what is exercised is the flag set the shipped
-// command carries rather than a union rebuilt here.
+// TestWarmParsesTheSignatureFlags pins that the real Warm().Flags parse every
+// signature flag, so a script sharing one flag block with install does not die
+// with "flag provided but not defined".
 func TestWarmParsesTheSignatureFlags(t *testing.T) {
 	neutralizeAnsibleDiscovery(t)
 

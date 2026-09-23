@@ -21,45 +21,13 @@ import (
 // contention, reclaim, or takeover scenarios.
 const foreignToken = "foreign-token"
 
-// errRawInFlightPlaceholder stands in for tryAcquireOnce's raw in-flight S3
-// transport failure in TestWaitCeilingErrClassification's table: only its
-// non-nilness matters to waitCeilingErr, so one static sentinel serves every
-// row that needs a placeholder, rather than a fresh dynamic error per row.
+// errRawInFlightPlaceholder stands in for an in-flight transport failure in
+// TestWaitCeilingErrClassification; waitCeilingErr only checks it is non-nil.
 var errRawInFlightPlaceholder = errors.New("raw in-flight transport failure")
 
-// testLockTiming returns a lockTiming with ttl set to the given value and
-// every other interval shrunk to make the lock's state machine fast and
-// deterministic in tests. Callers needing a non-default waitCeiling,
-// heartbeatInterval, etc. can copy the returned value and override fields.
-//
-// These shrunken intervals sit on top of the client's fixed retry policy
-// (s3RetryPolicy, base s3RetryBackoffBase = 200ms, 4 attempts), which tests
-// cannot shrink; heartbeatOpTimeout is sized for a clean round trip, so a
-// single jittered retry backoff can consume that whole op budget. Therefore
-// any test that injects a retryable 5xx on a lock-path key must synchronize
-// on the fault having been consumed, never sleep a number of intervals.
-//
-// waitCeiling is a LIVENESS margin here rather than a timing assertion, which
-// is why it sits an order above the round trips it covers: it bounds waits
-// these tests expect to end on their own, so a slow or loaded machine makes
-// such a test slower rather than wrong - the same contract lockEventWaitCeiling
-// states for itself. A test asserting that the ceiling fires is asserting on
-// that budget and must override it with a value of its own; leaving it
-// defaulted would make the assertion a bet on the machine.
-//
-// releaseTimeout is deliberately NOT raised alongside it, and the difference
-// between the two is the whole question a default is decided on: a budget
-// nothing ever reaches costs nothing to widen, while one something does reach
-// is paid on every run. abandonLockObject reaches this one - it runs the
-// release path's own HEAD/DELETE pair on this same budget against an endpoint
-// that may never answer, so a fixture that never answers waits out the whole of
-// it rather than merely being allowed to. Measured on this package:
-// newSilentEndpointBackend's row costs 0.40s at 200ms and 10.20s at 10s, taking
-// the whole package from 4.06s to 13.33s. A test wanting a longer release
-// budget takes one per test, which is the rule above applied rather than an
-// exception to it.
-// heartbeatOpTimeout stays short for a different reason - a tick that misses
-// its budget is transient and the next tick retries, so it is self-healing.
+// testLockTiming returns fast lock timing with the given ttl. waitCeiling is a
+// liveness margin a test asserting it fires overrides; releaseTimeout stays
+// short because abandonLockObject spends all of it on a silent endpoint.
 func testLockTiming(ttl time.Duration) lockTiming {
 	return lockTiming{
 		ttl:                ttl,
@@ -72,22 +40,17 @@ func testLockTiming(ttl time.Duration) lockTiming {
 	}
 }
 
-// lockEventWaitCeiling is a LIVENESS ceiling, not a timing margin - the
-// tests using waitForLockEvent assert on observed events, so a slow machine
-// only makes them slower, never wrong, and the ceiling fires only when the
-// event genuinely never happens.
+// lockEventWaitCeiling is a liveness ceiling for waitForLockEvent: a slow
+// machine makes those tests slower, never wrong.
 const lockEventWaitCeiling = 10 * time.Second
 
 // lockEventPollInterval is how often waitForLockEvent re-checks its
 // condition while waiting.
 const lockEventPollInterval = 2 * time.Millisecond
 
-// waitForLockEvent blocks until cond reports true, polling every
-// lockEventPollInterval, and fails the test once lockEventWaitCeiling
-// elapses without cond becoming true. It lets tests synchronize on something
-// the heartbeat observably did - a request the fake served, a deadline the
-// lock object now records - instead of sleeping a fixed number of heartbeat
-// intervals, which only ever buys a probabilistic head start.
+// waitForLockEvent polls cond until it holds, failing the test after
+// lockEventWaitCeiling, so a test waits on an observable lock event instead
+// of sleeping a number of heartbeat intervals.
 func waitForLockEvent(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(lockEventWaitCeiling)
@@ -135,9 +98,7 @@ func newLockBackendAt(t *testing.T, endpoint string, client *http.Client, timing
 }
 
 // newLockBackendWithFake starts a fresh fake S3 server and returns a Backend
-// pointed at it alongside the underlying fake, so a test can reach into the
-// fake's test-only knobs (e.g. deleteDelay) that Backend itself exposes no
-// way to set.
+// on it plus the fake, for test-only knobs such as deleteDelay.
 func newLockBackendWithFake(t *testing.T, timing lockTiming) (*Backend, *fakeS3) {
 	t.Helper()
 	fake := newFakeS3()
@@ -146,13 +107,9 @@ func newLockBackendWithFake(t *testing.T, timing lockTiming) (*Backend, *fakeS3)
 	return newLockBackendAt(t, srv.URL, srv.Client(), timing), fake
 }
 
-// testHolderCancel returns a holder-context cancel function shaped exactly
-// like the one acquireLock threads through the acquisition protocol, for the
-// tests below that call one step of that protocol directly instead of going
-// through Lock. The context it belongs to is discarded: those tests assert on
-// the returned lockAttempt, while the holder context's own behavior is
-// covered end to end by TestLockHolderContextCanceledWhenOwnershipLost and
-// its positive control. t.Cleanup cancels it so nothing outlives the test.
+// testHolderCancel returns a holder-context cancel shaped like acquireLock's,
+// for tests that call one acquisition step directly; the context itself is
+// discarded and t.Cleanup cancels it.
 func testHolderCancel(t *testing.T) context.CancelCauseFunc {
 	t.Helper()
 	_, cancel := context.WithCancelCause(context.Background())
@@ -160,10 +117,8 @@ func testHolderCancel(t *testing.T) context.CancelCauseFunc {
 	return cancel
 }
 
-// seedLockObject writes the lock object directly (bypassing acquireLock),
-// under foreignToken, to set up contention/reclaim scenarios ahead of a real
-// Lock call - every caller in this suite simulates a different acquirer, so
-// the token is fixed rather than taken as a parameter.
+// seedLockObject writes the lock object under foreignToken with the given
+// deadline, bypassing acquireLock, to stage another acquirer's lock.
 func seedLockObject(ctx context.Context, t *testing.T, b *Backend, deadline time.Time) {
 	t.Helper()
 	if err := b.Open(ctx); err != nil {
@@ -210,35 +165,9 @@ func TestLockAcquiresOnEmptyBucket(t *testing.T) {
 	}
 }
 
-// TestLockConcurrentFreshAcquireSingleWinner confirms that when two Backends
-// race to create the same absent lock, exactly one wins and the other times
-// out waiting rather than both succeeding or both failing outright. The
-// winner's release is deliberately deferred until after both Lock calls
-// have returned: releasing it immediately would legitimately free the lock
-// for the loser to acquire afterward, which is correct behavior but would
-// make this particular assertion (a single winner from the race itself)
-// meaningless.
-//
-// Both Backends share one client wrapped in answeredDespiteCancelTransport,
-// because this fixture is doubly exposed to the ceiling it keeps: the winner's
-// create PUT and the ownership HEAD behind it both have to fit inside that
-// ceiling, and so does the loser's own observation of the winner. The fake
-// answers every request it is given, which is what makes the wrapper
-// admissible here. The holder TTL is contendedLockHoldTTL for the reason that
-// constant states, reached here from the other side: with the ceiling no longer
-// bounding either goroutine, the winner staying live for the whole run has to
-// be a fact rather than a bet.
-//
-// KILLING MUTATION, run and reverted: in reclaimIfExpired's live-holder arm,
-// return lockAttempt{observed: true}, nil becomes return lockAttempt{}, nil, so
-// a wait that saw the winner holding the lock records nothing. Five runs, five
-// failures, all identical:
-//
-//	lock_test.go:286: expected exactly one timeout, got 0 (successes=1, other=1)
-//
-// The loser still fails, and still at the ceiling; what it loses is the
-// contention verdict, which is the whole difference between "rerun once the
-// other run finishes" and "this backend could not be reached".
+// TestLockConcurrentFreshAcquireSingleWinner pins that two Backends racing for
+// an absent lock yield one winner and one errS3LockWaitTimeout. The winner
+// releases only after both return, or the loser could then acquire it.
 func TestLockConcurrentFreshAcquireSingleWinner(t *testing.T) {
 	t.Parallel()
 	endpoint, client := newLockFake(t)
@@ -287,16 +216,9 @@ func TestLockConcurrentFreshAcquireSingleWinner(t *testing.T) {
 	}
 }
 
-// TestLockReclaimsExpiredLock seeds a lock object whose TTL has elapsed
-// (judged by Last-Modified staleness, which is what lockExpired checks)
-// under a foreign token, then confirms a single Backend
-// reclaims it: the stored token becomes the reclaimer's and the deadline
-// moves forward from the seeded (deliberately far-past) one. The comparison
-// is against the seeded deadline rather than time.Now(): RFC3339 only
-// carries second resolution, so a deadline computed a mere ttl (tens of
-// milliseconds) beyond "now" can round-trip to a timestamp that is not
-// reliably after a later call to time.Now() taken outside the test's
-// control; an hour-old seeded deadline avoids that flakiness entirely.
+// TestLockReclaimsExpiredLock pins that Lock takes over a foreign lock whose
+// deadline has passed: the token becomes ours and the deadline moves forward.
+// It compares with the hour-old seeded deadline, as RFC3339 keeps only seconds.
 func TestLockReclaimsExpiredLock(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -329,17 +251,9 @@ func TestLockReclaimsExpiredLock(t *testing.T) {
 	}
 }
 
-// TestLockWaitsThenTimesOutOnLiveLock takes newContendedLockBackend's live
-// foreign holder - one this run can never acquire - and confirms Lock backs
-// off at least once before giving up with errS3LockWaitTimeout once
-// waitCeiling elapses.
-//
-// KILLING MUTATION, run and reverted: reclaimIfExpired's live-holder arm
-// returning lockAttempt{} in place of lockAttempt{observed: true}. Five runs,
-// five failures, all identical (one line, wrapped here):
-//
-//	lock_test.go:353: expected errS3LockWaitTimeout, got cache backend
-//	unavailable: s3 lock wait ceiling elapsed without ever observing a lock holder
+// TestLockWaitsThenTimesOutOnLiveLock pins that a live foreign holder makes
+// Lock back off at least once and then fail with errS3LockWaitTimeout, which
+// carries helpers.ErrCacheBusy.
 func TestLockWaitsThenTimesOutOnLiveLock(t *testing.T) {
 	t.Parallel()
 	b := newContendedLockBackend(t, 150*time.Millisecond)
@@ -355,58 +269,16 @@ func TestLockWaitsThenTimesOutOnLiveLock(t *testing.T) {
 	if elapsed < b.lock.backoffBase {
 		t.Fatalf("expected at least one backoff sleep before timing out, elapsed %v", elapsed)
 	}
-	// errS3LockWaitTimeout carries helpers.ErrCacheBusy (see variables.go's
-	// partition doc): a live foreign lock that outlasts the wait ceiling is
-	// exactly the contention shape cmd/go-galaxy/exitcode's ExitCacheBusy
-	// exists for. TestLockAcquirePropagatesCallerCancellation is this
-	// assertion's negative control on the same acquireLock loop: a caller
-	// cancellation racing the identical contention must NOT match
-	// helpers.ErrCacheBusy.
+	// A live foreign lock outlasting the ceiling is contention (exit 8);
+	// TestLockAcquirePropagatesCallerCancellation is the negative control.
 	if !errors.Is(err, helpers.ErrCacheBusy) {
 		t.Fatalf("expected errors.Is(err, helpers.ErrCacheBusy), got %v", err)
 	}
 }
 
-// answeredDespiteCancelTransport forwards each request on a context with
-// cancellation and deadline stripped, so a request already in flight when the
-// caller's own context ends is still sent and still answered rather than being
-// aborted by http.Transport.roundTrip's own context check.
-//
-// A fixture wants that because acquireLockLoop's errS3LockWaitTimeout verdict
-// requires the wait ceiling to fire AFTER some attempt has recorded observed,
-// and that ceiling cannot be widened into a liveness margin the way
-// lockEventWaitCeiling is - the verdict REQUIRES it to fire - so the race
-// between the ceiling and the loopback round trips that record the observation
-// has to be taken out on the other side.
-//
-// The observation becomes unconditional rather than merely likely, and that is
-// a chain rather than an assertion: a conditional PUT is single-shot in
-// putObject, and helpers.Retry calls attempt() before it ever looks at the
-// context, so nothing on the way in consults the caller's context; newRequest
-// only hands that context to http.NewRequestWithContext; and Client.do reads
-// req.Context().Err() only once an error has already come back. Measured on
-// go1.27.1, the toolchain go.mod pins: http.Client.Do calls a custom
-// RoundTripper for a request whose context has already expired, and delivers
-// the response intact.
-//
-// Admissible ONLY for a fixture that answers every request it is given. One
-// that deliberately hangs a request must keep the caller's context attached,
-// since that cancellation is the only thing that ever ends the hang:
-// TestLockAcquireTimesOutAfterObservationThenSilence is exactly that shape.
-// Measured rather than predicted - its client was wrapped and the test run
-// under a 20s package timeout, which it reached: "panic: test timed out after
-// 20s", the acquisition parked in net/http's persistConn.roundTrip with no
-// context left to unpark it. A 300ms test becomes a hang.
-//
-// DOCUMENTED-UNCOVERED: no test can demonstrate this wrapper is necessary,
-// because the failure it removes needs a loaded machine and an idle one does
-// not produce it - measured at 1 failure per 5 full `go test ./... -race` runs
-// against 0 in 30 runs of this package alone at -count=30. Removing it returns
-// the rows it serves to that rate.
-//
-// srv.Client().Transport is always non-nil for an httptest server, so base is
-// never nil and no guard is needed; a future nil would panic at the first
-// request rather than quietly changing what a fixture measures.
+// answeredDespiteCancelTransport strips cancellation from each request, so a
+// round trip the wait ceiling interrupts still records its observation. Only
+// for fixtures that answer every request: on a hanging one it hangs the test.
 type answeredDespiteCancelTransport struct{ base http.RoundTripper }
 
 // RoundTrip forwards req on a context stripped of cancellation and deadline.
@@ -415,23 +287,14 @@ func (t answeredDespiteCancelTransport) RoundTrip(req *http.Request) (*http.Resp
 	return t.base.RoundTrip(req.Clone(context.WithoutCancel(req.Context())))
 }
 
-// contendedLockHoldTTL is the TTL the foreign holder newContendedLockBackend
-// seeds is written under. It is an hour because the wait ceiling no longer
-// bounds the run once the transport above ignores it, which leaves the OTHER
-// verdict this fixture can produce - the seeded lock read as expired,
-// reclaimIfExpired taking it over, and Lock succeeding - decided by the wall
-// clock alone. lockExpired reads X-Amz-Meta-Deadline first, so a deadline an
-// hour out makes "the holder is still live" a fact rather than a bet; the five
-// seconds the rows it serves used to seed was that bet. RFC3339's second
-// resolution is moot at this scale.
+// contendedLockHoldTTL is the seeded foreign holder's TTL: an hour, so
+// lockExpired can never read that holder as expired while a test runs,
+// however slow the machine.
 const contendedLockHoldTTL = time.Hour
 
-// newContendedLockBackend builds a Backend against a fresh fake S3 server whose
-// lock object is already held by a live foreign acquirer, with waitCeiling set
-// to waitCeiling: an acquisition against it observes that holder and then runs
-// out of ceiling. Its client is wrapped in answeredDespiteCancelTransport,
-// which is what makes the observation independent of whether the ceiling fires
-// while a request is still in flight.
+// newContendedLockBackend builds a Backend whose lock a live foreign acquirer
+// holds, with the given waitCeiling, over answeredDespiteCancelTransport so an
+// acquisition always observes that holder before the ceiling fires.
 func newContendedLockBackend(t *testing.T, waitCeiling time.Duration) *Backend {
 	t.Helper()
 	fake := newFakeS3()
@@ -450,15 +313,9 @@ func newContendedLockBackend(t *testing.T, waitCeiling time.Duration) *Backend {
 	return b
 }
 
-// newSilentEndpointBackend builds a Backend pointed at a live TCP listener
-// that accepts every connection and never answers a single request (see
-// newAcceptingNeverRespondingListener). client is built and assigned to the
-// Backend directly, bypassing Open's ensureBucket/probeConditionalPut calls:
-// both would otherwise run on the raw ctx Backend.Lock passes to Open, before
-// acquireLockLoop ever constructs waitCtx, so they are unbounded by waitCeiling -
-// calling them against a listener that never answers would hang the test
-// itself rather than exercising acquireLockLoop's wait ceiling, which is
-// this helper's entire point.
+// newSilentEndpointBackend builds a Backend on a listener that never answers.
+// It skips Open, whose bucket and probe calls run before the wait ceiling
+// exists and would hang the test.
 func newSilentEndpointBackend(t *testing.T, waitCeiling time.Duration) *Backend {
 	t.Helper()
 	ln, _ := newAcceptingNeverRespondingListener(t)
@@ -480,39 +337,9 @@ func newSilentEndpointBackend(t *testing.T, waitCeiling time.Duration) *Backend 
 	return &Backend{client: client, lock: timing}
 }
 
-// TestLockWaitCeilingDistinguishesSilentBackendFromContention pins
-// waitCeilingErr's discriminator between the two failures the S3 lock's
-// wait ceiling can produce, under an identical wait ceiling for both rows so
-// neither timing difference can explain the result: a silent endpoint that
-// never answers a single request must classify as an unreached backend
-// (helpers.ErrCacheBackendUnavailable), never as contention
-// (helpers.ErrCacheBusy) - the defect this test guards against is exactly a
-// silent, reachable endpoint being reported as "another process holds the
-// cache". The second row is this table's positive control: a live foreign
-// lock that outlasts the identical ceiling proves the fixture family (and
-// waitCeilingErr itself) still produces genuine contention when contention is
-// what actually happened, so the first row's refusal is not merely a
-// classifier that never fires at all.
-//
-// The two rows' fixtures differ in transport by design rather than by
-// accident: row one must be genuinely silent, so it keeps a real listener with
-// the caller's context attached, while row two must answer and therefore goes
-// through answeredDespiteCancelTransport. What the "neither timing difference
-// can explain the result" claim above rests on is the wait ceiling, and both
-// rows still take that one unchanged.
-//
-// KILLING MUTATION, run and reverted: reclaimIfExpired's live-holder arm
-// returning lockAttempt{} in place of lockAttempt{observed: true}. Five runs,
-// five failures of the second row alone, all identical (one line, wrapped
-// here):
-//
-//	lock_test.go:555: errors.Is(err, helpers.ErrCacheBusy) = false, want true
-//	(err: cache backend unavailable: s3 lock wait ceiling elapsed without ever
-//	observing a lock holder)
-//
-// The first row never changes under it, which is the shape this table is for:
-// the mutation removes the evidence, and only the row whose verdict rests on
-// that evidence moves.
+// TestLockWaitCeilingDistinguishesSilentBackendFromContention pins that under
+// one wait ceiling a silent endpoint is helpers.ErrCacheBackendUnavailable,
+// never ErrCacheBusy, while a live foreign lock is ErrCacheBusy.
 func TestLockWaitCeilingDistinguishesSilentBackendFromContention(t *testing.T) {
 	t.Parallel()
 
@@ -564,24 +391,9 @@ func TestLockWaitCeilingDistinguishesSilentBackendFromContention(t *testing.T) {
 	}
 }
 
-// answeredWhileUngatedTransport strips cancellation and deadline from a request
-// only while gated still reports zero, and forwards every later request on the
-// caller's own context untouched. gated is the fixture's own counter rather than
-// a second one: the handler increments it as it serves the single request it
-// will answer, so both halves work from one definition of which request that is.
-//
-// It exists because answeredDespiteCancelTransport - whose doc comment holds the
-// argument for stripping a context at all, and the boundary this type sits
-// outside of - is inadmissible on a fixture that hangs a request on purpose,
-// measured there as a hang until the package timeout. This one strips exactly
-// the prefix of the run that fixture does answer: every request issued before
-// the first gated one has been served, which is the create PUT and the HEAD
-// whose observation the verdict rests on, and nothing after it.
-//
-// The predicate errs toward attaching. A request issued once the counter has
-// moved keeps the caller's context even where the fixture would have answered
-// it, so the worst case is a request the ceiling may cut short - never one that
-// nothing can end.
+// answeredWhileUngatedTransport strips cancellation only until gated, the
+// fixture's own counter, turns non-zero; later requests keep the caller's
+// context, the only thing that ends a request the fixture hangs.
 type answeredWhileUngatedTransport struct {
 	base  http.RoundTripper
 	gated *atomic.Int32
@@ -596,34 +408,9 @@ func (t answeredWhileUngatedTransport) RoundTrip(req *http.Request) (*http.Respo
 	return t.base.RoundTrip(req.Clone(context.WithoutCancel(req.Context())))
 }
 
-// TestLockAcquireTimesOutAfterObservationThenSilence pins acquireLockLoop's
-// accumulation of observedHolder across attempts, not just the attempt in
-// flight when the wait ceiling fires: a live foreign lock is seeded so the
-// very first HEAD observes it, and every HEAD after that one hangs - never
-// answering at all - until the wait ceiling itself ends the wait. The
-// attempt actually in flight when acquireLockLoop gives up therefore observed
-// nothing; Lock must still report errS3LockWaitTimeout, proving the
-// accumulation is a logical OR across the whole wait, not the last attempt's
-// own answer. This is also waitCeilingErr's own "stale evidence" residual
-// (see its doc comment) made executable: the backend genuinely goes silent,
-// rather than merely failing, for the remainder of the wait.
-//
-// The one HEAD this fixture answers is the only observation the whole wait ever
-// gets, so losing it to a starved goroutine would leave nothing to accumulate.
-// The client therefore goes through answeredWhileUngatedTransport, sharing
-// headCount with the handler: that HEAD and the PUT ahead of it cannot be cut
-// short by the ceiling, while every gated HEAD after it keeps the caller's
-// context, which is the only thing that ends the hang.
-//
-// KILLING MUTATION, run and reverted: acquireLockLoop's accumulation itself,
-// observedHolder = observedHolder || res.observed becoming observedHolder =
-// res.observed, so the wait remembers only its last attempt. Five runs, five
-// failures, differing only in the fake's per-run port (one line, wrapped here):
-//
-//	lock_test.go:676: expected errS3LockWaitTimeout, got cache backend
-//	unavailable: s3 lock wait ceiling elapsed without ever observing a lock
-//	holder: Head "http://127.0.0.1:61732/test/locks/cache.lock": context
-//	deadline exceeded
+// TestLockAcquireTimesOutAfterObservationThenSilence pins that an observation
+// counts for the whole wait: the first HEAD sees a live holder, every later
+// one hangs, and Lock still fails with errS3LockWaitTimeout.
 func TestLockAcquireTimesOutAfterObservationThenSilence(t *testing.T) {
 	t.Parallel()
 
@@ -632,13 +419,9 @@ func TestLockAcquireTimesOutAfterObservationThenSilence(t *testing.T) {
 	lockPath := "/" + fake.bucket + "/" + key
 
 	var headCount atomic.Int32
-	// hangGate lets every HEAD to the lock key past the first block
-	// indefinitely, simulating a backend that goes silent for the rest of
-	// the wait. It is closed, and only then is the server closed, in a
-	// single t.Cleanup - the same ordering newAcceptingNeverRespondingListener
-	// uses for its own held connections: closing the server first would
-	// block in Close() waiting for this still-blocked handler to return,
-	// the exact teardown hang this ordering avoids.
+	// hangGate parks every HEAD on the lock key after the first. Cleanup closes
+	// it before the server, whose Close would otherwise block on the parked
+	// handler.
 	hangGate := make(chan struct{})
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead && r.URL.Path == lockPath {
@@ -675,33 +458,16 @@ func TestLockAcquireTimesOutAfterObservationThenSilence(t *testing.T) {
 	if !errors.Is(err, errS3LockWaitTimeout) {
 		t.Fatalf("expected errS3LockWaitTimeout, got %v", err)
 	}
-	// lockPath is assembled here rather than asked of the backend, and it
-	// equals the client's real request path only while the backend prefix is
-	// empty. Should the two ever diverge, no HEAD is gated, every attempt
-	// observes the holder, and the assertion above passes for the wrong
-	// reason - as a duplicate of TestLockWaitsThenTimesOutOnLiveLock.
+	// lockPath assumes an empty backend prefix; were it to diverge, no HEAD would
+	// be gated and the assertion above would pass for the wrong reason.
 	if got := headCount.Load(); got < 2 {
 		t.Fatalf("HEAD count on the lock key = %d, want at least 2: the gate never matched, so no attempt was ever silenced", got)
 	}
 }
 
-// TestLockAcquireSurfacesAHardFailureOverTheCeiling pins
-// acquireLockAttemptErr's live-waitCtx branch: an attempt that comes back
-// with its own failure while the wait ceiling is still live ends the whole
-// acquisition immediately, carrying that call's own sentinel, rather than
-// being held until the ceiling and reclassified as a wait-ceiling outcome.
-// It is the executable proof of waitCeilingErr's "a backend that answers
-// only with failures is a different case" paragraph.
-//
-// The first HEAD is served by the fake on purpose, so this wait genuinely
-// observes a live foreign holder before the failures start: that is what
-// makes the interesting half observable - a hard failure is not converted
-// into errS3LockWaitTimeout even when this wait already has the observation
-// that would otherwise justify it.
-//
-// waitCeiling is set far above the client's own retry budget so the ceiling
-// cannot be what ends the wait; it is a liveness margin, not a timing
-// assertion, and nothing here asserts elapsed time.
+// TestLockAcquireSurfacesAHardFailureOverTheCeiling pins that a HEAD failure
+// while the wait ceiling is live ends Lock with errS3HeadFailed, even after a
+// live holder was observed, never as a wait-ceiling outcome.
 func TestLockAcquireSurfacesAHardFailureOverTheCeiling(t *testing.T) {
 	t.Parallel()
 
@@ -730,11 +496,8 @@ func TestLockAcquireSurfacesAHardFailureOverTheCeiling(t *testing.T) {
 	if !errors.Is(err, errS3HeadFailed) {
 		t.Fatalf("expected errS3HeadFailed, got %v", err)
 	}
-	// Documentary, not pinned: neither can be the first failing line here.
-	// errS3HeadFailed and the two wait-ceiling sentinels are disjoint error
-	// trees, so any state satisfying the assertion above already fails both
-	// of these. They are kept because they name the confusion this test
-	// exists to rule out.
+	// Documentary: errS3HeadFailed and the wait-ceiling sentinels are disjoint,
+	// so this names the confusion the test rules out rather than pinning it.
 	if errors.Is(err, errS3LockWaitTimeout) || errors.Is(err, errS3LockWaitNoHolderObserved) {
 		t.Fatalf("a hard failure must not be reclassified as a wait-ceiling outcome, got %v", err)
 	}
@@ -746,13 +509,9 @@ func TestLockAcquireSurfacesAHardFailureOverTheCeiling(t *testing.T) {
 	}
 }
 
-// TestLockAcquirePropagatesCallerCancellation confirms that when the
-// caller's own context is canceled while Lock is still contending for a
-// live foreign lock, the caller cancellation is what surfaces - not
-// errS3LockWaitTimeout - even though both errors originate from the same
-// waitCtx.Done() signal internally. waitCeiling and the foreign lock's ttl
-// are both set far longer than the test can possibly run, so the wait
-// ceiling itself cannot fire; only the explicit cancel() can end the wait.
+// TestLockAcquirePropagatesCallerCancellation pins that canceling the
+// caller's context during contention surfaces context.Canceled, not
+// errS3LockWaitTimeout; ceiling and ttl are too long to fire first.
 func TestLockAcquirePropagatesCallerCancellation(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -785,40 +544,24 @@ func TestLockAcquirePropagatesCallerCancellation(t *testing.T) {
 	if errors.Is(err, errS3LockWaitTimeout) {
 		t.Fatalf("expected the caller cancellation, not errS3LockWaitTimeout, got %v", err)
 	}
-	// Negative control for TestLockWaitsThenTimesOutOnLiveLock, whose positive
-	// assertion this test mirrors: the identical live-foreign-lock contention,
-	// ended by the caller's own cancellation instead of the wait ceiling
-	// firing on its own, must NOT match helpers.ErrCacheBusy - waitCeilingErr
-	// propagates parent.Err() unchanged in that branch, never
-	// errS3LockWaitTimeout.
+	// Negative control for TestLockWaitsThenTimesOutOnLiveLock: a caller
+	// cancellation must not read as contention (helpers.ErrCacheBusy).
 	if errors.Is(err, helpers.ErrCacheBusy) {
 		t.Fatalf("expected the caller cancellation, not helpers.ErrCacheBusy, got %v", err)
 	}
 }
 
-// TestWaitCeilingErrClassification directly unit-tests waitCeilingErr over
-// all three of its parameters: a canceled parent wins even over an observed
-// holder; observed alone decides contention versus no-observation, regardless
-// of inFlight; and inFlight only matters, as a diagnostic cause, once
-// observed is false. This is the table that pins observed's priority over
-// inFlight: observed is checked first, so a non-nil inFlight - which ordinary
-// contention produces about as often as a nil one, since the wait ceiling
-// lands inside an in-flight attempt about as often as inside a backoff sleep
-// - never overrides a genuine observation.
+// TestWaitCeilingErrClassification pins waitCeilingErr's order: a canceled
+// parent wins, then observed decides busy versus unavailable whatever
+// inFlight holds, and inFlight is only a diagnostic cause.
 func TestWaitCeilingErrClassification(t *testing.T) {
 	t.Parallel()
 
 	canceledParent, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	// noHolderSynthetic is deliberately NOT a shape tryAcquireOnce's own
-	// in-flight transport errors ever take: it double-wraps context.Canceled
-	// with %w, a signature no producer in this package builds for an
-	// in-flight S3 call's failure. It exists to pin that waitCeilingErr's %v
-	// rendering of inFlight keeps context.Canceled unreachable through
-	// errors.Is regardless of what inFlight itself happens to wrap, not only
-	// for the shapes a real producer builds today - the same reason
-	// retry_test.go's stalledSynthetic exists for s3Retryable.
+	// noHolderSynthetic wraps context.Canceled, a shape no producer builds, to
+	// pin that waitCeilingErr's %v rendering hides whatever inFlight wraps.
 	noHolderSynthetic := fmt.Errorf("synthetic in-flight failure: %w", context.Canceled)
 
 	tests := []waitCeilingErrCase{
@@ -877,10 +620,8 @@ type waitCeilingErrCase struct {
 	wantCanceled    bool
 }
 
-// assertWaitCeilingErrClassification runs one row's body: call waitCeilingErr
-// with tc's parameters and assert the result's class membership. Split out of
-// TestWaitCeilingErrClassification purely to stay under the funlen budget;
-// the two together still cover the same five rows.
+// assertWaitCeilingErrClassification calls waitCeilingErr with one row's
+// parameters and checks the result's busy, unavailable and canceled classes.
 func assertWaitCeilingErrClassification(t *testing.T, tc waitCeilingErrCase) {
 	t.Helper()
 	err := waitCeilingErr(tc.parent, tc.observed, tc.inFlight)
@@ -898,17 +639,9 @@ func assertWaitCeilingErrClassification(t *testing.T, tc waitCeilingErrCase) {
 	}
 }
 
-// TestHeartbeatRefreshesDeadline confirms the background heartbeat advances
-// the lock object's deadline while the holder keeps it, without any
-// explicit refresh call from the caller.
-//
-// Rather than sleeping past several heartbeat ticks and comparing two reads
-// (which needs a 1.5s sleep just to guarantee the two RFC3339,
-// second-resolution timestamps differ), the test rolls the deadline an
-// hour into the past under the holder's own token - the same unconditional
-// same-token write the heartbeat itself performs - and waits for the
-// heartbeat to observably push it forward again. That is unambiguous at any
-// resolution and needs no scheduling margin.
+// TestHeartbeatRefreshesDeadline pins that the heartbeat advances the lock's
+// deadline on its own. It rolls the deadline an hour back under our token
+// and waits for a refresh, which RFC3339's second resolution cannot hide.
 func TestHeartbeatRefreshesDeadline(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -935,10 +668,8 @@ func TestHeartbeatRefreshesDeadline(t *testing.T) {
 	}
 
 	token, acquiredDeadline := readLock()
-	// The same unconditional same-token write the heartbeat itself performs,
-	// with the deadline moved an hour into the past, so the refresh that
-	// follows is observable without waiting for the wall clock to cross the
-	// second boundary RFC3339 resolution otherwise requires.
+	// Roll the deadline an hour back with the heartbeat's own same-token write,
+	// so the refresh is visible without crossing a second boundary.
 	rolledBack := time.Now().UTC().Add(-time.Hour)
 	if err := b.putLock(ctx, key, token, rolledBack, putCondition{}); err != nil {
 		t.Fatalf("roll the deadline back: %v", err)
@@ -964,44 +695,9 @@ func TestHeartbeatRefreshesDeadline(t *testing.T) {
 	}
 }
 
-// TestHeartbeatDetectsLostOwnershipAndReleaseSkipsDelete overwrites the lock
-// object out-of-band with a foreign token while a Backend holds it, and
-// confirms the heartbeat detects the takeover: release reports
-// errS3LockLost and, critically, never deletes the foreign holder's object.
-//
-// It waits on the holder context closing. The two alternatives an earlier
-// revision recorded here are both answered rather than sidestepped:
-//
-//   - the request stream is genuinely unusable, and that reasoning stands: the
-//     fake counts a request when it is SERVED, before the holder has processed
-//     the response, so waiting on its HEAD counter lets release's hbCancel
-//     abort the very HEAD that would have revealed the takeover. Polled
-//     tightly, that variant fails outright. Nothing a server observes can
-//     report what the client did with the answer.
-//   - the holder context was refused on the ground that consuming it makes
-//     this test assert through the mechanism
-//     TestLockHolderContextCanceledWhenOwnershipLost exists to pin. That
-//     conflates synchronizing with asserting. What this test asserts is
-//     unchanged and still exclusively its own: that release REPORTS the loss,
-//     and that the foreign object survives. Deleting lost.Store(true) - the
-//     flag half, which no other test covers - still fails it, and fails it on
-//     its own assertion rather than on the wait, because holderCancel keeps
-//     running and the wait keeps completing. What the wait does add is a
-//     second way to fail if holderCancel is deleted, which costs exclusive
-//     attribution and buys determinism; the fact stays covered either way,
-//     since that deletion fails the context test too.
-//
-// The wait is exact rather than probabilistic because heartbeatTick stores the
-// flag BEFORE it cancels: a closed holder context therefore proves the flag is
-// already set. That is a happens-before, not a margin - which is what the
-// three-heartbeat-interval sleep it replaces never was, and why that sleep
-// failed roughly one full package run in eighty-five under -race.
-//
-// KILLING MUTATION, run and reverted: deleting lost.Store(true) from
-// heartbeatTick, leaving the cancel in place. The wait still completes, and the
-// failure lands on this test's own assertion, which is the claim above:
-//
-//	lock_test.go:1031: expected errS3LockLost, got <nil>
+// TestHeartbeatDetectsLostOwnershipAndReleaseSkipsDelete pins that after a
+// takeover release reports errS3LockLost and keeps the foreign object. It
+// waits on the holder context, since the fake counts a HEAD before it is read.
 func TestHeartbeatDetectsLostOwnershipAndReleaseSkipsDelete(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -1040,26 +736,9 @@ func TestHeartbeatDetectsLostOwnershipAndReleaseSkipsDelete(t *testing.T) {
 	}
 }
 
-// TestLockHolderContextCanceledWhenOwnershipLost pins the other consumer of
-// the same takeover TestHeartbeatDetectsLostOwnershipAndReleaseSkipsDelete
-// covers: the holder context Lock returns must close, with a cause matching
-// helpers.ErrCacheLockLost, so the run itself stops working under a lock it
-// no longer holds instead of finishing and reporting the loss in one line
-// afterward. The takeover is seeded out-of-band with putLock, the same way
-// that test does it, rather than with raceTokenOnNextHead: that knob is a
-// one-shot swap armed for a specific HEAD and exists to race claim's own
-// verification during acquisition, not to model an acquirer that arrives
-// while a lock is already held.
-//
-// TestLockHolderContextStaysLiveWhileOwned is this test's positive control on
-// the identical fixture: without it, "the context closed" would be
-// indistinguishable from a holder context that is simply never live.
-//
-// What release does to that same cause on its way out is deliberately not
-// re-asserted below: a cause is immutable once set, so a second read after
-// release could not differ from the one above whatever release did. That
-// ordering is pinned by TestReleaseRacingTheTickKeepsTheLossCause instead,
-// which races release against a tick that has not decided yet.
+// TestLockHolderContextCanceledWhenOwnershipLost pins that a takeover closes
+// the holder context with a helpers.ErrCacheLockLost cause, so the run stops
+// writing; TestLockHolderContextStaysLiveWhileOwned is its positive control.
 func TestLockHolderContextCanceledWhenOwnershipLost(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -1076,10 +755,8 @@ func TestLockHolderContextCanceledWhenOwnershipLost(t *testing.T) {
 		t.Fatalf("seed foreign takeover: %v", err)
 	}
 
-	// A bounded select, not a sleep: the closing of the holder context IS the
-	// event this test is about, so it can be waited on directly. The ceiling
-	// is a liveness bound - a slow machine only makes this slower, never
-	// wrong - matching waitForLockEvent's own contract.
+	// The holder context closing is the event under test, so wait on it
+	// directly; the ceiling is only a liveness bound.
 	select {
 	case <-holderCtx.Done():
 	case <-time.After(lockEventWaitCeiling):
@@ -1092,11 +769,8 @@ func TestLockHolderContextCanceledWhenOwnershipLost(t *testing.T) {
 	assertReleaseReportsLossAndKeepsForeignLock(t, b, release, key)
 }
 
-// assertReleaseReportsLossAndKeepsForeignLock runs the release half of a
-// takeover scenario: release must report errS3LockLost and must leave the
-// foreign holder's object in place. Split out of
-// TestLockHolderContextCanceledWhenOwnershipLost purely to stay under the
-// funlen budget.
+// assertReleaseReportsLossAndKeepsForeignLock asserts that release reports
+// errS3LockLost and leaves the foreign holder's lock object in place.
 func assertReleaseReportsLossAndKeepsForeignLock(t *testing.T, b *Backend, release func() error, key string) {
 	t.Helper()
 	if err := release(); !errors.Is(err, errS3LockLost) {
@@ -1111,18 +785,9 @@ func assertReleaseReportsLossAndKeepsForeignLock(t *testing.T, b *Backend, relea
 	}
 }
 
-// TestLockHolderContextStaysLiveWhileOwned is
-// TestLockHolderContextCanceledWhenOwnershipLost's positive control on the
-// identical acquisition, with the one difference that matters: nobody takes
-// the lock away. The holder context must still be live after several
-// heartbeat ticks have observably happened, proving the cancellation that
-// test observes is a response to the takeover rather than a context that was
-// never usable in the first place.
-//
-// It also pins the no-leak half of the Backend.Lock contract: a clean release
-// must end the holder context too, so a long-lived parent does not accumulate
-// a child per run - and must end it with a plain cancellation, never a
-// lock-loss cause, or every successful run would classify as exit 8.
+// TestLockHolderContextStaysLiveWhileOwned pins that the holder context stays
+// live across heartbeat ticks while the lock is held, and that a clean
+// release ends it with plain cancellation, never a lock-loss cause.
 func TestLockHolderContextStaysLiveWhileOwned(t *testing.T) {
 	t.Parallel()
 	fake := newFakeS3()
@@ -1137,10 +802,8 @@ func TestLockHolderContextStaysLiveWhileOwned(t *testing.T) {
 
 	key := b.key(locksPrefix, lockObject)
 	putsAtAcquire := fake.requestCount(key, http.MethodPut)
-	// Three refresh PUTs the fake actually served, rather than three sleeps:
-	// each one proves a whole heartbeat tick ran to completion under this
-	// token, which is exactly the window a takeover would have been noticed
-	// in.
+	// Three refresh PUTs the fake served prove three whole heartbeat ticks ran
+	// under our token, the window a takeover would have been noticed in.
 	waitForLockEvent(t, "three heartbeat refresh PUTs under our own token", func() bool {
 		return fake.requestCount(key, http.MethodPut) >= putsAtAcquire+3
 	})
@@ -1157,13 +820,9 @@ func TestLockHolderContextStaysLiveWhileOwned(t *testing.T) {
 	assertHolderContextEndedCleanly(t, holderCtx.Err(), context.Cause(holderCtx))
 }
 
-// assertHolderContextEndedCleanly asserts the three things a clean release
-// owes the holder context, in an order where each is reachable while every
-// check above it passes: it ended at all (no leaked child), it did not end
-// with a lock-loss cause (which would classify a successful run as exit 8),
-// and the cause it did end with is plain cancellation. It takes the two
-// already-read values rather than the context itself, so the helper keeps
-// *testing.T first without tripping revive's context-as-argument rule.
+// assertHolderContextEndedCleanly asserts a clean release ended the holder
+// context, not with a lock-loss cause, and with context.Canceled. It takes
+// values, not the context, to satisfy revive's context-as-argument rule.
 func assertHolderContextEndedCleanly(t *testing.T, ctxErr, cause error) {
 	t.Helper()
 	if ctxErr == nil {
@@ -1177,24 +836,9 @@ func assertHolderContextEndedCleanly(t *testing.T, ctxErr, cause error) {
 	}
 }
 
-// TestHeartbeatSurvivesTransientHeadFailures forces the heartbeat's HEAD
-// (verifyOwner) calls to fail a bounded number of times with a transient
-// server error, then recover, while the holder keeps the lock. It confirms
-// heartbeatTick's error branch never flips the lost flag on its own: only a
-// definitive token mismatch may do that. Release afterward must succeed
-// (not errS3LockLost) and must actually delete the lock object, proving the
-// heartbeat kept refreshing normally once the forced failures were spent.
-//
-// The fault is sized to the client's whole retry budget
-// (s3RetryMaxAttempts) on purpose: a 500 is retryable, so a smaller fault is
-// absorbed by headObject's own retry and heartbeatTick never sees an error
-// at all - the branch this test is named for would go untested while the
-// test still passed. A full budget guarantees the tick that runs first
-// exhausts its retries and hands verifyOwner a real error. How long that
-// takes is not predictable (a single full-jitter backoff draw can outlast a
-// whole heartbeat interval), so the test waits for the refresh PUT that only
-// follows a successful verifyOwner HEAD, rather than sleeping a number of
-// ticks.
+// TestHeartbeatSurvivesTransientHeadFailures pins that failing heartbeat
+// HEADs never mark the lock lost. The fault spans s3RetryMaxAttempts, or
+// headObject's own retry would absorb it before heartbeatTick saw an error.
 func TestHeartbeatSurvivesTransientHeadFailures(t *testing.T) {
 	t.Parallel()
 	fake := newFakeS3()
@@ -1212,11 +856,8 @@ func TestHeartbeatSurvivesTransientHeadFailures(t *testing.T) {
 	putsAtArm := fake.requestCount(key, http.MethodPut)
 	fake.failNext(key, http.MethodHead, http.StatusInternalServerError, s3RetryMaxAttempts)
 
-	// The heartbeat only issues a refresh PUT after a verifyOwner HEAD
-	// succeeded, and a HEAD can only succeed once every armed failure has
-	// been served - so one new PUT proves the forced failures were spent and
-	// the heartbeat recovered, and proves nothing is left armed to ambush
-	// release's own HEAD.
+	// A refresh PUT follows only a successful HEAD, so one new PUT proves the
+	// armed failures are spent and none is left to hit release's own HEAD.
 	waitForLockEvent(t, "a heartbeat refresh PUT after the forced HEAD failures", func() bool {
 		return fake.requestCount(key, http.MethodPut) > putsAtArm
 	})
@@ -1235,15 +876,9 @@ func TestHeartbeatSurvivesTransientHeadFailures(t *testing.T) {
 	}
 }
 
-// TestReclaimIfExpiredLosesRaceOnRecreate directly unit-tests
-// reclaimIfExpired's losing-the-recreate-race branch: the existing lock is
-// expired (so this call deletes it), but a forced failure makes the
-// following create-if-absent PUT report precondition-failed - exactly as
-// real S3 would if another acquirer's create landed first. reclaimIfExpired
-// must report this as "not acquired, no immediate retry" (nil release,
-// retryNow=false) and, since that other creator is an acquirer this call did
-// observe, observed=true - see TestTryAcquireOnceReportsObservationPerBranch
-// for the same branch exercised through tryAcquireOnce's full entry point.
+// TestReclaimIfExpiredLosesRaceOnRecreate pins that a 412 on the If-Match
+// swap of an expired lock, another writer having changed it after our HEAD,
+// is reported as observed, with no release and no immediate retry.
 func TestReclaimIfExpiredLosesRaceOnRecreate(t *testing.T) {
 	t.Parallel()
 	fake := newFakeS3()
@@ -1260,9 +895,8 @@ func TestReclaimIfExpiredLosesRaceOnRecreate(t *testing.T) {
 		t.Fatalf("seed expired lock: %v", err)
 	}
 
-	// The next PUT to this key (the create-if-absent recreate that follows
-	// our delete) reports precondition-failed, simulating another
-	// acquirer's create winning the race for the just-deleted key.
+	// The next PUT to this key, reclaimIfExpired's If-Match swap, answers 412
+	// as if another writer had changed the object after our HEAD.
 	fake.failNext(key, http.MethodPut, http.StatusPreconditionFailed, 1)
 
 	attempt, err := b.reclaimIfExpired(ctx, key, "our-token", testHolderCancel(t))
@@ -1280,11 +914,9 @@ func TestReclaimIfExpiredLosesRaceOnRecreate(t *testing.T) {
 	}
 }
 
-// TestReclaimIfExpiredRetriesImmediatelyWhenObjectVanished directly
-// unit-tests reclaimIfExpired's vanished-object branch: HEAD on a key that
-// was never written returns not-found, which must be reported as an
-// immediate-retry signal (retryNow=true) rather than an error, and as
-// observed=false: a vanished object proves nothing about another acquirer.
+// TestReclaimIfExpiredRetriesImmediatelyWhenObjectVanished pins that a HEAD
+// answering not-found means retryNow and not observed: a vanished object
+// proves nothing about another acquirer.
 func TestReclaimIfExpiredRetriesImmediatelyWhenObjectVanished(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -1309,12 +941,9 @@ func TestReclaimIfExpiredRetriesImmediatelyWhenObjectVanished(t *testing.T) {
 	}
 }
 
-// TestTryAcquireOnceReportsObservationPerBranch pins lockAttempt.observed at
-// each of tryAcquireOnce's branches, against the real fake backend rather
-// than by constructing a lockAttempt value directly: the evidence a wait
-// ultimately reports as contention (see waitCeilingErr) must come from these
-// functions actually answering the backend's responses, not from a value a
-// test merely asserts about in isolation.
+// TestTryAcquireOnceReportsObservationPerBranch pins lockAttempt.observed for
+// each tryAcquireOnce branch against the real fake, since that evidence is
+// what waitCeilingErr later reports as contention.
 func TestTryAcquireOnceReportsObservationPerBranch(t *testing.T) {
 	t.Parallel()
 
@@ -1328,11 +957,8 @@ func TestTryAcquireOnceReportsObservationPerBranch(t *testing.T) {
 			wantObserved: true,
 		},
 		{
-			// The object is absent when this call's own create-if-absent PUT
-			// runs, so it succeeds; the armed swap then simulates another
-			// acquirer's write landing before this call's own follow-up
-			// ownership-verifying HEAD, in the same generation of the object
-			// this call itself just created.
+			// Our create lands, then raceTokenOnNextHead writes a foreign
+			// token just before our ownership-verifying HEAD.
 			name: "a foreign token racing in right after our own create is observed",
 			setup: func(t *testing.T, b *Backend, fake *fakeS3, key string) {
 				t.Helper()
@@ -1344,13 +970,8 @@ func TestTryAcquireOnceReportsObservationPerBranch(t *testing.T) {
 			wantObserved: true,
 		},
 		{
-			// Two real PUTs happen inside this one tryAcquireOnce call: the
-			// initial create-if-absent (which fails against the genuinely
-			// present, expired seeded object) and the post-delete recreate.
-			// Both are forced to precondition-failed here, so the second -
-			// the recreate - loses the race exactly as reclaimIfExpired's own
-			// final branch expects, regardless of which PUT the fault budget
-			// happens to land on first.
+			// Both PUTs, the create and the If-Match swap on the expired seeded
+			// object, answer 412, so the swap loses to another writer.
 			name: "another creator winning the race for the just-deleted object is observed",
 			setup: func(t *testing.T, b *Backend, fake *fakeS3, key string) {
 				t.Helper()
@@ -1389,10 +1010,8 @@ func TestTryAcquireOnceReportsObservationPerBranch(t *testing.T) {
 }
 
 // tryAcquireOnceObservationCase is one row of
-// TestTryAcquireOnceReportsObservationPerBranch's table: setup arranges the
-// fake and the Backend's lock object into the state that reaches one
-// tryAcquireOnce branch, and the want fields describe that branch's expected
-// lockAttempt.
+// TestTryAcquireOnceReportsObservationPerBranch: setup reaches one branch
+// and the want fields give that branch's lockAttempt.
 type tryAcquireOnceObservationCase struct {
 	setup        func(t *testing.T, b *Backend, fake *fakeS3, key string)
 	name         string
@@ -1401,12 +1020,9 @@ type tryAcquireOnceObservationCase struct {
 	wantRelease  bool
 }
 
-// assertTryAcquireOnceObservation runs one row's body: build a fresh Backend
-// and fake, arrange tc's precondition via tc.setup, call tryAcquireOnce once,
-// and assert every field of the returned lockAttempt against tc's want
-// fields, releasing the lock afterward if one was acquired. Split out of
-// TestTryAcquireOnceReportsObservationPerBranch purely to stay under the
-// funlen budget; the two together still cover the same five rows.
+// assertTryAcquireOnceObservation runs one row: tc.setup on a fresh Backend
+// and fake, one tryAcquireOnce, then every lockAttempt field against tc's
+// want fields, releasing any lock it took.
 func assertTryAcquireOnceObservation(t *testing.T, tc tryAcquireOnceObservationCase) {
 	t.Helper()
 	fake := newFakeS3()
@@ -1436,24 +1052,9 @@ func assertTryAcquireOnceObservation(t *testing.T, tc tryAcquireOnceObservationC
 	}
 }
 
-// TestLockAcquireBoundsImmediateRetrySpin forces the pathological PUT/HEAD
-// inconsistency that acquireLockLoop's retryNow handoff exists to survive: a
-// misbehaving S3-compatible backend that answers the create-if-absent PUT
-// with 412 (precondition failed) while a follow-up HEAD on the very same key
-// keeps reporting the object as missing. Before maxImmediateLockRetries
-// bounded this, acquireLockLoop would spin PUT+HEAD with no backoff sleep at all
-// for the entire waitCeiling window; this test shrinks waitCeiling so the
-// spin (if unbounded) would produce a very large number of requests in a
-// short, deterministic window, and confirms both that Lock still terminates
-// (not a raw transport/context error leaking out) and that the number of PUT
-// attempts against the lock key stays in the tens rather than growing to the
-// thousands an unbounded spin would produce over the same window.
-//
-// The terminal error is errS3LockWaitNoHolderObserved, not errS3LockWaitTimeout:
-// this fixture never produces a completed observation of another acquirer -
-// every create sees the object present, every HEAD sees it missing, a
-// self-contradicting sequence a conforming backend never sustains - so there
-// is no holder for "retry when the other run finishes" to be advice about.
+// TestLockAcquireBoundsImmediateRetrySpin pins maxImmediateLockRetries: a
+// backend answering every create with 412 and every HEAD with 404 must not
+// spin unbounded, and ends in errS3LockWaitNoHolderObserved, not contention.
 func TestLockAcquireBoundsImmediateRetrySpin(t *testing.T) {
 	t.Parallel()
 	fake := newFakeS3()
@@ -1463,12 +1064,8 @@ func TestLockAcquireBoundsImmediateRetrySpin(t *testing.T) {
 	b.lock = timing
 	ctx := context.Background()
 
-	// Arm both halves of the inconsistency indefinitely: every create
-	// attempt sees the key as already present (412), while every
-	// follow-up HEAD sees it as absent (404). A conforming backend can
-	// never produce this combination in steady state, only transiently;
-	// this fake sustains it for the whole test to exercise the acquirer's
-	// own bound rather than relying on the backend to behave.
+	// Arm both halves of the inconsistency for the whole test; a conforming
+	// backend only ever shows it transiently.
 	key := b.key(locksPrefix, lockObject)
 	fake.failNext(key, http.MethodPut, http.StatusPreconditionFailed, -1)
 	fake.failNext(key, http.MethodHead, http.StatusNotFound, -1)
@@ -1486,12 +1083,8 @@ func TestLockAcquireBoundsImmediateRetrySpin(t *testing.T) {
 		t.Fatalf("expected Lock to terminate close to the wait ceiling (%v), took %v", timing.waitCeiling, elapsed)
 	}
 
-	// maxRequestBudget is deliberately generous - order-of-magnitude
-	// headroom above what the bounded spin plus its subsequent
-	// backoff-gated attempts could plausibly produce in waitCeiling - so
-	// the assertion is about the spin being bounded at all (tens, not the
-	// thousands an unbounded immediate-retry loop would rack up in the
-	// same 300ms window), not about pinning an exact count.
+	// An order of magnitude above what the bounded spin produces: the check is
+	// that the spin is bounded at all, not an exact count.
 	const maxRequestBudget = 300
 	if puts := fake.requestCount(key, http.MethodPut); puts > maxRequestBudget {
 		t.Fatalf("expected the PUT spin to stay bounded (budget %d), got %d requests", maxRequestBudget, puts)
@@ -1515,10 +1108,8 @@ func TestReleaseLockOnMissingObjectReturnsNil(t *testing.T) {
 	}
 }
 
-// TestReleaseLockOnForeignTokenDoesNotDelete directly unit-tests
-// releaseLock's token-mismatch branch: releasing with a token that does not
-// match the object's recorded owner must return nil without deleting the
-// object, since it belongs to a different holder.
+// TestReleaseLockOnForeignTokenDoesNotDelete pins that releaseLock with a
+// token the object does not record returns nil and deletes nothing.
 func TestReleaseLockOnForeignTokenDoesNotDelete(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -1545,14 +1136,9 @@ func TestReleaseLockOnForeignTokenDoesNotDelete(t *testing.T) {
 	}
 }
 
-// TestReleaseLockPropagatesHeadError directly unit-tests releaseLock's
-// non-not-found HEAD error branch: a genuine S3 failure (as opposed to a
-// 404) must propagate to the caller rather than being swallowed. The
-// failure is armed indefinitely (500 is a retryable status, and
-// headObject now retries it internally) so it survives long enough to be
-// the terminal error rather than being consumed by a retry that then
-// observes the never-created key as a plain 404, which releaseLock treats
-// as an already-released lock.
+// TestReleaseLockPropagatesHeadError pins that a non-404 HEAD failure reaches
+// releaseLock's caller. The 500 is armed indefinitely so headObject's retry
+// cannot turn it into a 404, which reads as already released.
 func TestReleaseLockPropagatesHeadError(t *testing.T) {
 	t.Parallel()
 	fake := newFakeS3()
@@ -1592,11 +1178,9 @@ func TestReleaseDeletesOwnedLock(t *testing.T) {
 	}
 }
 
-// TestReleaseUsesFreshContextAfterInstallCancel is the core regression test
-// for the lock-leak bug: it cancels the caller's context (simulating an
-// interrupted or failed install run) before calling release, then confirms
-// release still succeeds and the lock object is actually gone from the
-// fake - proving its DELETE ran on a fresh context, not the canceled one.
+// TestReleaseUsesFreshContextAfterInstallCancel pins that release deletes the
+// lock object even after the caller's context was canceled, so an
+// interrupted run does not leave the lock blocking others until its TTL.
 func TestReleaseUsesFreshContextAfterInstallCancel(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -1620,11 +1204,9 @@ func TestReleaseUsesFreshContextAfterInstallCancel(t *testing.T) {
 	}
 }
 
-// TestReleaseTimeoutIsBounded confirms release's fresh context is itself
-// bounded by releaseTimeout: a DELETE that hangs well past releaseTimeout
-// causes release to give up with a deadline error rather than block
-// indefinitely, and it does so comfortably before the hang would resolve
-// on its own.
+// TestReleaseTimeoutIsBounded pins that release's fresh context is bounded by
+// releaseTimeout: a hanging DELETE yields a deadline error well before the
+// hang would end.
 func TestReleaseTimeoutIsBounded(t *testing.T) {
 	t.Parallel()
 	timing := testLockTiming(time.Minute)
@@ -1679,10 +1261,8 @@ func TestLockExpiredUsesDeadline(t *testing.T) {
 	}
 }
 
-// TestLockExpiredMalformedDeadlineFallsBackToAge confirms a deadline header
-// that fails to parse does not hard-fail the check: it falls back to
-// age-based staleness judged by Last-Modified against ttl, exactly as if no
-// deadline had been recorded at all.
+// TestLockExpiredMalformedDeadlineFallsBackToAge pins that an unparsable
+// deadline falls back to Last-Modified age against ttl rather than failing.
 func TestLockExpiredMalformedDeadlineFallsBackToAge(t *testing.T) {
 	t.Parallel()
 
@@ -1711,10 +1291,8 @@ func TestLockExpiredMalformedDeadlineFallsBackToAge(t *testing.T) {
 	}
 }
 
-// TestLockExpiredNoTimingIsReclaimable confirms that a lock object carrying
-// neither a deadline nor a Last-Modified header is treated as reclaimable
-// rather than as an unresolvable error: uninterpretable timing must never
-// permanently block acquisition.
+// TestLockExpiredNoTimingIsReclaimable pins that an object with neither a
+// deadline nor Last-Modified is reclaimable, so it can never block forever.
 func TestLockExpiredNoTimingIsReclaimable(t *testing.T) {
 	t.Parallel()
 

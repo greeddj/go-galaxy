@@ -1,18 +1,8 @@
 package lockfile
 
-// This file covers Compare and the two types built around it, Diff and
-// Change: the central Empty()-agrees-with-Hash invariant
-// (TestCompareEmptyMatchesHashEquality), that a deps-only difference still
-// counts as Updated (TestCompareDepsOnlyDifferenceIsUpdated), that neither
-// collection order nor dep order matters and Compare never mutates its
-// arguments (TestCompareIgnoresOrderAndDoesNotMutate), the nil-baseline
-// contract (TestCompareNilBaselineIsAllAdded), Change.Fields' fixed field
-// order and rendering (TestCompareFieldsReportsEveryChangedField), that
-// duplicate dependencies are multiset-significant, not merely set-significant
-// (TestCompareDuplicateDepsAreSignificant), and that an adversarial entry -
-// a path-traversal name, control bytes, an oversized deps element - passes
-// through unmutated and unescaped rather than panicking or being sanitized
-// at this layer (TestCompareRendersHostileEntryVerbatim).
+// Tests for Compare, Diff and Change: Empty agrees with Hash equality, order
+// never matters, inputs are never mutated, duplicate deps are significant and
+// hostile values pass through verbatim.
 
 import (
 	"strings"
@@ -35,12 +25,8 @@ type emptyMatchesHashEqualityCase struct {
 	wantEmpty bool
 }
 
-// eqWidgets and eqLegacy are the two entries every row in
-// TestCompareEmptyMatchesHashEquality's table starts from, and eqFile builds
-// a *File from them. Promoted to package level, rather than closures inside
-// one table-building function, so no single function trips the funlen
-// budget - the row data is what makes this table long, not any one
-// function's own logic.
+// eqWidgets and eqLegacy are the two entries every row of
+// TestCompareEmptyMatchesHashEquality starts from; eqFile builds a *File.
 func eqWidgets() Entry {
 	return Entry{
 		Name: "acme.widgets", Version: "1.0.0", Source: "https://galaxy.example",
@@ -61,10 +47,8 @@ func withSource(e Entry, s string) Entry  { e.Source = s; return e }
 func withSHA(e Entry, s string) Entry     { e.SHA256 = s; return e }
 func withDeps(e Entry, d []string) Entry  { e.Deps = d; return e }
 
-// samePayloadCases is TestCompareEmptyMatchesHashEquality's own positive
-// control: three rows the fixture must report Empty()==true for - identical,
-// reordered collections, and reordered deps - proving it is capable of that
-// outcome and not just of refusing.
+// samePayloadCases are the table's positive controls, which must report
+// Empty: identical files, reordered collections and reordered deps.
 func samePayloadCases() []emptyMatchesHashEqualityCase {
 	return []emptyMatchesHashEqualityCase{
 		{
@@ -88,10 +72,8 @@ func samePayloadCases() []emptyMatchesHashEqualityCase {
 	}
 }
 
-// fieldChangeCases covers a single-field change to the acme.widgets entry -
-// version, source, sha256, or deps (changed or dropped entirely) - each
-// against an otherwise-identical baseline, and each must report
-// Empty()==false.
+// fieldChangeCases each change one field of acme.widgets (version, source,
+// sha256, or deps changed or dropped) and must report a difference.
 func fieldChangeCases() []emptyMatchesHashEqualityCase {
 	return []emptyMatchesHashEqualityCase{
 		{
@@ -170,29 +152,9 @@ func emptyMatchesHashEqualityCases() []emptyMatchesHashEqualityCase {
 	return cases
 }
 
-// TestCompareEmptyMatchesHashEquality is the 12-row table proving Compare's
-// central invariant: for two non-nil *File sharing SchemaVersion,
-// Compare(before, after).Empty() agrees with before.Hash() == after.Hash().
-// Three rows (identical, reordered collections, reordered deps) are this
-// table's own positive control, asserting Empty()==true alongside the nine
-// rows asserting a real difference, so the fixture is shown capable of both
-// outcomes rather than only ever refusing.
-//
-// Two mutations were run against this test, both confirmed to fail it. Both
-// are caught by the same assertion - the hash-equality invariant, checked
-// ahead of the row's own wantEmpty - because both mutations break that exact
-// invariant rather than merely mis-classifying one row:
-//
-//   - Dropping sameDeps from sameEntry (comparing only Version/Source/SHA256)
-//     makes deps_changed and deps_dropped report Empty()==true while Hash
-//     disagrees - go test -run TestCompareEmptyMatchesHashEquality/deps_changed
-//     -v fails with:
-//     compare_test.go:201: Compare.Empty()=true but hash equality=false; diff={Server:<nil> Added:[] Updated:[] Removed:[]}
-//   - Dropping the file-level Server comparison from Compare makes
-//     server_changed and server_cleared report Empty()==true while Hash
-//     disagrees - go test -run TestCompareEmptyMatchesHashEquality/server_changed
-//     -v fails with the identical assertion, same line:
-//     compare_test.go:201: Compare.Empty()=true but hash equality=false; diff={Server:<nil> Added:[] Updated:[] Removed:[]}
+// TestCompareEmptyMatchesHashEquality pins Compare's central invariant: for
+// two non-nil files, Compare(before, after).Empty() agrees with Hash equality,
+// with three rows as positive controls expecting Empty.
 func TestCompareEmptyMatchesHashEquality(t *testing.T) {
 	t.Parallel()
 	for _, tc := range emptyMatchesHashEqualityCases() {
@@ -203,22 +165,9 @@ func TestCompareEmptyMatchesHashEquality(t *testing.T) {
 	}
 }
 
-// checkEmptyMatchesHashEquality runs one row of
-// TestCompareEmptyMatchesHashEquality's table: the hash-equality invariant is
-// checked ahead of the row's own wantEmpty, since that invariant is what
-// Compare exists to uphold, and checking it first is what lets a mutation
-// that breaks only the invariant (dropping the Server comparison, in
-// particular) surface its own message rather than being masked by the
-// separate wantEmpty check below it.
-//
-// The second check, against wantEmpty, cannot catch such a mutation itself:
-// every row's wantEmpty was chosen to agree with Hash, so for every row in
-// this table the two checks are equivalent, and no mutation of Compare can
-// pass the first while failing the second. What the second check actually
-// guards is the table's own rows - it fires when a future row's declared
-// wantEmpty disagrees with Hash, which is a bad fixture, not a Compare
-// regression. A real Compare regression always surfaces through the
-// invariant check above it.
+// checkEmptyMatchesHashEquality runs one row, checking the Hash invariant
+// before the row's wantEmpty so a Compare regression reports as such; a
+// wantEmpty mismatch alone means a bad fixture row.
 func checkEmptyMatchesHashEquality(t *testing.T, tc emptyMatchesHashEqualityCase) {
 	t.Helper()
 	diff := Compare(tc.before, tc.after)
@@ -238,17 +187,8 @@ func checkEmptyMatchesHashEquality(t *testing.T, tc emptyMatchesHashEqualityCase
 	}
 }
 
-// TestCompareDepsOnlyDifferenceIsUpdated proves a deps-only difference -
-// every pin field identical, only Deps differing - is reported as Updated,
-// not silently treated as no change. Deps is load-bearing for a --frozen
-// install (materializeLockfile -> lockfileDepsToKeys rebuilds the install
-// graph from it), so it must count as a real difference even though it pins
-// nothing about the artifact itself.
-//
-// Mutation: dropping sameDeps from sameEntry (comparing only
-// Version/Source/SHA256) makes this fail with:
-//
-//	compare_test.go:263: deps-only difference reported as no change: diff={Server:<nil> Added:[] Updated:[] Removed:[]}
+// TestCompareDepsOnlyDifferenceIsUpdated pins that a deps-only difference is
+// Updated: a --frozen install rebuilds its graph from Deps, so they are drift.
 func TestCompareDepsOnlyDifferenceIsUpdated(t *testing.T) {
 	t.Parallel()
 	before := &File{SchemaVersion: SchemaVersion, Collections: []Entry{
@@ -268,31 +208,9 @@ func TestCompareDepsOnlyDifferenceIsUpdated(t *testing.T) {
 	}
 }
 
-// TestCompareIgnoresOrderAndDoesNotMutate proves two independently pinnable
-// properties on one fixture that differs from a reordered-but-otherwise-
-// identical counterpart only in collection order and dep order: (1) Compare
-// reports no difference, and (2) Compare never mutates either input's order
-// while computing that verdict. Both are reachable from the same passing
-// fixture, so neither assertion is documentary.
-//
-// Mutation 1, dropping the sorted-clone fallback from sameDeps (leaving only
-// the length check and slices.Equal fast path), fails assertion (1) with:
-//
-//	compare_test.go:311: reordered but identical files reported as changed:
-//	diff={Server:<nil> Added:[] Updated:[{From:{acme.widgets 1.0.0 ...
-//
-// Mutation 2, adding canonicalize(before)/canonicalize(after) at the top of
-// Compare (an attempt to "simplify" order-insensitivity by sorting the inputs
-// instead of comparing order-insensitively), makes assertion (1) PASS - the
-// now-identically-sorted inputs compare equal - while failing assertion (2),
-// since canonicalize sorts its argument's Collections and each entry's Deps
-// in place:
-//
-//	compare_test.go:315: Compare mutated before: collections order changed from [acme.widgets acme.legacy] to [acme.legacy acme.widgets]
-//
-// which is exactly what the chain-pinnability rule requires: a mutation that
-// makes an earlier assertion pass while a later one in the same test still
-// fails.
+// TestCompareIgnoresOrderAndDoesNotMutate pins that (1) files differing only
+// in collection and dep order compare equal and (2) Compare reaches that
+// verdict without sorting either input in place.
 func TestCompareIgnoresOrderAndDoesNotMutate(t *testing.T) {
 	t.Parallel()
 	before := &File{SchemaVersion: SchemaVersion, Collections: []Entry{
@@ -325,12 +243,9 @@ func TestCompareIgnoresOrderAndDoesNotMutate(t *testing.T) {
 	}
 }
 
-// TestCompareNilBaselineIsAllAdded proves Compare(nil, f) reports every entry
-// as Added, sorted by name; Compare(nil, nil) is empty; and Compare(f, nil)
-// reports every entry as Removed, also sorted by name. f is built in reverse
-// name order specifically so a passing sorted-order assertion actually pins
-// the sort in Compare rather than coincidentally matching Collections' own
-// declaration order.
+// TestCompareNilBaselineIsAllAdded pins that a nil side reports every entry
+// Added or Removed, sorted by name (f is built in reverse order to prove the
+// sort), and that Compare(nil, nil) is empty.
 func TestCompareNilBaselineIsAllAdded(t *testing.T) {
 	t.Parallel()
 	f := &File{SchemaVersion: SchemaVersion, Collections: []Entry{
@@ -355,9 +270,7 @@ func TestCompareNilBaselineIsAllAdded(t *testing.T) {
 }
 
 // assertSortedEntryNames fails the test unless got's entries are named want,
-// in order - the one assertion shape TestCompareNilBaselineIsAllAdded applies
-// to both Compare(nil, f).Added and Compare(f, nil).Removed, so the sorted-
-// order check is written and pinned once rather than duplicated per call.
+// in order.
 func assertSortedEntryNames(t *testing.T, got []Entry, want []string, label string) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -370,12 +283,9 @@ func assertSortedEntryNames(t *testing.T, got []Entry, want []string, label stri
 	}
 }
 
-// TestCompareFieldsReportsEveryChangedField changes all four per-entry fields
-// at once (including clearing Deps entirely) and asserts Fields() reports
-// all four, in the fixed version/source/sha256/deps order, each carrying its
-// real from/to value - including the deps-cleared case rendering To as the
-// empty string, which internal/galaxy/collections's quoteEmpty turns into
-// "(none)" for display; Fields() itself does no such substitution.
+// TestCompareFieldsReportsEveryChangedField changes four fields at once and
+// pins Fields' fixed order and raw values, a cleared Deps rendering as ""
+// (the collections package substitutes "(none)" for display).
 func TestCompareFieldsReportsEveryChangedField(t *testing.T) {
 	t.Parallel()
 	before := &File{SchemaVersion: SchemaVersion, Collections: []Entry{
@@ -409,15 +319,8 @@ func TestCompareFieldsReportsEveryChangedField(t *testing.T) {
 	}
 }
 
-// TestCompareDuplicateDepsAreSignificant pins that sameDeps is a multiset
-// comparison, not a set comparison: [x.x, x.x] and [x.x, y.y] both have
-// length 2 and share an element, but are not the same dependency list, and
-// Hash (which sorts without deduplicating) agrees they are different files.
-//
-// Mutation: making sameEntry ignore Deps entirely (comparing only
-// Version/Source/SHA256, which are identical here) fails with:
-//
-//	compare_test.go:432: duplicate-vs-distinct deps must differ: diff={Server:<nil> Added:[] Updated:[] Removed:[]}
+// TestCompareDuplicateDepsAreSignificant pins that deps compare as a
+// multiset: [x.x, x.x] and [x.x, y.y] differ under Compare, and Hash agrees.
 func TestCompareDuplicateDepsAreSignificant(t *testing.T) {
 	t.Parallel()
 	before := &File{SchemaVersion: SchemaVersion, Collections: []Entry{
@@ -445,39 +348,16 @@ func TestCompareDuplicateDepsAreSignificant(t *testing.T) {
 	}
 }
 
-// hostileEntryName and hostileEntrySource are shared by
-// TestCompareRendersHostileEntryVerbatim and its mutation-focused sibling
-// TestCompareRendersHostileEntryVerbatimDoesNotMutate: a path-traversal name
-// and a Source embedding a NUL byte, an ANSI escape, and a CRLF.
+// hostileEntryName and hostileEntrySource are a path-traversal name and a
+// source carrying a NUL byte, an ANSI escape and a CRLF.
 const (
 	hostileEntryName   = "../../../../etc/passwd"
 	hostileEntrySource = "https://x.example\x00\x1b[31m\r\nInstalled: totally.fine"
 )
 
-// TestCompareRendersHostileEntryVerbatim proves Compare, Change.Fields, and
-// renderDeps treat an adversarial Entry exactly like any other one: no
-// panic, no error, and the hostile values pass through into
-// FieldChange.From/To exactly as given - neither escaped, sanitized, nor
-// mutated. That guarantee is not a runtime check this test itself performs;
-// it is a structural property of this package's import list, which this
-// test depends on rather than proves: compare.go imports only slices, sort,
-// and strings (see its own import block), so nothing in this package can
-// reach the filesystem or spawn a process in the first place, regardless of
-// what an Entry's fields contain. The companion property - that Compare
-// never mutates either input - is TestCompareRendersHostileEntryVerbatimDoesNotMutate,
-// split into its own function to keep this one's cyclomatic complexity
-// within budget.
-//
-// The hostile entry, present under the identical name on both sides so
-// Compare reports it as Updated, carries hostileEntryName, hostileEntrySource,
-// and an oversized Deps element - one row exercising all three surfaces
-// this package's rendering touches: Entry fields themselves, FieldChange.
-// From/To, and renderDeps' comma-join. A second, benign acme.widgets entry
-// shares the same table as this test's positive control: asserting
-// diff.Updated has exactly one entry, and that its Name is the hostile one,
-// already proves the benign entry was correctly left out of Updated - a
-// separate loop over diff.Updated to check for it would only re-assert what
-// the count and name checks already establish.
+// TestCompareRendersHostileEntryVerbatim pins that hostile names, sources and
+// an oversized dep pass through Compare and Fields unescaped and without a
+// panic; sanitizing is the printer's job. acme.widgets is the control.
 func TestCompareRendersHostileEntryVerbatim(t *testing.T) {
 	t.Parallel()
 	oversizedDep := strings.Repeat("d", 10000)
@@ -502,11 +382,8 @@ func TestCompareRendersHostileEntryVerbatim(t *testing.T) {
 	assertHostileFieldsRendered(t, diff.Updated[0], oversizedDep)
 }
 
-// assertHostileFieldsRendered checks that change - the hostile entry's own
-// Updated pair - carries its name unmangled and its three changed fields
-// (source, sha256, deps) exactly as given, in Fields()'s fixed order.
-// Factored out of TestCompareRendersHostileEntryVerbatim to keep that
-// function's own cyclomatic complexity within budget.
+// assertHostileFieldsRendered checks that change keeps the hostile name and
+// carries source, sha256 and deps exactly as given, in Fields' fixed order.
 func assertHostileFieldsRendered(t *testing.T, change Change, oversizedDep string) {
 	t.Helper()
 	if change.To.Name != hostileEntryName {
@@ -528,53 +405,9 @@ func assertHostileFieldsRendered(t *testing.T, change Change, oversizedDep strin
 	}
 }
 
-// TestCompareRendersHostileEntryVerbatimDoesNotMutate is
-// TestCompareRendersHostileEntryVerbatim's mutation-focused sibling: Compare
-// must leave both input files' own Collections order and each entry's Deps
-// order untouched. The fixture mirrors TestCompareIgnoresOrderAndDoesNotMutate's
-// own two-collection, multi-element-Deps shape rather than the hostile entry
-// alone: a single collection with a single-element Deps makes an in-place
-// canonicalize mutation structurally unobservable, since sorting one
-// collection - or one dep - is a no-op regardless of what the sort does, so a
-// non-mutation assertion against that fixture can never fail no matter what
-// Compare actually does to it.
-//
-// acme.widgets carries the two-element, non-sorted Deps ["z.z", "a.a"], and
-// is placed BEFORE hostileEntryName in Collections - the reverse of
-// canonical sorted order, since "../../../../etc/passwd" sorts ahead of
-// "acme.widgets" ('.' is 0x2E, 'a' is 0x61) - so an in-place Collections sort
-// would swap them.
-//
-// Killing mutation: adding canonicalize(before)/canonicalize(after) at the
-// top of Compare - the same mutation TestCompareIgnoresOrderAndDoesNotMutate
-// itself is killed by - fails this test with:
-//
-//	compare_test.go:597: Compare mutated before: names changed from
-//	[acme.widgets ../../../../etc/passwd] to [../../../../etc/passwd acme.widgets]
-//
-// That is the first of the four checks below, so it is the only one a
-// single run of this exact mutation can observe failing - the deps-order
-// checks after it are documentary under this specific mutation: canonicalize
-// sorts Collections and every entry's Deps together in one pass, and the
-// collection-order check's own t.Fatalf halts the test before either deps
-// check is reached. The collection-order check above is what this mutation
-// actually pins; the acme.widgets Deps are still non-sorted-order on
-// purpose, matching TestCompareIgnoresOrderAndDoesNotMutate's own fixture
-// shape, but no mutation isolating just the deps-sort has been run against
-// this test.
-//
-// A more surgical mutation was run instead: dropping the defensive
-// slices.Clone from sameDeps's sorted-clone fallback (see sameDeps itself for
-// why that clone exists). It is caught, but not here: acme.widgets's deps are
-// bit-identical on both sides of this fixture, so sameDeps's slices.Equal
-// fast path returns before the sort is ever reached, and hostileEntryName's
-// own Deps are single-element, where sorting is a no-op regardless of the
-// mutation. It is caught instead by TestCompareIgnoresOrderAndDoesNotMutate's
-// own fixture, whose acme.widgets entry carries a genuinely reordered
-// two-element Deps on each side, which reaches the sort this mutation
-// removes the safety of. That leaves this test's own deps-order coverage
-// documentary but not unguarded: the property it does not itself pin is
-// pinned by its sibling.
+// TestCompareRendersHostileEntryVerbatimDoesNotMutate pins that Compare leaves
+// both files' collection and deps order untouched; acme.widgets is listed
+// ahead of the hostile name, which sorts first, so an in-place sort would show.
 func TestCompareRendersHostileEntryVerbatimDoesNotMutate(t *testing.T) {
 	t.Parallel()
 	oversizedDep := strings.Repeat("d", 10000)

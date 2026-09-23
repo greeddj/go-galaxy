@@ -1,8 +1,6 @@
-// Package solver implements a PubGrub-style version solver: a pure,
-// in-memory, deterministic algorithm for choosing one version per package
-// that satisfies every declared constraint, or proving that no such
-// selection exists. It performs no I/O of its own; all package metadata is
-// obtained through the Provider seam, which the caller supplies.
+// Package solver is a pure, deterministic PubGrub-style version solver: one
+// version per package satisfying every constraint, or a proof none exists. It
+// performs no I/O; all package metadata arrives through the Provider seam.
 package solver
 
 import (
@@ -11,11 +9,9 @@ import (
 	"github.com/Masterminds/semver/v3"
 )
 
-// rootPkg is the name of the synthetic root package. It is not a valid
-// "ns.name" fully qualified collection name, so it can never collide with a
-// real package, and its leading NUL byte sorts it before every real fqdn
-// under byte-wise ordering, which the decision heuristic and root-requirement
-// processing both rely on.
+// rootPkg names the synthetic root package. It can never collide with a real
+// "ns.name", and its leading NUL sorts it before every real fqdn, which the
+// decision heuristic and root-requirement processing rely on.
 const rootPkg = "\x00root"
 
 // rootVersionString is the single version of the synthetic root package.
@@ -28,9 +24,7 @@ const rootVersionString = "0.0.0"
 var rootVersion = mustNewVersion(rootVersionString)
 
 // mustNewVersion parses raw as a Version or panics. It exists only for the
-// constant root version string above, which is guaranteed to parse.
-// errSolverBug's own doc comment (solver.go) is the home of the
-// panic-vs-error rule this function's own panic falls under.
+// constant root version, evaluated at init before any solve can fail.
 func mustNewVersion(raw string) Version {
 	v, err := NewVersion(raw)
 	if err != nil {
@@ -39,10 +33,9 @@ func mustNewVersion(raw string) Version {
 	return v
 }
 
-// Requirement is one root requirement to resolve: a package name paired with
-// its constraint expression. The caller is responsible for validating and
-// deduplicating requirements before calling Solve; the core does not sort,
-// dedupe, or normalize reqs itself beyond processing them in Package order.
+// Requirement is one root requirement: a package name and its constraint.
+// The caller validates and deduplicates requirements before Solve; the core
+// neither dedupes nor normalizes them.
 type Requirement struct {
 	Package    string
 	Constraint string
@@ -52,11 +45,9 @@ type Requirement struct {
 // string of the version Solve chose for it.
 type Resolution map[string]string
 
-// Constraint is a canonical constraint expression: the output of
-// helpers.NormalizeConstraint, where the empty string means unconstrained
-// (both raw "*" and raw empty normalize to ""). The core parses it with
-// Masterminds/semver; a parse failure at that point is a provider contract
-// violation and aborts the solve.
+// Constraint is a canonical constraint from helpers.NormalizeConstraint, where
+// "" means unconstrained. A constraint Masterminds/semver cannot parse is a
+// provider contract violation and aborts the solve.
 type Constraint = string
 
 // Result is the successful outcome of Solve.
@@ -101,35 +92,22 @@ func (v Version) sv() *semver.Version {
 	return v.parsed
 }
 
-// Provider is the seam between the solver core and package metadata. All
-// three methods must be safe for concurrent use if the caller drives
-// multiple solves concurrently, though a single Solve call drives the
-// provider from one goroutine only. An implementation must carry the supplied
-// ctx into every I/O it performs rather than substituting one of its own, and
-// must surface a cancellation observed there as an error whose tree still
-// satisfies errors.Is(err, ctx.Err()). A call answered entirely from an
-// in-memory cache performs no I/O and is under no obligation to check ctx
-// itself: Solve's own per-iteration check is what bounds that case.
+// Provider is the seam between the solver core and package metadata; one Solve
+// drives it from one goroutine. Every I/O must use the supplied ctx and keep
+// errors.Is(err, ctx.Err()) true for a cancellation it observes.
 type Provider interface {
-	// Highest returns the registry-reported highest version of pkg, with NO
-	// constraint checking performed by the provider - the core checks
-	// membership itself. ok reports whether the package is known and a
-	// highest version is available; when ok is false (or err is non-nil),
-	// the core falls back to Universe.
+	// Highest returns the registry-reported highest version of pkg, unchecked
+	// against any constraint (the core checks membership). When ok is false or
+	// err is non-nil, the core falls back to Universe.
 	Highest(ctx context.Context, pkg string) (Version, bool, error)
 
 	// Universe returns every published version of pkg, deduplicated by
-	// original string. The core re-sorts the result into its own total
-	// order regardless of what order Universe returns, so the provider
-	// contract states an order only as a defense-in-depth convention, not a
-	// correctness requirement. An unknown package returns an empty slice
-	// and a nil error.
+	// original string, in any order (the core re-sorts it). An unknown package
+	// returns an empty slice and a nil error.
 	Universe(ctx context.Context, pkg string) ([]Version, error)
 
-	// Dependencies returns the validated dependency map of pkg@v: dependency
-	// fqdn mapped to its canonical Constraint. Key and constraint validation
-	// happens inside Dependencies itself; a malformed dependency key or
-	// constraint is a provider contract violation and must be surfaced as an
-	// error from this method, never guessed at by the core.
+	// Dependencies returns pkg@v's dependency fqdn mapped to its canonical
+	// Constraint. A malformed key or constraint must be returned as an error
+	// here, never left for the core to guess at.
 	Dependencies(ctx context.Context, pkg string, v Version) (map[string]Constraint, error)
 }

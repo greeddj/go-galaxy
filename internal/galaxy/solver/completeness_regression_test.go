@@ -2,19 +2,13 @@ package solver
 
 import "testing"
 
-// The two fixtures below are hand-expanded from the brute-force oracle's
-// generated corpus (generateGraph seeds 1623 and 2373 at n=4,
-// maxVersions=3): the exact graphs the retired bitset representation
-// false-rejected on a wide oracle sweep, pinned here as concrete named
-// providers so the completeness claim never depends on any seed-count knob.
-// Each graph has exactly one valid resolution, which the oracle confirms
-// and the assertions below spell out.
+// These fixtures are oracle-corpus graphs (generateGraph seeds 1623 and 2373
+// at n=4, maxVersions=3) once falsely rejected, pinned as named providers;
+// each has exactly one valid resolution.
 
-// falseReject1623Provider: only gen.p0@0.2.0 (dependency-free) resolves.
-// gen.p0@1.0.0 needs gen.p3 ^0.0.3, which no gen.p3 version satisfies;
-// gen.p0@0.2.5 pulls gen.p2, whose only version needs gen.p3 ^0.2.0, which
-// no gen.p3 version satisfies either - so the solver must backtrack through
-// both higher versions of gen.p0 instead of declaring the graph unsolvable.
+// falseReject1623Provider builds a graph where only the dependency-free
+// gen.p0@0.2.0 resolves, so the solver must backtrack through both higher
+// gen.p0 versions instead of declaring the graph unsolvable.
 func falseReject1623Provider() *fakeProvider {
 	return newFakeProvider().
 		withVersions("gen.p0", "0.2.0", "0.2.5", testVersion100).
@@ -37,11 +31,9 @@ func TestCompletenessRegressionSeed1623(t *testing.T) {
 	}
 }
 
-// falseReject2373Provider: only gen.p0@1.0.0 (dependency-free) resolves.
-// gen.p0@1.2.0 pulls gen.p2, both of whose versions need gen.p3 1.x - and
-// gen.p3 publishes no 1.x release (1.0.0-rc.1 is a prerelease that a plain
-// 1.x excludes) - so the solver must learn "not gen.p0@1.2.0" and settle on
-// the lower root version.
+// falseReject2373Provider builds a graph where only the dependency-free
+// gen.p0@1.0.0 resolves: gen.p0@1.2.0 needs, through gen.p2, a gen.p3 1.x
+// release, and gen.p3's only 1.x candidate is a prerelease "1.x" excludes.
 func falseReject2373Provider() *fakeProvider {
 	return newFakeProvider().
 		withVersions("gen.p0", testVersion100, "1.2.0").

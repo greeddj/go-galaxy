@@ -15,14 +15,9 @@ type RetryPolicy struct {
 	MaxAttempts int
 }
 
-// Retry runs attempt up to p.MaxAttempts times, stopping as soon as it
-// succeeds (returns a nil error) or as soon as retryable reports false for
-// its returned error - including on the final attempt, whose error is
-// always returned as-is without consulting retryable again. Between
-// retries it sleeps a full-jitter exponential backoff (BackoffDelay under
-// p.Base/p.Cap), honoring ctx cancellation during that sleep: a canceled or
-// expired ctx returns ctx.Err() immediately rather than completing the
-// wait, so a caller cancellation surfaces as such even mid-backoff.
+// Retry runs attempt up to p.MaxAttempts times until it succeeds or
+// retryable refuses its error, sleeping BackoffDelay between tries; a ctx
+// canceled mid-backoff returns ctx.Err() at once.
 func Retry(ctx context.Context, p RetryPolicy, attempt func() error, retryable func(error) bool) error {
 	for i := 0; ; i++ {
 		err := attempt()

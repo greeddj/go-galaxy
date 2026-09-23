@@ -1,20 +1,6 @@
-// Package infra holds Infra, the per-run container of runtime dependencies
-// threaded through every subsystem: the operator-output printer, the shared
-// HTTP client, the clock and temp-directory functions a test substitutes, and
-// this run's metrics counters. Extending Infra is preferred over introducing a
-// new global or widening an already-wide signature. New always allocates fresh
-// counters, so nothing carries over between two runs in one process.
-//
-// It also carries the artifact-download, metadata-fetch, cache-state,
-// signature-fetch and git-fetch budgets as test-only override fields. Read
-// each one through its accessor - ArtifactDeadline, MetadataDeadline,
-// StateDeadline, SignatureDeadline, GitDeadline - never the field, so a nil
-// Infra or a non-positive override falls back to the helpers constant by
-// construction rather than by caller convention.
-//
-// Git is the one dependency here that is an interface rather than a value:
-// the client a git collection source is acquired through, wired by the
-// command layer from the production fetcher and by a test from a double.
+// Package infra holds Infra, the per-run container of runtime dependencies:
+// printer, HTTP clients, git client, clock, metrics, and test-only deadline
+// overrides read only through accessors that fall back to the helpers budgets.
 package infra
 
 import (
@@ -34,12 +20,9 @@ type Infra struct {
 	Output output.Printer
 	Git    gitsource.Client
 	HTTP   *http.Client
-	// URLHTTP is the client url collection and role sources download over
-	// (fetch.NewURLDownload): its own credential layer, no Galaxy token, no
-	// relaxed TLS. A nil URLHTTP at a url acquisition is a wiring defect the
-	// pipeline reports, the same contract Git carries - never a fallback to
-	// HTTP, which would silently re-attach Galaxy tokens to
-	// repository-authored URLs.
+	// URLHTTP is the client url sources download over (fetch.NewURLDownload). A
+	// nil one is a wiring defect the pipeline reports, never a fallback to HTTP,
+	// which would re-attach Galaxy tokens to repository-authored URLs.
 	URLHTTP                  *http.Client
 	Now                      func() time.Time
 	TempDir                  func() string
@@ -68,11 +51,9 @@ func New(out output.Printer, httpClient *http.Client) *Infra {
 	}
 }
 
-// GitDeadline returns the budget one git acquisition gets, from the first
-// advertisement request to the last built artifact: i.GitFetchDeadline when
-// positive, helpers.ArtifactDownloadDeadline otherwise. It is the same
-// constant an artifact download gets because a git acquisition is one: a
-// repository's pack is the artifact's wire form, with the build on top.
+// GitDeadline returns the budget of one git acquisition, advertisement to last
+// built artifact: GitFetchDeadline when positive, else
+// helpers.ArtifactDownloadDeadline, since a pack is the artifact's wire form.
 func (i *Infra) GitDeadline() time.Duration {
 	if i == nil || i.GitFetchDeadline <= 0 {
 		return helpers.ArtifactDownloadDeadline
@@ -80,12 +61,9 @@ func (i *Infra) GitDeadline() time.Duration {
 	return i.GitFetchDeadline
 }
 
-// ArtifactDeadline returns the per-acquisition artifact download budget this
-// run uses: i.ArtifactDownloadDeadline when it is set to a positive duration,
-// or helpers.ArtifactDownloadDeadline otherwise. Every call site reads the
-// budget through this method rather than the field directly, so a nil Infra,
-// a zero-value Infra, or a nonsensical (non-positive) override all fall back
-// to the real constant structurally, instead of by caller convention.
+// ArtifactDeadline returns ArtifactDownloadDeadline when positive, else
+// helpers.ArtifactDownloadDeadline, so a nil Infra, a zero value or a
+// non-positive override falls back structurally rather than by convention.
 func (i *Infra) ArtifactDeadline() time.Duration {
 	if i == nil || i.ArtifactDownloadDeadline <= 0 {
 		return helpers.ArtifactDownloadDeadline
@@ -93,11 +71,8 @@ func (i *Infra) ArtifactDeadline() time.Duration {
 	return i.ArtifactDownloadDeadline
 }
 
-// MetadataDeadline returns the per-request Galaxy metadata fetch budget this
-// run uses: i.MetadataFetchDeadline when it is set to a positive duration, or
-// helpers.MetadataFetchDeadline otherwise. Every call site reads the budget
-// through this method rather than the field directly, mirroring
-// ArtifactDeadline's own structural fallback.
+// MetadataDeadline returns the per-request Galaxy metadata fetch budget:
+// MetadataFetchDeadline when positive, else helpers.MetadataFetchDeadline.
 func (i *Infra) MetadataDeadline() time.Duration {
 	if i == nil || i.MetadataFetchDeadline <= 0 {
 		return helpers.MetadataFetchDeadline
@@ -105,11 +80,8 @@ func (i *Infra) MetadataDeadline() time.Duration {
 	return i.MetadataFetchDeadline
 }
 
-// StateDeadline returns the per-operation cache-state budget this run uses:
-// i.StateObjectDeadline when it is set to a positive duration, or
-// helpers.StateObjectDeadline otherwise. Every call site reads the budget
-// through this method rather than the field directly, mirroring
-// ArtifactDeadline's own structural fallback.
+// StateDeadline returns the per-operation cache-state budget:
+// StateObjectDeadline when positive, else helpers.StateObjectDeadline.
 func (i *Infra) StateDeadline() time.Duration {
 	if i == nil || i.StateObjectDeadline <= 0 {
 		return helpers.StateObjectDeadline
@@ -117,11 +89,8 @@ func (i *Infra) StateDeadline() time.Duration {
 	return i.StateObjectDeadline
 }
 
-// SignatureDeadline returns the per-collection signature-phase budget this run
-// uses: i.SignatureFetchDeadline when it is set to a positive duration, or
-// helpers.SignatureFetchDeadline otherwise. Every call site reads the budget
-// through this method rather than the field directly, mirroring
-// ArtifactDeadline's own structural fallback.
+// SignatureDeadline returns the per-collection signature-phase budget:
+// SignatureFetchDeadline when positive, else helpers.SignatureFetchDeadline.
 func (i *Infra) SignatureDeadline() time.Duration {
 	if i == nil || i.SignatureFetchDeadline <= 0 {
 		return helpers.SignatureFetchDeadline
@@ -129,10 +98,8 @@ func (i *Infra) SignatureDeadline() time.Duration {
 	return i.SignatureFetchDeadline
 }
 
-// DebugAnsibleConfig logs which settings were sourced from ansible.cfg, then
-// the fully resolved server list (see debugServerList) - independent of
-// whether ansible.cfg contributed anything at all, since the server list can
-// equally come from CLI flags or env vars alone.
+// DebugAnsibleConfig logs which settings came from ansible.cfg, then the
+// resolved server list and credential bindings, whatever their source.
 func (i *Infra) DebugAnsibleConfig(cfg *config.Config) {
 	if i == nil || i.Output == nil || cfg == nil {
 		return
@@ -160,24 +127,16 @@ func (i *Infra) DebugAnsibleConfig(cfg *config.Config) {
 	i.debugURLCredentials(cfg.URLCredentials)
 }
 
-// WarnConfig surfaces non-fatal configuration warnings collected while
-// building cfg (e.g. an ignored collections_path entry). Config is built
-// before the output printer exists, so these warnings are queued on cfg
-// and drained here once a printer is available.
-//
-// It drains config.Config.Warnings only. The role-scoped queue beside it is
-// WarnRoleConfig's, because at this point - the top of every command, before
-// any requirements file has been read - whether this run has a role at all
-// is still unknown.
+// WarnConfig prints cfg.Warnings, queued while config was built before any
+// printer existed. Role warnings wait for WarnRoleConfig, since no
+// requirements file has been read yet and a run may have no roles.
 func (i *Infra) WarnConfig(cfg *config.Config) {
 	i.warn(cfg, func(c *config.Config) []string { return c.Warnings })
 }
 
-// WarnRoleConfig surfaces the configuration warnings that only concern a run
-// installing roles (config.Config.RoleWarnings - everything about
-// roles_path). Its caller is whatever has just read the requirements file
-// and found a roles: block there, so a run without one never hears a
-// complaint about a setting it never reads.
+// WarnRoleConfig prints cfg.RoleWarnings (everything about roles_path). It is
+// called only once a roles: block was found, so a run without roles never
+// hears about a setting it does not read.
 func (i *Infra) WarnRoleConfig(cfg *config.Config) {
 	i.warn(cfg, func(c *config.Config) []string { return c.RoleWarnings })
 }
@@ -194,13 +153,9 @@ func (i *Infra) warn(cfg *config.Config, queue func(*config.Config) []string) {
 	}
 }
 
-// debugServerList logs one line per resolved server this run will use: its
-// server_list id (empty for the implicit single server), its URL, whether
-// it carries a token, and whether TLS certificate verification is disabled
-// for it - exactly what an operator debugging "why is it hitting the wrong
-// server" needs. The token is rendered as a presence boolean only, never
-// through config.Secret.Reveal, so raising verbosity can never turn this
-// line into a credential leak.
+// debugServerList logs each resolved server's id, URL, TLS policy and token
+// presence as a boolean; the token is never passed through Secret.Reveal, so
+// raising verbosity cannot leak it.
 func (i *Infra) debugServerList(servers []config.Server) {
 	for _, s := range servers {
 		i.Output.Debugf("Galaxy server %q: url=%s token=%t insecure_skip_tls_verify=%t",
@@ -208,11 +163,8 @@ func (i *Infra) debugServerList(servers []config.Server) {
 	}
 }
 
-// debugGitCredentials logs one line per configured git credential binding:
-// its id, the URL prefix it covers, and which kind it is. The password, key
-// and passphrase are never rendered, not even as presence booleans - the kind
-// already says which of them the binding holds, and config refused any shape
-// where that is ambiguous.
+// debugGitCredentials logs each git credential binding's id, URL prefix and
+// kind; no password, key or passphrase is rendered, not even as presence.
 func (i *Infra) debugGitCredentials(creds []config.GitCredential) {
 	for _, c := range creds {
 		kind := "basic"
@@ -223,11 +175,9 @@ func (i *Infra) debugGitCredentials(creds []config.GitCredential) {
 	}
 }
 
-// debugURLCredentials logs one line per configured url credential binding:
-// its id and the URL prefix it covers. The token is never rendered, not even
-// as a presence boolean - a binding without a token cannot exist, config
-// refused that shape, so presence would say nothing the line does not
-// already.
+// debugURLCredentials logs each url credential binding's id and URL prefix;
+// the token is never rendered, not even as presence, since config refuses a
+// binding without one.
 func (i *Infra) debugURLCredentials(creds []config.URLCredential) {
 	for _, c := range creds {
 		i.Output.Debugf("Url credential %q: url=%s kind=bearer", c.ID, c.URL.String())

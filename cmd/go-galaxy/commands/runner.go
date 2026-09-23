@@ -32,18 +32,13 @@ func runCollectionCommand(ctx context.Context, c *cli.Command, action collection
 	}
 	defer p.Close()
 	runtime := infra.New(p, newHTTPClient(cfg))
-	// The git client is wired for every command alike, even the ones that
-	// never reach a repository: it holds no connection and costs nothing
-	// until a git requirement is resolved, and a run that meets one with no
-	// client reports a wiring defect rather than a network failure. It runs
-	// on its own HTTP client (fetch.NewGit), never on the Galaxy one, so no
-	// Galaxy token and no relaxed TLS policy can ride along to a repository.
+	// The git client is wired for every command: it holds no connection until
+	// a git requirement is met, and its own HTTP client (fetch.NewGit) keeps
+	// any Galaxy token and relaxed TLS policy away from a repository.
 	runtime.Git = gitfetch.New(fetch.NewGit(cfg.Timeout), runtime.TempDir)
 	runtime.GitCredentials = gitCredentials(cfg)
-	// The url client is wired for every command alike for the same reason
-	// the git client is: it holds no connection until a url requirement is
-	// met, and it runs on its own client (fetch.NewURLDownload) so no Galaxy
-	// token and no relaxed TLS policy can ride along to an artifact host.
+	// The url client is wired the same way, and fetch.NewURLDownload keeps
+	// any Galaxy token and relaxed TLS policy away from an artifact host.
 	runtime.URLHTTP = fetch.NewURLDownload(cfg.Timeout, cfg.Offline, urlBindings(cfg))
 	runtime.DebugAnsibleConfig(cfg)
 	runtime.WarnConfig(cfg)

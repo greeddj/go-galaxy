@@ -7,12 +7,9 @@ import (
 	"github.com/Masterminds/semver/v3"
 )
 
-// differentialConstraintPool is the constraint corpus the builder is
-// differentially tested on: every operator of the vendored grammar in its
-// non-dirty, minor-dirty, patch-dirty, and fully wildcarded forms, with and
-// without prerelease operands, plus hyphen ranges, OR groups, space-ANDs,
-// v-prefixes, and build metadata. sharpConstraintPool's members are
-// included so the solver-level corpora and this suite share their alphabet.
+// differentialConstraintPool is the differential suite's constraint corpus:
+// every vendored operator in plain, minor-dirty, patch-dirty and wildcarded
+// forms, with prereleases, ranges, OR groups and metadata, plus the sharp pool.
 func differentialConstraintPool() []string {
 	pool := sharpConstraintPool()
 	pool = append(pool,
@@ -31,10 +28,9 @@ func differentialConstraintPool() []string {
 	return pool
 }
 
-// differentialProbePool is the version corpus the differential suite
-// evaluates membership on: releases and prereleases at and around every
-// boundary the constraint pool names, both subline minima, tuple-neighbor
-// prereleases, and build-metadata variants (which must be invisible).
+// differentialProbePool is the differential suite's version corpus: releases
+// and prereleases around every boundary the constraint pool names, subline
+// minima, and build-metadata variants, which must be invisible.
 func differentialProbePool() []string {
 	return []string{
 		"0.0.0-0", "0.0.0-alpha", "0.0.0", "0.0.1-0", "0.0.1", "0.0.3-0", "0.0.3", "0.0.4-0", "0.0.4",
@@ -75,11 +71,9 @@ func TestVerSetGroundTruthRows(t *testing.T) {
 	}
 }
 
-// TestVerSetDifferentialAgainstCheck is the builder's correctness contract:
-// for every accepted constraint in the pool and every probe version,
-// membership in the built exact set must agree with Masterminds' Check
-// (through propCheck, the same independent authority the solver-level
-// property suite uses). A divergence is always a builder bug.
+// TestVerSetDifferentialAgainstCheck pins the builder's contract: membership
+// in every built set agrees with Masterminds' Check (via propCheck) for every
+// pooled constraint and probe. A divergence is always a builder bug.
 func TestVerSetDifferentialAgainstCheck(t *testing.T) {
 	t.Parallel()
 	probes := make([]Version, 0, len(differentialProbePool()))
@@ -101,10 +95,9 @@ func TestVerSetDifferentialAgainstCheck(t *testing.T) {
 	}
 }
 
-// TestVerSetVacuousFormsAdmitPrereleases pins the one deliberate divergence
-// from a literal Masterminds reading: the unconstrained forms ("", "*")
-// build the full set, prereleases included, preserving the anySet identity
-// semantics the solver's vacuous truth depends on.
+// TestVerSetVacuousFormsAdmitPrereleases pins the deliberate divergence from
+// Masterminds: the unconstrained forms ("", "*") build the full set,
+// prereleases included, as the solver's vacuous truth requires.
 func TestVerSetVacuousFormsAdmitPrereleases(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{"", "*", "  ", " * "} {
@@ -121,11 +114,9 @@ func TestVerSetVacuousFormsAdmitPrereleases(t *testing.T) {
 	}
 }
 
-// TestVerSetUnsupportedCombErrors pins the single deliberate grammar
-// exclusion: a patch x-ranged "!=" with a prerelease operand excludes an
-// infinite comb of isolated points and has no interval form, so newVerSet
-// must refuse it loudly - even though Masterminds itself accepts the form
-// (asserted here so this stays a documented divergence, not an accident).
+// TestVerSetUnsupportedCombErrors pins the one grammar exclusion: a patch
+// x-ranged "!=" with a prerelease operand, which Masterminds accepts, is
+// refused with errNonIntervalConstraint since it excludes an infinite comb.
 func TestVerSetUnsupportedCombErrors(t *testing.T) {
 	t.Parallel()
 	for _, raw := range []string{"!=1.2.x-beta", "!=1.2-beta", ">=0.0.1,!=4.1.x-beta"} {

@@ -302,13 +302,9 @@ func TestDetachedHeadAdvertisesNoSymref(t *testing.T) {
 	if ar.Head == nil || *ar.Head != f.first {
 		t.Fatalf("Head = %v, want %s", ar.Head, f.first)
 	}
-	// Pinned go-git client behavior, not a property of the fake: with no
-	// symref, packp.AdvRefs.AllReferences guesses HEAD's branch by hash and
-	// fails outright when no branch tip matches - a detached HEAD on a commit
-	// that is not a tip breaks every clone and fetch through the stock
-	// client, whatever reference was asked for. Production code must not
-	// resolve the advertisement through AllReferences if it wants to survive
-	// such a remote.
+	// Pinned go-git behavior: with no symref, AdvRefs.AllReferences fails when
+	// HEAD matches no branch tip, so a detached HEAD off every tip breaks the
+	// stock client; production code must not resolve refs through it.
 	if _, err := clone(t, f.srv.RepoURL(fixtureRepo), branchOpts(0)); err == nil {
 		t.Fatal("clone against a detached HEAD off any tip succeeded")
 	}
@@ -564,10 +560,8 @@ func TestRedirectFaultSendsClientElsewhere(t *testing.T) {
 	if other.Count(EndpointInfoRefs) != 1 || other.Count(EndpointUploadPack) != 1 {
 		t.Fatalf("target counts = %d/%d, want 1/1", other.Count(EndpointInfoRefs), other.Count(EndpointUploadPack))
 	}
-	// go-git drops the session's credential once the advertisement moved to
-	// another host:port, so the upload-pack on the target is anonymous; what
-	// net/http does with the header on the redirected GET itself is the
-	// client's business and is not pinned here.
+	// go-git drops the credential once the advertisement moved to another
+	// host:port, so the target's upload-pack is anonymous.
 	if _, present := other.SeenAuth(EndpointUploadPack); present {
 		t.Fatal("credential followed the redirect onto the target's upload-pack")
 	}

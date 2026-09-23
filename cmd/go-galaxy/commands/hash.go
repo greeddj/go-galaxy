@@ -12,12 +12,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Hash returns the CLI command that prints a deterministic CI cache key.
-//
-// The key is the canonical lockfile hash when a lockfile is present
-// (preferred for reproducible CI), otherwise it falls back to the SHA256
-// of the requirements file. Output goes to stdout as `sha256:<hex>` on a
-// single line, suitable for capture in CI: `KEY=$(go-galaxy hash)`.
+// Hash returns the CLI command that prints a deterministic CI cache key,
+// `sha256:<hex>` on one line: the canonical lockfile hash, or the requirements
+// file's SHA256 when there is no lockfile.
 func Hash() *cli.Command {
 	return &cli.Command{
 		Name:    "hash",
@@ -37,12 +34,9 @@ func Hash() *cli.Command {
 	}
 }
 
-// computeHash prefers the lockfile's canonical hash when one is present. A
-// missing lockfile falls back to hashing the requirements file (the historic
-// behavior, kept for repos that do not lock). Any other lockfile.Load
-// failure - the file exists but cannot be parsed or validated, whatever the
-// specific cause - is surfaced as an error instead of silently falling back,
-// since that would hide a broken lockfile behind a hash that looks fine.
+// computeHash prefers the lockfile's canonical hash and falls back to the
+// requirements file only when the lockfile is missing: one that fails to load is
+// an error, since a fallback would hide it behind a plausible key.
 func computeHash(requirementsFile, lockPath string) (string, error) {
 	lf, err := lockfile.Load(lockPath)
 	switch {

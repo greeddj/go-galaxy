@@ -17,10 +17,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// helloFileContent is the shared "foo.txt" fixture body used across most
-// tests in this file, factored into one constant so its many uses (as a
-// writeTarball map value, an expected read-back body, and a legacy-file
-// seed) do not read as coincidentally identical literals.
+// helloFileContent is the shared "foo.txt" fixture body, one constant so its
+// uses as tarball content and expected read-back do not look coincidental.
 const helloFileContent = "hello"
 
 func TestStoreEnsureExtractsOnce(t *testing.T) {
@@ -94,17 +92,9 @@ func TestStoreEnsureConcurrent(t *testing.T) {
 	}
 }
 
-// The nested entry is what makes this test defend materializeEntry's
-// directory arm: writeTarball emits no directory headers at all, so sub/
-// exists in the CAS tree only because archive.ensureDir created it, and it
-// exists under dst only because the walk's directory arm creates each
-// directory before descending into it. Deleting that arm fails this test,
-// and five others, with
-//
-//	Materialize: open <dst>/sub/bar.txt: no such file or directory
-//
-// reported from copyFile's OpenFile rather than from os.Link, since
-// materializeFile falls back to a byte copy on any link failure.
+// TestMaterializeUsesHardlinks pins that Materialize hardlinks files and skips
+// the ReadyMarker. The nested entry has no directory header, so sub/ exists
+// under dst only because materializeEntry's directory arm creates it.
 func TestMaterializeUsesHardlinks(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -193,16 +183,9 @@ func TestEnsureAcceptsMatchingSHA(t *testing.T) {
 	}
 }
 
-// TestEnsureSelfComputedSkipsVerify proves the SHASelfComputed declaration is
-// honored: Ensure ingests the tarball under the caller's sha without hashing
-// the file first. The proof works like the mismatch test above, inverted - the
-// supplied sha is deliberately NOT the tarball's real hash, so if Ensure still
-// verified, the call would fail with ErrSHA256Mismatch; instead it must
-// extract and finalize the tree under the declared sha. That trust is exactly
-// the contract: a caller may declare SHASelfComputed only for a sha it hashed
-// itself over these very bytes, and the store cannot distinguish a lying
-// caller from an honest one without the re-read the declaration exists to
-// skip.
+// TestEnsureSelfComputedSkipsVerify pins that a SHASelfComputed sha is trusted
+// without hashing the file: a sha that is not the tarball's hash still
+// extracts and finalizes under the declared name.
 func TestEnsureSelfComputedSkipsVerify(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -235,10 +218,7 @@ func TestEnsureSelfComputedSkipsVerify(t *testing.T) {
 }
 
 // TestEnsureZeroProvenanceVerifies pins SHAProvenance's zero value to the
-// verifying behavior: a caller that never declares provenance - passing the
-// zero value, however it obtained one - must get the SHAFromRecord check, so
-// forgetting the declaration can only cost a redundant hash, never a skipped
-// one.
+// verifying behavior, so an undeclared provenance costs a hash, never a skip.
 func TestEnsureZeroProvenanceVerifies(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -272,15 +252,9 @@ func TestStoreSweep(t *testing.T) {
 	}
 }
 
-// TestStoreSweepStopsWhenTheContextEnds proves Sweep reads its context before
-// each entry: a caller that stopped owning the store - cleanup's holder
-// context canceled after another holder took the cache lock - removes no
-// further trees, and hears why rather than being told the sweep succeeded.
-//
-// TestStoreSweep above is the positive control on the identical fixture: it
-// removes "drop" through the same call with a live context, so "drop
-// survived" here means the context check fired rather than that the entry was
-// never a candidate.
+// TestStoreSweepStopsWhenTheContextEnds pins that Sweep checks ctx before each
+// entry: a canceled sweep removes nothing and returns context.Canceled, where
+// TestStoreSweep removes "drop" from the identical fixture.
 func TestStoreSweepStopsWhenTheContextEnds(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -346,11 +320,9 @@ func TestStoreSweepPlanMissingRoot(t *testing.T) {
 	}
 }
 
-// TestStoreSweepPlanPropagatesRealReadDirError proves SweepPlan surfaces a
-// genuine (non-not-exist) ReadDir error - e.g. a permission error - rather
-// than treating it the same as a missing root. Skipped when running as
-// root, since root bypasses the permission bits this test relies on to
-// force the read failure.
+// TestStoreSweepPlanPropagatesRealReadDirError pins that a permission error
+// listing the store is returned, not treated as a missing store. Skipped
+// under root, which bypasses permission bits.
 func TestStoreSweepPlanPropagatesRealReadDirError(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root; permission-based read guard cannot be tested")
@@ -375,11 +347,9 @@ func TestStoreSweepPlanPropagatesRealReadDirError(t *testing.T) {
 	}
 }
 
-// TestStoreSweepTempRemovesOrphanTempsKeepsFinalized proves SweepTemp removes
-// both temp forms the store creates under its root - an "ingest-" directory
-// from IngestReader and a "<sha>.tmp" directory from Ensure/extractInto -
-// while leaving a finalized CAS tree (a bare sha directory with its .ready
-// marker) untouched.
+// TestStoreSweepTempRemovesOrphanTempsKeepsFinalized pins that SweepTemp
+// removes both an "ingest-" and a "<sha>.tmp" directory and leaves a
+// finalized entry and its ready marker alone.
 func TestStoreSweepTempRemovesOrphanTempsKeepsFinalized(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -423,11 +393,8 @@ func mustHash(t *testing.T, path string) string {
 	return sha
 }
 
-// seedFinalizedEntry creates a finalized CAS tree directly under store's
-// root - a bare directory named name carrying only the ReadyMarker - without
-// going through Ensure. This is used by tests (Sweep/SweepTemp) that only
-// need a finalized entry addressable by a readable, arbitrary name, decoupling
-// them from Ensure's sha-verification requirement.
+// seedFinalizedEntry creates a finalized entry called name, holding only the
+// ReadyMarker, without Ensure, so a test can use a readable, non-sha name.
 func seedFinalizedEntry(t *testing.T, store *Store, name string) string {
 	t.Helper()
 	dir := filepath.Join(store.Root(), name)
@@ -560,10 +527,8 @@ func writeTarball(t *testing.T, path string, files map[string]string) {
 	}
 }
 
-// seedCASTree extracts a small tarball into a fresh store via Ensure and
-// returns (store, casTree). It is the common fixture for every read-only /
-// removal test below, none of which care about the tarball's own content
-// beyond it being a real, hashable file.
+// seedCASTree extracts a small tarball into a fresh store through Ensure and
+// returns the store and the extracted tree.
 func seedCASTree(t *testing.T) (*Store, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -595,10 +560,9 @@ func casEntryInfo(root, path string, d fs.DirEntry) (string, fs.FileInfo, error)
 	return rel, info, nil
 }
 
-// assertCASEntryMode applies the three-way permission contract enforced
-// below: the .ready marker is helpers.FileMod, a directory is
-// helpers.DirMod, and anything else (a regular file, the only other kind a
-// collection tarball produces) must carry no write bit.
+// assertCASEntryMode checks one CAS entry's mode: the .ready marker is
+// helpers.FileMod, a directory is helpers.DirMod, and any other entry has no
+// write bit.
 func assertCASEntryMode(t *testing.T, rel string, info fs.FileInfo, isDir bool) {
 	t.Helper()
 	switch {
@@ -617,11 +581,8 @@ func assertCASEntryMode(t *testing.T, rel string, info fs.FileInfo, isDir bool) 
 	}
 }
 
-// checkCASEntryMode is TestCASTreeIsReadOnly's per-entry WalkDir callback,
-// split out as its own function so the test itself stays a simple two-line
-// call: golangci-lint's cyclomatic-complexity budget counts a WalkDir
-// closure's branches against its enclosing test function, and this entry's
-// three-way mode check is exactly the branching that budget exists to flag.
+// checkCASEntryMode is TestCASTreeIsReadOnly's WalkDir callback, split out to
+// keep the test within the cyclomatic-complexity budget.
 func checkCASEntryMode(t *testing.T, root, path string, d fs.DirEntry, walkErr error) error {
 	t.Helper()
 	if walkErr != nil {
@@ -638,11 +599,9 @@ func checkCASEntryMode(t *testing.T, root, path string, d fs.DirEntry, walkErr e
 	return nil
 }
 
-// TestCASTreeIsReadOnly proves Ensure's extraction result satisfies the
-// permission contract everywhere at once: every regular file has no write
-// bit, every directory (including the root) keeps helpers.DirMod, and the
-// .ready marker itself is at helpers.FileMod (it is go-galaxy's own sidecar,
-// not artifact content, so it is deliberately not hardened).
+// TestCASTreeIsReadOnly pins the CAS tree's modes after Ensure: regular files
+// carry no write bit, directories keep helpers.DirMod, and the .ready marker,
+// go-galaxy's own sidecar, stays helpers.FileMod.
 func TestCASTreeIsReadOnly(t *testing.T) {
 	t.Parallel()
 	_, got := seedCASTree(t)
@@ -655,11 +614,9 @@ func TestCASTreeIsReadOnly(t *testing.T) {
 	}
 }
 
-// TestInstalledFilesAreReadOnly proves Materialize preserves the CAS tree's
-// read-only regular-file mode exactly (not merely "still read-only", but
-// bit-for-bit identical to the source), that every linked file really is
-// the same inode as its CAS source, and that install directories stay
-// writable even though their file contents do not.
+// TestInstalledFilesAreReadOnly pins that Materialize links each file to its
+// CAS inode with the identical read-only mode, while install directories stay
+// writable at helpers.DirMod.
 func TestInstalledFilesAreReadOnly(t *testing.T) {
 	t.Parallel()
 	_, src := seedCASTree(t)
@@ -697,13 +654,9 @@ func TestInstalledFilesAreReadOnly(t *testing.T) {
 	}
 }
 
-// TestInPlaceEditIsBlocked is the load-bearing regression test for this
-// commit: opening an installed, hard-linked file for writing must fail with
-// a permission error, and the CAS content it aliases must be unaffected by
-// the attempt. Skipped under root, which bypasses every permission bit this
-// test relies on to force the write to fail - detection (the tree-tally
-// check from the previous commit) is what still holds in that case, not
-// these mode bits.
+// TestInPlaceEditIsBlocked pins that opening an installed hard-linked file for
+// writing fails with a permission error and leaves the CAS bytes unchanged.
+// Skipped under root, which bypasses permission bits.
 func TestInPlaceEditIsBlocked(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root; permission bits do not block writes")
@@ -737,13 +690,9 @@ func TestInPlaceEditIsBlocked(t *testing.T) {
 	}
 }
 
-// TestReplaceByRenameDoesNotCorruptCAS pins the intentional scope of this
-// commit's protection: it blocks a write *through* the shared inode, not a
-// project replacing its own installed file wholesale. Renaming a new file
-// over the installed path only needs write permission on the containing
-// directory (which stays writable by design), so it succeeds and simply
-// detaches the install from the CAS inode - the CAS content itself, still
-// referenced under its own sha, is untouched.
+// TestReplaceByRenameDoesNotCorruptCAS pins the protection's scope: renaming a
+// new file over an installed one succeeds, since directories stay writable,
+// and detaches it from the CAS inode without changing the CAS bytes.
 func TestReplaceByRenameDoesNotCorruptCAS(t *testing.T) {
 	t.Parallel()
 
@@ -772,10 +721,8 @@ func TestReplaceByRenameDoesNotCorruptCAS(t *testing.T) {
 	}
 }
 
-// assertCopyFileCreatesIndependentCopy asserts copyFile(src, dst, perm)
-// succeeds, dst's content matches want, dst's mode is exactly perm (not
-// merely read-only), and dst is a distinct inode from src rather than a
-// hard link.
+// assertCopyFileCreatesIndependentCopy asserts copyFile yields dst with want's
+// content, a mode of exactly perm, and an inode distinct from src.
 func assertCopyFileCreatesIndependentCopy(t *testing.T, dst, src, want string, perm os.FileMode) {
 	t.Helper()
 	if err := copyFile(src, dst, perm); err != nil {
@@ -805,12 +752,9 @@ func assertCopyFileCreatesIndependentCopy(t *testing.T, dst, src, want string, p
 	}
 }
 
-// assertMaterializeFileSurfacesRemoveError drives materializeFile's
-// checked-remove error path by pre-creating dst as a non-empty directory:
-// os.Remove fails on a non-empty directory (unlike an empty one, which it
-// would happily remove), so this deterministically forces the checked
-// remove to surface a real error instead of silently falling through to a
-// confusing EEXIST/EISDIR failure further down.
+// assertMaterializeFileSurfacesRemoveError occupies dst with a non-empty
+// directory, which os.Remove cannot delete, and asserts materializeFile
+// returns that remove's own ENOTEMPTY rather than a later link or open error.
 func assertMaterializeFileSurfacesRemoveError(t *testing.T, dir, src string, perm os.FileMode) {
 	t.Helper()
 	occupiedDst := filepath.Join(dir, "occupied-dst")
@@ -826,11 +770,8 @@ func assertMaterializeFileSurfacesRemoveError(t *testing.T, dir, src string, per
 	}
 }
 
-// TestMaterializeCopyFallback exercises copyFile's cross-device fallback
-// branch directly, without needing a second filesystem, then drives
-// materializeFile's checked-remove error path. See
-// assertCopyFileCreatesIndependentCopy and
-// assertMaterializeFileSurfacesRemoveError for what each half proves.
+// TestMaterializeCopyFallback drives copyFile's cross-device fallback without
+// a second filesystem, then materializeFile's checked-remove error path.
 func TestMaterializeCopyFallback(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -850,12 +791,9 @@ func TestMaterializeCopyFallback(t *testing.T) {
 	assertMaterializeFileSurfacesRemoveError(t, dir, src, casPerm)
 }
 
-// TestLegacyReadyMarkerForcesRebuild proves a CAS tree left over from a
-// pre-hardening binary - carrying the legacy "ok" marker payload and a
-// writable regular file - is never trusted: Ensure must reject its stale
-// marker, rebuild the tree via extractInto's RemoveAll-then-rebuild path,
-// and the rebuilt tree must be hardened (and carry the current marker
-// payload) exactly like a first-time extraction would.
+// TestLegacyReadyMarkerForcesRebuild pins that a tree with the legacy "ok"
+// marker and a writable file is not trusted: Ensure rebuilds it read-only
+// with the current ReadyMarkerPayload.
 func TestLegacyReadyMarkerForcesRebuild(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -897,14 +835,9 @@ func TestLegacyReadyMarkerForcesRebuild(t *testing.T) {
 	}
 }
 
-// TestStoreReady proves the pure read-only predicate Ready mirrors Ensure's
-// own isReady short-circuit exactly: false before a tree is ever extracted,
-// false for an empty sha, true once the tree is genuinely promoted, and false
-// again for a tree whose ready marker carries the legacy "ok" payload - the
-// same pre-hardening shape TestLegacyReadyMarkerForcesRebuild proves Ensure
-// rejects and rebuilds rather than trusts. A bare os.Stat of the marker would
-// report true for that legacy case, so this pins Ready against exactly the
-// regression its own doc comment warns about.
+// TestStoreReady pins that Ready matches Ensure's isReady check: false before
+// extraction, for an empty sha, for the legacy "ok" payload a bare stat would
+// accept, and for a traversal sha; true for a finalized tree.
 func TestStoreReady(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -939,11 +872,8 @@ func TestStoreReady(t *testing.T) {
 		t.Error("expected Ready to report false for a tree carrying the legacy \"ok\" marker payload")
 	}
 
-	// Traversal guard: a sha crafted to escape the store root, naming a real
-	// sibling directory that genuinely holds a valid-looking ready marker,
-	// must still report false. storePath rejects any sha containing a path
-	// separator before Ready ever calls isReady, so this never even joins
-	// into a path that could reach the sibling.
+	// A traversal sha naming a sibling that holds a valid marker must still
+	// report false: entryRel rejects it before any path is joined.
 	siblingDir := filepath.Join(store.Root(), "..", "sibling")
 	if err := os.MkdirAll(siblingDir, helpers.DirMod); err != nil {
 		t.Fatalf("mkdir sibling: %v", err)
@@ -956,18 +886,9 @@ func TestStoreReady(t *testing.T) {
 	}
 }
 
-// TestEnsureAndPromoteRejectTraversalSHA proves both of the store's
-// tree-creating entry points refuse an unsafe sha - one that is not a single
-// path element - rather than joining it into a Rename target that could
-// escape the store root. Neither call may create or remove anything outside
-// store.Root().
-//
-// Promote's cleanup of the rejected call's temp tree is checked from both
-// sides, because that cleanup is a RemoveAll and it is now aimed through the
-// containment root: a temp that really does sit under the cache directory is
-// still removed, and one that does not is left untouched. Without the first
-// half, "the outside temp survived" would be indistinguishable from Promote
-// having stopped cleaning up at all.
+// TestEnsureAndPromoteRejectTraversalSHA pins that Ensure and Promote refuse a
+// sha that is not one path element, creating nothing, and that Promote still
+// removes a temp inside the store while leaving one outside it untouched.
 func TestEnsureAndPromoteRejectTraversalSHA(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -981,10 +902,8 @@ func TestEnsureAndPromoteRejectTraversalSHA(t *testing.T) {
 	if _, err := store.Ensure(context.Background(), traversalSHA, tarPath, SHAFromRecord); !errors.Is(err, ErrSHAUnsafe) {
 		t.Errorf("Ensure(%q, ...) error = %v, want ErrSHAUnsafe", traversalSHA, err)
 	}
-	// The rejection happens before Ensure opens a containment root at all, so
-	// neither the store root nor the cache directory holding it exists yet -
-	// the strongest available proof that nothing was created anywhere, inside
-	// the root or out.
+	// The rejection precedes opening any root, so not even the cache directory
+	// may exist afterward.
 	if _, err := os.Stat(cacheDir); !os.IsNotExist(err) {
 		t.Errorf("expected Ensure to create nothing at all for a rejected sha, cache dir stat error = %v", err)
 	}
@@ -1014,10 +933,8 @@ func TestEnsureAndPromoteRejectTraversalSHA(t *testing.T) {
 	}
 }
 
-// TestRemoveRefusesTraversalSHA proves Remove leaves a traversal target
-// intact and returns nil (its normal best-effort "nothing to do" result,
-// matching an empty sha) rather than removing whatever path an unsafe sha
-// would otherwise resolve to outside the store root.
+// TestRemoveRefusesTraversalSHA pins that Remove leaves a traversal target
+// intact and returns nil, its "nothing touched" result for an unsafe sha.
 func TestRemoveRefusesTraversalSHA(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1040,12 +957,9 @@ func TestRemoveRefusesTraversalSHA(t *testing.T) {
 	}
 }
 
-// TestTarballShippingReadyMarkerPromotes is the regression test for the bug
-// hardening introduces: a tarball that ships its own root-level ".ready"
-// entry now extracts it read-only along with everything else, so a naive
-// os.WriteFile of the real marker would fail EACCES trying to truncate it
-// in place. Promote's remove-then-write must tolerate this and finish with
-// the current payload, not the tarball's own content.
+// TestTarballShippingReadyMarkerPromotes pins that a tarball carrying its own
+// read-only root ".ready" still promotes: writeReadyMarker removes it first
+// and writes the current payload instead of failing with EACCES.
 func TestTarballShippingReadyMarkerPromotes(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1090,14 +1004,9 @@ func TestTarballShippingReadyMarkerPromotes(t *testing.T) {
 	}
 }
 
-// TestRemovalPathsWithReadOnlyFiles proves every removal path this
-// package's callers rely on still succeeds against a tree of read-only
-// regular files: Store.Remove, Sweep, and SweepTemp for CAS trees, plus a
-// bare os.RemoveAll over a Materialize'd install tree - the exact pattern
-// collections.extractCollection uses to wipe an install path before a fresh
-// extraction. None of these need the target file's own write bit, only the
-// containing directory's, so hardening the files must not affect any of
-// them.
+// TestRemovalPathsWithReadOnlyFiles pins that Remove, Sweep, SweepTemp and a
+// plain os.RemoveAll of a materialized install all delete read-only files,
+// since removal needs only the directory's write bit.
 func TestRemovalPathsWithReadOnlyFiles(t *testing.T) {
 	t.Parallel()
 
@@ -1164,12 +1073,9 @@ func TestRemovalPathsWithReadOnlyFiles(t *testing.T) {
 	}
 }
 
-// TestNewFilesCanStillBeCreatedInInstallTree encodes the __pycache__
-// guarantee: hardening regular files must never extend to blocking new file
-// or directory creation inside an install tree, since directories are never
-// hardened and their write bit is exactly what os.Mkdir and os.WriteFile
-// need. A future change that hardened directories too would break this
-// test.
+// TestNewFilesCanStillBeCreatedInInstallTree pins that the read-only hardening
+// stops at files: a new directory and file, as __pycache__ needs, can still be
+// created inside an install tree.
 func TestNewFilesCanStillBeCreatedInInstallTree(t *testing.T) {
 	t.Parallel()
 	_, src := seedCASTree(t)
@@ -1197,17 +1103,9 @@ func TestNewFilesCanStillBeCreatedInInstallTree(t *testing.T) {
 	}
 }
 
-// escapingStoreFixture builds a cache directory whose store-directory name is
-// a symlink to a directory outside the cache, holding one victim entry named
-// so that every sweeping entry point would delete it if the symlink were
-// followed. It returns the store and the victim's real path.
-//
-// The symlink is absolute rather than relative, and that is the weaker of the
-// two forms on purpose: os.Root refuses an absolute target outright, so the
-// tests below would still pass against a root that had somehow been given
-// permission to follow in-root relative links. Nothing here is meant to prove
-// how os.Root distinguishes link shapes - only that the store operations run
-// through it at all.
+// escapingStoreFixture builds a cache whose store directory is an absolute
+// symlink to an outside directory holding a victim every sweep would delete if
+// followed; it returns the store and the victim's path.
 func escapingStoreFixture(t *testing.T) (*Store, string) {
 	t.Helper()
 
@@ -1248,12 +1146,9 @@ func realStoreFixture(t *testing.T) (*Store, string) {
 	return NewStore(cacheDir), filepath.Join(victim, "keepme")
 }
 
-// TestStoreRefusesAnEscapingStoreDirectory proves the containment root, not
-// the sha predicate, is what stops a store directory that leads out of the
-// cache directory: every entry point that lists, creates, renames, or removes
-// under it must refuse, and the tree the symlink points at must survive
-// untouched. Each row states what it needs from the control fixture too, so
-// "refused" is never confused with "never ran".
+// TestStoreRefusesAnEscapingStoreDirectory pins that every store entry point
+// refuses a store directory symlinked out of the cache and leaves its target
+// intact, each row checked against realStoreFixture as a positive control.
 func TestStoreRefusesAnEscapingStoreDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -1285,10 +1180,8 @@ func TestStoreRefusesAnEscapingStoreDirectory(t *testing.T) {
 	}
 }
 
-// escapingStoreCase is one row of TestStoreRefusesAnEscapingStoreDirectory.
-// sweeps marks the rows whose control run must actually delete the fixture
-// entry, which is what separates a sweeping operation from one that merely
-// has to succeed.
+// escapingStoreCase is one row of TestStoreRefusesAnEscapingStoreDirectory;
+// sweeps marks the rows whose control run must delete the fixture entry.
 type escapingStoreCase struct {
 	run    func(t *testing.T, s *Store) error
 	name   string
@@ -1350,11 +1243,9 @@ func escapingStoreCases() []escapingStoreCase {
 	}
 }
 
-// TestStoreDirUnusableNamesWhatIsWrong pins that a write against a store
-// directory the root will not follow reports ErrStoreDirUnusable rather than
-// the operating system's own answer, which for both reachable shapes - an
-// escaping symlink and a regular file in that name - is a bare "file exists"
-// from mkdirat that names neither the path nor the problem.
+// TestStoreDirUnusableNamesWhatIsWrong pins that Ensure reports
+// ErrStoreDirUnusable, not the bare "file exists" of mkdirat, for both an
+// escaping symlink and a regular file at the store directory name.
 func TestStoreDirUnusableNamesWhatIsWrong(t *testing.T) {
 	t.Parallel()
 
@@ -1387,10 +1278,8 @@ func TestStoreDirUnusableNamesWhatIsWrong(t *testing.T) {
 	})
 }
 
-// TestDiscardRefusesATempOutsideTheStore pins the other half of Promote's
-// rooted cleanup as its own entry point: Discard removes a temp under the
-// store and refuses one outside it, rather than handing RemoveAll whatever
-// path it is given.
+// TestDiscardRefusesATempOutsideTheStore pins that Discard removes a temp
+// under the store and refuses one outside it with ErrTempOutsideStore.
 func TestDiscardRefusesATempOutsideTheStore(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -11,44 +11,19 @@ import (
 	"time"
 )
 
-// freshCreateCutShortBudget bounds the acquisition of the row that must fail
-// after its create-if-absent PUT landed. It has to clear the one loopback round
-// trip ahead of that PUT - measured at 87-169us on this fixture, the
-// measurement recorded on reclaimSwapHold - by enough that the row never fails
-// before reaching the state it is about, and it is also the entire time the
-// fixture then holds the ownership check open, so it is what that row waits.
-// Well past the former, small enough to be a cheap test.
+// freshCreateCutShortBudget is the failure row's budget: wide enough for the
+// create PUT to land, and then the whole time the fixture holds the ownership
+// check open.
 const freshCreateCutShortBudget = 300 * time.Millisecond
 
-// freshCreateCompletionMargin is the deadline the control row hands
-// tryAcquireOnce, and it is a second constant rather than the one above for a
-// reason that is the defect rather than tidiness: a value that must FIRE and a
-// value a round trip must FIT INSIDE are opposite requirements, so the number
-// that keeps the failure row cheap is the same number that makes the control
-// row a bet on the machine, and one constant serving both is wrong for
-// whichever of the two it was not chosen for.
-//
-// The control row no longer bets on this number at all: its client is wrapped
-// in answeredDespiteCancelTransport, so no request it makes can be cut short by
-// any context, and what is left for the deadline to bound is the part of that
-// row which is not a request - helpers.Retry's own backoff select, which a row
-// meant to succeed never reaches. The call takes a context regardless, and this
-// is the value it carries. reclaimCompletionMargin is its twin on the take-over
-// branch; stateDeadlineCompletionMargin is the one margin of the three still
-// bet on, for the reason its own doc gives.
+// freshCreateCompletionMargin is the control row's deadline, separate from the
+// budget above because a value that must fire and one a round trip must fit
+// inside are opposite requirements.
 const freshCreateCompletionMargin = 10 * time.Second
 
-// orphanRowClient returns the http.Client one orphan-cleanup row runs on, and it
-// is the single place the two rows of those tables stop being protected by the
-// same thing: the control row's client is wrapped in
-// answeredDespiteCancelTransport, so no request it makes can be cut short by a
-// clock at all, while the blocked row keeps the server's own client, because its
-// budget expiring inside the ownership check IS the state that row exists to
-// reach. Wrapping the blocked row would delete what it measures.
-//
-// Both orphan tables call this rather than spelling the choice out twice, so the
-// asymmetry has one home; each of their doc comments points here rather than
-// restating it.
+// orphanRowClient returns one orphan-cleanup row's client. The control row
+// uses answeredDespiteCancelTransport so no clock can cut it short; the blocked
+// row keeps the plain client, as its budget firing is the point.
 func orphanRowClient(srv *httptest.Server, blockPostPutHead bool) *http.Client {
 	// A copy of the server's own client rather than a bare http.Client, so
 	// whatever else httptest configured on it survives the wrapping.
@@ -59,43 +34,9 @@ func orphanRowClient(srv *httptest.Server, blockPostPutHead bool) *http.Client {
 	return &client
 }
 
-// TestFreshCreateAbandonsALockItNeverHeld is the fresh-create counterpart of
-// TestReclaimAbandonsALockItNeverHeld: the same orphan, on the branch that
-// creates the lock object rather than the one that takes it over. Once the
-// create-if-absent PUT has landed and the acquisition then ends anyway, the
-// object records this run's token with no heartbeat behind it - and every other
-// acquirer waits out a full lock TTL against a holder that does not exist,
-// which is twice the ceiling each of them waits before giving up.
-//
-// The two branches reach that state by different routes and share one cleanup,
-// which is why this test exists separately rather than as a row of the reclaim
-// one: the reclaim writes with If-Match and this one with If-None-Match, so no
-// fixture drives both.
-//
-// The failure row builds the state exactly: the budget is wide enough for the
-// create to land, and the fixture then holds the ownership check that follows
-// it until that budget is gone, so the run always fails at the same point
-// rather than racing a loopback round trip it would win.
-//
-// The second row is the positive control on the same fixture, with the block
-// disarmed: the acquisition holds the lock and the object still records our
-// token, so the failure row's "the object is gone" cannot be the fixture never
-// letting an acquisition through in the first place.
-//
-// The failure row asserts the object is GONE rather than merely foreign, since
-// foreign is what a competing acquirer would leave and this cleanup must never
-// delete that.
-//
-// The two rows are not protected by the same thing - the control row cannot be
-// cut short by a clock at all, while the failure row is defined by its budget
-// firing - and that asymmetry is deliberate rather than something to be tidied
-// away. orphanRowClient is where it is decided, and why.
-//
-// KILLING MUTATION, run and reverted: deleting the abandonLockObject call from
-// tryAcquireOnce's claim-error arm. The failure row then leaves the orphan
-// behind:
-//
-//	lock_acquire_test.go:113: lock object after an abandoned acquisition: headObject err = <nil>, want errS3NotFound
+// TestFreshCreateAbandonsALockItNeverHeld pins that an acquisition failing
+// after its create-if-absent PUT landed deletes that object rather than leaving
+// an orphan; the control row shows the same fixture does grant the lock.
 func TestFreshCreateAbandonsALockItNeverHeld(t *testing.T) {
 	t.Parallel()
 
@@ -115,10 +56,8 @@ func TestFreshCreateAbandonsALockItNeverHeld(t *testing.T) {
 	}
 }
 
-// assertFreshCreateOrphanCleanup runs one row end to end against a real fake S3
-// server, driving tryAcquireOnce directly rather than Lock: Lock would retry the
-// whole acquisition loop after the failure this row induces, spending the
-// budget on attempts that are not what is being measured.
+// assertFreshCreateOrphanCleanup runs one row against a fake S3 server,
+// calling tryAcquireOnce directly because Lock would retry past the failure.
 func assertFreshCreateOrphanCleanup(t *testing.T, blockPostPutHead, wantRelease bool) {
 	t.Helper()
 	key := path.Join(locksPrefix, lockObject)
@@ -150,10 +89,8 @@ func assertFreshCreateOrphanCleanup(t *testing.T, blockPostPutHead, wantRelease 
 	t.Cleanup(srv.Close)
 
 	b := newLockBackendAt(t, srv.URL, orphanRowClient(srv, blockPostPutHead), testLockTiming(time.Minute))
-	// Open runs before the budget matters and writes only its own probe key, so
-	// the lock key is untouched when tryAcquireOnce reaches it: its
-	// create-if-absent PUT is the first write this key ever sees, which is what
-	// makes the anchor above count that PUT alone.
+	// Open writes only its probe key, so putsServed counts the create below
+	// alone: it is the first PUT the lock key sees.
 	if err := b.Open(context.Background()); err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -172,10 +109,8 @@ func assertFreshCreateOutcome(t *testing.T, wantRelease bool, attempt lockAttemp
 	if got := attempt.release != nil; got != wantRelease {
 		t.Fatalf("attempt holds the lock = %v, want %v (error: %v)", got, wantRelease, err)
 	}
-	// The first arm is documentary, not pinned: reaching it needs a release AND
-	// an error, which lockAttempt's own contract forbids and no path produces.
-	// The second is the real one - a failure row that quietly reported nothing
-	// wrong is exactly what an abandoned lock would look like to a caller.
+	// The first arm is documentary: lockAttempt forbids a release with an
+	// error. The second catches a failure row that reported nothing wrong.
 	switch {
 	case wantRelease && err != nil:
 		t.Fatalf("tryAcquireOnce: %v", err)
@@ -204,35 +139,9 @@ func assertFreshCreateObject(t *testing.T, wantRelease bool, b *Backend, key str
 	}
 }
 
-// TestConditionalConflictIsRetriedNotFatal drives a 409 answering each of the
-// two conditional writes the lock protocol makes. S3 documents the status for a
-// concurrent request racing a conditional write - a delete completing first -
-// and documents the write as safe to retry afterwards, so an acquisition that
-// meets one must back off and try again rather than end.
-//
-// Both rows assert the acquisition SUCCEEDS, which alone would pass just as
-// happily against a fixture that never served a 409 at all. The PUT count is
-// what rules that out: it is asserted to have grown past the number a
-// conflict-free acquisition makes, so the row fails if the conflict was never
-// delivered or never retried. That count is also this test's positive control -
-// the same fixture is shown taking the lock, so "it retried" cannot be "it
-// failed differently".
-//
-// The two rows arm the conflict at different points because the two writes sit
-// at different points: the create-if-absent PUT is the first request an
-// acquisition makes against an empty bucket, while the swap only happens after
-// a create has been refused and a HEAD has judged the object expired, so its
-// row arms the conflict behind that HEAD.
-//
-// KILLING MUTATIONS, run and reverted. Each fails its own row, and the two
-// report the identical message, so the row name is what tells them apart.
-// Deleting tryAcquireOnce's errS3ConditionalConflict arm fails the create row:
-//
-//	lock_acquire_test.go:250: Lock: cache backend unavailable: s3 conditional write conflicted with a concurrent request
-//
-// Deleting reclaimIfExpired's own arm fails the reclaim row:
-//
-//	lock_acquire_test.go:250: Lock: cache backend unavailable: s3 conditional write conflicted with a concurrent request
+// TestConditionalConflictIsRetriedNotFatal pins that a 409 on either the
+// create or the swap PUT is backed off and retried; the PUT count proves the
+// conflict was served and retried, not merely that the lock was taken.
 func TestConditionalConflictIsRetriedNotFatal(t *testing.T) {
 	t.Parallel()
 

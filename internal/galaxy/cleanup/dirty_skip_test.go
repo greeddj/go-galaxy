@@ -1,24 +1,8 @@
 package cleanup
 
-// This file proves the WIRING of the clean-save skip decorator through
-// cleanup.Start's real initCleanup, end to end against a real local backend.
-// Nothing in internal/galaxy/store's or internal/galaxy/cache's own unit
-// tests for the flag and the decorator drives Start at all, so nothing there
-// proves initCleanup actually wraps its backend with
-// cacheManager.WithCleanSaveSkip.
-//
-// Unlike collections.Start, a cleanup run over a genuinely cold cache can
-// never be the one to first stamp Meta.LastSnapshot: finalizeCleanup's own
-// !cfg.DryRun && st.WasPersisted() guard (see its own doc comment) means the
-// very first cleanup run against a cache with no prior persisted snapshot
-// always skips the save on its own, regardless of this decorator - cleanup
-// never writes an installed entry itself, so removeUnused's Delete* calls
-// against an empty in-memory map are no-ops either way. The fixture below
-// therefore seeds a persisted snapshot directly (seedSnapshotInstalled)
-// before the first real Start call under test, exactly the way a prior real
-// install run would have left one behind, so the scenario under test - a
-// cleanup run against an already-persisted snapshot that removes nothing -
-// is reachable at all.
+// These tests prove Start's initCleanup wraps its real local backend with
+// cacheManager.WithCleanSaveSkip; cleanup never writes the first snapshot, so
+// the fixture seeds a persisted one the way a prior install would.
 
 import (
 	"os"
@@ -33,11 +17,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// reloadCleanupLastSnapshot opens a fresh backend for cfg, loads the
-// persisted store, and returns its Meta.LastSnapshot, closing the backend
-// before returning. It never reuses a backend Start itself touched, so each
-// call is an independent observation of what is actually on disk after that
-// run finished.
+// reloadCleanupLastSnapshot returns the persisted Meta.LastSnapshot read
+// through a fresh backend, never one Start touched, so each call observes
+// what is actually on disk.
 func reloadCleanupLastSnapshot(t *testing.T, cfg *config.Config, runtime *infra.Infra) time.Time {
 	t.Helper()
 	backend, err := cacheBackend.New(cfg, runtime)
@@ -60,15 +42,9 @@ func reloadCleanupLastSnapshot(t *testing.T, cfg *config.Config, runtime *infra.
 	return st.MetaSnapshot().LastSnapshot
 }
 
-// TestCleanupThatRemovesNothingDoesNotRewriteTheSnapshot proves the second
-// wiring site TestIdleInstallDoesNotRewriteTheSnapshot
-// (internal/galaxy/collections) cannot reach: a cleanup run that removes
-// nothing must leave the persisted snapshot's LastSnapshot untouched, and a
-// cleanup run that does remove something must advance it. ns.name's install
-// stays reachable (its project's requirements.yml names it) across the first
-// two runs, then the requirements file is rewritten to name nothing, making
-// the exact same on-disk collection unreachable for the third run - the
-// positive control.
+// TestCleanupThatRemovesNothingDoesNotRewriteTheSnapshot pins that a cleanup
+// removing nothing leaves LastSnapshot untouched, while one that removes an
+// unreachable collection advances it (the positive control).
 func TestCleanupThatRemovesNothingDoesNotRewriteTheSnapshot(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()
@@ -82,10 +58,8 @@ func TestCleanupThatRemovesNothingDoesNotRewriteTheSnapshot(t *testing.T) {
 	cfg := &config.Config{CacheDir: cacheDir, DryRun: false}
 	runtime := newTestRuntime()
 
-	// Seed a persisted snapshot recording ns.name@1.0.0 as installed, exactly
-	// as a prior real install would have left one - see this file's own
-	// package doc comment for why cleanup itself can never be the first
-	// writer of a persisted snapshot.
+	// Cleanup never writes the first persisted snapshot, so seed one the way
+	// a prior install would have left it.
 	seedSnapshotInstalled(t, cfg, runtime, map[string]store.InstalledEntry{
 		"ns.name@1.0.0": {Source: "https://galaxy.example.com/api", ArtifactSHA256: "deadbeef"},
 	})
@@ -135,9 +109,7 @@ func writeUnreachableRequirements(t *testing.T, path string) {
 }
 
 // runCleanupAndReload runs Start, failing the test with label on error, then
-// reloads and returns the persisted snapshot's LastSnapshot. Factored out of
-// TestCleanupThatRemovesNothingDoesNotRewriteTheSnapshot purely to stay under
-// this repository's cyclomatic-complexity budget.
+// returns the persisted snapshot's LastSnapshot.
 func runCleanupAndReload(t *testing.T, cfg *config.Config, runtime *infra.Infra, label string) time.Time {
 	t.Helper()
 	if err := Start(t.Context(), cfg, runtime); err != nil {

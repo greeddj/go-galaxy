@@ -8,11 +8,8 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// TestVerifyRootsResolved covers verifyRootsResolved's role as the sole
-// production post-condition asserting the solver returned a version for
-// every requested root: it exercises helpers.ErrMissingResolvedRoot, a real
-// fail-closed guard against a solver that silently drops a root on the
-// fresh-solve path.
+// TestVerifyRootsResolved pins the post-condition that fails closed with
+// helpers.ErrMissingResolvedRoot when the solver drops a requested root.
 func TestVerifyRootsResolved(t *testing.T) {
 	t.Parallel()
 

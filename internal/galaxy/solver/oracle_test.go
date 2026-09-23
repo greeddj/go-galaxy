@@ -7,17 +7,9 @@ import (
 	"testing"
 )
 
-// oracleSeedCount bounds the brute-force membership corpus below: this many
-// seeds per package-count, at which the per-seed enumeration stays cheap
-// (propCheck's parse memo is what keeps the widened count affordable under
-// -race). Since the exact signed-set algebra replaced the bitset
-// representation, this suite is a completeness gate, not just a soundness
-// one: the resolver must false-reject NOTHING the oracle can enumerate.
-// The count is a regression bar whose level is documented to have killed
-// the bitset implementation - it false-rejected seeds 1623 and 2373 (both
-// under this count, at n=4) on a 10000-seed evidence sweep whose exact
-// graphs completeness_regression_test.go pins as named fixtures; the same
-// sweep on the exact algebra completes with zero false rejections.
+// oracleSeedCount is the seeds per package count TestOracleMembership
+// enumerates. The suite is a completeness gate: the resolver must reject
+// nothing the oracle can solve, so lowering the count weakens it.
 const oracleSeedCount = 3000
 
 // reachableClosure returns the packages reachable from the roots by following,
@@ -60,10 +52,9 @@ func (g generatedGraph) constraintsSatisfied(assign map[string]string) bool {
 	return true
 }
 
-// validResolution reports whether assign (present package -> version) is a
-// valid closed minimal resolution: roots present and satisfying, every present
-// package's dependencies present and satisfying, and the present set exactly
-// equal to the reachable closure from the roots (no unreachable extras).
+// validResolution reports whether assign is a valid closed minimal
+// resolution: every root and dependency present and satisfied, and the
+// present set exactly the closure reachable from the roots.
 func (g generatedGraph) validResolution(assign map[string]string) (Resolution, bool) {
 	if !g.constraintsSatisfied(assign) {
 		return nil, false

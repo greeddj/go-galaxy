@@ -64,24 +64,9 @@ func TestLoadMissing(t *testing.T) {
 	}
 }
 
-// TestLoadWrapsUnreadableFileAsInvalid proves a lockfile path that exists but
-// cannot be read as a regular file - a directory sitting there - fails
-// closed with helpers.ErrLockfileInvalid rather than an unclassified error,
-// and is not also IsNotExist: the two are mutually exclusive by construction,
-// because Load's fs.ErrNotExist guard runs first and this arm is only
-// reached once that guard did not match (Load then wraps the os.ReadFile
-// cause with %s, never %w, in that arm - the %s choice matches the sibling
-// YAML-unmarshal arm and is not itself what keeps the two exclusive). A
-// directory is used rather than chmod 0000: EACCES never fires when tests
-// run as root, which is the normal case inside a CI container, so a
-// permission-denied fixture would silently pass there for the wrong reason;
-// ELOOP (a symlink cycle) is fiddly to construct portably and would prove
-// the identical arm anyway.
-//
-// The positive control removes the directory and writes a valid lockfile at
-// the identical path, proving Load can still succeed there - the failure
-// above is about what currently occupies the path, not about the path
-// itself being permanently unusable.
+// TestLoadWrapsUnreadableFileAsInvalid pins that a path Load cannot read (a
+// directory: chmod 0000 proves nothing as root) is ErrLockfileInvalid and not
+// IsNotExist, and that a valid file at the same path then loads.
 func TestLoadWrapsUnreadableFileAsInvalid(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -110,34 +95,8 @@ func TestLoadWrapsUnreadableFileAsInvalid(t *testing.T) {
 	}
 }
 
-// TestLoadAbsentFileIsNotInvalid states the exclusivity property Load's own
-// doc comment promises, from the other side of
-// TestLoadWrapsUnreadableFileAsInvalid: a genuinely absent path is
-// IsNotExist and never also helpers.ErrLockfileInvalid. This is what pins
-// the fs.ErrNotExist guard in Load - without it, every error the function
-// returns would satisfy helpers.ErrLockfileInvalid, absence included.
-//
-// Mutation (deleting the `if errors.Is(err, fs.ErrNotExist) { return nil,
-// err }` guard, so every os.ReadFile failure is wrapped) confirmed to fail
-// this test with:
-//
-//	lockfile_test.go:146: expected IsNotExist, got lockfile is invalid: open
-//	/.../missing.yml: no such file or directory
-//	--- FAIL: TestLoadAbsentFileIsNotInvalid (0.00s)
-//
-// The same mutation also fails the pre-existing TestLoadMissing, and - one
-// level up - collections.TestLockFrozenFailsOnAMissingLockfile, since
-// lockFrozen's own `if lockfile.IsNotExist(err)` branch stops seeing a
-// missing file as IsNotExist and falls through to the generic
-// helpers.ErrLockfileInvalid wrap instead of helpers.ErrLockfileMissing.
-// It also perturbs lockDryRunBaseline: a cold-cache `lock --dry-run` (no
-// lockfile on disk at all) newly emits "existing lockfile
-// .../galaxy.lock cannot be read (lockfile is invalid: ... no
-// such file or directory); reporting every collection as added" - a warning
-// about a file that was never there in the first place. That perturbation
-// is caught, not silent: collections.TestLockDryRunWritesNoLockfileAndReportsAdds
-// asserts the absence of exactly that warning, which is the silence half of
-// lockDryRunBaseline's documented policy.
+// TestLoadAbsentFileIsNotInvalid pins the other side of Load's dichotomy: an
+// absent path is IsNotExist and never also helpers.ErrLockfileInvalid.
 func TestLoadAbsentFileIsNotInvalid(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -180,15 +139,9 @@ func TestLoadRejectsDuplicateNames(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsNonExactVersion proves Load refuses a lockfile entry whose
-// version is a constraint rather than an exact version - "*" here, a shape
-// that reads as unpinned to exactVersionFromConstraints, so a --frozen
-// install would otherwise resolve it against the server's highest available
-// version instead of the pin the operator wrote. TestSaveLoadRoundTrip is
-// this test's positive control on the same Load/validate path: it already
-// proves an exact version ("11.1.0", "2.0.0") round-trips cleanly, so this
-// test only needs to show the constraint shape specifically is what
-// validate refuses.
+// TestLoadRejectsNonExactVersion pins that Load refuses a constraint ("*") as
+// a pinned version, which a --frozen install would resolve to the server's
+// highest; TestSaveLoadRoundTrip is the positive control.
 func TestLoadRejectsNonExactVersion(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -403,15 +356,9 @@ func TestResolveDefaultPath(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsAnInvalidCollectionName pins the read boundary for a
-// lockfile entry's name: a name outside the alphabet a Galaxy server itself
-// accepts makes the whole file invalid, so nothing downstream ever holds it.
-//
-// Without this boundary such a name loads successfully and is carried until
-// something else trips over it - for a name carrying a newline, that is URL
-// construction, which reports a network failure and so invites a CI to retry
-// a file no retry could ever repair. The rows here are the two ways a name
-// can be wrong and the control that proves the fixture loads at all.
+// TestLoadRejectsAnInvalidCollectionName pins that a name outside the Galaxy
+// alphabet invalidates the file at load, rather than failing later as a
+// network error a CI would retry; one row is the well-formed control.
 func TestLoadRejectsAnInvalidCollectionName(t *testing.T) {
 	t.Parallel()
 	for _, tc := range invalidCollectionNameCases() {
@@ -459,10 +406,8 @@ func invalidCollectionNameCases() []invalidCollectionNameCase {
 	}
 }
 
-// writeSourceLockfile writes a one-entry lockfile whose single collection
-// carries source, and returns its path. The entry is otherwise valid - a
-// well-formed name and an exact version - so the source is the only thing
-// left for validate to object to.
+// writeSourceLockfile writes a one-entry lockfile whose otherwise valid
+// collection carries source, and returns its path.
 func writeSourceLockfile(t *testing.T, source string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "galaxy.lock")
@@ -476,34 +421,22 @@ func writeSourceLockfile(t *testing.T, source string) string {
 	return path
 }
 
-// TestLoadRejectsSourceWithUserinfo proves a lockfile entry whose source
-// embeds a credential is refused at the read boundary, and that the refusal
-// does not itself leak the credential it refuses.
-// TestLoadAcceptsSourceWithoutUserinfo is the positive control on the same
-// fixture: without it, "it refused" would be indistinguishable from a fixture
-// that is invalid for some other reason entirely.
+// TestLoadRejectsSourceWithUserinfo pins that a source embedding a credential
+// is refused at load under both sentinels without leaking the credential;
+// TestLoadAcceptsSourceWithoutUserinfo is its positive control.
 func TestLoadRejectsSourceWithUserinfo(t *testing.T) {
 	t.Parallel()
 	path := writeSourceLockfile(t, "https://user:hunter2@hub.example.invalid/")
 
 	_, err := Load(path)
 
-	// Killing mutation: deleting the sourceHasUserinfo call from File.validate
-	// makes Load accept the file and fails this assertion with `Load = <nil>,
-	// want errors.Is helpers.ErrGalaxyServerURLUserinfo`.
-	//
-	// The specific sentinel is asserted first, ahead of the general one,
-	// deliberately: an assertion in a Fatalf chain is only pinned by a
-	// mutation that can reach it, and deleting the check makes Load return nil,
-	// which fails whichever assertion comes first. Ordered the other way, the
-	// general sentinel would absorb that mutation and this one would never run.
+	// Asserted ahead of ErrLockfileInvalid so a deleted userinfo check fails
+	// here, on the sentinel it owns.
 	if !errors.Is(err, helpers.ErrGalaxyServerURLUserinfo) {
 		t.Fatalf("Load = %v, want errors.Is helpers.ErrGalaxyServerURLUserinfo", err)
 	}
-	// Pinned by a different mutation from the one above: dropping
-	// ErrLockfileInvalid from the wrap leaves the assertion above satisfied and
-	// breaks Load's contract that every error it returns is either IsNotExist
-	// or ErrLockfileInvalid.
+	// Load's contract: every error it returns is IsNotExist or wraps
+	// ErrLockfileInvalid.
 	if !errors.Is(err, helpers.ErrLockfileInvalid) {
 		t.Fatalf("Load = %v, want errors.Is helpers.ErrLockfileInvalid", err)
 	}
@@ -532,12 +465,9 @@ func TestLoadAcceptsSourceWithoutUserinfo(t *testing.T) {
 	}
 }
 
-// TestLoadAcceptsBareServerListIDAsSource pins the exception both boundaries
-// share: a source naming a bare server_list id is not URL-shaped, so
-// url.Parse yields no scheme and no host and the userinfo branch is
-// unreachable for it. Without this, tightening the guard into "anything
-// url.Parse accepts" would break every lockfile written against a named
-// server rather than a URL.
+// TestLoadAcceptsBareServerListIDAsSource pins the exception both userinfo
+// checks share: a bare server_list id is not URL-shaped and loads, so a guard
+// on anything url.Parse accepts would break every named-server lockfile.
 func TestLoadAcceptsBareServerListIDAsSource(t *testing.T) {
 	t.Parallel()
 	const source = "internal"
@@ -552,11 +482,9 @@ func TestLoadAcceptsBareServerListIDAsSource(t *testing.T) {
 	}
 }
 
-// canonicalLockfileGolden is the exact byte sequence Save must write for the
-// fixture canonicalGoldenFile builds. It is spelled out rather than derived,
-// because deriving it from the same emitter that produced it would assert
-// nothing: the whole point is that these bytes stay put when the emitter
-// underneath them is upgraded or replaced.
+// canonicalLockfileGolden is the exact byte sequence Save must write for
+// canonicalGoldenFile, spelled out rather than derived from the emitter so an
+// emitter upgrade that moves a byte fails here.
 const canonicalLockfileGolden = `server: https://galaxy.ansible.com
 collections:
   - name: ansible.netcommon
@@ -579,12 +507,9 @@ collections:
 schema_version: 1
 `
 
-// canonicalGoldenFile builds the fixture canonicalLockfileGolden pins. It
-// covers the three shapes an entry takes on disk - one carrying a sha256 and
-// dependencies, one minimal enough that its source renders as the empty
-// string, and one whose dependencies arrive unsorted - and it lists the
-// collections themselves out of order, so the golden states what
-// canonicalization produces rather than what the fixture already was.
+// canonicalGoldenFile builds the fixture canonicalLockfileGolden pins: an
+// entry with sha256 and deps, one whose source renders as "", unsorted deps,
+// and collections out of order, so the golden shows canonicalization.
 func canonicalGoldenFile() *File {
 	return &File{
 		Server:        "https://galaxy.ansible.com",
@@ -608,22 +533,9 @@ func canonicalGoldenFile() *File {
 	}
 }
 
-// TestSaveEmitsCanonicalBytes is the lockfile's golden test. The bytes Save
-// writes are a public contract rather than an implementation detail: Hash is
-// the SHA256 of exactly those bytes and `go-galaxy hash` prints it, so an
-// operator who recorded that digest in a CI gate is broken by any move in the
-// emitter's output - a different indent width, a different rendering of the
-// empty string, a reordered or requoted scalar. Pinning the bytes literally
-// makes such a move fail here instead of in somebody's pipeline.
-//
-// The second assertion recomputes the expected digest from the same literal
-// instead of restating a hex string, so what it pins is the relationship -
-// the hash is the hash of the bytes Save writes - rather than a number that
-// would have to be recomputed by hand whenever the fixture changed. It is
-// separately reachable rather than implied by the first: because the fixture
-// is deliberately out of canonical order, a Hash that stopped canonicalizing
-// its copy would hash the fixture's own order, leaving Save correct and
-// failing only here.
+// TestSaveEmitsCanonicalBytes pins Save's bytes literally, since Hash is their
+// SHA256 and `go-galaxy hash` prints it, and pins that Hash digests exactly
+// those bytes even though the fixture is out of canonical order.
 func TestSaveEmitsCanonicalBytes(t *testing.T) {
 	t.Parallel()
 
@@ -643,14 +555,6 @@ func TestSaveEmitsCanonicalBytes(t *testing.T) {
 		t.Fatalf("reading back %s: %v", path, err)
 	}
 
-	// Mutation (swapping the ansible.netcommon and ansible.posix blocks in
-	// canonicalLockfileGolden, so the literal no longer states the order
-	// canonicalization produces) confirmed to fail this test with:
-	//
-	//	Save wrote non-canonical bytes; first difference at line 3:
-	//	 got: "  - name: ansible.netcommon"
-	//	want: "  - name: ansible.posix"
-	//	--- FAIL: TestSaveEmitsCanonicalBytes (0.01s)
 	if got := string(data); got != canonicalLockfileGolden {
 		line, gotLine, wantLine := firstLineDifference(got, canonicalLockfileGolden)
 		t.Fatalf("Save wrote non-canonical bytes; first difference at line %d:\n got: %q\nwant: %q", line, gotLine, wantLine)
@@ -668,12 +572,8 @@ func TestSaveEmitsCanonicalBytes(t *testing.T) {
 }
 
 // firstLineDifference returns the 1-based number of the first line on which
-// got and want differ, together with that line from each. Reporting one line
-// rather than dumping both files keeps the failure readable: every shape this
-// golden exists to catch - a changed indent, a changed empty-string
-// rendering, a requoted scalar - lands on a single line, which a whole-file
-// dump would bury. Identical inputs return a zero line, which the sole caller
-// never reaches because it compares first.
+// got and want differ, with that line from each, since every shape the golden
+// catches lands on one line; identical inputs return 0.
 func firstLineDifference(got, want string) (int, string, string) {
 	gotLines := strings.Split(got, "\n")
 	wantLines := strings.Split(want, "\n")

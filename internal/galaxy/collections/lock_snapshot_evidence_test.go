@@ -15,32 +15,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestLockOnAColdCacheLeavesNoEvidenceForCleanupToActOn is the end-to-end half
-// of the defect: the cleanup package's own guard test pins what the guard does
-// with each snapshot shape, and this pins that a real `lock` run produces the
-// shape that must be left alone.
-//
-// The scenario is the reachable one. A machine has extracted trees on disk; a
-// schema bump drops its snapshot but not those trees; `lock` runs, saving a
-// snapshot that records nothing about on-disk content because lock never looks
-// at any; then `cleanup` runs. Before, that last step wiped the whole
-// content-addressable store on the strength of a snapshot that had never been
-// told anything.
-//
-// The lockfile itself is asserted, not incidental: it is what proves the run
-// did its real work rather than failing early into a no-op that would leave
-// the tree alone for the wrong reason. The recorded project is load-bearing
-// for the same reason: without it cleanup returns before the sweep, and the
-// tree survives having never been considered.
-//
-// KILLING MUTATION, run and reverted: putting sweepExtractedStore's guard back
-// on WasPersisted - the predicate that reads a written snapshot as evidence
-// regardless of whether anything was ever recorded in it - fails this test
-// with the whole tree gone:
-//
-//	lock_snapshot_evidence_test.go:111: expected the extracted tree to survive a
-//	cleanup following a cold-cache lock, stat error: stat
-//	.../cache/extracted/sha-survived-the-schema-bump: no such file or directory
+// TestLockOnAColdCacheLeavesNoEvidenceForCleanupToActOn pins that a lock on a
+// cold cache saves a snapshot cleanup must not read as evidence: an extracted
+// tree that survived a schema bump outlives the following cleanup.
 func TestLockOnAColdCacheLeavesNoEvidenceForCleanupToActOn(t *testing.T) {
 	t.Parallel()
 
@@ -86,20 +63,14 @@ func TestLockOnAColdCacheLeavesNoEvidenceForCleanupToActOn(t *testing.T) {
 		t.Fatalf("expected lock to have written its lockfile: %v", err)
 	}
 
-	// cleanup walks the project registry, so without a recorded project it
-	// would return before the extracted-store sweep is even reached and the
-	// tree below would survive for the wrong reason. The recorded project
-	// points at a DownloadPath that was never created, which is the ordinary
-	// warm-only shape: its workspace is skipped, it contributes no installed
-	// key, and the sweep therefore runs with an empty keep set - the exact
-	// state that decides whether the snapshot's silence is read as evidence.
+	// Without a recorded project cleanup returns before the sweep; this one
+	// has no install tree, so the sweep runs with an empty keep set.
 	if err := state.backend.RecordProject(context.Background(), reqPath, cfg.DownloadPath, ""); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 
-	// cleanup opens its own backend against the same cache directory, and Bolt
-	// admits one holder at a time, so the lock run's backend has to be closed
-	// first - exactly as a real run does when its process exits.
+	// Bolt admits one holder at a time, so the lock run's backend is closed
+	// before cleanup opens its own, as a real process exit would.
 	if err := state.backend.Close(context.Background()); err != nil {
 		t.Fatalf("closing the lock run's backend: %v", err)
 	}

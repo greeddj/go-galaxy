@@ -1,11 +1,7 @@
 package s3
 
-// This file covers Artifacts.Meta directly: the tri-state contract
-// cacheManager.ArtifactStore's own doc comment requires (absent, present
-// with a recorded digest, present with no recorded metadata, present with a
-// non-hex recorded digest), that Meta's found always equals Has's own result
-// for the identical key, and that Has, which shares headArtifact with Meta,
-// still costs exactly one HEAD request.
+// Tests for Artifacts.Meta: the cacheManager.ArtifactStore tri-state contract,
+// Meta's found matching Has for the same key, and Has costing one HEAD.
 
 import (
 	"bytes"
@@ -18,17 +14,12 @@ import (
 // probes, factored out since none of them ever vary it.
 const artifactsMetaTestKey = "ns.name-1.0.0.tar.gz"
 
-// testSHA is a canonical 64-char lowercase hex digest, mirroring the
-// identically-named constant in internal/cache/local's own artifacts_test.go
-// (a different package, so this is a deliberate duplicate rather than a
-// shared import).
+// testSHA is a canonical 64-char lowercase hex digest, duplicated from the
+// internal/cache/local tests because they are a different package.
 const testSHA = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-// assertS3MetaFoundMatchesHas re-probes artifactsMetaTestKey with Has and
-// fails the test unless it reports the identical presence metaFound just
-// reported - the equality cacheManager.ArtifactStore's own doc comment
-// requires between the two methods, and the one dryRunArtifactMeta
-// (internal/galaxy/collections) depends on to keep mirroring isCacheHit.
+// assertS3MetaFoundMatchesHas fails unless Has reports the same presence as
+// metaFound, the equality dryRunArtifactMeta relies on to mirror isCacheHit.
 func assertS3MetaFoundMatchesHas(t *testing.T, artifacts *Artifacts, metaFound bool) {
 	t.Helper()
 	hasFound, err := artifacts.Has(context.Background(), artifactsMetaTestKey)
@@ -93,12 +84,9 @@ func TestArtifactsMetaPresentWithValidDigestReturnsIt(t *testing.T) {
 	assertS3MetaFoundMatchesHas(t, b.artifacts, found)
 }
 
-// TestArtifactsMetaPresentWithNoMetadataReportsFoundNilMeta proves Meta still
-// reports found=true for a stored object that carries no x-amz-meta-sha256
-// header at all - an object written by something other than this package's
-// own Commit, which always computes and writes one - while its own meta map
-// is nil: "cached, no recorded metadata", exactly the tri-state
-// cacheManager.ArtifactStore's own doc comment names.
+// TestArtifactsMetaPresentWithNoMetadataReportsFoundNilMeta proves an object
+// with no x-amz-meta-sha256 (not written by Commit) is found with a nil map:
+// the "cached, no recorded metadata" state.
 func TestArtifactsMetaPresentWithNoMetadataReportsFoundNilMeta(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -126,13 +114,9 @@ func TestArtifactsMetaPresentWithNoMetadataReportsFoundNilMeta(t *testing.T) {
 	assertS3MetaFoundMatchesHas(t, b.artifacts, found)
 }
 
-// TestArtifactsMetaPresentWithNonHexDigestReturnsItVerbatim proves Meta
-// applies no shape validation of its own: a stored object whose recorded
-// sha256 header is not helpers.IsSHA256Hex is still reported found=true with
-// that value returned verbatim. Meta's own contract (backend.go) is silent
-// on digest shape - it is a metadata store, not a validator - so the shape
-// gate belongs to callers: internal/galaxy/collections' dryRunPinVerdict
-// checks helpers.IsSHA256Hex itself before ever trusting a recorded digest.
+// TestArtifactsMetaPresentWithNonHexDigestReturnsItVerbatim proves Meta does
+// not validate digest shape: a non-hex sha256 comes back verbatim, since
+// callers such as dryRunPinVerdict check helpers.IsSHA256Hex themselves.
 func TestArtifactsMetaPresentWithNonHexDigestReturnsItVerbatim(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -161,21 +145,9 @@ func TestArtifactsMetaPresentWithNonHexDigestReturnsItVerbatim(t *testing.T) {
 	assertS3MetaFoundMatchesHas(t, b.artifacts, found)
 }
 
-// TestArtifactsHeadArtifactPropagatesNonNotFoundError proves headArtifact's
-// non-404 error arm (return nil, false, err) is reached, and its error
-// surfaces, through both of its callers: a HEAD that fails with a non-404
-// status must make Has and Meta each return a non-nil error, never fold
-// silently into found=false the way a genuine miss does. found=false is
-// exactly what a mutation collapsing that arm into "return nil, false, nil"
-// would still report, so the assertions below check the returned error
-// itself, never found alone - a found-only assertion would pass unchanged
-// against that mutation and prove nothing about this arm.
-//
-// The fault is sized to the client's whole retry budget (s3RetryMaxAttempts),
-// mirroring TestHeartbeatSurvivesTransientHeadFailures (lock_test.go): a
-// smaller fault is absorbed by headObject's own internal retry and
-// headArtifact never sees an error at all, so this arm would go untested
-// while the test still passed.
+// TestArtifactsHeadArtifactPropagatesNonNotFoundError proves a non-404 HEAD
+// failure surfaces as an error from Has and Meta, never as found=false. The
+// fault spans s3RetryMaxAttempts so headObject's own retry cannot absorb it.
 func TestArtifactsHeadArtifactPropagatesNonNotFoundError(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -191,9 +163,7 @@ func TestArtifactsHeadArtifactPropagatesNonNotFoundError(t *testing.T) {
 		t.Fatal("expected Meta to return a non-nil error for a HEAD that exhausted its retries on a non-404 status")
 	}
 
-	// Re-armed independently: the call above already spent the rule armed
-	// for it, so Has must be shown to propagate the identical failure on its
-	// own HEAD rather than by inheriting an already-exhausted rule.
+	// Re-armed: Meta's call already spent the previous fault rule.
 	fake.failNext(objectKey, http.MethodHead, http.StatusInternalServerError, s3RetryMaxAttempts)
 	if _, err := b.artifacts.Has(ctx, artifactsMetaTestKey); err == nil {
 		t.Fatal("expected Has to return a non-nil error for a HEAD that exhausted its retries on a non-404 status")
@@ -201,14 +171,8 @@ func TestArtifactsHeadArtifactPropagatesNonNotFoundError(t *testing.T) {
 }
 
 // TestArtifactsHasSharesHeadArtifactWithMetaOneHeadRequest proves Has costs
-// exactly one HEAD request even though it shares headArtifact with Meta
-// (internal/cache/s3/artifacts.go) rather than issuing its own independent
-// headObject call - the mechanical basis for
-// dryRunArtifactMeta's own claim (internal/galaxy/collections/dryrun.go)
-// that replacing a dry run's Has call with a Meta call costs the S3 backend
-// nothing extra. Both a present and an absent key are checked, since
-// headObject's retry policy could plausibly differ between a 200 and a 404
-// response.
+// exactly one HEAD for a present and an absent key, so a dry run calling Meta
+// instead of Has costs the S3 backend nothing extra.
 func TestArtifactsHasSharesHeadArtifactWithMetaOneHeadRequest(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)

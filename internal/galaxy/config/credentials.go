@@ -6,21 +6,13 @@ import (
 	"strings"
 )
 
-// This file holds the grammar the GO_GALAXY_GIT_* and GO_GALAXY_URL_*
-// credential surfaces share: how a declared id list is judged and how
-// variables under a declared id's prefix are scanned for unknown keys. The
-// two surfaces are parameterized over the same helpers rather than written
-// twice so their rules cannot drift; everything specific to one surface -
-// which keys exist, which kinds a binding may take - stays in its own file.
+// This file holds the id-list grammar and unknown-variable scan that the
+// GO_GALAXY_GIT_* and GO_GALAXY_URL_* credential surfaces share, so their rules
+// cannot drift; each surface's keys and binding kinds stay in its own file.
 
-// credentialIDList splits a comma-separated id list and applies the same two
-// list-level rules validateServerIDs applies to server ids, for the same
-// reason: each id becomes an environment variable prefix, so it must be
-// spellable as one and must not collide with another by case alone. A blank
-// list is empty rather than invalid; a blank element inside a non-blank list
-// is invalid, since it is what a stray comma produces. Every refusal wraps
-// sentinel and names listVar; envPrefix appears only in the case-fold
-// message, which names the folded variable prefix two ids would share.
+// credentialIDList splits a comma-separated id list under validateServerIDs'
+// rules, since each id becomes a variable prefix. A blank list is empty, while
+// a blank element (a stray comma) is refused; refusals wrap sentinel.
 func credentialIDList(raw, listVar, envPrefix string, sentinel error) ([]string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, nil
@@ -48,13 +40,9 @@ func credentialIDList(raw, listVar, envPrefix string, sentinel error) ([]string,
 	return ids, nil
 }
 
-// unknownCredentialVariableWarnings returns one warning per environment
-// variable that sits under a declared id's prefix and is none of the
-// surface's keys. The known names of every id are collected first, because
-// one id's prefix can be a prefix of another's (ids "a" and "a_b" share one
-// prefix), and a variable that is a known key of the longer id must not be
-// reported as an unknown key of the shorter one. The result is sorted so the
-// warning order does not depend on the environment's own.
+// unknownCredentialVariableWarnings warns, sorted, about each variable under a
+// declared id's prefix that is none of keys. Every id's known names are
+// collected first, since id "a"'s prefix also covers id "a_b"'s variables.
 func unknownCredentialVariableWarnings(ids, environ, keys []string, varFor func(id, key string) string) []string {
 	known := make(map[string]bool, len(ids)*len(keys))
 	prefixes := make([]string, 0, len(ids))

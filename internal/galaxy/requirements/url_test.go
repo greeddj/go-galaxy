@@ -127,9 +127,8 @@ func TestParseCollectionsRejectsURLShapes(t *testing.T) {
 }
 
 // TestParseRolesAcceptsURLShapes pins the url role spellings: an http(s)
-// .tar.gz src, with the install name derived from the basename or given
-// explicitly, an optional version label, and the github.com release-asset
-// shape, which the git promotion's own suffix rule leaves to the url arm.
+// .tar.gz src, a derived or explicit install name, an optional version label,
+// and a github.com release asset, which the git promotion leaves to url.
 func TestParseRolesAcceptsURLShapes(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {

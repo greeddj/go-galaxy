@@ -5,10 +5,9 @@ import (
 	"slices"
 )
 
-// cause is the closed sum of reasons an incompatibility exists. External
-// incompatibilities (every variant but causeConflict) track the external
-// fact that produced them; causeConflict is the derivation-graph edge
-// produced during conflict resolution.
+// cause is the closed sum of reasons an incompatibility exists: every
+// variant but causeConflict records an external fact, causeConflict the
+// derivation-graph edge conflict resolution produced.
 type cause interface {
 	isCause()
 }
@@ -47,9 +46,8 @@ type causeUnknownPackage struct {
 func (causeUnknownPackage) isCause() {}
 
 // causeConflict is a derived incompatibility's derivation-graph edge: Left
-// is the previously conflicting incompatibility, Right is the satisfier's
-// cause, from a single step of conflict resolution's generalized resolution
-// rule.
+// is the conflicting incompatibility, Right the satisfier's cause, merged by
+// one generalized-resolution step.
 type causeConflict struct {
 	Left  *incompatibility
 	Right *incompatibility
@@ -86,18 +84,9 @@ func (inc *incompatibility) termForPackage(pkg string) (term, bool) {
 	return term{}, false
 }
 
-// normalizeTerms merges multiple terms for the same package into one (their
-// signed conjunction via termIntersect - the only producer of
-// multi-term-per-package input is conflict resolution), sorts the result by
-// package ascending, and - when more than one term remains - drops positive
-// terms naming the root package. Root is the one package structurally
-// guaranteed to be part of every solution (it is always decided first,
-// unconditionally, regardless of any other package's availability), so its
-// own singleton term is always true and contributes nothing to whether the
-// incompatibility can fire. This does NOT generalize to any other package:
-// an ordinary package's positive term asserts that the package is selected
-// at all, which is conditional on something actually depending on it -
-// dropping it would silently discard that conditionality.
+// normalizeTerms merges each package's terms by signed conjunction and sorts
+// by package; with two or more left it drops positive root terms (only root
+// is selected unconditionally) and then tautological terms.
 func normalizeTerms(terms []term) []term {
 	byPkg := make(map[string][]term, len(terms))
 	order := make([]string, 0, len(terms))
@@ -123,15 +112,9 @@ func normalizeTerms(terms []term) []term {
 	return merged
 }
 
-// dropTautological removes any term that is true for every selection
-// (exactly N({}), see termIsTautological). Such a term contributes nothing
-// inside an incompatibility (a conjunction that must not hold in full):
-// "{A, always-true}" is equivalent to "{A}", and left in a merged root
-// cause it would leave that package permanently unsatisfied and the learned
-// clause non-unit after a backjump, which conflict resolution would then
-// reject as inconclusive. Only applied when more than one term remains, so
-// a genuinely tautological single-term incompatibility is never emptied
-// here.
+// dropTautological removes N({}) terms, which are always true: left in a
+// learned clause they keep it non-unit after a backjump. A term list that is
+// all tautological is returned unchanged rather than emptied.
 func dropTautological(terms []term) []term {
 	out := terms[:0:0]
 	for _, t := range terms {
@@ -146,11 +129,9 @@ func dropTautological(terms []term) []term {
 	return out
 }
 
-// mergeTermGroup collapses one package's group of terms into their signed
-// conjunction: the sole member unchanged if the group has exactly one,
-// otherwise the termIntersect fold. Signed intersection IS conjunction, so
-// the merged term is exactly equivalent to the group - including keeping a
-// legitimately negative result negative rather than forcing a polarity.
+// mergeTermGroup collapses one package's terms into their signed
+// conjunction, the termIntersect fold, keeping a negative result negative
+// rather than forcing a polarity.
 func mergeTermGroup(group []term) term {
 	if len(group) == 1 {
 		return group[0]
@@ -189,10 +170,9 @@ func dropPositiveRoot(terms []term) []term {
 	return out
 }
 
-// incompatStore is the append-only collection of known incompatibilities,
-// indexed by package name in append order (the order unit propagation's
-// newest-to-oldest scan relies on) and content-deduplicated so a repeat
-// derivation never grows the store or the per-package scan.
+// incompatStore is the append-only, content-deduplicated incompatibility
+// store, indexed per package in append order, which unit propagation's
+// newest-first scan relies on.
 type incompatStore struct {
 	byPkg   map[string][]int
 	content map[uint64][]int
@@ -206,10 +186,9 @@ func newIncompatStore() *incompatStore {
 	}
 }
 
-// add inserts inc unless content-identical to an already-stored
-// incompatibility (same terms: package, polarity, and set identity, in
-// order), in which case it returns the existing entry's index. The hash is a
-// prefilter only; equality is always decided by direct term comparison.
+// add inserts inc unless a stored incompatibility has identical normalized
+// terms, returning that one's index instead. The hash only prefilters;
+// incompatEqual decides.
 func (s *incompatStore) add(inc *incompatibility) (int, bool) {
 	h := hashIncompat(inc)
 	for _, cand := range s.content[h] {
@@ -243,9 +222,8 @@ func (s *incompatStore) byPackageNewestFirst(pkg string) []int {
 }
 
 // incompatEqual reports whether two incompatibilities have identical term
-// lists (same length, same content at each position - both are already
-// normalized into the same package-ascending order, so positional
-// comparison is sound).
+// lists; both are normalized into package order, so positional comparison
+// is sound.
 func incompatEqual(a, b *incompatibility) bool {
 	if len(a.Terms) != len(b.Terms) {
 		return false
@@ -258,10 +236,8 @@ func incompatEqual(a, b *incompatibility) bool {
 	return true
 }
 
-// hashIncompat computes a prefilter hash over an incompatibility's terms.
-// Collisions only cost an extra incompatEqual comparison; they can never
-// cause a real duplicate to be dropped, since incompatEqual always decides
-// final equality.
+// hashIncompat computes the prefilter hash over an incompatibility's terms;
+// a collision costs only an extra incompatEqual, never a dropped entry.
 func hashIncompat(inc *incompatibility) uint64 {
 	h := fnv.New64a()
 	for _, t := range inc.Terms {

@@ -1,14 +1,8 @@
 package collections
 
-// This file covers dryrun.go's shared machinery directly: classifyDryRun's
-// deterministic report order, installDryRunProbe's settled gate (reusing
-// installRecordMatches rather than a second, hand-rolled check), warmDryRunProbe's
-// independence from install state, the shared cache-hit classification, and
-// dryRunBanner's exclusive use of Warnf. installWithState's and warmWithState's
-// end-to-end dry-run substitutions (no download, no install tree, no
-// recordInstall/recordWarmed, the snapshot still saved) are covered against a
-// live fake Galaxy server in dry_run_e2e_test.go instead, since that is the
-// level at which "nothing was downloaded" is actually observable.
+// Tests for dryrun.go's shared machinery; the end-to-end dry-run substitutions
+// (nothing downloaded, installed or recorded) are covered against a live fake
+// Galaxy server in dry_run_e2e_test.go.
 
 import (
 	"context"
@@ -31,26 +25,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestClassifyDryRunSortedOrder proves classifyDryRun's report is in sorted
-// key order - not map order, and not completion order - by exercising the
-// actual concurrent shape it runs under in production.
-//
-// Both the worker count and the key count below are load-bearing, not
-// arbitrary: cfg.Workers is set to 8, wide enough that many probe goroutines
-// are genuinely in flight together rather than one finishing before the next
-// starts (a serial probe - the shape a Workers-less-than-2 config like
-// &config.Config{} degrades to, since max(cfg.Workers, 1) then makes the
-// semaphore capacity 1 - would coincidentally preserve dispatch order even
-// with a completion-order bug, since only one goroutine ever runs at a
-// time, so it would never catch the class of bug this test exists for). The
-// key count (24) is wide enough that, across true 8-way concurrency,
-// completion order almost certainly differs from dispatch order at least
-// once per run. This was verified directly: a mutation that appends each
-// goroutine's result under a mutex instead of writing it to its own
-// pre-sized index (so the report order becomes completion order, not
-// dispatch/sorted order) failed this exact test 5 times out of 5 with these
-// parameters; a serial (Workers: 1, few keys) version of this test would not
-// have caught that mutation at all.
+// TestClassifyDryRunSortedOrder pins classifyDryRun's report to sorted key
+// order, not completion order. Workers: 8 and 24 keys are load-bearing: a
+// serial probe would keep dispatch order and hide a completion-order bug.
 func TestClassifyDryRunSortedOrder(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Workers: 8}
@@ -72,12 +49,8 @@ func TestClassifyDryRunSortedOrder(t *testing.T) {
 		printer := &capturingPrinter{}
 		runtime := infra.New(printer, http.DefaultClient)
 
-		// artifacts is nil throughout: dryRunArtifactMeta treats a nil store as
-		// "not cached", which is the only classification this test needs and
-		// avoids depending on any real cache state. root is nil too - cfg has no
-		// DownloadPath, and a nil root already makes installRecordMatches
-		// unreachable through newInstallTarget's own nil-root guard, so there is
-		// nothing for a real root to add here.
+		// artifacts and root are nil: a nil store reads as not cached and a nil
+		// root settles nothing, the only classification this test needs.
 		classifyDryRun(context.Background(), runtime, cfg, cols, installDryRunVerbs, installDryRunProbe(cfg, nil, nil, nil))
 
 		got := printer.okLines()
@@ -89,10 +62,7 @@ func TestClassifyDryRunSortedOrder(t *testing.T) {
 				t.Fatalf("iteration %d: okLines[%d] = %q, want %q (report order must be sorted, not completion order)", i, j, got[j], want[j])
 			}
 		}
-		// installDryRunVerbs.summaryAction/summarySettled assemble this line at
-		// runtime now, rather than it being a single literal format string, so
-		// this pins install's summary wording as byte-identical to what it was
-		// before dryRunVerbs existed.
+		// Pins install's summary wording, assembled from installDryRunVerbs.
 		wantSummary := fmt.Sprintf("Dry run: %d would install, 0 already up to date, 0 would fail", keyCount)
 		if !printer.hasPersistentPrintContaining(wantSummary) {
 			t.Fatalf("iteration %d: expected persistent print containing %q, got %v", i, wantSummary, printer.persists)
@@ -100,12 +70,9 @@ func TestClassifyDryRunSortedOrder(t *testing.T) {
 	}
 }
 
-// TestClassifyDryRunReportsCacheHitVsMiss proves classifyDryRun distinguishes
-// a collection whose artifact tarball is already cached from one that has
-// never been fetched, reusing artifactExists/artifactKey rather than a
-// duplicated lookup. acme.app is installed for real first (populating its
-// cache entry); acme.other is registered on the server but never touched, so
-// its artifact cache entry never exists.
+// TestClassifyDryRunReportsCacheHitVsMiss pins that classifyDryRun tells a
+// cached artifact (acme.app, installed first) from one never fetched
+// (acme.other).
 func TestClassifyDryRunReportsCacheHitVsMiss(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -136,10 +103,8 @@ func TestClassifyDryRunReportsCacheHitVsMiss(t *testing.T) {
 	}
 	printer := &capturingPrinter{}
 	reportRuntime := infra.New(printer, srv.Client())
-	// A fresh, empty store - not state.store, which really does hold acme.app's
-	// installed record - so the probe's install-record arm can never match
-	// either collection, isolating the cache-hit classification this test is
-	// about from acme.app's genuine install record.
+	// A fresh store, not state.store, so the install-record arm never matches
+	// and only the cache-hit classification is exercised.
 	installRoot := newTestCollectionsRoot(t, cfg.DownloadPath)
 	probe := installDryRunProbe(cfg, store.New(), state.backend.Artifacts(), installRoot)
 	classifyDryRun(context.Background(), reportRuntime, cfg, cols, installDryRunVerbs, probe)
@@ -155,27 +120,13 @@ func TestClassifyDryRunReportsCacheHitVsMiss(t *testing.T) {
 	}
 }
 
-// errSwitchOrderProbeStub is a sentinel distinct from helpers.ErrOfflineMode,
-// so TestReportDryRunResultsOfflineGuardOutranksProbeFailure and its positive
-// control below can tell which of the two reportDryRunResults actually
-// recorded, rather than the two colliding under errors.Is.
+// errSwitchOrderProbeStub is a probe failure distinct from
+// helpers.ErrOfflineMode, so the switch-order tests can tell which one won.
 var errSwitchOrderProbeStub = errors.New("stub probe failure, must not surface when the offline guard applies")
 
 // TestReportDryRunResultsOfflineGuardOutranksProbeFailure pins
-// reportDryRunResults' own documented switch order: its !res.cached &&
-// cfg.Offline case is checked before its res.fail != nil case, so an uncached
-// collection under --offline whose probe ALSO returned a non-nil fail is
-// reported and recorded under the offline cause, never the probe's own fail.
-// This is the only state that discriminates the two orderings - every other
-// fixture in this file drives its probe online - so this drives classifyDryRun
-// directly with a stub probe fixed to exactly that state instead of relying
-// on any real probe to ever reach it.
-//
-// TestReportDryRunResultsReportsProbeFailureWhenCached is this test's
-// required positive control, on the identical fixture: it proves the offline
-// cause winning above is a genuine ordering effect of a state that can report
-// either cause, not a stub that always reports the offline one regardless of
-// what it is given.
+// reportDryRunResults' case order: an uncached collection under --offline is
+// recorded under the offline cause even when its probe also returned a fail.
 func TestReportDryRunResultsOfflineGuardOutranksProbeFailure(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Workers: 1, Offline: true}
@@ -207,10 +158,8 @@ func TestReportDryRunResultsOfflineGuardOutranksProbeFailure(t *testing.T) {
 }
 
 // TestReportDryRunResultsReportsProbeFailureWhenCached is the positive
-// control TestReportDryRunResultsOfflineGuardOutranksProbeFailure's own doc
-// comment requires: on the identical fixture, with the collection reported
-// cached instead of uncached, the offline case no longer applies and the
-// probe's own fail is what wins.
+// control for the offline-guard test: on the same fixture with the artifact
+// cached, the probe's own fail wins.
 func TestReportDryRunResultsReportsProbeFailureWhenCached(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Workers: 1, Offline: true}
@@ -241,13 +190,9 @@ func TestReportDryRunResultsReportsProbeFailureWhenCached(t *testing.T) {
 	}
 }
 
-// TestInstallDryRunProbeMarksUpToDate proves installDryRunProbe reports a
-// collection whose on-disk install already satisfies installRecordMatches as
-// already up to date, not as "would install", and that this reuses
-// installRecordMatches rather than a second, independent check: acme.app is
-// installed for real, then reported on with the exact same
-// collection/installPath installRecordMatches itself would be given at real
-// install time.
+// TestInstallDryRunProbeMarksUpToDate pins that installDryRunProbe reports a
+// collection whose real install satisfies installRecordMatches as up to date,
+// not as "would install".
 func TestInstallDryRunProbeMarksUpToDate(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -291,14 +236,9 @@ func TestInstallDryRunProbeMarksUpToDate(t *testing.T) {
 	}
 }
 
-// TestClassifyDryRunMirrorsIsCacheHitUnderNoCache proves dryRunArtifactMeta
-// mirrors isCacheHit's own --no-cache guard rather than a bare artifact-store
-// probe: a warm cache under --no-cache must still be reported as
-// "would download", since that is what a real install would actually do
-// (isCacheHit itself returns false whenever cfg.NoCache is set). Without
-// that mirroring, this exact configuration would make classifyDryRun claim
-// the artifact was cached even though the real run would still hit the
-// network.
+// TestClassifyDryRunMirrorsIsCacheHitUnderNoCache pins that
+// dryRunArtifactMeta mirrors isCacheHit's --no-cache guard: a warm cache
+// under --no-cache is reported "would download", as a real install behaves.
 func TestClassifyDryRunMirrorsIsCacheHitUnderNoCache(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -330,10 +270,8 @@ func TestClassifyDryRunMirrorsIsCacheHitUnderNoCache(t *testing.T) {
 	}
 	printer := &capturingPrinter{}
 	reportRuntime := infra.New(printer, srv.Client())
-	// A fresh, empty store - not state.store, which really does hold acme.app's
-	// installed record - so the probe's install-record arm can never match,
-	// isolating the --no-cache classification this test is about from
-	// acme.app's genuine install record.
+	// A fresh store, not state.store, so the install-record arm never matches
+	// and only the --no-cache classification is exercised.
 	installRoot := newTestCollectionsRoot(t, cfg.DownloadPath)
 	probe := installDryRunProbe(cfg, store.New(), state.backend.Artifacts(), installRoot)
 	classifyDryRun(context.Background(), reportRuntime, cfg, cols, installDryRunVerbs, probe)
@@ -346,16 +284,9 @@ func TestClassifyDryRunMirrorsIsCacheHitUnderNoCache(t *testing.T) {
 	}
 }
 
-// TestClassifyDryRunNeverDeletesDriftedExtractMarker proves classifyDryRun
-// detects a drifted installed tree exactly like a real install would - via
-// checkExtractMarker, the pure predicate marker.go factored out of
-// verifyExtractMarker - while never calling verifyExtractMarker itself (which
-// would delete the drifted marker as a side effect of deciding to
-// re-extract). After installing acme.app for real and then drifting its
-// installed tree (adding a file), this proves both halves of the same
-// property: the verdict is correct (reported as "would install", exactly
-// what a real install would also decide, not an optimistic "up to date")
-// AND the marker survives untouched (no deletion, unlike verifyExtractMarker).
+// TestClassifyDryRunNeverDeletesDriftedExtractMarker pins that a drifted
+// install is reported "would install" through checkExtractMarker while its
+// marker survives, unlike verifyExtractMarker, which deletes it.
 func TestClassifyDryRunNeverDeletesDriftedExtractMarker(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -389,11 +320,8 @@ func TestClassifyDryRunNeverDeletesDriftedExtractMarker(t *testing.T) {
 		t.Fatalf("expected the extract marker to exist right after install, stat error: %v", err)
 	}
 
-	// Drift the installed tree: a real install's canSkipInstall would detect
-	// this via a changed tally (through verifyExtractMarker) and delete the
-	// marker as part of deciding to re-extract. classifyDryRun must detect
-	// the same drift (through checkExtractMarker) but never delete the
-	// marker itself.
+	// Drift the tree: a real install's verifyExtractMarker would delete the
+	// marker here; classifyDryRun must detect the drift and leave it alone.
 	mustWriteFile(t, filepath.Join(entry.InstallPath, "drifted-file.txt"), []byte("unexpected"))
 
 	cols := map[string]collection{
@@ -416,13 +344,9 @@ func TestClassifyDryRunNeverDeletesDriftedExtractMarker(t *testing.T) {
 	}
 }
 
-// newDriftedOfflineEvictedFixture installs acme.app for real, then evicts its
-// cached artifact (tarball plus sha256 sidecar, exactly as cleanup would for
-// an unreachable key) and drifts its installed tree by adding one file -
-// the exact combination TestInstallDryRunDriftedOfflineEvictedReportsWouldFailAndFails
-// needs. cfg.Offline is left false; the caller sets it once the fixture is
-// ready, and the returned cols map is keyed exactly like classifyDryRun and
-// installDryRun expect.
+// newDriftedOfflineEvictedFixture installs acme.app, evicts its cached
+// artifact and drifts its installed tree; cfg.Offline is left false for the
+// caller to set.
 func newDriftedOfflineEvictedFixture(t *testing.T) (*config.Config, *installState, map[string]collection) {
 	t.Helper()
 	root := t.TempDir()
@@ -478,10 +402,9 @@ func assertReportsSingleWouldFail(t *testing.T, printer *capturingPrinter, summa
 	}
 }
 
-// assertFailsOfflineClosed asserts err is non-nil and matches both
-// helpers.ErrInstallationFailed and helpers.ErrOfflineMode: the same
-// classification a real failed --offline install returns, since
-// cmd/go-galaxy/exitcode checks isInstallError ahead of isNetworkError.
+// assertFailsOfflineClosed asserts err matches both
+// helpers.ErrInstallationFailed and helpers.ErrOfflineMode, the classification
+// a real failed --offline install returns.
 func assertFailsOfflineClosed(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {
@@ -495,16 +418,9 @@ func assertFailsOfflineClosed(t *testing.T, err error) {
 	}
 }
 
-// TestInstallDryRunDriftedOfflineEvictedReportsWouldFailAndFails pins the
-// preview/run agreement for a collection that looks installed by the cheap
-// check but whose tree has drifted, whose cached artifact has been evicted
-// (as cleanup would evict it), and that cannot be re-downloaded because
-// --offline is set. A real install would re-extract (drift detected) and
-// then fail to fetch a replacement artifact; the dry run must report the
-// same "would fail" verdict and return the same error class, not an
-// optimistic "up to date" - which is exactly what installDryRunProbe's
-// installRecordMatches-only gate alone would report, since checkExtractMarker
-// is what additionally catches the drift.
+// TestInstallDryRunDriftedOfflineEvictedReportsWouldFailAndFails pins
+// preview/run agreement for a drifted install with an evicted artifact under
+// --offline: "would fail" and the same error class, never "up to date".
 func TestInstallDryRunDriftedOfflineEvictedReportsWouldFailAndFails(t *testing.T) {
 	t.Parallel()
 	cfg, state, cols := newDriftedOfflineEvictedFixture(t)
@@ -524,12 +440,9 @@ func TestInstallDryRunDriftedOfflineEvictedReportsWouldFailAndFails(t *testing.T
 	assertFailsOfflineClosed(t, err)
 }
 
-// TestWarmDryRunProbeIgnoresInstallState proves warmDryRunProbe never
-// consults install state at all: a collection with a valid install record and
-// a matching extract marker - installDryRunProbe's own settled case - is
-// still reported "Would warm" once its cached artifact is evicted, since
-// warm's product is the artifact cache plus the extracted tree, not an
-// install path warm tracks nothing about.
+// TestWarmDryRunProbeIgnoresInstallState pins that warmDryRunProbe ignores
+// install state: a valid install whose cached artifact was evicted is still
+// reported "Would warm", since warm's product is the cache.
 func TestWarmDryRunProbeIgnoresInstallState(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -554,10 +467,8 @@ func TestWarmDryRunProbeIgnoresInstallState(t *testing.T) {
 	}
 
 	col := collection{Namespace: "acme", Name: "app", Version: "1.0.0", Source: srv.URL()}
-	// Evict the cached artifact even though the install itself (and its extract
-	// marker) still stands: this is the one state where installDryRunProbe would
-	// call the collection settled (a matching install record) but warm's own
-	// product - the artifact cache - is absent.
+	// Evict the artifact while the install and its marker stand: install's
+	// probe would call this settled, but warm's product is gone.
 	if err := state.backend.Artifacts().Delete(context.Background(), artifactKey(col)); err != nil {
 		t.Fatalf("evict cached artifact: %v", err)
 	}
@@ -577,11 +488,8 @@ func TestWarmDryRunProbeIgnoresInstallState(t *testing.T) {
 	}
 }
 
-// TestDryRunBannerOnlyWarns proves dryRunBanner emits exactly one line,
-// through Warnf and nothing else. Warnf is the tier that always writes to
-// stderr and always survives --quiet (see internal/progress's own Warnf
-// behavior); routing the banner through any other tier would let a quiet
-// dry run announce itself nowhere at all.
+// TestDryRunBannerOnlyWarns pins that dryRunBanner emits exactly one line,
+// through Warnf only: the tier that reaches stderr and survives --quiet.
 func TestDryRunBannerOnlyWarns(t *testing.T) {
 	t.Parallel()
 	printer := &capturingPrinter{}
@@ -600,10 +508,8 @@ func TestDryRunBannerOnlyWarns(t *testing.T) {
 	}
 }
 
-// TestDryRunBannerEmittedExactlyOnceAcrossCommands proves initInstall's
-// hoisted dryRunBanner call fires exactly once per run, for both install and
-// warm, rather than once per call site the way it did before the hoist (only
-// installWithState's own cfg.DryRun branch printed it).
+// TestDryRunBannerEmittedExactlyOnceAcrossCommands pins that initInstall
+// prints the dry-run banner exactly once per run, for install and warm alike.
 func TestDryRunBannerEmittedExactlyOnceAcrossCommands(t *testing.T) {
 	t.Parallel()
 
@@ -652,14 +558,9 @@ func TestDryRunBannerEmittedExactlyOnceAcrossCommands(t *testing.T) {
 	})
 }
 
-// TestInitInstallDryRunSkipsClearCache proves --clear-cache is suppressed
-// under a dry run, with a warning explaining why, since deleting cached
-// artifacts is exactly the kind of destructive mutation --dry-run exists to
-// prevent. Its positive control is
-// TestInitInstallClearCacheWipesArtifactsAndMetadataCaches: this test
-// proves only that the branch is skipped, which says nothing about what
-// the branch does, so that test proves what a real (non-dry-run) run
-// actually wipes and keeps.
+// TestInitInstallDryRunSkipsClearCache pins that a dry run skips
+// --clear-cache with a warning; its positive control is
+// TestInitInstallClearCacheWipesArtifactsAndMetadataCaches.
 func TestInitInstallDryRunSkipsClearCache(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -667,11 +568,8 @@ func TestInitInstallDryRunSkipsClearCache(t *testing.T) {
 	if err := os.MkdirAll(cacheDir, helpers.DirMod); err != nil {
 		t.Fatalf("mkdir cacheDir: %v", err)
 	}
-	// A file directly under cacheDir, named like a real cached artifact
-	// (store.ClearCacheFiles only deletes files matching its own
-	// shouldDeleteCacheFile patterns, ".tar.gz" among them), stands in for a
-	// cached artifact: its survival is what proves ClearFiles was never
-	// called, not a filename ClearFiles would have ignored anyway.
+	// Named like a cached artifact (store.ClearCacheFiles deletes ".tar.gz"),
+	// so its survival proves ClearFiles never ran.
 	sentinelPath := filepath.Join(cacheDir, "sentinel.acme-app-1.0.0.tar.gz")
 	mustWriteFile(t, sentinelPath, []byte("cached bytes"))
 
@@ -708,11 +606,8 @@ func TestInitInstallDryRunSkipsClearCache(t *testing.T) {
 	}
 }
 
-// TestInitInstallDryRunSkipsRecordProject proves a dry run never enrolls the
-// project in the persistent project registry: RecordProject feeds cleanup,
-// a destructive command, so a dry run against a broken requirements.yml must
-// not be able to poison every future cleanup run on a shared cache with a
-// project that never actually installed anything.
+// TestInitInstallDryRunSkipsRecordProject pins that a dry run never records
+// the project in the registry, which feeds the destructive cleanup command.
 func TestInitInstallDryRunSkipsRecordProject(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -749,11 +644,8 @@ func TestInitInstallDryRunSkipsRecordProject(t *testing.T) {
 	}
 }
 
-// TestWriteRunMetricsDryRunSkipsAndWarns proves writeRunMetrics's own
-// cfg.DryRun guard: with a configured MetricsFile, a dry run never writes it
-// and instead warns, since a dry run's counters would be indistinguishable
-// from a real run's in the report's wire shape. This guard lives inside
-// writeRunMetrics itself, so install, warm, and lock all inherit it.
+// TestWriteRunMetricsDryRunSkipsAndWarns pins writeRunMetrics' own dry-run
+// guard: no metrics file and a warning instead, for every command using it.
 func TestWriteRunMetricsDryRunSkipsAndWarns(t *testing.T) {
 	t.Parallel()
 	metricsPath := filepath.Join(t.TempDir(), "metrics.json")
@@ -771,14 +663,9 @@ func TestWriteRunMetricsDryRunSkipsAndWarns(t *testing.T) {
 	}
 }
 
-// countingArtifactMetaCalls is a stub cacheManager.ArtifactStore that counts,
-// per artifact key, how many times Has and Meta were each called - proving
-// dryRunArtifactMeta costs the dry run one round trip rather than a Has()
-// call plus a Meta() one (see
-// TestClassifyDryRunCallsMetaExactlyOncePerCollectionNeverHas). Fetch,
-// TempFile, Commit, and Delete are never called by a dry-run probe, so they
-// return errStubNotImplemented (declared in prefetch_scan_test.go) to make an
-// accidental call fail loudly instead of silently.
+// countingArtifactMetaCalls is an ArtifactStore stub counting Has and Meta
+// calls per key; its other methods return errStubNotImplemented so an
+// unexpected call fails loudly.
 type countingArtifactMetaCalls struct {
 	metaCalls map[string]int
 	hasCalls  map[string]int
@@ -816,15 +703,9 @@ func (a *countingArtifactMetaCalls) Delete(context.Context, string) error {
 	return errStubNotImplemented
 }
 
-// TestClassifyDryRunCallsMetaExactlyOncePerCollectionNeverHas is the direct
-// mechanical proof behind dryRunArtifactMeta's own doc comment claim: on the
-// S3 backend, a dry run's Meta() call costs no more than a Has() call
-// would, because production code calls ArtifactStore.Meta at
-// most once per collection - once for a collection that reaches the artifact
-// probe, never for one already reported settled - and never calls Has at
-// all. This fixture's nil root makes nothing settled, so every collection
-// here does reach the probe; collections alternate cached/uncached so both of
-// dryRunArtifactMeta's branches run under the identical assertion.
+// TestClassifyDryRunCallsMetaExactlyOncePerCollectionNeverHas pins that a
+// dry run calls ArtifactStore.Meta exactly once per probed collection and
+// never Has, so on S3 it costs one HEAD; cached and uncached keys alternate.
 func TestClassifyDryRunCallsMetaExactlyOncePerCollectionNeverHas(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Workers: 4}
@@ -863,26 +744,16 @@ func TestClassifyDryRunCallsMetaExactlyOncePerCollectionNeverHas(t *testing.T) {
 	}
 }
 
-// pinVerdictTestPin and pinVerdictTestRecorded are two well-formed but
-// distinct 64-char lowercase hex digests, used by both
-// TestDryRunPinVerdictSuppressedWhenOnline and
-// TestDryRunPinVerdictSuppressedForSettledCollection as a lockfile
-// pin/recorded-digest pair that disagrees.
+// pinVerdictTestPin and pinVerdictTestRecorded are two well-formed, distinct
+// sha256 hex digests used as a disagreeing lockfile pin and recorded digest.
 const (
 	pinVerdictTestPin      = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	pinVerdictTestRecorded = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
-// TestDryRunPinVerdictSuppressedWhenOnline proves dryRunPinVerdict's
-// !cfg.Offline arm: a cached artifact whose recorded digest disagrees with
-// the lockfile pin produces no verdict while online, since a real run's own
-// canRetryCacheHit can still evict and refetch a mismatched cache hit in
-// that case - the disagreement is a cost (one wasted refetch), never a
-// certain failure, so reporting one here would be the wrong answer. The
-// positive control is TestDryRunPinVerdictSuppressedForSettledCollection's
-// own fixture-sanity check, which proves the identical two digests DO
-// produce a verdict once cfg.Offline is true - so this test is not passing
-// merely because dryRunPinVerdict never fires for any input.
+// TestDryRunPinVerdictSuppressedWhenOnline pins that a recorded digest
+// disagreeing with the pin yields no verdict online, where a real run can
+// still evict and refetch.
 func TestDryRunPinVerdictSuppressedWhenOnline(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Offline: false}
@@ -894,33 +765,9 @@ func TestDryRunPinVerdictSuppressedWhenOnline(t *testing.T) {
 	}
 }
 
-// TestDryRunPinVerdictSuppressedForSettledCollection proves
-// installDryRunProbe's settled check runs, and returns, before
-// dryRunPinVerdict is ever consulted: acme.app is installed for real first
-// (a matching install record, a matching extract marker, and a cache
-// sidecar digest equal to the lockfile pin), and only then is the artifact
-// cache's SIDECAR alone - not the tarball, not the store's own installed
-// record, not the extract marker - overwritten with a different, well-formed
-// digest. The probe must still report the collection settled, with no fail,
-// because installRecordMatches (installEntryMatches, specifically) already
-// required entry.ArtifactSHA256 == col.SHA256 before this probe ever reaches
-// the artifact cache at all - see installDryRunProbe's own doc comment for
-// why settled is checked first.
-//
-// This is non-vacuous: the fixture-sanity check below calls dryRunPinVerdict
-// directly against the identical pin/recorded-digest pair, under the
-// identical --offline config, and requires it to fire.
-//
-// Verified against a real mutation that drops the settled branch's early
-// return (letting the function fall through to the pin check regardless of
-// a settled match, while discarding the now-unused entry): this test failed
-// with "expected the collection to be reported settled despite the drifted
-// sidecar, got {fail:0x... settled:false cached:true}" followed by
-// "expected no fail verdict for a settled collection, got sha256 mismatch:
-// the cached artifact's recorded digest does not match the lockfile pin and
-// --offline forbids refetching" - both assertions below this comment fire,
-// confirming they pin the settled-first order rather than restating
-// dryRunPinVerdict's own contract a second time.
+// TestDryRunPinVerdictSuppressedForSettledCollection pins that
+// installDryRunProbe's settled check returns before dryRunPinVerdict: a
+// settled install whose cache sidecar drifted stays settled under --offline.
 func TestDryRunPinVerdictSuppressedForSettledCollection(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -945,11 +792,8 @@ func TestDryRunPinVerdictSuppressedForSettledCollection(t *testing.T) {
 		t.Fatalf("installWithState (perform the real install): %v", err)
 	}
 
-	// The probe below runs under --offline: that is the one config where
-	// dryRunPinVerdict can fire at all (its own !cfg.Offline arm suppresses
-	// every online disagreement), so this is the config that actually
-	// exercises the settled short-circuit rather than vacuously passing
-	// through the offline guard.
+	// --offline is the only config where dryRunPinVerdict can fire, so it is
+	// the one that exercises the settled short-circuit.
 	cfg.Offline = true
 	col := collection{Namespace: "acme", Name: "app", Version: "1.0.0", Source: srv.URL(), SHA256: version.SHA256}
 
@@ -973,18 +817,9 @@ func TestDryRunPinVerdictSuppressedForSettledCollection(t *testing.T) {
 	}
 }
 
-// TestDryRunPinVerdictNoVerdictArms is a table-driven proof of every "no
-// verdict" arm dryRunPinVerdict's own doc comment names, other than the
-// !cfg.Offline arm (pinned separately by
-// TestDryRunPinVerdictSuppressedWhenOnline) and the recorded-equals-pin arm
-// (pinned by TestWarmDryRunAndRunDisagreeOnAFrozenOfflineDriftedCacheHit's
-// own drifted-bytes fixture): an empty pin, an uncached collection, an empty
-// recorded digest, and a recorded digest that is not helpers.IsSHA256Hex all
-// produce nil under --offline, the one config where a verdict could
-// otherwise fire. The positive control in the same table (matching row) is
-// what proves the config itself is capable of producing a verdict, so a nil
-// result on every other row is a real refusal rather than evidence the
-// helper never fires at all.
+// TestDryRunPinVerdictNoVerdictArms pins each "no verdict" arm of
+// dryRunPinVerdict under --offline, with a disagreeing well-formed digest as
+// the positive control row.
 func TestDryRunPinVerdictNoVerdictArms(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Offline: true}
@@ -1060,11 +895,8 @@ func dryRunPinVerdictNoVerdictCases() []struct {
 			meta:   map[string]string{"sha256": pinVerdictTestPin},
 		},
 		{
-			// Positive control: the identical cached/offline config, with a
-			// well-formed recorded digest that genuinely disagrees with the
-			// pin, must produce a verdict - proving the "no verdict" rows
-			// above are real refusals of that same config, not evidence
-			// dryRunPinVerdict never fires under it at all.
+			// Positive control: the same config with a disagreeing well-formed
+			// digest must produce a verdict.
 			name:    "disagreeing well-formed digest fires",
 			col:     col,
 			cached:  true,
@@ -1074,16 +906,9 @@ func dryRunPinVerdictNoVerdictCases() []struct {
 	}
 }
 
-// TestInstallDryRunProbeReportsUnsafeIdentifierWhenRootExists proves
-// installDryRunProbe's own newInstallTarget ok=false, root != nil arm: a
-// collection whose namespace fails helpers.IsPathElement is reported a
-// would-fail carrying helpers.ErrUnsafeCollectionIdentifier, rather than
-// silently falling through unclassified. This arm is unreachable through the
-// full production pipeline - buildCollectionsMap already rejects the
-// identical identifier before any collection reaches a probe (see
-// installDryRunProbe's own doc comment) - so it is exercised here by calling
-// the probe directly, bypassing buildCollectionsMap, the only way to reach
-// it at all.
+// TestInstallDryRunProbeReportsUnsafeIdentifierWhenRootExists pins that, with a
+// root, an unsafe namespace is a would-fail with ErrUnsafeCollectionIdentifier;
+// it calls the probe directly, since buildCollectionsMap rejects it first.
 func TestInstallDryRunProbeReportsUnsafeIdentifierWhenRootExists(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{DownloadPath: t.TempDir()}
@@ -1104,24 +929,9 @@ func TestInstallDryRunProbeReportsUnsafeIdentifierWhenRootExists(t *testing.T) {
 	}
 }
 
-// metaFoundWithErrorArtifacts is a stub cacheManager.ArtifactStore whose Meta
-// always answers found=true alongside a non-nil error - the one state
-// ArtifactStore's own doc comment marks as meaningless ("a non-nil err means
-// the store could not be consulted, and found carries no meaning in that
-// case") but that a degraded or unreachable backend can still produce, and
-// that dryRunArtifactMeta's own `err != nil || !found` guard exists to fail
-// closed on. found=true paired with a non-nil error is the discriminating
-// shape here, and nothing else in this package produces it: two of this
-// package's other stub ArtifactStores (concurrentProbeArtifacts,
-// presenceArtifacts) do return a non-nil Meta error, but always paired with
-// found=false, so `!found` already short-circuits dryRunArtifactMeta's guard
-// before `err != nil` is ever load-bearing - which is exactly why
-// go tool cover -func reports the guard as 100% covered purely on the
-// strength of its `!found` half, while a mutation dropping the `err != nil`
-// check still goes undetected: a stub answering found=false here would leave
-// that same gap open. Has and every method besides Meta return
-// errStubNotImplemented, since neither installDryRunProbe nor
-// warmDryRunProbe ever needs them.
+// metaFoundWithErrorArtifacts is an ArtifactStore stub whose Meta answers
+// found=true with a non-nil error, the only shape that exercises the
+// err != nil half of dryRunArtifactMeta's guard; other methods are stubs.
 type metaFoundWithErrorArtifacts struct{}
 
 // errStubMetaUnreachable is the error metaFoundWithErrorArtifacts.Meta always
@@ -1153,10 +963,8 @@ func (metaFoundWithErrorArtifacts) Delete(context.Context, string) error {
 	return errStubNotImplemented
 }
 
-// TestDryRunProbeMetaErrorCases covers dryRunArtifactMeta's `err != nil` half
-// of its `if err != nil || !found` guard, one row per probe that reaches it.
-// Every row asserts the same three-field verdict; the probe under test, and
-// the route by which it arrives at that verdict, are stated on the row.
+// TestDryRunProbeMetaErrorCases pins that a Meta error reads as not cached,
+// not failed and not settled, for every probe that reaches dryRunArtifactMeta.
 func TestDryRunProbeMetaErrorCases(t *testing.T) {
 	t.Parallel()
 	col := collection{Namespace: "acme", Name: "app", Version: "1.0.0"}
@@ -1195,20 +1003,9 @@ type dryRunProbeMetaErrorCase struct {
 func dryRunProbeMetaErrorCases() []dryRunProbeMetaErrorCase {
 	return []dryRunProbeMetaErrorCase{
 		{
-			// Proves dryRunArtifactMeta's `err != nil` half of its
-			// `if err != nil || !found` guard, reached through
-			// installDryRunProbe: a Meta call answering found=true alongside a
-			// non-nil error must be classified not-cached, never a cache hit
-			// and never a probe-level fail of its own - a store that could not
-			// be consulted is not evidence the artifact is absent, and
-			// reporting it as either "cached" or "would fail" would both be
-			// lies a preview cannot afford.
-			//
-			// root is nil so newInstallTarget's own nil-root guard makes the
-			// collection report ok=false before the pin check, isolating this
-			// row to the artifact probe branch alone - the same isolation
-			// TestClassifyDryRunCallsMetaExactlyOncePerCollectionNeverHas
-			// already uses.
+			// installDryRunProbe: a store that could not be consulted is neither
+			// a cache hit nor a would-fail. The nil root isolates the artifact
+			// probe.
 			name: "install",
 			buildProbe: func(t *testing.T) dryRunProbe {
 				t.Helper()
@@ -1217,10 +1014,8 @@ func dryRunProbeMetaErrorCases() []dryRunProbeMetaErrorCase {
 			},
 		},
 		{
-			// The "install" row's counterpart for warmDryRunProbe: the
-			// identical Meta failure must also be reported as not-cached
-			// there, before ever reaching extractStore.Ready under a sha this
-			// probe could not have named from a genuine cache miss anyway.
+			// warmDryRunProbe: the same Meta failure reads as not cached, before
+			// extractStore.Ready is ever reached.
 			name: "warm",
 			buildProbe: func(t *testing.T) dryRunProbe {
 				t.Helper()

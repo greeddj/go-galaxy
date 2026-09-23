@@ -18,14 +18,9 @@ import (
 
 const sshDefaultPort = "22"
 
-// authFor builds the go-git auth method for u from the credential bound to it.
-// Over http(s) a bound username and password become Basic auth (GitHub and
-// GitLab take a token as the Basic password, never as a Bearer token) and no
-// binding means an anonymous session. Over ssh a bound key is parsed into a
-// signer, and no binding means the agent SSH_AUTH_SOCK names; neither is
-// helpers.ErrGitSSHNoCredential. Every ssh method is wrapped so the dial is
-// bounded and the host key is checked against known_hosts with the algorithm
-// list that database holds for the host.
+// authFor builds u's go-git auth: over http(s) a bound credential is Basic auth
+// (a token is the password), none is anonymous; over ssh a bound key, else the
+// agent, else helpers.ErrGitSSHNoCredential, with a bounded dial and known_hosts.
 func authFor(u gitsource.URL, cred gitsource.Credential) (transport.AuthMethod, error) {
 	switch u.Scheme {
 	case protocolHTTP, protocolHTTPS:
@@ -109,15 +104,9 @@ func (a timedAuth) ClientConfig() (*ssh.ClientConfig, error) {
 	return cfg, nil
 }
 
-// classifyTransportError maps a go-git or ssh failure onto this tool's two
-// wire sentinels. A refused credential (401, 403, an ssh authentication
-// failure) and a host key known_hosts does not vouch for are
-// helpers.ErrGitAuthFailed; an empty remote is helpers.ErrGitRefNotFound,
-// since it advertises nothing to resolve; a repository the remote does not
-// know is helpers.ErrGitTransportFailed naming that (GitHub answers 404 for a
-// private repository and a missing one alike, so it is not an auth verdict);
-// everything else is helpers.ErrGitTransportFailed. A context error is
-// returned unchanged so a deadline or an interrupt keeps its own class.
+// classifyTransportError maps a refused credential or host key to
+// ErrGitAuthFailed, an empty remote to ErrGitRefNotFound, and all else, even a
+// 404 (GitHub's answer for a private repo), to ErrGitTransportFailed.
 func classifyTransportError(err error, display string) error {
 	if err == nil {
 		return nil

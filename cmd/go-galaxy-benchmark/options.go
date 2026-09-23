@@ -12,9 +12,8 @@ import (
 )
 
 // The environment prefix is GGB_ rather than GO_GALAXY_ on purpose: this
-// process sets GO_GALAXY_* for the binary it measures, and one prefix for
-// both would make "configure the stopwatch" and "configure the thing being
-// timed" indistinguishable in a CI job's environment block.
+// process sets GO_GALAXY_* for the binary it measures, and one prefix would
+// blur configuring the stopwatch with configuring the thing being timed.
 const envPrefix = "GGB_"
 
 // Defaults. Five runs is enough for the cold rows to show their spread
@@ -53,10 +52,8 @@ type options struct {
 }
 
 // spinnerActive reports whether the progress printer will draw a spinner,
-// mirroring the rule internal/progress applies: stdout is a terminal, and the
-// run is neither quiet nor verbose. The live timing line exists only there.
-// Without a spinner every update would be a fresh line rather than a replaced
-// suffix, and the harness would spend a CI log on a clock.
+// mirroring internal/progress's rule: stdout is a terminal and the run is
+// neither quiet nor verbose. The live timing line exists only there.
 func (o options) spinnerActive() bool {
 	if o.quiet || o.verbose {
 		return false

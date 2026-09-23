@@ -68,11 +68,8 @@ func TestParseAnsibleConfigDelimiters(t *testing.T) {
 }
 
 // TestParseAnsibleConfigValueFidelity checks that values are stored as
-// ansible reads them: quotes are kept and a trailing '#' is part of the value.
-// ansible.cfg is read by CPython's configparser, not a TOML parser, so
-// drop-in fidelity requires reproducing that behavior rather than
-// "helpfully" cleaning it up. The one thing configparser does strip, a ';'
-// comment, is TestParseAnsibleConfigInlineSemicolonComment's.
+// ansible's configparser reads them: quotes are kept and a trailing '#' is
+// part of the value.
 func TestParseAnsibleConfigValueFidelity(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -89,37 +86,9 @@ func TestParseAnsibleConfigValueFidelity(t *testing.T) {
 	})
 }
 
-// TestParseAnsibleConfigInlineSemicolonComment pins the inline comment ansible
-// configures its parser with, inline_comment_prefixes=(';',): a ';' that
-// follows whitespace starts a comment running to the end of the line, on a key
-// line and on a section header alike, while a ';' glued to the text before it
-// stays in the value. Every want below is what CPython 3.14's
-// ConfigParser(inline_comment_prefixes=(';',)) returned for the same input.
-//
-// The "glued" rows are the positive control for the stripping rows: a parser
-// that cut at every ';' would pass the first rows and fail these, which is why
-// a URL query or a token carrying ';' is here beside the comments.
-//
-// KILLING MUTATION, run and reverted, in parseAnsibleConfig (ansiblecfg.go) -
-// delete the stripInlineComment call. Every stripping row fails, the glued
-// rows pass:
-//
-//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
-//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir:/c ; note Server:
-//	ServerList: ServerTimeout: SignatureKeys:[]}}, want {GalaxyServers:map[]
-//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir:/c Server:
-//	ServerList: ServerTimeout: SignatureKeys:[]}}
-//
-// KILLING MUTATION, run and reverted, in isINISpace (ansiblecfg.go) - return
-// unicode.IsSpace(r) alone. Only "an information separator counts as
-// whitespace" fails, since U+001C is the one kind of whitespace Python and Go
-// disagree on (it sits unprinted between "x" and ";" in the got value):
-//
-//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
-//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:https://x;prod
-//	ServerList: ServerTimeout: SignatureKeys:[]}}, want {GalaxyServers:map[]
-//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:https://x
-//	ServerList: ServerTimeout: SignatureKeys:[]}}
+// TestParseAnsibleConfigInlineSemicolonComment pins configparser's ';' inline
+// comment on key lines and headers alike, each want taken from CPython 3.14;
+// the glued rows are the control against cutting at every ';'.
 func TestParseAnsibleConfigInlineSemicolonComment(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -206,10 +175,9 @@ func TestParseAnsibleConfigCommentsAndBlanks(t *testing.T) {
 	})
 }
 
-// TestParseAnsibleConfigSections checks section- and key-scoping rules:
-// keys before any section header, unknown sections, and unknown keys
-// within a known section are all ignored; duplicate keys resolve to the
-// last occurrence; and section names are matched case-sensitively.
+// TestParseAnsibleConfigSections checks that keys before any header, unknown
+// sections and unknown keys are ignored, a duplicate key keeps its last
+// value, and section names are matched case-sensitively.
 func TestParseAnsibleConfigSections(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -249,35 +217,8 @@ func TestParseAnsibleConfigSections(t *testing.T) {
 }
 
 // TestParseAnsibleConfigSectionHeaderGrammar pins sectionName to configparser's
-// SECTCRE, `\[(?P<header>.+)\]` applied with re.match: whatever follows the
-// last ']' is ignored, the name runs to that last ']' rather than the first,
-// and the name is not trimmed. Every want is what CPython 3.14's
-// ConfigParser(inline_comment_prefixes=(';',)) returned for the same input, so
-// the rows that leave a tracked section unread are fidelity too: ansible does
-// not read "[ galaxy ]" as [galaxy] either.
-//
-// KILLING MUTATION, run and reverted, in sectionName (ansiblecfg.go) - require
-// the line to end with ']', as the parser once did. The five rows with text
-// after the ']' fail, among them:
-//
-//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
-//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:
-//	ServerList: ServerTimeout: SignatureKeys:[]}}, want {GalaxyServers:map[]
-//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:https://x
-//	ServerList: ServerTimeout: SignatureKeys:[]}}
-//
-// KILLING MUTATION, run and reverted, in sectionName (ansiblecfg.go) - trim the
-// name with strings.TrimSpace. Only the two rows with spaces inside the
-// brackets fail.
-//
-// KILLING MUTATION, run and reverted, in sectionName (ansiblecfg.go) - end the
-// name at the first ']' instead of the last. Only "the last bracket ends the
-// name" fails.
-//
-// KILLING MUTATION, run and reverted, in sectionName (ansiblecfg.go) - weaken
-// the length guard to end < 1, letting an empty name through. Only "brackets
-// with nothing between them are not a header" fails: its key line is read as a
-// header, and the url below it lands under no section.
+// SECTCRE: text after the last ']' is ignored, the name runs to that last ']'
+// and is not trimmed. Each want is what CPython 3.14 returned.
 func TestParseAnsibleConfigSectionHeaderGrammar(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -371,10 +312,8 @@ func TestParseAnsibleConfigLexicalQuirks(t *testing.T) {
 	})
 }
 
-// TestParseAnsibleConfigServerList checks that [galaxy] server_list is
-// captured as a plain string, read the way every other [galaxy] key is
-// (quotes and a trailing '#' kept, a ';' comment after whitespace removed,
-// last occurrence wins).
+// TestParseAnsibleConfigServerList checks that [galaxy] server_list is kept
+// as a plain string, read like every other [galaxy] key.
 func TestParseAnsibleConfigServerList(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -391,36 +330,9 @@ func TestParseAnsibleConfigServerList(t *testing.T) {
 	})
 }
 
-// TestParseAnsibleConfigSignatureKeysAreNotRead pins a decision rather than a
-// behavior: the signature policy is configured from flags and environment
-// variables only, so a [galaxy] section carrying all four of ansible's
-// signature keys contributes their NAMES and not one of their values.
-//
-// The reason is that this program cannot establish who authored a discovered
-// ansible.cfg, and a setting that can relax a verification check must not come
-// from a file whose author is unknown. cliflags.SignatureFlags holds that
-// argument, including why each proxy for the authorship question leaks.
-//
-// Binding absence is what makes this stronger than a deny-list, and recording
-// names sharpens rather than weakens it: the want value below is the whole
-// ansibleConfig, compared structurally, so every value-carrying field of it has
-// to stay zero. It needs no list to keep current, and it fails the moment
-// anyone teaches the parser to store one of these VALUES without answering the
-// authorship question first.
-//
-// The second row is what makes the names a fact about the file rather than
-// about the parser's own table: keys ansible does not define are not recorded,
-// so the first row's four cannot be "every unrecognized [galaxy] key".
-//
-// KILLING MUTATION, run and reverted: recordSignatureKey's membership test
-// (`!slices.Contains(signatureKeyNames[:], key)`) deleted, so every
-// unrecognized [galaxy] key is recorded. The second row fails:
-//
-//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
-//	Defaults:{CollectionsPath:} Galaxy:{CacheDir: Server: ServerList:
-//	SignatureKeys:[gpg_keyrings verify_signatures]}}, want {GalaxyServers:map[]
-//	Defaults:{CollectionsPath:} Galaxy:{CacheDir: Server: ServerList:
-//	SignatureKeys:[]}}
+// TestParseAnsibleConfigSignatureKeysAreNotRead pins that ansible's signature
+// keys contribute their names and no value, compared over the whole
+// ansibleConfig, and that a [galaxy] key ansible does not define is not named.
 func TestParseAnsibleConfigSignatureKeysAreNotRead(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -453,11 +365,9 @@ func TestParseAnsibleConfigSignatureKeysAreNotRead(t *testing.T) {
 	})
 }
 
-// TestParseAnsibleConfigGalaxyServerSections checks that every
-// [galaxy_server.<id>] section is captured in full into GalaxyServers,
-// keyed by the id exactly as written after the dot, with the outer map
-// staying nil when no such section is present (the overwhelmingly common
-// case must not pay for an allocation it never uses).
+// TestParseAnsibleConfigGalaxyServerSections checks that each
+// [galaxy_server.<id>] section is kept whole, keyed by the id as written, and
+// that GalaxyServers stays nil when no such section exists.
 func TestParseAnsibleConfigGalaxyServerSections(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -521,10 +431,8 @@ func TestParseAnsibleConfigGalaxyServerSections(t *testing.T) {
 }
 
 // TestParseAnsibleConfigGalaxyServerSectionsFidelity checks that a
-// [galaxy_server.<id>] section is read the way every other section this
-// parser tracks is: values as ansible reads them (quotes and a trailing '#'
-// kept, a ';' comment after whitespace removed), section names matched
-// case-sensitively, keys lowercased.
+// [galaxy_server.<id>] section follows the same value, section-case and
+// key-case rules as every other section.
 func TestParseAnsibleConfigGalaxyServerSectionsFidelity(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -556,28 +464,9 @@ func TestParseAnsibleConfigGalaxyServerSectionsFidelity(t *testing.T) {
 	})
 }
 
-// TestParseAnsibleConfigInformationSeparatorTrim pins the trimming half of
-// isINISpace, which TestParseAnsibleConfigInlineSemicolonComment's separator
-// row leaves open: configparser strips the whitespace str.isspace names from a
-// line, a key and a value, U+001C through U+001F included. Each row puts the
-// separator where exactly one trim can remove it - around a header only the
-// line trim reaches, before the delimiter only the key trim, after it only the
-// value trim - so each trim is pinned by a row of its own. Every want is what
-// CPython 3.14's ConfigParser(inline_comment_prefixes=(';',)) returned.
-//
-// KILLING MUTATION, run and reverted, in parseAnsibleConfig (ansiblecfg.go) -
-// trim the line with strings.TrimSpace. Only the header row fails, the key and
-// value rows pass:
-//
-//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[]
-//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:
-//	ServerList: ServerTimeout: SignatureKeys:[]}}, want {GalaxyServers:map[]
-//	Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir: Server:https://x
-//	ServerList: ServerTimeout: SignatureKeys:[]}}
-//
-// KILLING MUTATION, run and reverted, in splitKeyValue (ansiblecfg.go) - trim
-// the key with strings.TrimSpace, and separately the value. Each fails only
-// its own row, with the same shape of output as above.
+// TestParseAnsibleConfigInformationSeparatorTrim pins that U+001C is trimmed,
+// as configparser trims it, from a header line, a key and a value, one row per
+// trim. Each want is what CPython 3.14 returned.
 func TestParseAnsibleConfigInformationSeparatorTrim(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -599,26 +488,9 @@ func TestParseAnsibleConfigInformationSeparatorTrim(t *testing.T) {
 	})
 }
 
-// TestParseAnsibleConfigRefusedHeaderClosesSection pins what happens under a
-// line that opens like a section header but is not one: a header whose ';'
-// comment cut off its ']', and one never closed. configparser refuses such a
-// file outright, so there is no ansible reading to match; what matters is that
-// the keys below the line are not filed under the section above it. Otherwise
-// the dev url below becomes prod's url, and prod's token, which the same-file
-// pairing rule lets through, is sent to the dev host.
-//
-// The last row is the positive control: a line starting with '[' that is a
-// key line to configparser too keeps its section, so the reset is not simply
-// "any line starting with '['".
-//
-// KILLING MUTATION, run and reverted, in parseAnsibleConfig (ansiblecfg.go) -
-// delete the section = "" reset. Both refused-header rows fail:
-//
-//	ansiblecfg_test.go:35: parseAnsibleConfig() = {GalaxyServers:map[prod:map[token:t
-//	url:https://dev.example]] Defaults:{CollectionsPath: RolesPath:} Galaxy:{CacheDir:
-//	Server: ServerList: ServerTimeout: SignatureKeys:[]}}, want
-//	{GalaxyServers:map[prod:map[token:t url:https://prod.example]] Defaults:{CollectionsPath:
-//	RolesPath:} Galaxy:{CacheDir: Server: ServerList: ServerTimeout: SignatureKeys:[]}}
+// TestParseAnsibleConfigRefusedHeaderClosesSection pins that a broken header
+// closes the section above it, so a dev url never pairs with prod's token; the
+// last row is the control that a key line starting with '[' keeps its section.
 func TestParseAnsibleConfigRefusedHeaderClosesSection(t *testing.T) {
 	t.Parallel()
 	runParseAnsibleConfigCases(t, []parseAnsibleConfigCase{
@@ -647,10 +519,9 @@ func TestParseAnsibleConfigRefusedHeaderClosesSection(t *testing.T) {
 	})
 }
 
-// TestLoadAnsibleConfig checks that loadAnsibleConfig opens and parses a
-// real file from disk, and surfaces a wrapped os.ErrNotExist for a missing
-// path (the existing swallow-and-continue behavior in
-// loadAnsibleConfigFromCLI depends on this).
+// TestLoadAnsibleConfig checks that loadAnsibleConfig parses a file from disk
+// and wraps os.ErrNotExist for a missing path, which loadAnsibleConfigFromCLI
+// relies on to tell a missing file from a broken one.
 func TestLoadAnsibleConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "ansible.cfg")

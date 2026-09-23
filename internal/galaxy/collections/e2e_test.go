@@ -1,9 +1,6 @@
-// Package collections_test exercises the real install pipeline end-to-end
-// against an in-memory fake Galaxy server (github.com/greeddj/go-galaxy/
-// internal/testing/fakegalaxy), driving collections.Start exactly the way a
-// CI job would: a cold network install, a warm cache-served reinstall, a
-// frozen lockfile-pinned install (both honoring and rejecting a pin), and an
-// offline install with the network transport hard-disabled.
+// Package collections_test drives the real install pipeline end to end
+// through the public API (collections.Start, Lock) against an in-memory fake
+// Galaxy server, the way a CI job would.
 package collections_test
 
 import (
@@ -40,16 +37,12 @@ const e2eTimeout = 30 * time.Second
 // artifact it names.
 const corruptedAppSHA256 = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 
-// testVersion100 is the version every fixture in this file registers first,
-// mirroring the internal collections package's own constant of the same
-// name (unreachable from here across the package boundary, hence the
-// duplicate declaration rather than a shared import).
+// testVersion100 is the version every fixture registers first; it duplicates
+// the internal package's constant, unreachable across the package boundary.
 const testVersion100 = "1.0.0"
 
-// noopPrinter is a minimal output.Printer stub, mirroring the one the
-// collections package's own internal tests use, so this external test
-// package renders no progress output while still satisfying every method
-// Start's runtime needs.
+// noopPrinter is an output.Printer that prints nothing, mirroring the
+// internal tests' stub across the package boundary.
 type noopPrinter struct{}
 
 func (noopPrinter) Printf(string, ...any)                        {}
@@ -63,12 +56,9 @@ func (noopPrinter) Warnf(string, ...any)                         {}
 func (noopPrinter) Debugf(string, ...any)                        {}
 func (noopPrinter) DebugSincef(time.Time, string, ...any)        {}
 
-// e2eFixture bundles one scenario's fake server, configuration, and runtime.
-// Every fixture registers the same two collections - acme.app@1.0.0
-// depending on acme.lib>=1.0.0, and acme.lib@1.0.0 with no dependencies - and
-// a requirements.yml requiring acme.app at any version, so scenarios differ
-// only in the config/runtime knobs they flip and how many times they call
-// collections.Start.
+// e2eFixture bundles one scenario's fake server, config and runtime; every
+// fixture registers acme.app@1.0.0 (depending on acme.lib>=1.0.0) and
+// acme.lib@1.0.0, with requirements.yml asking for acme.app at "*".
 type e2eFixture struct {
 	server       *fakegalaxy.Server
 	cfg          *config.Config
@@ -122,11 +112,8 @@ func writeRequirements(t *testing.T, path, name string) {
 	}
 }
 
-// installPathFor returns where acme.name lands under downloadPath, matching
-// the fixed ansible_collections layout Start installs into. Every collection
-// this file registers lives under the "acme" namespace, so it is fixed here
-// rather than threaded through as a parameter every caller would pass the
-// same value for.
+// installPathFor returns where acme.name lands under downloadPath in the
+// ansible_collections layout; every collection here is in the acme namespace.
 func installPathFor(downloadPath, name string) string {
 	return filepath.Join(downloadPath, "ansible_collections", "acme", name)
 }
@@ -192,16 +179,9 @@ func TestFreshInstallDownloadsFromNetwork(t *testing.T) {
 	}
 }
 
-// TestInstallReportNamesTheResolvedVersion proves both halves of the install
-// report name the version the run settled on: the success line for the
-// collection that installed, and the failure line for the one whose artifact
-// the server refused. Asserted on the same run, so neither result can be the
-// fixture, and asserted on the whole failure line rather than on a substring
-// of it, since where the version sits is the point - behind the cause it
-// would read as part of the error text.
-//
-// The version is the one the solver chose rather than one the requirements
-// spelled: requirements.yml asks for "*" here.
+// TestInstallReportNamesTheResolvedVersion pins that the success and failure
+// lines name the version the solver chose for "*", placed before the cause so
+// it cannot read as part of the error text.
 func TestInstallReportNamesTheResolvedVersion(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -224,10 +204,8 @@ func TestInstallReportNamesTheResolvedVersion(t *testing.T) {
 	}
 }
 
-// TestWarmInstallServesFromCache asserts that reinstalling into a wiped
-// download path, with the same cache directory already populated by a prior
-// run, succeeds entirely from the persisted snapshot and local artifact
-// cache without a single HTTP request.
+// TestWarmInstallServesFromCache pins that reinstalling into a wiped download
+// path over a populated cache makes no HTTP request at all.
 func TestWarmInstallServesFromCache(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -252,14 +230,9 @@ func TestWarmInstallServesFromCache(t *testing.T) {
 	}
 }
 
-// TestFrozenInstallHonorsLockfilePins asserts --frozen installs pin exactly
-// the version and artifact a lockfile names, even when a higher version is
-// available, and that a corrupted pin fails the run closed rather than
-// installing drifted bytes. Its two subtests intentionally run sequentially,
-// not in parallel with each other: the corrupted-pin subtest reuses and
-// mutates the same lockfile the pin-overrides subtest already wrote, so this
-// test itself does not call t.Parallel either, keeping that dependency
-// explicit rather than racing the two subtests against each other.
+// TestFrozenInstallHonorsLockfilePins pins that --frozen installs the locked
+// version over a higher one and fails closed on a corrupted pin. The subtests
+// share one lockfile, so neither they nor the test run in parallel.
 func TestFrozenInstallHonorsLockfilePins(t *testing.T) {
 	f := newE2EFixture(t)
 	lockPath, lf := newFrozenPinFixture(t, f)
@@ -272,13 +245,9 @@ func TestFrozenInstallHonorsLockfilePins(t *testing.T) {
 	})
 }
 
-// newFrozenPinFixture registers acme.app@2.0.0 on f.server (after the
-// fixture's own acme.app@1.0.0, so an unpinned resolution would prefer this
-// one - proving a lockfile pin, not "highest available", drives a frozen
-// run), writes a lockfile pinning acme.app@1.0.0 and acme.lib@1.0.0 to their
-// real sha256 sums, and sets f.cfg.Frozen. Shared by the install- and
-// warm-side frozen-pin e2e tests, which otherwise differ only in which
-// collections.* entry point they drive.
+// newFrozenPinFixture publishes acme.app@2.0.0 so only the pin can hold 1.0.0,
+// writes a lockfile pinning acme.app and acme.lib at 1.0.0 to their real
+// sha256 sums, and sets f.cfg.Frozen.
 func newFrozenPinFixture(t *testing.T, f *e2eFixture) (string, *lockfile.File) {
 	t.Helper()
 	f.server.AddVersion("acme", "app", "2.0.0", map[string]string{"acme.lib": ">=1.0.0"})
@@ -309,22 +278,13 @@ func setAppPin(lf *lockfile.File, sha string) {
 	}
 }
 
-// assertFrozenPinOverridesHighestVersion runs a frozen install and asserts it
-// installs the lockfile's pinned acme.app@1.0.0 - not the higher 2.0.0 also
-// registered on the server - without ever listing versions, and that a
-// successful frozen install's metrics report still claims "frozen": true.
-// Nothing else in the suite pins this for install specifically: install and
-// warm pass cfg.Frozen through to writeRunMetrics, and this is the
-// regression net proving that still happens for the install path;
-// TestLockFrozenPassesOnAnUpToDateLockfile (lock_command_test.go) pins the
-// identical claim for lock, which honors --frozen too, through a different
-// mechanism (a drift gate rather than consuming the lockfile).
+// assertFrozenPinOverridesHighestVersion asserts a frozen install takes the
+// pinned acme.app@1.0.0 over 2.0.0 without listing versions, and that its
+// metrics report says "frozen": true.
 func assertFrozenPinOverridesHighestVersion(t *testing.T, f *e2eFixture) {
 	t.Helper()
-	// f.cfg is shared with the corrupted-pin subtest that runs right after
-	// this one (see TestFrozenInstallHonorsLockfilePins), so MetricsFile is
-	// set here and restored afterward rather than being added to the shared
-	// fixture, leaving it exactly as newFrozenPinFixture/newE2EFixture left it.
+	// f.cfg is shared with the corrupted-pin subtest, so MetricsFile is set
+	// here and restored afterward.
 	f.cfg.MetricsFile = filepath.Join(t.TempDir(), "metrics.json")
 	defer func() { f.cfg.MetricsFile = "" }()
 
@@ -372,17 +332,9 @@ func assertFrozenCorruptedPinFailsClosed(t *testing.T, f *e2eFixture, lockPath s
 	if err == nil {
 		t.Fatal("expected an error from a corrupted lockfile pin, got nil")
 	}
-	// Start aggregates per-collection install failures behind
-	// helpers.ErrInstallationFailed, but the triggering cause is not
-	// swallowed: it is joined into the same error tree (see failureSummary),
-	// so both the aggregate classification and the actual
-	// helpers.ErrSHA256Mismatch cause are reachable through errors.Is at this
-	// call site, one level above cmd/go-galaxy/exitcode where the latter maps
-	// to the dedicated integrity exit code rather than the generic install one.
-	// Verified against a real revert of failureSummary.wrap (dropping the
-	// per-collection cause, returning headline unchanged): that mutation makes
-	// the errors.Is(err, helpers.ErrSHA256Mismatch) assertion below fail with:
-	// "expected errors.Is ErrSHA256Mismatch, got installation failed for 1 collections"
+	// failureSummary.wrap joins each collection's cause behind
+	// ErrInstallationFailed, so ErrSHA256Mismatch stays reachable and exitcode
+	// maps the run to the integrity code rather than the install one.
 	if !errors.Is(err, helpers.ErrInstallationFailed) {
 		t.Fatalf("expected errors.Is ErrInstallationFailed, got %v", err)
 	}
@@ -392,33 +344,9 @@ func assertFrozenCorruptedPinFailsClosed(t *testing.T, f *e2eFixture, lockPath s
 	assertPathAbsent(t, installPathFor(f.downloadPath, "app"))
 }
 
-// TestFrozenInstallRejectsWildcardLockfilePin proves install --frozen fails
-// closed on a lockfile entry whose pinned version is not an exact version -
-// "*" here - with helpers.ErrLockfileInvalid and the lockfile exit class (6),
-// rather than treating it as unpinned and silently installing the server's
-// highest available version under a directory literally named
-// "acme.app-*.info". TestLoadRejectsNonExactVersion (internal/galaxy/lockfile)
-// is the unit-level proof that lockfile.Load itself refuses this shape; this
-// test proves the resulting error and exit class survive up through
-// install --frozen end to end, and that no manifest and specifically no
-// glob-named ".info" sidecar directory are ever created.
-//
-// What this test does NOT prove on its own: that the wrong-version-install
-// consequence is unreachable. buildCollectionsMap carries an independent
-// helpers.IsExactVersion guard over the same shape (see its own doc
-// comment), reached from a resolved-snapshot path that never touches a
-// lockfile at all, so reverting lockfile.validate's check alone still fails
-// this test closed - just under a different sentinel
-// (helpers.ErrInvalidCollectionVersion, exit 2) and never reaching the
-// point where a wrong version could install. What this test pins is
-// specifically lockfile.validate's own sentinel and exit class on the
-// --frozen lockfile path; TestPoisonedResolvedSnapshotVersionRejectsInstall
-// (poisoned_version_test.go) is the analogous pin for buildCollectionsMap's
-// own guard on the snapshot path.
-//
-// The two subtests share one fixture and run in a fixed order, not in
-// parallel with each other, since the second overwrites the lockfile the
-// first wrote.
+// TestFrozenInstallRejectsWildcardLockfilePin pins that install --frozen
+// refuses a "*" lockfile pin with ErrLockfileInvalid and exit 6, creating no
+// manifest or glob-named ".info" directory; the subtests share one lockfile.
 func TestFrozenInstallRejectsWildcardLockfilePin(t *testing.T) {
 	f := newE2EFixture(t)
 	f.server.AddVersion("acme", "app", "2.0.0", nil)
@@ -474,13 +402,8 @@ func TestFrozenInstallRejectsWildcardLockfilePin(t *testing.T) {
 	})
 }
 
-// warnCapturingPrinter is a minimal output.Printer stub for this package's
-// own use: every method is a no-op (inherited from noopPrinter) except
-// Warnf, which records each call so TestOfflineOutranksRefresh can assert on
-// it. The internal collections package has its own, richer capturingPrinter
-// (start_test.go), but that type lives in a _test.go file and is therefore
-// invisible across the package boundary this file's own package
-// (collections_test) sits on the other side of.
+// warnCapturingPrinter is a no-op output.Printer that records Warnf lines;
+// the internal package's capturingPrinter is unreachable from this package.
 type warnCapturingPrinter struct {
 	noopPrinter
 
@@ -501,15 +424,9 @@ func (p *warnCapturingPrinter) hasWarnContaining(substr string) bool {
 	return false
 }
 
-// installOnceAndPublishNewerVersion runs a cold install (populating the
-// cache and the download path with acme.app@1.0.0), then publishes
-// acme.app@2.0.0 on the same server - with the identical acme.lib dependency
-// the fixture's own 1.0.0 already declares, so the published version changes
-// only the version number, not the dependency graph - and wipes the
-// download path, leaving a warm cache whose persisted resolve snapshot still
-// names 1.0.0. This is the fixture every --refresh e2e test in this file
-// shares; the server's call counts are reset just before returning so a
-// caller's own assertions start counting from the second Start alone.
+// installOnceAndPublishNewerVersion installs acme.app@1.0.0 cold, publishes
+// 2.0.0 with the same dependency, wipes the download path and resets the
+// server counts, leaving a warm cache whose snapshot still names 1.0.0.
 func installOnceAndPublishNewerVersion(t *testing.T) *e2eFixture {
 	t.Helper()
 	f := newE2EFixture(t)
@@ -524,24 +441,9 @@ func installOnceAndPublishNewerVersion(t *testing.T) *e2eFixture {
 	return f
 }
 
-// TestRefreshReSolvesInsteadOfReplayingTheSnapshot proves --refresh's whole
-// point: with it unset, a second install against a warm cache replays the
-// persisted resolve snapshot and installs the same 1.0.0 it always would,
-// entirely from cache (Total() == 0); with it set, the run bypasses that
-// snapshot, re-resolves against the live server, and picks up the newly
-// published acme.app@2.0.0 instead, making at least one real HTTP request
-// (Total() > 0). The two rows are mutual controls: --refresh is the only
-// variable between them, and it flips both the installed version and
-// whether the network was touched at all.
-//
-// Mutation (dropping `&& !refreshBypassesSnapshot(cfg)` from
-// resolveCollectionsInternal's snapshotAllowed expression) confirmed to fail
-// the "with refresh" row with:
-//
-//	e2e_test.go:567: installed acme.app collection_info.version = "1.0.0",
-//	want "2.0.0"
-//	e2e_test.go:571: server.Total() > 0 = false, want true (Total() = 0)
-//	--- FAIL: TestRefreshReSolvesInsteadOfReplayingTheSnapshot/with_refresh:_re-resolves,_picks_up_the_new_version (0.08s)
+// TestRefreshReSolvesInsteadOfReplayingTheSnapshot pins that without
+// --refresh a warm rerun replays the snapshot with no HTTP, and with it the
+// run re-resolves and installs the newly published 2.0.0.
 func TestRefreshReSolvesInsteadOfReplayingTheSnapshot(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -574,22 +476,9 @@ func TestRefreshReSolvesInsteadOfReplayingTheSnapshot(t *testing.T) {
 	}
 }
 
-// TestRefreshDoesNotRedownloadCachedArtifacts proves the content-addressed
-// carve-out --refresh leaves alone: with nothing new published upstream,
-// --refresh still re-fetches root metadata (the version-free cached answer
-// it exists to bypass) but the artifact itself - already cached from the
-// first install, and named by a version this run resolves to the identical
-// 1.0.0 - is never re-downloaded. isCacheHit and the extracted store are
-// correct here only by omission (neither one consults cfg.Refresh at all),
-// and that omission is exactly what this test pins.
-//
-// Mutation (adding `|| deps.cfg.Refresh` to isCacheHit's own early-return
-// condition, so refresh forces a cache miss the way forceDownload already
-// does) confirmed to fail with:
-//
-//	e2e_test.go:613: EndpointArtifact count = 2, want 0 (a cached artifact
-//	must not be re-downloaded)
-//	--- FAIL: TestRefreshDoesNotRedownloadCachedArtifacts (0.07s)
+// TestRefreshDoesNotRedownloadCachedArtifacts pins that --refresh re-fetches
+// root metadata but never re-downloads an artifact already cached for the
+// version it resolves to: isCacheHit must not consult cfg.Refresh.
 func TestRefreshDoesNotRedownloadCachedArtifacts(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -617,43 +506,9 @@ func TestRefreshDoesNotRedownloadCachedArtifacts(t *testing.T) {
 	}
 }
 
-// TestOfflineOutranksRefresh proves --offline wins when both are set:
-// resolution replays the persisted snapshot exactly as an unrefreshed
-// offline run would (Total() == 0, installs the pinned 1.0.0 despite
-// acme.app@2.0.0 being available upstream), and the operator is warned that
-// --refresh was skipped rather than the run silently dropping it.
-// TestRefreshReSolvesInsteadOfReplayingTheSnapshot's own "with refresh" row
-// is this test's positive control on the identical fixture shape: the same
-// --refresh, without --offline, does reach the network and does pick up
-// 2.0.0 - proving --offline is what changes the outcome here, not some
-// other difference between the two fixtures.
-//
-// The count assertions are checked before the warning one deliberately.
-// Mutation (dropping the `runtime.Output.Warnf` call from initInstall's
-// `if cfg.Refresh && cfg.Offline` block, keeping the veto itself) confirmed
-// to fail only the warning assertion, with the counts and installed version
-// above it still passing:
-//
-//	e2e_test.go:676: expected a --refresh-skipped warning on stderr, got []
-//	--- FAIL: TestOfflineOutranksRefresh (0.08s)
-//
-// A second mutation was also tried and did NOT kill this test: dropping the
-// `!cfg.Offline` term from refreshBypassesSnapshot (so it vetoes the
-// snapshot on --refresh alone, offline or not) still resolves 1.0.0 with
-// Total() == 0. cache.PolicyForConstraint's own IsOffline()-first check is
-// why: with the resolve snapshot no longer consulted, the fallback solve's
-// root-metadata read still goes through that policy, which forces
-// Read: true, Write: false under --offline regardless of --refresh - so it
-// serves the already-cached (pre-2.0.0) root metadata document from the API
-// cache instead of reaching the network, landing on 1.0.0 again by a
-// different route. This fixture's API cache is warm purely as a side effect
-// of installOnceAndPublishNewerVersion's own seeding install, not because
-// the offline check fired - so this test cannot pin the `!cfg.Offline` term
-// itself. internal/galaxy/collections' own
-// TestRefreshOfflinePreservesResolveWithStaleMetadataCaches (package
-// collections, not collections_test) seeds the state where the metadata
-// caches are empty and the resolve snapshot is the only thing that can
-// answer, and that test does kill on the identical mutation.
+// TestOfflineOutranksRefresh pins that --offline wins over --refresh: no HTTP,
+// the snapshot's 1.0.0 installed and a skipped-flag warning; the snapshot veto
+// itself is pinned by TestRefreshOfflinePreservesResolveWithStaleMetadataCaches.
 func TestOfflineOutranksRefresh(t *testing.T) {
 	t.Parallel()
 	f := installOnceAndPublishNewerVersion(t)
@@ -728,12 +583,9 @@ func TestOfflineInstall(t *testing.T) {
 	})
 }
 
-// TestNoDepsUnpinnedInstallsResolvedVersion asserts that --no-deps resolves
-// an unpinned root to a concrete version - the highest registered - rather
-// than keeping the literal "*" constraint as the collection's Version. That
-// concrete version must then flow, as the single source of truth, into the
-// installed MANIFEST.json, the artifact cache key on disk, and a
-// subsequently generated lockfile entry.
+// TestNoDepsUnpinnedInstallsResolvedVersion pins that --no-deps resolves a
+// "*" root to the highest version, which then names the installed manifest,
+// the artifact cache key and the lockfile entry.
 func TestNoDepsUnpinnedInstallsResolvedVersion(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -782,11 +634,8 @@ func TestNoDepsUnpinnedInstallsResolvedVersion(t *testing.T) {
 	}
 }
 
-// assertNoWildcardArtifactFilenames walks cacheDir recursively and fails the
-// test if any file name contains a percent-escaped or literal "*" - the
-// telltale sign of an unresolved "*" version constraint having leaked into an
-// artifact cache key (see artifactKey, which url.QueryEscapes the
-// namespace-name-version filename).
+// assertNoWildcardArtifactFilenames fails if any file under cacheDir carries a
+// literal or escaped "*", the sign of an unresolved version in an artifact key.
 func assertNoWildcardArtifactFilenames(t *testing.T, cacheDir string) {
 	t.Helper()
 	err := filepath.WalkDir(cacheDir, func(path string, d fs.DirEntry, walkErr error) error {
@@ -831,10 +680,8 @@ func findLockEntry(t *testing.T, lf *lockfile.File, name string) lockfile.Entry 
 	return lockfile.Entry{}
 }
 
-// writeRequirementsMulti writes a requirements.yml at path listing every name
-// in names at version "*" - the multi-collection variant of
-// writeRequirements, used to force requirements to change between two runs
-// that share a cache.
+// writeRequirementsMulti writes a requirements.yml listing every name at
+// version "*", to change the requirements between two runs sharing a cache.
 func writeRequirementsMulti(t *testing.T, path string, names ...string) {
 	t.Helper()
 	var b strings.Builder
@@ -849,14 +696,9 @@ func writeRequirementsMulti(t *testing.T, path string, names ...string) {
 	}
 }
 
-// TestNoDepsSnapshotNotReusedByDepsRun proves the full-match snapshot-reuse
-// path (loadResolvedFromSnapshot, gated by RequirementsHash) cannot serve a
-// --no-deps snapshot - roots only, nil graph edges - to a later run that
-// resolves the full dependency graph. requirementsSignatureFromSpec encodes
-// the --no-deps mode as part of the hashed requirements signature, so a mode
-// change alone changes RequirementsHash and forces a fresh resolve instead
-// of matching the stored hash and reusing the --no-deps graph verbatim,
-// which would silently skip acme.lib.
+// TestNoDepsSnapshotNotReusedByDepsRun pins that a --no-deps snapshot is not
+// replayed by a later deps-following run: the mode is part of RequirementsHash,
+// so acme.lib is resolved rather than silently skipped.
 func TestNoDepsSnapshotNotReusedByDepsRun(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -881,10 +723,8 @@ func TestNoDepsSnapshotNotReusedByDepsRun(t *testing.T) {
 	assertManifestInstalled(t, f.downloadPath, "lib")
 }
 
-// TestArtifactMetricsColdInstallCountsMisses asserts a cold-cache install
-// against a fake Galaxy server counts one cache miss per artifact actually
-// downloaded from the origin, no hits at all, and a positive number of bytes
-// downloaded.
+// TestArtifactMetricsColdInstallCountsMisses pins that a cold install counts
+// one miss per downloaded artifact, no hits, and a positive byte count.
 func TestArtifactMetricsColdInstallCountsMisses(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -905,24 +745,13 @@ func TestArtifactMetricsColdInstallCountsMisses(t *testing.T) {
 	}
 }
 
-// TestArtifactMetricsWrittenToMetricsFile asserts that the counters a cold
-// install accumulates in-process actually reach cfg.MetricsFile on disk with
-// the wire-contract key names a CI dashboard reads, not just the in-memory
-// runtime.Metrics.Totals() other tests in this file check. A cold install is
-// the required scenario, not a warm one: it is the only one where CacheHits
-// (0) and CacheMisses (2) are distinguishable from each other, so a swapped
-// field mapping in writeRunMetrics's Report literal - CacheHits written where
-// CacheMisses belongs, or vice versa - actually flips the file's values
-// instead of leaving them coincidentally equal. A warm run, where both
-// figures could plausibly collide, would not catch that class of bug and
-// would make this test vacuous.
+// TestArtifactMetricsWrittenToMetricsFile pins the metrics file's wire keys
+// against the in-process counters; a cold install is required because only
+// there do cache_hits (0) and cache_misses (2) differ, exposing a swap.
 func TestArtifactMetricsWrittenToMetricsFile(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
-	// Set on f.cfg for this test only, never on the shared fixture: every
-	// other counter test in this file reuses newE2EFixture without reading a
-	// metrics file, and giving every one of them a MetricsFile would make
-	// them all start writing files nothing ever reads.
+	// Set for this test only: the other counter tests read no metrics file.
 	f.cfg.MetricsFile = filepath.Join(t.TempDir(), "metrics.json")
 
 	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
@@ -933,22 +762,16 @@ func TestArtifactMetricsWrittenToMetricsFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read metrics file %s: %v", f.cfg.MetricsFile, err)
 	}
-	// Unmarshal into a map, not metrics.Report: decoding into the struct
-	// would resolve field names through the very same json tags the marshal
-	// side used, so a renamed or swapped tag would round-trip invisibly.
-	// Reading the literal wire keys pins the on-disk contract a consuming CI
-	// dashboard actually parses, independent of the Go struct's field names.
+	// A map, not metrics.Report: decoding through the same json tags would hide
+	// a renamed or swapped tag; the literal keys are the on-disk contract.
 	var written map[string]any
 	if err := json.Unmarshal(data, &written); err != nil {
 		t.Fatalf("unmarshal metrics file %s: %v", f.cfg.MetricsFile, err)
 	}
 
 	totals := f.runtime.Metrics.Totals()
-	// Each assertMetricCounter call does both halves required to catch a
-	// swapped field mapping: file-vs-Totals (catches a stale read or the
-	// wrong runtime) and file-vs-absolute-value (catches the mapping swap
-	// itself, which the file-vs-Totals half alone cannot - both sides of
-	// that comparison would swap together and still agree).
+	// Each check compares the file with Totals (a stale read) and with an
+	// absolute value (a swapped mapping, which Totals alone would mirror).
 	assertMetricCounter(t, written, "cache_hits", totals.CacheHits, 0)
 	assertMetricCounter(t, written, "cache_misses", totals.CacheMisses, 2)
 
@@ -961,12 +784,8 @@ func TestArtifactMetricsWrittenToMetricsFile(t *testing.T) {
 	}
 }
 
-// metricFloat extracts the JSON number stored at key in written, failing the
-// test if the key is missing or not a number. encoding/json decodes every
-// JSON number into a map[string]any as float64; a cache-hit/miss count of 2
-// and a download size of a few KB are both far inside float64's exact-integer
-// range (2^53), so converting the result to int64 for comparison is exact,
-// not approximate.
+// metricFloat returns the JSON number at key, failing if it is missing or not
+// a number; the counts here are far below 2^53, so float64 is exact.
 func metricFloat(t *testing.T, written map[string]any, key string) float64 {
 	t.Helper()
 	v, ok := written[key].(float64)
@@ -990,10 +809,8 @@ func assertMetricCounter(t *testing.T, written map[string]any, key string, wantT
 	}
 }
 
-// TestArtifactMetricsWarmInstallCountsHits asserts a warm-cache reinstall
-// into a wiped download path counts one cache hit per artifact served from
-// the artifact cache, no misses, and zero bytes downloaded, since a cache hit
-// reads no bytes from a Galaxy origin's artifact response body.
+// TestArtifactMetricsWarmInstallCountsHits pins that a warm reinstall counts
+// one hit per cached artifact, no misses, and zero bytes downloaded.
 func TestArtifactMetricsWarmInstallCountsHits(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -1028,21 +845,9 @@ func TestArtifactMetricsWarmInstallCountsHits(t *testing.T) {
 	}
 }
 
-// TestArtifactMetricsPrefetchHandoffCountedOnce asserts that a cold install's
-// prefetch handoff (payloadFromPrefetched) contributes no separate miss of
-// its own: CacheMisses must equal exactly the number of EndpointArtifact
-// requests the fake server actually served, proving the miss is counted once,
-// at the prefetcher's own download, not again when installCollection consumes
-// the handed-off artifact. The CacheHits == 0 assertion is what makes this
-// test self-supporting rather than vacuous: payloadFromPrefetched reports
-// servedFromCache as false and never touches ArtifactStore.Fetch, so an
-// install worker that actually consumed the handoff records no hit at all.
-// If prefetching were silently disabled (or an install worker ignored the
-// handoff and re-fetched from the cache the prefetcher had just populated),
-// that worker would find the artifact the prefetcher already committed and
-// serve a HIT instead - so a zero hit count is the proof the handed-off bytes
-// were the ones actually installed, not that prefetching ran at all in name
-// only.
+// TestArtifactMetricsPrefetchHandoffCountedOnce pins that a consumed prefetch
+// handoff adds no miss of its own and no hit: misses equal artifact requests,
+// and zero hits proves the handed-off bytes, not a cache read, were installed.
 func TestArtifactMetricsPrefetchHandoffCountedOnce(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -1063,10 +868,8 @@ func TestArtifactMetricsPrefetchHandoffCountedOnce(t *testing.T) {
 	}
 }
 
-// TestArtifactMetricsLockCountsNothing asserts collections.Lock reports all
-// three artifact counters as zero: runLock resolves and writes a lockfile
-// without ever touching an ArtifactStore, so this is a truthful zero, not a
-// gap in coverage.
+// TestArtifactMetricsLockCountsNothing pins that Lock leaves all three
+// artifact counters at zero: it never touches an ArtifactStore.
 func TestArtifactMetricsLockCountsNothing(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -1087,15 +890,9 @@ func TestArtifactMetricsLockCountsNothing(t *testing.T) {
 	}
 }
 
-// TestNoDepsSnapshotNotReusedIncrementally proves the incremental snapshot-
-// reuse path (tryIncrementalResolve) cannot preserve a --no-deps root's
-// nil-deps graph entry across a mode change either. Adding acme.tool as a
-// second, previously-unseen root alongside the unchanged acme.app root is
-// what routes resolution through tryIncrementalResolve rather than
-// loadResolvedFromSnapshot: tryIncrementalResolve checks RequirementsHash in
-// addition to per-root spec equality against RequirementsSnapshot, so
-// acme.app's --no-deps (nil-deps) snapshot entry is not reused once the mode
-// has changed, and acme.lib is resolved rather than silently skipped.
+// TestNoDepsSnapshotNotReusedIncrementally pins that adding a root after a
+// --no-deps run cannot make tryIncrementalResolve keep acme.app's nil-deps
+// entry, so acme.lib is resolved rather than silently skipped.
 func TestNoDepsSnapshotNotReusedIncrementally(t *testing.T) {
 	t.Parallel()
 	f := newE2EFixture(t)
@@ -1123,11 +920,9 @@ func TestNoDepsSnapshotNotReusedIncrementally(t *testing.T) {
 	assertManifestInstalled(t, f.downloadPath, "tool")
 }
 
-// assertInstalledProvenance fails the test unless the .info directory of
-// the installed acme.<name>-<version> names server in its GALAXY.yml, keeps
-// provenanceLine out of that document - ansible discards a GALAXY.yml
-// carrying any key outside its schema - and holds that line, and only it, in
-// go-galaxy.yml beside it.
+// assertInstalledProvenance asserts acme.<name>-<version>.info/GALAXY.yml names
+// server and lacks provenanceLine's key (ansible discards a document with
+// unknown keys), while go-galaxy.yml beside it holds exactly that line.
 func assertInstalledProvenance(t *testing.T, downloadPath, name, version, server, provenanceLine string) {
 	t.Helper()
 	infoDir := filepath.Join(downloadPath, "ansible_collections", "acme."+name+"-"+version+".info")

@@ -1,15 +1,8 @@
 package collections
 
-// This file exercises the verification step itself - verifyCollectionSignatures
-// and the context it runs against - over artifacts and signatures this test
-// binary generates for itself.
-//
-// The key material is ephemeral rather than the committed fixture set in
-// internal/galaxy/signature/testdata, and that is a requirement rather than a
-// preference: every test here signs the MANIFEST.json of an artifact it just
-// built, so the signature, the manifest and the archive's own chain all have to
-// agree. A fixed signature over a fixed document could not, since the archive
-// would have to be generated to match it.
+// This file tests verifyCollectionSignatures and its context over artifacts
+// and signatures generated here with an ephemeral key: each test signs the
+// MANIFEST.json it just built, which no committed fixture signature could match.
 
 import (
 	"archive/tar"
@@ -36,9 +29,8 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
-// testSignedCollection is the identity every fixture in this file signs and
-// installs. It is a plain acme.app so the sources map key ("acme.app") and the
-// collection key ("acme.app@1.0.0") stay legible in a failure message.
+// testSignedCollection is the identity every fixture here signs and installs,
+// kept plain so its sources key and collection key read well in a failure.
 //
 //nolint:gochecknoglobals // a fixed fixture identity, not mutable shared state.
 var testSignedCollection = collection{Namespace: "acme", Name: "app", Version: "1.0.0"}
@@ -48,17 +40,8 @@ var testSignedCollection = collection{Namespace: "acme", Name: "app", Version: "
 // than malformed.
 const testOtherDigest = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
-// testSigningEntity generates one ephemeral OpenPGP entity per test binary and
-// hands the same one to every fixture.
-//
-// Ed25519 rather than RSA, and once rather than per test: key generation is the
-// only expensive thing in this file. Measured on this machine over
-// openpgp.NewEntity, 87.8us an EdDSA key against 103.3ms a 2048-bit RSA one -
-// a cost that would otherwise be paid by every row.
-//
-// sync.OnceValues carries the error rather than panicking inside the
-// initializer, so a generation failure is reported by the test that needed the
-// key rather than by an unattributed panic during package initialization.
+// testSigningEntity generates one Ed25519 entity per test binary and shares it:
+// key generation is this file's only expensive step, far cheaper than RSA.
 //
 //nolint:gochecknoglobals // a lazily built, immutable fixture, not mutable shared state.
 var testSigningEntity = sync.OnceValues(func() (*openpgp.Entity, error) {
@@ -120,14 +103,9 @@ func writeTestSignature(t *testing.T, message []byte) string {
 	return "file://" + path
 }
 
-// buildSignedArtifact builds a collection artifact carrying MANIFEST.json,
-// FILES.json and one README.md, and returns the path it was written to
-// alongside the manifest bytes a signature is made over.
-//
-// breakChain makes FILES.json name a digest for README.md that the archive's
-// own README.md does not have, which is what a manifest chain that does not
-// match looks like from the outside: the signed document is intact, the listing
-// it vouches for is not.
+// buildSignedArtifact builds an artifact carrying MANIFEST.json, FILES.json and
+// README.md and returns its path and the manifest bytes to sign; breakChain
+// makes FILES.json list a README.md digest the archive does not match.
 func buildSignedArtifact(t *testing.T, breakChain bool) (string, []byte) {
 	t.Helper()
 
@@ -135,10 +113,8 @@ func buildSignedArtifact(t *testing.T, breakChain bool) (string, []byte) {
 		testSignedCollection.Namespace, testSignedCollection.Name, testSignedCollection.Version, breakChain)
 }
 
-// buildSignedArtifactAs is buildSignedArtifact with the identity the manifest
-// declares as parameters, so a fixture can build an artifact that is internally
-// perfect - signature, chain and all - and about a different collection than
-// the one being installed.
+// buildSignedArtifactAs is buildSignedArtifact with the manifest's identity as
+// parameters, so an internally perfect artifact can name another collection.
 func buildSignedArtifactAs(t *testing.T, namespace, name, version string, breakChain bool) (string, []byte) {
 	t.Helper()
 	readme := []byte("# " + namespace + "." + name + "\n")
@@ -156,10 +132,8 @@ func buildSignedArtifactAs(t *testing.T, namespace, name, version string, breakC
 			`"file_manifest_file":{"name":"FILES.json","ftype":"file","chksum_type":"sha256","chksum_sha256":%q}}`,
 		namespace, name, version, sha256Hex(filesJSON))
 
-	// A fixed filename rather than one built from the identity: a fixture may
-	// declare an identity no filesystem would accept as a name, which is the
-	// whole point of the parameters, and nothing here reads the artifact's own
-	// file name.
+	// A fixed filename: a fixture may declare an identity no filesystem accepts
+	// as a name, and nothing reads the artifact's own file name.
 	path := filepath.Join(t.TempDir(), "collection.tar.gz")
 	mustWriteFile(t, path, buildTarGz(t, []tarEntry{
 		{name: helpers.ManifestFileName, body: manifestJSON},
@@ -170,14 +144,8 @@ func buildSignedArtifactAs(t *testing.T, namespace, name, version string, breakC
 }
 
 // buildArtifactWithManifest builds a chain-correct artifact whose MANIFEST.json
-// is the caller's own collection_info text, closed with the file_manifest_file
-// pointer this builder computes. It exists for the fixtures whose defect is the
-// SHAPE of that document - a key declared twice, in one spelling or two - which
-// no set of identity parameters can express.
-//
-// collectionInfo is written verbatim and must therefore be an unterminated
-// object: everything from the opening brace up to, but not including, the comma
-// that precedes the pointer.
+// opens with collectionInfo verbatim, an unterminated object, so a fixture can
+// express a defect in the document's shape, such as a key declared twice.
 func buildArtifactWithManifest(t *testing.T, collectionInfo string) (string, []byte) {
 	t.Helper()
 	readme := []byte("# fixture\n")
@@ -238,10 +206,8 @@ type verifyFixture struct {
 	printer *capturingPrinter
 }
 
-// newVerifyFixture builds installDeps whose verify context is resolved from a
-// real config, through the real newVerifyContext, so every test here exercises
-// the same construction an install does. keyring may be empty, which is the
-// run that verifies nothing.
+// newVerifyFixture builds installDeps through the real newVerifyContext, as an
+// install does; an empty keyring is the run that verifies nothing.
 func newVerifyFixture(t *testing.T, keyring, count string, sources []string) *verifyFixture {
 	t.Helper()
 	printer := &capturingPrinter{}
@@ -280,30 +246,14 @@ func serverSignatureMeta(blobs ...[]byte) *types.GalaxyCollectionVersionInfo {
 	return meta
 }
 
-// verifyPayload builds the installPayload verifyCollectionSignatures reads: the
-// metadata a server's own signatures ride on, and the artifact those signatures
-// are checked against. metaUnavailable defaults false here, which is what every
-// row but the metadata-unavailable one means.
+// verifyPayload builds the installPayload verifyCollectionSignatures reads:
+// the metadata carrying a server's signatures and the artifact to check.
 func verifyPayload(meta *types.GalaxyCollectionVersionInfo, tarPath string) installPayload {
 	return installPayload{meta: meta, artifact: artifactData{Path: tarPath}}
 }
 
-// TestVerifyDisabledDoesNoWork pins the first statement of
-// verifyCollectionSignatures: a run that verifies nothing does not read the
-// artifact at all. The fixture is a file that is not an archive, so anything
-// that opened it would fail.
-//
-// The second row is the positive control on the identical fixture: with
-// verification on, the same bytes fail, which is what makes the first row's nil
-// a decision rather than a fixture nothing could refuse.
-//
-// KILLING MUTATION, run and reverted: the `if !vc.enabled() { return nil }`
-// guard deleted from verifyCollectionSignatures. The first row fails:
-//
-//	verify_test.go:317: verifyCollectionSignatures() = /var/folders/09/
-//	mv8r2msx43l5t38mwljc2xfm0000gn/T/TestVerifyDisabledDoesNoWork4126773194/
-//	001/not-an-archive.tar.gz: downloaded artifact is not a gzip-compressed
-//	tar archive: gzip: invalid header, want nil
+// TestVerifyDisabledDoesNoWork pins that a run verifying nothing never reads the
+// artifact: a non-archive passes with verification off and fails with it on.
 func TestVerifyDisabledDoesNoWork(t *testing.T) {
 	t.Parallel()
 	tarPath := filepath.Join(t.TempDir(), "not-an-archive.tar.gz")
@@ -349,9 +299,7 @@ func TestVerifySucceedsWithServerSignature(t *testing.T) {
 }
 
 // TestVerifySucceedsWithRequirementSignature covers the other source: the
-// requirements file names a signature of its own and the server carries none.
-// The metadata is nil here, which is also what an offline cache hit hands the
-// verifier.
+// requirements file declares a signature and the server carries none.
 func TestVerifySucceedsWithRequirementSignature(t *testing.T) {
 	t.Parallel()
 	tarPath, manifestJSON := buildSignedArtifact(t, false)
@@ -362,13 +310,9 @@ func TestVerifySucceedsWithRequirementSignature(t *testing.T) {
 	}
 }
 
-// TestVerifyFailsOnBadSignature pins the verdict: a signature made over other
-// bytes does not verify this manifest, so the required count of one is not
-// reached and the collection is refused.
-//
-// The signature is well-formed and made by a key the keyring holds - only the
-// document differs - so the refusal is the verification verdict rather than a
-// keyring or an armor failure.
+// TestVerifyFailsOnBadSignature pins that a well-formed signature by a trusted
+// key over other bytes is a verification verdict naming the collection, not a
+// keyring or armor failure.
 func TestVerifyFailsOnBadSignature(t *testing.T) {
 	t.Parallel()
 	tarPath, _ := buildSignedArtifact(t, false)
@@ -399,15 +343,9 @@ func TestVerifyFailsOnChainMismatch(t *testing.T) {
 	}
 }
 
-// TestVerifySkipsChainWhenNothingVerified pins an intentional efficiency rule,
-// not an oversight: a chain check over a pass that no signature backs is backed
-// by nothing, so it is not run at all. The fixture's chain is broken and its
-// signature list is empty, and the default count of 1 passes vacuously.
-//
-// The second row is the positive control on the identical artifact: one good
-// signature makes the chain reachable, and that same broken chain then fails.
-// Without it, the first row would be indistinguishable from a fixture whose
-// chain was fine all along.
+// TestVerifySkipsChainWhenNothingVerified pins that a vacuous pass does not walk
+// the manifest chain, since nothing backs it; one good signature makes the same
+// broken chain fail (the control).
 func TestVerifySkipsChainWhenNothingVerified(t *testing.T) {
 	t.Parallel()
 	tarPath, manifestJSON := buildSignedArtifact(t, true)
@@ -431,16 +369,9 @@ func TestVerifySkipsChainWhenNothingVerified(t *testing.T) {
 	})
 }
 
-// TestVacuousPassIsWarned pins the one thing this tool does not inherit from
-// ansible-galaxy: the verdict on an empty signature set is a pass, and the
-// silence around it is not. The line has to name the collection and the
-// spelling that would have required a signature, since those are the two things
-// an operator acts on.
-//
-// KILLING MUTATION, run and reverted: the `if result.VacuousPass` arm deleted
-// from verifyCollectionSignatures:
-//
-//	verify_test.go:453: no vacuous-pass warning naming acme.app@1.0.0; warns=[]
+// TestVacuousPassIsWarned pins that a pass over an empty signature set warns,
+// naming the collection and the strict spelling that would have required one,
+// where ansible-galaxy passes silently.
 func TestVacuousPassIsWarned(t *testing.T) {
 	t.Parallel()
 	tarPath, _ := buildSignedArtifact(t, false)
@@ -457,15 +388,9 @@ func TestVacuousPassIsWarned(t *testing.T) {
 	}
 }
 
-// TestMetadataFailureUnderVerificationCountPolicyDecides states what happens
-// when the metadata that would have carried a server's signatures never
-// arrived: nothing is gathered, and which verdict that produces is the
-// policy's, not this code's.
-//
-// Both rows run against one artifact and one keyring, differing only in the
-// count spec, which is what makes the pair a statement about the policy: the
-// default of 1 is satisfied by an empty set and warns, while its strict
-// spelling refuses the collection.
+// TestMetadataFailureUnderVerificationCountPolicyDecides pins that missing
+// metadata gathers nothing and the count policy decides: the default passes
+// with a warning, its strict spelling refuses the collection.
 func TestMetadataFailureUnderVerificationCountPolicyDecides(t *testing.T) {
 	t.Parallel()
 	tarPath, _ := buildSignedArtifact(t, false)
@@ -492,16 +417,9 @@ func TestMetadataFailureUnderVerificationCountPolicyDecides(t *testing.T) {
 	})
 }
 
-// TestServerSignatureListIsCapped pins helpers.MaxSignaturesPerCollection over
-// a server-supplied list, the trust boundary that constant exists for: a
-// metadata document naming ten thousand signatures must not cost ten thousand
-// public-key operations.
-//
-// The cap is observed through the verdict rather than through a counter: the
-// one good signature sits past the cap, so a capped gather never reaches it and
-// the count of one goes unsatisfied. The second row is the positive control on
-// the same harness - the same good signature, alone - which must verify, so the
-// first row's refusal is the cap rather than a blob this fixture cannot check.
+// TestServerSignatureListIsCapped pins helpers.MaxSignaturesPerCollection over a
+// server list, so ten thousand entries cost no more than the cap: a good
+// signature past the cap is never reached, while the same one alone verifies.
 func TestServerSignatureListIsCapped(t *testing.T) {
 	t.Parallel()
 	tarPath, manifestJSON := buildSignedArtifact(t, false)
@@ -535,14 +453,9 @@ func TestServerSignatureListIsCapped(t *testing.T) {
 	})
 }
 
-// TestSignaturesWithoutKeyringIsAHardError pins the refusal a requirements file
-// declaring signatures earns when no keyring is configured, and pins it by exit
-// class as well as by sentinel: it is a configuration error the operator fixes,
-// which is exit 2, never a verification verdict.
-//
-// The second row is the positive control on the same requirements: adding a
-// keyring makes the identical roots resolve, so the refusal is the missing
-// keyring rather than the declaration itself.
+// TestSignaturesWithoutKeyringIsAHardError pins that declared signatures with no
+// keyring are ErrKeyringRequired, exit 2 rather than a verdict; adding a keyring
+// accepts the same requirements (the control).
 func TestSignaturesWithoutKeyringIsAHardError(t *testing.T) {
 	t.Parallel()
 	root := testSignedCollection
@@ -574,20 +487,9 @@ func TestSignaturesWithoutKeyringIsAHardError(t *testing.T) {
 	})
 }
 
-// TestAnsibleSignatureKeysAreWarnedOnce pins requirement (A) at the point it
-// fires: one line per run, naming the discovered ansible.cfg and the key names
-// it carried, and never a value any of them was set to.
-//
-// It runs newVerifyContext twice over the same config to state what "once per
-// run" rests on: this function is the single emission point, so the count an
-// operator sees is the number of times a command builds a verification context,
-// which every verifying command does exactly once.
-//
-// KILLING MUTATION, run and reverted: the AnsibleSignatureKeysWarning arm
-// deleted from newVerifyContext:
-//
-//	verify_test.go:605: warns = [], want exactly one line naming the
-//	ansible.cfg signature keys
+// TestAnsibleSignatureKeysAreWarnedOnce pins that newVerifyContext, the single
+// emission point, warns once per call naming the ansible.cfg and its signature
+// key names, never their values.
 func TestAnsibleSignatureKeysAreWarnedOnce(t *testing.T) {
 	t.Parallel()
 	printer := &capturingPrinter{}
@@ -619,11 +521,9 @@ func TestAnsibleSignatureKeysAreWarnedOnce(t *testing.T) {
 	}
 }
 
-// TestVerificationDisabledWarnsAboutDeclaredSources pins the other way
-// verification can be off while a requirements file asks for it: the operator
-// switched it off explicitly. That is not helpers.ErrKeyringRequired - a
-// keyring is configured, and the switch is the operator's own - so the run
-// proceeds and says so instead.
+// TestVerificationDisabledWarnsAboutDeclaredSources pins that verification
+// switched off explicitly, with a keyring configured, proceeds with a warning
+// naming the collection whose declared sources go unchecked.
 func TestVerificationDisabledWarnsAboutDeclaredSources(t *testing.T) {
 	t.Parallel()
 	root := testSignedCollection
@@ -648,14 +548,9 @@ func TestVerificationDisabledWarnsAboutDeclaredSources(t *testing.T) {
 	}
 }
 
-// TestServerSignatureBlobsIgnoresForeignShapes pins the shape filter: a server
-// entry this tool does not recognize is skipped rather than failing the
-// install, since a third-party server may send something else alongside the
-// signatures it does carry.
-//
-// The last row is the positive control - the recognized shape in the same list
-// still produces a blob - so "nothing was gathered" is the filter's doing
-// rather than the whole list being dropped.
+// TestServerSignatureBlobsIgnoresForeignShapes pins that a server entry of an
+// unrecognized shape is skipped and not counted as offered, rather than failing
+// the install, since a third-party server may send more than signatures.
 func TestServerSignatureBlobsIgnoresForeignShapes(t *testing.T) {
 	t.Parallel()
 
@@ -712,25 +607,9 @@ func TestVerifyContextSourcesAreDedupedInFileOrder(t *testing.T) {
 	}
 }
 
-// TestVacuousPassAdviceCanActuallyPass pins that the spelling the vacuous-pass
-// warning advises is one that could satisfy the policy it replaces.
-//
-// The zero row is the reason this test exists. A count of zero has no strict
-// form: measured against signature.Policy.verdict, "+0" is refused by the
-// strict clause when nothing verifies and by the equality clause when something
-// does, so a run advised to write it would fail under every outcome. "+1" is
-// the smallest spelling that requires a signature, and it is what the operator
-// who wants the pass closed has to write.
-//
-// The other two rows are the control that keeps the zero row a statement about
-// zero rather than about the advice in general: a real count and "all" are both
-// strict-ified by prefixing, and must stay that way.
-//
-// KILLING MUTATION, run and reverted: the `spec.Count < 1` arm deleted from
-// strictSpelling, which is what the function looked like before the zero case
-// was noticed:
-//
-//	verify_test.go:751: strictSpelling(count 0) = "+0", want "+1"
+// TestVacuousPassAdviceCanActuallyPass pins strictSpelling: the advice for a
+// count of 0 is "+1", since "+0" fails under every outcome, while a real count
+// and "all" are made strict by prefixing.
 func TestVacuousPassAdviceCanActuallyPass(t *testing.T) {
 	t.Parallel()
 
@@ -754,10 +633,8 @@ func TestVacuousPassAdviceCanActuallyPass(t *testing.T) {
 	}
 }
 
-// TestVacuousPassUnderCountZeroAdvisesAWritableSpelling is the end-to-end half
-// of the row above: a run configured with a count of 0 and nothing to gather
-// passes vacuously - the shape that reaches the warning - and the line it emits
-// names "+1" rather than the "+0" that could never have passed.
+// TestVacuousPassUnderCountZeroAdvisesAWritableSpelling pins end to end that a
+// vacuous pass under count 0 advises "+1", never "+0", which cannot pass.
 func TestVacuousPassUnderCountZeroAdvisesAWritableSpelling(t *testing.T) {
 	t.Parallel()
 	tarPath, _ := buildSignedArtifact(t, false)
@@ -790,11 +667,8 @@ func buildDistinctFileSources(t *testing.T, n int) []string {
 	return sources
 }
 
-// buildDistinctServerBlobs returns n server-carried signature blobs, each with
-// distinct bytes - "server-blob-<i>" - so a row naming a large offered count
-// does not collapse under nextBlob's own sha dedupe: two identical blobs would
-// count as one gathered candidate, understating how many the server side
-// alone contributed.
+// buildDistinctServerBlobs returns n server blobs with distinct bytes, so
+// nextBlob's sha dedupe cannot collapse two of them into one candidate.
 func buildDistinctServerBlobs(n int) [][]byte {
 	blobs := make([][]byte, n)
 	for i := range blobs {
@@ -804,11 +678,8 @@ func buildDistinctServerBlobs(n int) [][]byte {
 	return blobs
 }
 
-// drainGather pulls every blob next offers to exhaustion, sorting each one
-// into a file-sourced or a server-sourced count by comparing its Origin
-// against the known set of file:// sources this test built. That split is
-// exactly the two sides of the gather, since gatherOne draws a requirement's
-// own sources before a server's.
+// drainGather pulls every blob next offers and counts it as file-sourced or
+// server-sourced by its Origin, the two sides of gatherOne's gather.
 func drainGather(t *testing.T, next signature.NextBlob, fileSources []string) (int, int) {
 	t.Helper()
 	known := make(map[string]struct{}, len(fileSources))
@@ -844,24 +715,8 @@ type gatherLimitRow struct {
 	wantServerCount int
 }
 
-// gatherLimitRows is TestGatherWarnsWhenTheCapTruncatesTheCandidateSet's own
-// table, split out so the test function itself stays a fixture plus an
-// assertion rather than growing with every row.
-//
-// The first three rows hold the server side at 2 throughout, which is well
-// under the cap on its own, so every one of them keeps offered <= cap and the
-// pre-truncation count serverSignatureBlobs returns agrees with the
-// post-truncation length of the blob slice it also returns. That is exactly
-// why a table shaped like those three rows alone could never have caught
-// gatherLimit being handed the post-truncation length instead of the true
-// offered count: with the server side under the cap the two numbers are
-// identical, so a defect that only shows once they diverge is structurally
-// unreachable from a fixture that never lets the server side alone cross the
-// cap. The four rows after them do exactly that: each pushes offered past 64
-// on its own, with declared sources at 0 or 10, so a caller reading the
-// post-truncation slice length instead of offered would report 64 candidates
-// where the true count is 65 to 210 - which is why every warning's own
-// arithmetic, not merely whether one fired, is asserted on every row.
+// gatherLimitRows is TestGatherWarnsWhenTheCapTruncatesTheCandidateSet's table.
+// Rows whose server side alone passes the cap catch a post-truncation count.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state.
 var gatherLimitRows = []gatherLimitRow{
@@ -877,13 +732,10 @@ var gatherLimitRows = []gatherLimitRow{
 			"the last 1 were not gathered",
 		wantFileCount: 63, wantServerCount: 1,
 	},
-	// The positive control on the same fixture builder: one candidate
-	// under the point where the cap starts truncating, both server blobs
-	// are gathered and no warning fires at all - which is what shows the
-	// harness above is capable of a silent, complete gather rather than
-	// one that just happens never to reach the check.
+	// The control: one candidate under the cap, every blob is gathered and no
+	// warning fires, so the harness can complete a silent gather.
 	{name: "62 declared, 2 offered", declared: 62, offered: 2, wantWarns: 0, wantFileCount: 62, wantServerCount: 2},
-	// The four rows below push the SERVER side itself past the cap,
+	// The rows below push the SERVER side itself past the cap,
 	// which none of the three rows above can: with the server side fixed
 	// at 2, offered never crosses the cap on its own.
 	{
@@ -903,20 +755,14 @@ var gatherLimitRows = []gatherLimitRow{
 			"the last 146 were not gathered",
 		wantFileCount: 10, wantServerCount: 54,
 	},
-	// The boundary control on the divergent side, the counterpart of the
-	// "62 declared" control above: the server alone fills the cap
-	// exactly and nothing is dropped, which is what shows the three rows
-	// above it are the cap actually truncating rather than a large
-	// server side warning unconditionally.
+	// The boundary control on the server side: the server alone fills the
+	// cap exactly, nothing is dropped and no warning fires.
 	{name: "0 declared, 64 offered", declared: 0, offered: 64, wantWarns: 0, wantFileCount: 0, wantServerCount: 64},
 }
 
-// TestGatherWarnsWhenTheCapTruncatesTheCandidateSet pins gatherLimit's own
-// decision: a combined candidate set - a requirements entry's own declared
-// sources plus whatever the server offers alongside the artifact - past
-// helpers.MaxSignaturesPerCollection is warned about, once, naming what was
-// withheld, rather than silently dropped or refused outright. gatherLimitRows'
-// own doc comment holds why the table is shaped the way it is.
+// TestGatherWarnsWhenTheCapTruncatesTheCandidateSet pins gatherLimit: declared
+// plus server-offered candidates past helpers.MaxSignaturesPerCollection warn
+// once, naming what was dropped, rather than silently dropping or refusing.
 func TestGatherWarnsWhenTheCapTruncatesTheCandidateSet(t *testing.T) {
 	t.Parallel()
 
@@ -937,70 +783,8 @@ func TestGatherWarnsWhenTheCapTruncatesTheCandidateSet(t *testing.T) {
 			if serverCount != row.wantServerCount {
 				t.Fatalf("gathered %d server candidates, want %d", serverCount, row.wantServerCount)
 			}
-			// KILLING MUTATION, run and reverted: gatherLimit's whole
-			// `if dropped := ...; dropped > 0 { ... }` block deleted, so
-			// nothing is ever warned about. Every row wanting a warning then
-			// fails, one of them with
-			//
-			//	verify_test.go:1005: warns = [], want exactly 1
-			//
-			// while the two boundary controls survive untouched, since
-			// neither ever expected a warning either.
-			//
-			// KILLING MUTATION, run and reverted: gatherLimit's predicate
-			// narrowed to `sources >= helpers.MaxSignaturesPerCollection`,
-			// the premise checkSignatureSources' own doc comment used to
-			// state before this function existed. Only the rows whose
-			// declared count alone stays under the cap - "63 declared, 2
-			// offered", "0 declared, 200 offered", "0 declared, 65 offered"
-			// and "10 declared, 200 offered" - then fail, one of them with
-			//
-			//	verify_test.go:1005: warns = [], want exactly 1
-			//
-			// while every row already past the threshold on declared sources
-			// alone, and both boundary controls, are untouched: it is the
-			// rows whose truncation comes from the server side, not the
-			// declared one, that tell the correct predicate apart from the
-			// one stated above.
-			//
-			// KILLING MUTATION, run and reverted: gatherLimit's predicate
-			// widened to `dropped >= 0`, so it fires even when nothing was
-			// actually dropped. Only the two boundary controls then fail,
-			// one of them with
-			//
-			//	verify_test.go:1005: warns = [acme.app@1.0.0: 64 signature candidates exceed the limit of 64 ...], want exactly 0
-			//
-			// which is what proves them controls: the identical fixture
-			// shape the rows around them pass now catches a warning that
-			// should never have fired.
-			//
-			// KILLING MUTATION, run and reverted: serverSignatureBlobs' own
-			// second return changed from `offered` to `len(blobs)` - the
-			// live defect this table exists to catch, handing gatherLimit a
-			// post-truncation count again. The two rows whose server side
-			// alone crosses the cap with no declared sources then fail with
-			// no warning at all, one of them with
-			//
-			//	verify_test.go:1005: warns = [], want exactly 1
-			//
-			// and the "10 declared, 200 offered" row still warns once -
-			// dropped is still positive there - but on the wrong arithmetic,
-			// failing its own substring check instead:
-			//
-			//	verify_test.go:1008: warns do not name "210 signature candidates exceed the limit of 64 (10
-			//	    declared, 200 offered by the server); the last 146 were not gathered": [acme.app@1.0.0: 74
-			//	    signature candidates exceed the limit of 64 (10 declared, 64 offered by the server); the last
-			//	    10 were not gathered, and declared sources always come first]
-			//
-			// while the three rows whose server side never approaches the
-			// cap, and the boundary control at exactly 64 offered, are all
-			// unaffected: none of them is where offered and len(blobs) ever
-			// disagreed. A sibling mutation - offered++ kept but the early
-			// break at the cap restored instead of the len(blobs) < cap
-			// guard - was checked separately and produces byte-identical
-			// failures to this one on every row, since the break stops
-			// counting at exactly the same point the guard stops appending;
-			// it earns no separate entry here for that reason.
+			// The warning's text is checked as well as its count, so an offered
+			// count taken after truncation fails here on its arithmetic.
 			if len(fx.printer.warns) != row.wantWarns {
 				t.Fatalf("warns = %v, want exactly %d", fx.printer.warns, row.wantWarns)
 			}

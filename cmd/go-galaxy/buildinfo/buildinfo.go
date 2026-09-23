@@ -1,8 +1,6 @@
-// Package buildinfo renders the version string the CLI reports for itself.
-// The Justfile's ldflags are the authoritative source; everything here exists
-// to keep a build without them - a plain `go build` or `go run` - reporting
-// something truthful, from the module and VCS metadata the toolchain already
-// embedded rather than from anywhere off the machine.
+// Package buildinfo renders the CLI's version string. Link-time ldflags are
+// authoritative; a build without them reports the module and VCS metadata the
+// toolchain embedded, never anything fetched off the machine.
 package buildinfo
 
 import (
@@ -11,11 +9,9 @@ import (
 	"runtime/debug"
 )
 
-// Version returns the formatted version string for the application. version,
-// commit, and date are normally injected by the Justfile's ldflags; on a
-// plain `go build`/`go run` (dev build) they are empty, and fillFromBuildInfo
-// recovers what it can from the Go module/VCS build info instead of making a
-// network call.
+// Version returns the formatted version string. Fields the ldflags left empty
+// (a plain `go build` or `go run`) are recovered by fillFromBuildInfo; the
+// version comes first, which the action's `--version` parse relies on.
 func Version(version, commit, date, builtBy string) string {
 	if version == "" || commit == "" || date == "" {
 		version, commit, date = fillFromBuildInfo(version, commit, date)
@@ -31,10 +27,8 @@ func Version(version, commit, date, builtBy string) string {
 	return formatVersion(version, commit, date, builtBy)
 }
 
-// formatVersion renders the already-resolved version fields into the final
-// display string. Split out from Version so the four format branches can be
-// exercised deterministically in tests, independent of fillFromBuildInfo's
-// environment-dependent fallback.
+// formatVersion renders already-resolved fields into the display string, split
+// out so its branches are testable apart from fillFromBuildInfo's environment.
 func formatVersion(version, commit, date, builtBy string) string {
 	switch {
 	case date != "" && commit != "":

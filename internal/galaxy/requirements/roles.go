@@ -10,13 +10,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// RoleRequirement is one validated roles: entry, normalized the way
-// ansible's role_yaml_parse normalizes it. Name is the directory the role
-// installs into under roles_path and the identifier a playbook names it by.
-// For a Galaxy role (Type == TypeGalaxy) Src is the Galaxy name, owner.role,
-// and Version the tag asked for, "" when the highest is wanted. For a git
-// role (Type == TypeGit) Src is the canonical repository URL and Version the
-// canonical ref name, HEAD when none was given. Type is always set.
+// RoleRequirement is one validated roles: entry, normalized as ansible's
+// role_yaml_parse does. Name is the install directory under roles_path; per
+// Type, Src is owner.role or a canonical URL and Version a tag, ref or label.
 type RoleRequirement struct {
 	Name    string
 	Src     string
@@ -43,10 +39,9 @@ const (
 	roleSpecName
 )
 
-// parseRoleList parses the roles: value. nil (a bare "roles:" or "roles: ~")
-// is an empty list; any other non-list value is refused. Two entries that
-// would install into one directory are refused here, where both spellings
-// are still in hand.
+// parseRoleList parses the roles: value; nil is an empty list. Two entries
+// installing into one directory are refused here, where both spellings are
+// still in hand.
 func parseRoleList(raw any) ([]RoleRequirement, []string, error) {
 	if raw == nil {
 		return nil, nil, nil
@@ -139,18 +134,14 @@ func roleMapKeys() map[string]struct{} {
 	return map[string]struct{}{"name": {}, "role": {}, "src": {}, "scm": {}, "version": {}}
 }
 
-// roleForbiddenKeys are collection keys a role entry has no meaning for. A
-// source: would read as a per-entry Galaxy server, which a role never has
-// (roles are looked up on the configured server list); a signatures: block
-// names a verification a role cannot get; a type: is the collection
-// spelling of what scm: says here. Each is refused by name rather than
-// dropped, since dropping it would silently change what the entry means.
+// roleForbiddenKeys are collection keys meaningless on a role entry. Each is
+// refused by name rather than dropped, since dropping it would silently
+// change what the entry means.
 func roleForbiddenKeys() []string { return []string{"source", "signatures", "type"} }
 
-// parseRoleMap reads the mapping spelling: src:, scm:, version:, name: and
-// the old-style role: alias of name. include: is refused (ansible reads a
-// second file through it), the collection keys are refused, and any other
-// key is a warning, as ansible drops it without a word.
+// parseRoleMap reads the mapping spelling (src:, scm:, version:, name:, role:).
+// include: and the collection keys are refused; any other key is a warning,
+// where ansible drops it without a word.
 func parseRoleMap(value map[string]any) (roleSpec, []string, error) {
 	if _, ok := value["include"]; ok {
 		return roleSpec{}, nil, fmt.Errorf("%w: list the included roles inline", helpers.ErrUnsupportedRoleInclude)
@@ -245,12 +236,9 @@ func finishRole(spec roleSpec) (RoleRequirement, error) {
 	return req, nil
 }
 
-// classifyRole decides what a src: names, in ansible's order: a git source
-// (an scm of git, a git pointer, or the github.com special case), then a
-// url source (an http(s) URL to a .tar.gz - the github.com special case
-// excludes the suffix, so a release-asset URL lands here even on
-// github.com), then a source this tool refuses (any other URL, a path, a
-// non-http tarball), else a Galaxy role name.
+// classifyRole decides what src: names, in ansible's order: git (scm git, a
+// git pointer, or the github.com case), then an http(s) .tar.gz url, then a
+// refused URL, path or tarball, else a Galaxy role name.
 func classifyRole(spec roleSpec) (RoleRequirement, error) {
 	switch {
 	case spec.scm == TypeGit || gitsource.IsPointer(spec.src) || isGitHubHTTPSource(spec.src):
@@ -265,19 +253,16 @@ func classifyRole(spec roleSpec) (RoleRequirement, error) {
 	}
 }
 
-// isURLRoleSource reports whether src names a role tarball this tool
-// downloads directly: an http(s) URL ending .tar.gz. Any other URL stays
-// refused - ansible would try to download it, and a URL that does not name
-// an archive is far more often a mistyped repository than an artifact.
+// isURLRoleSource reports whether src is an http(s) URL ending .tar.gz. Any
+// other URL is refused, where ansible would try to download it: it is far
+// more often a mistyped repository than an artifact.
 func isURLRoleSource(src string) bool {
 	return urlsource.IsHTTPURL(src) && strings.HasSuffix(strings.ToLower(src), ".tar.gz")
 }
 
-// urlRole judges a url spec: the URL through urlsource's grammar, which is
-// where a credential in it and a fragment are refused; the version, when
-// given, as the label the role installs under (the sha256 pins the bytes -
-// a tarball names no versions to pick among); and the install name from the
-// URL's basename when none was given, .tar.gz cut, as ansible derives it.
+// urlRole judges a url spec through urlsource's grammar (no credential, no
+// fragment). Version is only an install label, since the sha256 pins the
+// bytes; the name defaults to the URL's basename minus .tar.gz, as in ansible.
 func urlRole(spec roleSpec) (RoleRequirement, error) {
 	u, err := urlsource.ParseURL(spec.src)
 	if err != nil {
@@ -293,11 +278,9 @@ func urlRole(spec roleSpec) (RoleRequirement, error) {
 	return RoleRequirement{Name: name, Src: u.String(), Version: spec.version, Type: TypeURL}, nil
 }
 
-// isGitHubHTTPSource is ansible's special case: an http(s) URL on github.com
-// without an scm prefix and without a tarball suffix is a git repository.
-// ansible matches "github.com" anywhere in the string; this tool requires
-// the parsed host to be exactly github.com, so a tarball host that merely
-// mentions it is not promoted.
+// isGitHubHTTPSource is ansible's special case: an http(s) github.com URL
+// with no .tar.gz suffix is a git repository. The parsed host must be exactly
+// github.com, where ansible matches the substring anywhere.
 func isGitHubHTTPSource(src string) bool {
 	lower := strings.ToLower(src)
 	if !strings.HasPrefix(lower, "https://") && !strings.HasPrefix(lower, "http://") {
@@ -310,10 +293,9 @@ func isGitHubHTTPSource(src string) bool {
 	return err == nil && u.Host == "github.com"
 }
 
-// gitRole judges a git spec: the URL through gitsource's grammar, which is
-// where a credential in it and a #fragment are refused, the version as a
-// ref, and the name from the URL's last path element when none was given,
-// as ansible's repo_url_to_role_name derives it.
+// gitRole refuses a #subdir and judges the URL (no credential) and the version
+// (a ref) through gitsource's grammar. The name defaults to the URL's last path
+// element minus .git, as ansible's repo_url_to_role_name derives it.
 func gitRole(spec roleSpec) (RoleRequirement, error) {
 	raw := strings.TrimPrefix(strings.TrimPrefix(spec.src, "git+"), "GIT+")
 	if strings.Contains(raw, "#") {
@@ -371,13 +353,9 @@ const (
 	DependencyCollection
 )
 
-// ParseRoleDependency judges one dependency a role's meta declared through
-// the same grammar a roles: entry passes: ansible's string spelling with
-// commas, the scm prefix, the git shapes and the Galaxy name. A dependency
-// ansible would not look up - a local role, a collection's role - is
-// reported through the DependencySkip rather than as an error; anything
-// else a roles: entry would be refused for is refused here too, naming the
-// declaring role being the caller's job.
+// ParseRoleDependency judges a dependency from a role's meta with the same
+// grammar as a roles: entry. A local role or a collection's role, which
+// ansible skips too, is reported as a DependencySkip rather than an error.
 func ParseRoleDependency(dep gitsource.RoleDependency) (RoleRequirement, DependencySkip, error) {
 	spec := roleSpec{name: strings.TrimSpace(dep.Name), src: strings.TrimSpace(dep.Src),
 		scm: strings.ToLower(strings.TrimSpace(dep.Scm)), version: strings.TrimSpace(dep.Version)}
@@ -410,10 +388,9 @@ func ParseRoleDependency(dep gitsource.RoleDependency) (RoleRequirement, Depende
 	return req, DependencyInstalled, err
 }
 
-// dependencySkip classifies the two dependency shapes ansible leaves alone.
-// Both are judged before the source classification, since neither carries
-// an scm or a URL: a no-dot name is local, a three-part dotted name is a
-// collection's role.
+// dependencySkip classifies the two dependency shapes ansible leaves alone,
+// before source classification: a no-dot name is local, a name with two or
+// more dots is a collection's role.
 func dependencySkip(spec roleSpec) DependencySkip {
 	if spec.scm != "" || gitsource.IsPointer(spec.src) || looksLikeSourceName(spec.src) {
 		return DependencyInstalled

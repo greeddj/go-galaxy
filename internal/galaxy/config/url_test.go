@@ -148,10 +148,9 @@ func assertURLCredentials(t *testing.T, got, want []URLCredential) {
 	}
 }
 
-// TestLoadURLCredentialsNone pins that an absent or blank list is not a
-// configuration at all: no error, no entries, and no warning, even when a
-// stray GO_GALAXY_URL_X_* variable sits in the environment for an id that
-// was never declared.
+// TestLoadURLCredentialsNone pins that an absent or blank list configures
+// nothing: no error, no entries and no warning, even with a stray
+// GO_GALAXY_URL_X_* variable for an id that was never declared.
 func TestLoadURLCredentialsNone(t *testing.T) {
 	for name, env := range map[string]map[string]string{
 		"unset":                    {"GO_GALAXY_URL_STRAY_URL": "https://x.example"},
@@ -298,10 +297,9 @@ func TestLoadURLCredentialsRefused(t *testing.T) {
 	}
 }
 
-// TestLoadURLCredentialsUnknownVariableWarns pins the unknown-variable
-// warning: one per variable, for declared ids only, sorted, and never for a
-// variable that is a known key of another declared id whose prefix happens
-// to extend this one's.
+// TestLoadURLCredentialsUnknownVariableWarns pins one sorted warning per
+// unknown variable of a declared id, and none for an undeclared id or for a
+// known key of another declared id whose prefix extends this one's.
 func TestLoadURLCredentialsUnknownVariableWarns(t *testing.T) {
 	setURLEnv(t, map[string]string{
 		"GO_GALAXY_URL_CREDENTIALS": "a,a_b",
@@ -333,8 +331,7 @@ func TestLoadURLCredentialsUnknownVariableWarns(t *testing.T) {
 
 // TestBrokenGitCredentialWinsOverBrokenURL pins the load order in
 // BuildCollectionConfig: a configuration broken in both surfaces reports the
-// git failure, so error precedence does not change because a url surface was
-// added behind it.
+// git failure, so adding the url surface did not change error precedence.
 func TestBrokenGitCredentialWinsOverBrokenURL(t *testing.T) {
 	setGitEnv(t, map[string]string{
 		"GO_GALAXY_GIT_CREDENTIALS": "broken",

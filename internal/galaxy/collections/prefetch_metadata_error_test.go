@@ -1,17 +1,8 @@
 package collections
 
-// This file pins prefetchOne's metadata-load failure branch (prefetch.go):
-// loadCollectionMetadata erroring returns a nil meta and a zero downloadResult
-// with no download attempted, and that failure is recorded by finish and
-// surfaced through Wait rather than lost. It also proves the install worker
-// absorbs a prefetch metadata failure - logging it and reloading metadata
-// itself - rather than propagating it as an install failure.
-//
-// A plain 500 fault would not reach this branch: loadCollectionMetadata's own
-// GET retries on a retryable status (helpers.IsRetryableHTTPStatus), so a
-// one-shot 500 would be consumed inside that retry loop and never surface as
-// an error from loadCollectionMetadata itself. A 404 is not in the retryable
-// set, so it fails the version-detail fetch on the first attempt.
+// Tests prefetchOne's metadata-load failure: surfaced through Wait, then
+// absorbed by the install worker's own reload. The fault is a 404 because a
+// retryable 500 would be consumed inside loadCollectionMetadata's retries.
 
 import (
 	"context"
@@ -22,12 +13,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
-// TestPrefetchMetadataErrorSurfacedByWait drives startPrefetcher directly
-// (bypassing installLevels) against a collection whose version-detail fetch
-// always 404s, and asserts prefetchOne's metadata-load failure branch: the
-// task is still scheduled and completed (ok == true), its recorded error is
-// non-nil, and both its metadata and its downloaded artifact are the zero
-// value, since prefetchOne returns before ever reaching the download step.
+// TestPrefetchMetadataErrorSurfacedByWait pins that a version-detail 404
+// leaves the task completed with its error recorded, a nil meta and no
+// download, all visible through Wait.
 func TestPrefetchMetadataErrorSurfacedByWait(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -64,18 +52,9 @@ func TestPrefetchMetadataErrorSurfacedByWait(t *testing.T) {
 	prefetch.Close()
 }
 
-// TestPrefetchMetadataErrorAbsorbedInstallRecovers proves the recovery
-// behavior end to end: a one-shot (Count: 1) 404 on the version-detail
-// endpoint is consumed by the prefetcher's own metadata fetch, which runs
-// strictly before the install worker's since runInstallLevel always calls
-// prefetch.Wait(key) first. The install worker then observes a prefetch
-// failure (ok == true, prefetchErr != nil), logs it, and proceeds with a nil
-// meta and an empty prefetched handoff, so its own resolveMetadata call
-// reloads metadata from scratch - a fresh GET, since the failed prefetch
-// fetch was never cached - which this time succeeds because the fault was
-// already consumed. The install completes successfully, and exactly two
-// version-detail requests were made: the failed prefetch attempt and the
-// successful install attempt.
+// TestPrefetchMetadataErrorAbsorbedInstallRecovers pins that a one-shot 404
+// spent by the prefetch is absorbed: the install worker reloads metadata with
+// a fresh GET, since the failure was never cached, and installs.
 func TestPrefetchMetadataErrorAbsorbedInstallRecovers(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)

@@ -1,27 +1,6 @@
-// Package main is the go-galaxy-benchmark executable. It times
-// `ansible-galaxy collection install` against `go-galaxy install` over the
-// requirements files in testing/, records every run's wall clock in a JSON
-// report, and renders that report as a table or an SVG chart.
-//
-// Two entry points, and the split is the point: `run` performs the
-// measurement and prints the table, `show` re-renders a report already on
-// disk and touches neither the network nor the measured binaries. A chart can
-// therefore be redrawn without paying for the measurement again.
-//
-// Wall clock is the only thing recorded. Peak memory, bytes downloaded and
-// disk footprint are deliberately absent: they cannot be read off a stopwatch
-// around a child process, and inferring them would make the report claim more
-// than it measured.
-//
-// Three measurement rules are worth stating, because each exists for a
-// reason that is not obvious from the code alone. Every measured command
-// gets a closed stdin, because a tool that decides to prompt is otherwise
-// indistinguishable from one that has hung. A failing run is recorded and
-// left out of the mean rather than ending the series, so one flaky download
-// does not discard the four runs around it. Each tool gets its own cache, its
-// own install target and its own temporary directory inside a single working
-// tree, so neither tool can warm the other and both do their temporary work
-// on the same filesystem.
+// Package main is go-galaxy-benchmark: `run` times ansible-galaxy against
+// go-galaxy and writes every run's wall clock to a JSON report, and `show`
+// re-renders that report without touching the network or the measured tools.
 package main
 
 import (
@@ -101,15 +80,9 @@ func runCommand() *cli.Command {
 	}
 }
 
-// runMeasurement owns the progress printer for exactly as long as the
-// measurement lasts, and that scope is the point rather than a detail.
-//
-// The printer draws a spinner on a terminal and repaints its line until it is
-// closed. Every line the printer itself writes stops and restarts the spinner
-// around the write, so those survive - but the table is written straight to
-// stdout and never passes through the printer, so nothing would stop the
-// spinner for it. Closing here, before the caller renders anything, is what
-// keeps the final spinner frame from being drawn into the table's first line.
+// runMeasurement owns the progress printer only while measuring: the table is
+// written straight to stdout, so the spinner must be closed before the caller
+// renders it or its last frame lands in the table's first line.
 func runMeasurement(ctx context.Context, opts options) (*Report, error) {
 	out := progress.New(opts.verbose, opts.quiet)
 	defer out.Close()

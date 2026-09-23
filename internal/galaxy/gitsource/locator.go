@@ -18,20 +18,18 @@ const (
 	gitDirName       = ".git"
 )
 
-// Locator identifies a git collection source: the canonical repository URL,
-// the subdir inside it ("" for the root), and the commit it resolved to ("" for
-// a requirement that has not been resolved yet). Its String form is what the
-// program persists wherever a source is recorded.
+// Locator identifies a git collection source: canonical repository URL,
+// subdir ("" for the root) and resolved commit ("" before resolution); its
+// String form is persisted wherever a source is recorded.
 type Locator struct {
 	URL    string
 	Subdir string
 	Commit string
 }
 
-// String renders git+<url>#<subdir>[@<commit>]. The "#" is always written so
-// the grammar stays unambiguous: a canonical URL never contains "#", and a
-// subdir never contains "@" (ParseSubdir refuses it), so the commit is exactly
-// the suffix after the last "@".
+// String renders git+<url>#<subdir>[@<commit>], always writing "#" so parsing
+// is unambiguous: a canonical URL never holds "#" and a subdir never holds "@",
+// so the commit is exactly the suffix after the last "@".
 func (l Locator) String() string {
 	var b strings.Builder
 	b.WriteString(LocatorPrefix)
@@ -54,11 +52,9 @@ func IsLocator(s string) bool {
 	return strings.HasPrefix(s, LocatorPrefix)
 }
 
-// ParseLocator parses the String form back. It accepts only the canonical
-// spelling: the URL part must round-trip through ParseURL unchanged, the
-// subdir must satisfy ParseSubdir, and a commit, when present, must be forty
-// lowercase hex digits. Anything else is helpers.ErrInvalidGitLocator, which
-// is reachable only through a hand-edited record.
+// ParseLocator parses the canonical String form only: the URL must round-trip
+// through ParseURL, the subdir pass ParseSubdir and a commit be forty lowercase
+// hex digits; anything else is helpers.ErrInvalidGitLocator.
 func ParseLocator(s string) (Locator, error) {
 	if !IsLocator(s) {
 		return Locator{}, fmt.Errorf("%w: missing %q prefix", helpers.ErrInvalidGitLocator, LocatorPrefix)
@@ -84,11 +80,9 @@ func ParseLocator(s string) (Locator, error) {
 	return Locator{URL: rawURL, Subdir: subdir, Commit: commit}, nil
 }
 
-// ParseSubdir validates a #subdir fragment and returns it with surrounding
-// slashes stripped. Every "/"-separated element must be a safe path element
-// (helpers.IsPathElement), must not be ".git", and must not contain "@" or a
-// backslash: "@" is the locator's commit separator, and a backslash is a path
-// separator on the one platform helpers.IsPathElement does not cover it for.
+// ParseSubdir validates a #subdir and strips surrounding slashes: every element
+// must be a safe path element other than ".git", with no "@" (the locator's
+// commit separator) and no backslash (a separator on one platform).
 func ParseSubdir(s string) (string, error) {
 	subdir := strings.Trim(strings.TrimSpace(s), "/")
 	if subdir == "" {

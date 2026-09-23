@@ -18,14 +18,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// Tree returns the CLI command that prints the dep tree from a lockfile.
-//
-// Output layout (similar to `cargo tree` / `pip show --tree`):
-//
-//	requirements.yml
-//	├── community.general 11.5.0
-//	│   └── ansible.posix 2.0.0
-//	└── ansible.utils 6.0.2
+// Tree returns the CLI command that prints the resolved dependency tree from
+// the lockfile, one tree per requirements root, in the style of cargo tree.
 func Tree() *cli.Command {
 	return &cli.Command{
 		Name:    "tree",
@@ -50,13 +44,9 @@ func Tree() *cli.Command {
 	}
 }
 
-// loadRootFQDNs lists the collections the requirements file names as roots.
-// A Galaxy entry names one directly. A git entry names whatever its
-// repository held, which only the lockfile knows: every git entry locked from
-// the same repository under the entry's subdir (or an immediate child of it,
-// the multi-collection shape) is a root, or just the one the entry named
-// explicitly. A git entry the lockfile holds nothing for is reported under
-// its locator text, so the tree shows it as missing rather than dropping it.
+// loadRootFQDNs lists the collection and role roots of the requirements file.
+// A git or url entry's roots are the lockfile entries locked from it; with none,
+// it is listed by its name or locator so the tree shows it as missing.
 func loadRootFQDNs(reqPath string, lf *lockfile.File) ([]string, []string, error) {
 	file, err := requirements.Load(reqPath, "")
 	if err != nil {
@@ -103,10 +93,8 @@ func gitRootFQDNs(r requirements.CollectionRequirement, lf *lockfile.File) []str
 	return out
 }
 
-// urlRootFQDNs lists what a url entry named, which only the lockfile knows:
-// the one url entry locked from the same URL. A url entry the lockfile holds
-// nothing for is reported under its locator text, so the tree shows it as
-// missing rather than dropping it.
+// urlRootFQDNs lists the lockfile entry locked from a url entry's URL, or the
+// entry's locator text when there is none, so the tree shows it as missing.
 func urlRootFQDNs(r requirements.CollectionRequirement, lf *lockfile.File) []string {
 	if lf != nil {
 		for _, e := range lf.Collections {
@@ -131,15 +119,9 @@ func gitSubdirWithin(entrySubdir, rootSubdir string) bool {
 	return parent == rootSubdir
 }
 
-// printTree writes the header line (the actual requirements path passed in,
-// not a hardcoded name) followed by the dependency tree rooted at each entry
-// in roots.
-//
-// w is wrapped in safeout.NewWriter as the first statement so every write
-// this function and the helpers it calls (walkTree) make is sanitized,
-// regardless of what a lockfile entry's Name/Version/Deps contain - a
-// lockfile can be edited by hand or reach this command from an untrusted
-// source, and its fields are otherwise printed verbatim.
+// printTree writes the requirements path as the header, then one tree per
+// root. w is wrapped in safeout because a lockfile may be hand-edited or
+// untrusted, and its fields are otherwise printed verbatim.
 func printTree(w io.Writer, reqPath string, lf *lockfile.File, roots []string) {
 	w = safeout.NewWriter(w)
 	byFQDN := make(map[string]lockfile.Entry, len(lf.Collections))
@@ -197,11 +179,9 @@ func gitOrigin(entry lockfile.Entry) string {
 	return fmt.Sprintf(" (git %s%s @%s)", entry.Source, subdir, entry.Commit)
 }
 
-// printRoleTree writes the roles half of the tree under its own "roles:"
-// header, one tree per requirements root through the dependencies the
-// lockfile recorded. Nothing is printed for a file without roles, so a
-// collections-only tree reads exactly as it did before roles existed. The
-// writer is wrapped in safeout.NewWriter for the reason printTree's is.
+// printRoleTree writes the roles half under a "roles:" header, one tree per
+// root, and nothing when neither file has roles. w is wrapped in safeout for
+// the reason printTree's is.
 func printRoleTree(w io.Writer, lf *lockfile.File, roots []string) {
 	if len(lf.Roles) == 0 && len(roots) == 0 {
 		return

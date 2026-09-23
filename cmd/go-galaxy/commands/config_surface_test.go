@@ -16,11 +16,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// buildConfigFor runs config.BuildCollectionConfig(c) through a two-level
-// *cli.Command tree mirroring main.go's real wiring: global flags on the
-// root app (cliflags.CommonFlags), and subFlags on a single subcommand named
-// sub. The subcommand's action does no I/O; it only captures
-// BuildCollectionConfig's result for the caller to assert on.
+// buildConfigFor runs config.BuildCollectionConfig through a two-level command
+// tree mirroring main.go: cliflags.CommonFlags on the root and subFlags on the
+// subcommand sub, whose action only captures the result.
 func buildConfigFor(t *testing.T, sub string, subFlags []cli.Flag, args []string) (*config.Config, error) {
 	t.Helper()
 
@@ -48,14 +46,9 @@ func buildConfigFor(t *testing.T, sub string, subFlags []cli.Flag, args []string
 	return gotCfg, gotErr
 }
 
-// neutralizeAnsibleDiscovery isolates ansible.cfg discovery from whatever
-// happens to exist on the machine running these tests: it points
-// $ANSIBLE_CONFIG at a path that does not exist, redirects $HOME to an
-// empty temp directory, and changes into an empty temp directory, so
-// neither ./ansible.cfg nor ~/.ansible.cfg is picked up. It cannot control
-// /etc/ansible/ansible.cfg, so these tests only assert fields that were
-// explicitly set via a flag - those always win over any ansible.cfg value,
-// since explicit CLI/env beats ansible.cfg via cli.Command.IsSet.
+// neutralizeAnsibleDiscovery hides ./ansible.cfg and ~/.ansible.cfg. It cannot
+// hide /etc/ansible/ansible.cfg, so tests assert only values a flag or env
+// source set explicitly, which outrank any ansible.cfg value.
 func neutralizeAnsibleDiscovery(t *testing.T) {
 	t.Helper()
 	t.Setenv("ANSIBLE_CONFIG", filepath.Join(t.TempDir(), "absent.cfg"))
@@ -73,13 +66,9 @@ func assertConfigField[T comparable](t *testing.T, field string, got, want T) {
 	}
 }
 
-// TestCleanupConfigSurface locks in the documented BuildCollectionConfig
-// contract for cleanup: it registers only S3Flags (plus the global
-// CommonFlags), and BuildCollectionConfig still reads the full flag union
-// without erroring - install-only flags it never registers (server,
-// download-path, and so on) simply resolve to their zero values, which is
-// safe because cleanup never reads those Config fields (it consumes only
-// DryRun, CacheDir, and S3Cache; see internal/galaxy/cleanup).
+// TestCleanupConfigSurface pins that cleanup, registering only S3Flags and the
+// globals, still builds a Config: unregistered flags read as zero values, safe
+// because cleanup consumes only DryRun, CacheDir and S3Cache.
 func TestCleanupConfigSurface(t *testing.T) {
 	neutralizeAnsibleDiscovery(t)
 	cacheDir := t.TempDir()
@@ -114,12 +103,9 @@ func TestCleanupConfigSurface(t *testing.T) {
 	})
 }
 
-// TestCollectionCommandConfigSurface locks in the documented
-// BuildCollectionConfig contract for install/lock/warm/outdated: all four
-// register the CollectionFlags+S3Flags union (see install.go, lock.go,
-// warm.go, outdated.go), and the two of them that verify mount the signature
-// flags on top of it, so one run through "install" covers what all four share.
-// Every collection-level flag set here must round-trip into its Config field.
+// TestCollectionCommandConfigSurface pins that every flag of the
+// CollectionFlags+S3Flags union shared by install, lock, warm and outdated
+// round-trips into its Config field.
 func TestCollectionCommandConfigSurface(t *testing.T) {
 	neutralizeAnsibleDiscovery(t)
 	cacheDir := t.TempDir()
@@ -155,13 +141,9 @@ func TestCollectionCommandConfigSurface(t *testing.T) {
 	assertConfigField(t, "CacheDir", cfg.CacheDir, cacheDir)
 }
 
-// ansibleCfgWithServerList writes an ansible.cfg carrying a two-entry
-// server_list plus a section for each id, points $ANSIBLE_CONFIG at it, and
-// returns nothing: what the caller needs is the environment, not the path.
-//
-// It runs neutralizeAnsibleDiscovery first and then overrides $ANSIBLE_CONFIG,
-// because that helper deliberately points the variable at a file that does not
-// exist - which is the opposite of what these rows need.
+// ansibleCfgWithServerList writes an ansible.cfg with a two-entry server_list
+// and points $ANSIBLE_CONFIG at it, overriding the nonexistent path
+// neutralizeAnsibleDiscovery sets.
 func ansibleCfgWithServerList(t *testing.T) {
 	t.Helper()
 	neutralizeAnsibleDiscovery(t)
@@ -186,21 +168,9 @@ func serverIDs(cfg *config.Config) []string {
 	return ids
 }
 
-// TestAnsibleGalaxyServerDoesNotCollapseServerList pins one precedence rule:
-// ANSIBLE_GALAXY_SERVER is the env spelling of the [galaxy] server key, so a
-// configured server_list wins over it. Treating it as a source of the --server
-// flag instead would make it precedence rule 1 - exporting it would silently
-// reduce a two-server configuration to one anonymous server, and a private hub
-// would simply disappear, with no warning even under --verbose.
-//
-// The two control rows are what make the first one mean something: on the same
-// fixture, the two spellings that ARE rule 1 must still collapse the list, so
-// "the list survived" cannot be the fixture failing to collapse anything.
-//
-// KILLING MUTATION, run and reverted: restoring ANSIBLE_GALAXY_SERVER to the
-// server flag's Sources in cmd/go-galaxy/cliflags/flags.go. The first row fails:
-//
-//	config_surface_test.go:214: server ids = [], want [hub pub]
+// TestAnsibleGalaxyServerDoesNotCollapseServerList pins that
+// ANSIBLE_GALAXY_SERVER, like [galaxy] server, yields to a server_list; the
+// control rows show GO_GALAXY_SERVER and --server still collapse it.
 func TestAnsibleGalaxyServerDoesNotCollapseServerList(t *testing.T) {
 	t.Run("the ansible env spelling leaves server_list intact", func(t *testing.T) {
 		ansibleCfgWithServerList(t)
@@ -252,62 +222,9 @@ func aliasCfg(t *testing.T) *config.Config {
 	return cfg
 }
 
-// TestFlagNameEnvAliases pins the GO_GALAXY_<FLAG_NAME> env spelling on the
-// only two flags that lacked one: --timeout and --download-path, whose env
-// names were taken from ansible's own variables rather than derived from the
-// flag name. Each accepts the flag-name-shaped spelling in second
-// position, so the convention every other flag in cmd/go-galaxy/cliflags
-// follows has no exception, while the name that shipped first keeps the
-// precedence it already had.
-//
-// Three pairs of rows, each pair one path row and one timeout row. The
-// pairs assert, in order, that the new name is read at all, that it does
-// not outrank the name that shipped first, and that it does outrank the
-// ANSIBLE_ spelling behind it. Both ordering directions are load-bearing:
-// a chain carrying the new name first still passes the third pair, and one
-// carrying it last still passes the second, so neither pins it alone.
-//
-// Two value choices are load-bearing and must survive a later tidy-up. The
-// timeout values must not be 30s, since that is helpers.FetchDefaultTimeout
-// and a row asserting it would pass with no env source read at all; the path
-// values must not be ".collections", the --download-path default, for the
-// identical reason, and must contain no ":", since splitSearchPath
-// POSIX-splits the resolved value and would keep only what precedes the
-// first one. t.TempDir() satisfies both.
-//
-// No row's asserted value depends on the /etc/ansible/ansible.cfg that
-// neutralizeAnsibleDiscovery cannot control: each path row sets its flag
-// through an env source, so pickConfigValue never reaches its ansible arm,
-// and no ansible.cfg key feeds --timeout - applyTimeout reads it directly.
-//
-// KILLING MUTATIONS, all run and reverted, all on the Sources chains of the
-// timeout and download-path flags in cmd/go-galaxy/cliflags. Quoted under
-// TMPDIR=/tmp, which keeps the longest line here at 139 columns against
-// lll's 140; the digits t.TempDir() appends differ on every run.
-//
-// M1, both chains cut back to their pre-change two-name form. It fails four
-// rows rather than only the two that set the new spelling alone, because a
-// row pitting it against the ANSIBLE_ spelling loses to that spelling once
-// it is no longer a source at all:
-//
-//	config_surface_test.go:321: DownloadPath = .collections, want /tmp/TestFlagNameEnvAliases82068219/001/b
-//	config_surface_test.go:337: DownloadPath = /tmp/TestFlagNameEnvAliases82068219/001/c, want /tmp/TestFlagNameEnvAliases82068219/001/b
-//	config_surface_test.go:344: Timeout = 30s, want 1m30s
-//	config_surface_test.go:360: Timeout = 1m0s, want 1m30s
-//
-// M2, positions 1 and 2 swapped in both chains. Only the two rows pitting
-// the new name against the name that shipped first fail, which is what makes
-// them a pin on ordering rather than on membership:
-//
-//	config_surface_test.go:329: DownloadPath = /tmp/TestFlagNameEnvAliases3589060566/001/b, want /tmp/TestFlagNameEnvAliases3589060566/001/a
-//	config_surface_test.go:352: Timeout = 1m30s, want 45s
-//
-// M3, the new name demoted to last in both chains. Only the two rows pitting
-// it against the ANSIBLE_ spelling fail, so second position is pinned from
-// both sides and not merely membership in the chain:
-//
-//	config_surface_test.go:337: DownloadPath = /tmp/TestFlagNameEnvAliases4102758397/001/c, want /tmp/TestFlagNameEnvAliases4102758397/001/b
-//	config_surface_test.go:360: Timeout = 1m0s, want 1m30s
+// TestFlagNameEnvAliases pins GO_GALAXY_DOWNLOAD_PATH and GO_GALAXY_TIMEOUT
+// second in their chains, below the older name and above the ANSIBLE_ one. The
+// values avoid the flag defaults, and paths avoid ":", which the path split cuts.
 func TestFlagNameEnvAliases(t *testing.T) {
 	base := t.TempDir()
 	pathA := filepath.Join(base, "a")
@@ -361,34 +278,9 @@ func TestFlagNameEnvAliases(t *testing.T) {
 	})
 }
 
-// TestAnsibleRequirementsFileEnvIsStillRead pins a deliberate exception rather
-// than a compatibility guarantee. ANSIBLE_GALAXY_REQUIREMENTS_FILE sits in
-// ansible's namespace without being an ansible name: ansible-core declares no
-// requirements-file setting, and ansible-galaxy takes that path only as
-// -r/--role-file. The ANSIBLE_ prefix invites an assumption of parity that
-// does not hold here, so a cleanup acting on that assumption would delete
-// this one to restore parity - and it would not fail the pipelines that set
-// it, it would silently install whatever requirements.yml the working
-// directory happens to hold. The keep is the decision; this test is what makes
-// dropping it loud.
-//
-// The second row states the order alongside it, so the exception cannot be
-// mistaken for a promotion: go-galaxy's own name still wins.
-//
-// KILLING MUTATION, run and reverted, on the requirements-file Sources chain
-// in cmd/go-galaxy/cliflags - drop envRequirementsFileAnsible from it, which is
-// exactly the "restore parity" edit this test exists to stop:
-//
-//	config_surface_test.go:402: RequirementsFile = requirements.yml, want /from-ansible.yml
-//
-// The second row survives that mutation, since GO_GALAXY_REQUIREMENTS_FILE is
-// untouched by it - which is why the first row, not the pair, is the pin.
-//
-// Both paths are literals rather than t.TempDir() values, as the surface row
-// above already does for this same field: nothing between the flag and
-// cfg.RequirementsFile opens the path, so a real file buys nothing, and a
-// literal keeps the quoted failure above reproducible instead of carrying
-// digits that change on every run.
+// TestAnsibleRequirementsFileEnvIsStillRead pins a deliberate exception:
+// ANSIBLE_GALAXY_REQUIREMENTS_FILE, no ansible name, is still read below
+// GO_GALAXY_REQUIREMENTS_FILE; dropping it would silently install another file.
 func TestAnsibleRequirementsFileEnvIsStillRead(t *testing.T) {
 	const (
 		ansiblePath  = "/from-ansible.yml"
@@ -421,11 +313,9 @@ type workersEnvRow struct {
 	wantWarn bool
 }
 
-// workersWarning returns the queued configuration warning naming --workers, or
-// "" when the run queued none. It matches on the flag name the message carries
-// rather than on a position in the slice - applyWorkers happens to queue ahead
-// of every other config-load warning, and this assertion does not rest on that.
-// "--download-workers" does not match: its only "--" is followed by "download".
+// workersWarning returns the queued warning naming --workers, or "" when none,
+// matching the flag name rather than a slice position; "--download-workers"
+// does not match.
 func workersWarning(cfg *config.Config) string {
 	for _, w := range cfg.Warnings {
 		if strings.Contains(w, "--workers") {
@@ -435,47 +325,9 @@ func workersWarning(cfg *config.Config) string {
 	return ""
 }
 
-// TestWorkersEnvShapes pins how each GO_GALAXY_WORKERS shape resolves, driven
-// through the real cliflags.CollectionFlags() rather than a hand-copied flag -
-// which is the whole reason this test exists alongside TestApplyWorkers
-// (internal/galaxy/config), whose fixture builds its own --workers flag and so
-// can only pin the predicate, never the production flag's fields.
-//
-// Every want naming the derived default is computed from
-// galaxyhelpers.DefaultInstallWorkers rather than hand-spelled, the opposite
-// of TestApplyWorkers' rows, and forced rather than a matter of taste: this
-// surface cannot fabricate a procs value, since BuildCollectionConfig reads
-// runtime.GOMAXPROCS(0) itself, so a hand-spelled want would only pin
-// whichever CPU count the test machine happens to permit.
-//
-// The "1" row is the positive control for the empty-value row specifically:
-// without it, "the declared-but-empty variable was honored" would be
-// indistinguishable from "this harness never reads the environment at all",
-// since a harness ignoring the environment entirely would resolve that row to
-// the very same derived default. 1 is the value it is because it is the only
-// one both inside the accepted range on every machine - the ceiling is at
-// least 2 - and never equal to the derived default, whose own floor is 2.
-//
-// The "1000000" row assumes no machine running this suite permits a million
-// CPUs, which is what makes it an above-the-ceiling row rather than an
-// ordinary accepted value.
-//
-// KILLING MUTATIONS, both run and reverted.
-//
-// M-A, the `Value` field deleted outright from the workers IntFlag in
-// cmd/go-galaxy/cliflags. Only the empty-value row fails, and it fails on its
-// warning assertion rather than its worker count: with no Value that row reads
-// 0, which applyWorkers replaces with the same derived default the row already
-// wanted, so the warning is the only observable difference:
-//
-//	config_surface_test.go:502: warned about --workers = true, want false
-//
-// M-B, the `if !c.IsSet("workers")` branch deleted from applyWorkers
-// (internal/galaxy/config). Not one row of the table fails - none of them is
-// the unset shape - and the cleanup subtest at the end fails instead, which is
-// exactly the coverage that subtest exists to carry:
-//
-//	config_surface_test.go:523: warned about --workers, want no such warning
+// TestWorkersEnvShapes pins how each GO_GALAXY_WORKERS shape resolves through
+// the real cliflags.CollectionFlags(), which TestApplyWorkers cannot reach; "1"
+// is the positive control, in range on every machine and never the default.
 func TestWorkersEnvShapes(t *testing.T) {
 	derived := galaxyhelpers.DefaultInstallWorkers(runtime.GOMAXPROCS(0))
 	rows := []workersEnvRow{
@@ -507,11 +359,8 @@ func TestWorkersEnvShapes(t *testing.T) {
 		})
 	}
 
-	// The cleanup shape, on the real flag set rather than a fixture: no
-	// --workers flag is registered at all, so no source supplied a value and
-	// nothing may be warned about one. Kept here rather than in
-	// TestCleanupConfigSurface because what it pins belongs to this test's
-	// subject - it is the only place in this package M-B is observable.
+	// The cleanup shape on the real flag set: with no --workers flag registered,
+	// no source supplied a value, so nothing may be warned about one.
 	t.Run("a command registering no workers flag warns about none", func(t *testing.T) {
 		neutralizeAnsibleDiscovery(t)
 

@@ -52,11 +52,9 @@ func (c *countingProvider) Universe(ctx context.Context, pkg string) ([]solver.V
 	return c.Provider.Universe(ctx, pkg)
 }
 
-// TestProviderLazinessAvoidsVersionsList drives a full Solve against a
-// MetadataProvider whose only root requirement is satisfied by the
-// registry's own highest_version, and asserts Universe is never called and
-// the fake server never receives a versions-list request: the highest_version
-// probe alone must be enough to decide the package.
+// TestProviderLazinessAvoidsVersionsList pins that a root satisfied by the
+// registry's highest_version is decided by that probe alone: Universe is
+// never called and no versions-list request is made.
 func TestProviderLazinessAvoidsVersionsList(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -80,12 +78,9 @@ func TestProviderLazinessAvoidsVersionsList(t *testing.T) {
 	}
 }
 
-// TestProviderDependenciesWarmPinIsZeroNetwork warms the deps cache under
-// the exact scoped key Dependencies itself would use - scoped to the single
-// configured server, which boundBaseFor resolves with no network access
-// since serverCandidates already returns exactly one candidate for it - then
-// asserts Dependencies serves it without ever touching the (otherwise-empty,
-// would-404) fake server.
+// TestProviderDependenciesWarmPinIsZeroNetwork pins that a deps-cache entry
+// under the key scoped to the single configured server is served with no
+// request at all, since boundBaseFor needs no network for one candidate.
 func TestProviderDependenciesWarmPinIsZeroNetwork(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -106,10 +101,9 @@ func TestProviderDependenciesWarmPinIsZeroNetwork(t *testing.T) {
 	}
 }
 
-// TestProviderOfflineMissReturnsErrOfflineMode drives Dependencies and
-// Universe with an offline HTTP client and an empty cache, and asserts both
-// surface errors.Is(err, helpers.ErrOfflineMode) rather than any other
-// error shape.
+// TestProviderOfflineMissReturnsErrOfflineMode pins that Dependencies and
+// Universe on an offline client with an empty cache both fail with
+// helpers.ErrOfflineMode.
 func TestProviderOfflineMissReturnsErrOfflineMode(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{Server: "http://offline.example.invalid", Offline: true}
@@ -124,11 +118,9 @@ func TestProviderOfflineMissReturnsErrOfflineMode(t *testing.T) {
 	}
 }
 
-// TestProviderMalformedDependencyKeyAborts registers a version whose
-// dependency map carries a key that is not a valid "ns.name" fqdn, and
-// asserts Dependencies reports helpers.ErrInvalidDependencyKey directly, and
-// that a full Solve depending on it aborts with that same error rather than
-// producing a *solver.ConflictError.
+// TestProviderMalformedDependencyKeyAborts pins that a dependency key that
+// is not "ns.name" fails Dependencies with ErrInvalidDependencyKey and
+// aborts a full Solve with it, rather than yielding a *solver.ConflictError.
 func TestProviderMalformedDependencyKeyAborts(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -150,11 +142,9 @@ func TestProviderMalformedDependencyKeyAborts(t *testing.T) {
 	}
 }
 
-// TestBuildSolverUniverseIsDeterministic feeds buildSolverUniverse the same
-// version set in several different (shuffled) input orders, including an
-// equal-precedence tie (1.0.0 vs 1.0.0+build), and asserts every call
-// produces the exact same descending order regardless of input order - the
-// raw versions list can arrive in any order over the wire.
+// TestBuildSolverUniverseIsDeterministic pins that buildSolverUniverse yields
+// one descending order for every input order, the equal-precedence
+// 1.0.0 vs 1.0.0+build tie included.
 func TestBuildSolverUniverseIsDeterministic(t *testing.T) {
 	t.Parallel()
 	orderings := [][]string{
@@ -200,11 +190,9 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// TestProviderUnknownPackageIsNotAnError registers no version at all for
-// "acme.ghost" and asserts Highest/Universe both report the solver.Provider
-// "unknown package" contract (ok=false / nil slice, both with a nil error),
-// and that a full Solve requiring it produces a *solver.ConflictError (not
-// an abort) whose proof mentions the package has no published versions.
+// TestProviderUnknownPackageIsNotAnError pins that a package with no
+// versions reports ok=false and a nil universe with nil errors, and that a
+// Solve requiring it fails with a "no published versions" ConflictError.
 func TestProviderUnknownPackageIsNotAnError(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -234,11 +222,9 @@ func TestProviderUnknownPackageIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestNoDepsProviderReturnsEmptyDependencies pins noDepsProvider's contract
-// in isolation (Dependencies always empty, never delegating), and then
-// end-to-end: a full Solve wrapped in NewNoDepsProvider against a package
-// that really does declare a dependency resolves only the root and never
-// adds the dependency edge.
+// TestNoDepsProviderReturnsEmptyDependencies pins that noDepsProvider reports
+// no dependencies without delegating, and that a Solve through it resolves
+// only the root of a package that does declare a dependency.
 func TestNoDepsProviderReturnsEmptyDependencies(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
@@ -269,12 +255,9 @@ func TestNoDepsProviderReturnsEmptyDependencies(t *testing.T) {
 	}
 }
 
-// TestProviderHighestEmptyFallsBackToUniverse serves a root metadata
-// document whose highest_version is present but empty (a shape fakegalaxy
-// itself never produces, since it always fills highest_version once a
-// version exists), and asserts Highest reports ok=false while Universe
-// still succeeds against the same collection's versions list - the
-// documented fallback path.
+// TestProviderHighestEmptyFallsBackToUniverse pins that an empty
+// highest_version, a shape fakegalaxy never serves, makes Highest report
+// ok=false while Universe still reads the versions list.
 func TestProviderHighestEmptyFallsBackToUniverse(t *testing.T) {
 	t.Parallel()
 	srv := newEmptyHighestVersionServer(t)
@@ -297,10 +280,8 @@ func TestProviderHighestEmptyFallsBackToUniverse(t *testing.T) {
 	}
 }
 
-// newEmptyHighestVersionServer starts a minimal httptest.Server answering
-// the v3 root-metadata, versions-list, and version-detail routes for
-// acme/widgets by hand, with highest_version deliberately left empty - the
-// one shape fakegalaxy's own harness cannot produce.
+// newEmptyHighestVersionServer serves acme/widgets' v3 root metadata, with
+// highest_version left empty, and its versions list; anything else 404s.
 func newEmptyHighestVersionServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
@@ -327,15 +308,9 @@ func newEmptyHighestVersionServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// TestIsUnknownPackageErrorClassification pins isUnknownPackageError's
-// contract against the two new classified sentinels: a 401/403 wrapped in
-// helpers.ErrGalaxyAuthFailed and a retryable status wrapped in
-// helpers.ErrGalaxyServerUnavailable must both fail this check (so they
-// abort the run rather than silently becoming "unknown package"), while a
-// bare 404 and helpers.ErrLoadMetadataFailed - the two forms
-// loadRootMetadataCached's own advance-or-abort walk can still produce -
-// keep passing it. A future edit that let a 404 slip into the
-// unavailable/auth branch would invert this test.
+// TestIsUnknownPackageErrorClassification pins that only a bare 404 and
+// ErrLoadMetadataFailed count as an unknown package, while an auth failure
+// or an unavailable server must abort the run instead.
 func TestIsUnknownPackageErrorClassification(t *testing.T) {
 	t.Parallel()
 	notFound := &cacheManager.HTTPStatusError{Code: http.StatusNotFound}

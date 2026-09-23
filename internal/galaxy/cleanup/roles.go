@@ -24,14 +24,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// installedRole is one role directory this tool installed, found under a
-// project's recorded roles path by its extract marker - the one piece of
-// on-disk evidence that says "this tool wrote this", which neither an
-// ansible-galaxy install (meta/.galaxy_install_info alone) nor a hand-written
-// role carries. Source, Version, ArtifactSHA and Deps come from the snapshot's
-// installed-role record matched by install path; a directory with a marker
-// but no record is removable but has no artifact to purge and no
-// dependencies to keep alive.
+// installedRole is a role directory under a recorded roles path carrying this
+// tool's extract marker, the only evidence this tool wrote it, joined with the
+// snapshot's installed-role record for its path when one exists.
 type installedRole struct {
 	Name        string
 	InstallPath string
@@ -42,19 +37,14 @@ type installedRole struct {
 	Deps        []string
 }
 
-// rolesByName accumulates every on-disk copy of a role name across the
-// registered projects' roles paths, as installedByKey does for a collection
-// key: a name reachable from any project keeps every copy, and an
-// unreachable one has every copy removed in one run.
+// rolesByName holds every on-disk copy of a role name across the recorded
+// roles paths: a name any project reaches keeps every copy, and an unreachable
+// one loses every copy in one run.
 type rolesByName map[string][]installedRole
 
-// scanProjectRoles indexes the roles this tool installed under a project's
-// recorded roles path. A record with no roles path - written before roles
-// existed, or by an older binary since - contributes nothing and is never
-// scanned: the recorded path is the only directory this run may reason
-// about, and guessing a sibling would retarget a delete at a directory the
-// operator never configured. The listing goes through an os.Root at the
-// roles path, so a symlink planted under it is never followed out.
+// scanProjectRoles indexes the marked roles under a project's recorded roles
+// path, through an os.Root at it. A record with no roles path is never scanned:
+// guessing one would aim a delete at a directory nobody configured.
 func scanProjectRoles(out output.Printer, projectPath string, project store.ProjectRecord, st *store.Store, byName rolesByName) error {
 	if project.RolesPath == "" {
 		out.Debugf("project %q: no roles path recorded; roles are not scanned", projectPath)
@@ -82,10 +72,9 @@ func scanProjectRoles(out output.Printer, projectPath string, project store.Proj
 	return nil
 }
 
-// scannedRole turns one directory entry of a roles path into an installed
-// role when it is one: a directory with a role install name and this
-// tool's marker, joined with the snapshot's record for its path when one
-// exists.
+// scannedRole returns the installed role for a roles path entry that is a
+// directory with a role install name and this tool's marker, joined with the
+// snapshot record for its path when one exists.
 func scannedRole(root *os.Root, rolesPath string, e fs.DirEntry, records map[string]store.InstalledRoleEntry) (installedRole, bool) {
 	if !e.IsDir() || !helpers.IsRoleInstallName(e.Name()) {
 		return installedRole{}, false
@@ -107,20 +96,16 @@ func scannedRole(root *os.Root, rolesPath string, e fs.DirEntry, records map[str
 		}
 		return inst, true
 	}
-	// Without a record - the snapshot dropped at a schema bump, or a roles
-	// path recorded under another spelling - the dependencies are read from
-	// the installed role's own meta, so reachability through a dependency
-	// never rests on the snapshot alone. The artifact cannot be purged
-	// without the record's locator and version, and is left to the sweep.
+	// Without a record the dependencies come from the role's own meta, so
+	// reachability never rests on the snapshot alone; the artifact, whose key
+	// needs the record, is not purged.
 	inst.Deps = installedRoleDeps(root, e.Name())
 	return inst, true
 }
 
-// installedRoleDeps reads the install names a role's meta depends on, from
-// meta/main.yml and meta/requirements.yml under the role directory, judged
-// through the same grammar the install judged them with; a dependency the
-// install would have skipped is skipped here too, and an unreadable meta
-// yields no dependencies rather than a failed run.
+// installedRoleDeps reads the install names a role's meta/main.yml and
+// meta/requirements.yml depend on, under the install's own grammar; an
+// unreadable meta yields no dependencies rather than a failed run.
 func installedRoleDeps(root *os.Root, name string) []string {
 	var specs []gitsource.RoleDependency
 	meta := path.Join(name, "meta")
@@ -215,11 +200,9 @@ func markReachableRoles(roots []string, byName rolesByName, reachable map[string
 	}
 }
 
-// removeUnusedRoles removes every role directory no project reaches, its
-// cached artifact when the record names one, and its snapshot record, in
-// sorted name order so a failure leaves the same partial result on disk
-// every time. Nothing without this tool's marker is ever in byName, so
-// nothing without it is ever removed.
+// removeUnusedRoles removes every unreached role directory, its recorded
+// artifact and its snapshot record, in sorted order for a repeatable partial
+// result; only marked directories are ever in byName.
 func removeUnusedRoles(
 	ctx context.Context,
 	cfg *config.Config,
@@ -255,10 +238,9 @@ func removeUnusedRoles(
 	return removed, nil
 }
 
-// removeRole deletes one role directory through an os.Root at its roles
-// path, re-validating the name it is about to join, and purges the cached
-// artifact the record named. The root is opened fresh rather than kept from
-// the scan so a roles path swapped in between is refused by the kernel.
+// removeRole deletes one role directory through a fresh os.Root at its roles
+// path, re-validating the name, and purges the recorded artifact; a fresh root
+// refuses a roles path swapped in since the scan.
 func removeRole(ctx context.Context, inst installedRole, artifacts cacheManager.ArtifactStore) error {
 	if !helpers.IsRoleInstallName(inst.Name) {
 		return fmt.Errorf("%w: role %q", helpers.ErrUnsafeRemovalPath, inst.Name)

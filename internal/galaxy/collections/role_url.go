@@ -15,9 +15,8 @@ import (
 )
 
 // urlRolePinKeyPrefix scopes a url role's pin in the shared role_pins
-// bucket: "url\n" plus the canonical URL. One newline makes the key space
-// provably disjoint from a git pin's (url\nref\nsubdir - two newlines) and a
-// Galaxy pin's (galaxy\nname\nversion - two newlines).
+// bucket; its one newline keeps the key space disjoint from git and Galaxy
+// pin keys, which carry two.
 const urlRolePinKeyPrefix = "url\n"
 
 // urlRoleRequest is a url role requirement with its parts judged: the
@@ -45,12 +44,9 @@ func newURLRoleRequest(req requirements.RoleRequirement) (urlRoleRequest, error)
 	}, nil
 }
 
-// resolveURLRole resolves a url role the way expandURLRoot resolves a url
-// collection: the recorded pin is replayed when the cache policy allows a
-// read and the repacked artifact is still cached; a miss under --offline is
-// refused; --refresh re-downloads, since a URL has no cheaper probe; else
-// the tarball is downloaded and repacked into this tool's canonical role
-// artifact.
+// resolveURLRole resolves a url role as expandURLRoot does a url collection:
+// replay the pin while its artifact is cached, unless --refresh without
+// --offline forces a download; refuse a miss under --offline.
 func resolveURLRole(ctx context.Context, deps collectionDeps, req requirements.RoleRequirement) (rolePin, error) {
 	ureq, err := newURLRoleRequest(req)
 	if err != nil {
@@ -70,10 +66,9 @@ func resolveURLRole(ctx context.Context, deps collectionDeps, req requirements.R
 	return acquireURLRole(ctx, deps, ureq, policy)
 }
 
-// replayURLRolePin turns a recorded pin into a rolePin, re-validating what
-// it carries and requiring the repacked artifact it names to still be in
-// the store, for the reasons replayRolePin gives. The zero rolePin reports
-// "not replayable".
+// replayURLRolePin is replayRolePin for a url pin: re-validated, and
+// replayed only while its repacked artifact is stored; the zero rolePin
+// reports "not replayable".
 func replayURLRolePin(ctx context.Context, deps collectionDeps, ureq urlRoleRequest, pin store.RolePinEntry) (rolePin, error) {
 	if !helpers.IsSHA256Hex(pin.SHA256) {
 		return rolePin{}, fmt.Errorf("%w: recorded role pin for %s names sha256 %q",
@@ -106,9 +101,8 @@ func replayURLRolePin(ctx context.Context, deps collectionDeps, ureq urlRoleRequ
 }
 
 // acquireURLRole downloads the tarball, repacks it into the canonical role
-// artifact through tartree and rolebuild, commits or keeps the artifact, and
-// records the pin. The origin sha256 - the bytes as served, before the
-// repack - is the pin: it is what a later run's re-download is compared to.
+// artifact and records the pin: the origin bytes' sha256 before the repack,
+// which a later re-download is compared to.
 func acquireURLRole(ctx context.Context, deps collectionDeps, ureq urlRoleRequest, policy cacheManager.Policy) (rolePin, error) {
 	runtime := deps.runtime
 	runtime.Output.Printf("Fetching role %s from %s", ureq.name, ureq.display)
@@ -188,10 +182,9 @@ func tempDirOf(deps collectionDeps) func() string {
 // tell two artifacts apart in a directory listing without dominating it.
 const urlRoleVersionLen = helpers.ArtifactKeyFingerprintLen
 
-// urlRoleVersion is the concrete version a url role installs as: the label
-// the requirement asked for, else the leading urlRoleVersionLen hex digits
-// of the origin sha256 - content-derived, stable across runs, and a legal
-// role version.
+// urlRoleVersion is the version a url role installs as: the label asked
+// for, else the leading urlRoleVersionLen hex digits of the origin sha256,
+// stable across runs and a legal role version.
 func urlRoleVersion(requested, sha string) string {
 	if requested != "" {
 		return requested
@@ -202,14 +195,9 @@ func urlRoleVersion(requested, sha string) string {
 	return sha[:urlRoleVersionLen]
 }
 
-// urlRoleFetchToCache re-downloads a pinned url role's tarball and repacks
-// it, the install-time counterpart of urlFetchToCache: reached after a
-// --dry-run discovery, on a --frozen run whose cached artifact was evicted,
-// or through a cache miss on a shared cache. The origin now serving bytes
-// with a different sha256 than the pin is
-// helpers.ErrURLArtifactSHA256Mismatch: the artifact this tool would install
-// is a repack, so the refusal names the origin bytes the pin actually
-// covers.
+// urlRoleFetchToCache re-downloads and repacks a pinned url role on an
+// install-time cache miss; origin bytes whose sha256 differs from the pin
+// fail as helpers.ErrURLArtifactSHA256Mismatch before any repack.
 func urlRoleFetchToCache(ctx context.Context, deps installDeps, r resolvedRole, useCache bool) (downloadResult, error) {
 	loc, err := urlsource.ParseLocator(r.Source)
 	if err != nil {

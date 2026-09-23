@@ -16,11 +16,9 @@ const (
 	urlKeysOldSHA   = "0000000000000000000000000000000000000000000000000000000000000000"
 )
 
-// urlKeysStore builds the store the urlRootKeys rows share. Installed and
-// recorded: acme.app@1.2.3 from the tarball URL at the pinned sha,
-// acme.app@1.0.0 from the same URL at an older sha (only a locator scan can
-// see it), and acme.other@1.0.0 from another URL. acme.ghost@9.9.9 is in
-// the pin but not installed, so the pin branch must drop it.
+// urlKeysStore builds the store the urlRootKeys rows share: acme.app@1.2.3 at
+// the pinned sha, acme.app@1.0.0 from the same URL at an older sha that only
+// the locator scan sees, and acme.other@1.0.0 from another URL.
 func urlKeysStore(withPin bool) (*store.Store, map[string][]installedCollection) {
 	st := store.New()
 	record := func(key, url, sha string) {

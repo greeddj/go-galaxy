@@ -12,9 +12,8 @@ import (
 )
 
 // fakeGitRole is the role a fake repository carries at one commit: its
-// meta/main.yml dependencies in the shapes ansible writes, an optional
-// galaxy_info.role_name, and extra files beside the minimal tree every role
-// gets (meta/main.yml, tasks/main.yml, defaults/main.yml).
+// meta/main.yml dependencies as ansible writes them, an optional role_name, and
+// extra files beside the minimal meta, tasks and defaults tree.
 type fakeGitRole struct {
 	files    map[string]string
 	roleName string
@@ -61,10 +60,9 @@ func (r *fakeGitRepo) addRole(commit string, role fakeGitRole) {
 	r.roles[commit] = role
 }
 
-// AcquireRole resolves the ref like Acquire and builds the role the commit
-// carries through the real rolebuild.Build, so the artifact the pipeline
-// caches and extracts is byte for byte what production would build from the
-// same tree.
+// AcquireRole resolves the ref like Acquire and builds the commit's role
+// through the real rolebuild.Build, so the cached artifact is byte for byte
+// what production would build from the same tree.
 func (c *fakeGitClient) AcquireRole(ctx context.Context, req gitsource.RoleRequest) (gitsource.RoleResult, error) {
 	c.mu.Lock()
 	c.roleAcquires++

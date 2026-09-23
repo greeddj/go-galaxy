@@ -27,10 +27,9 @@ const (
 	refsHeadsPrefix = "refs/heads/"
 	refsTagsPrefix  = "refs/tags/"
 	commitHexLen    = 40
-	// abbreviatedMinLen is the shortest all-hex name this tool reads as a
-	// shortened commit rather than as a branch or tag name. Git itself
-	// abbreviates to seven digits by default, and a shorter hex run is far
-	// more likely to be a name someone chose.
+	// abbreviatedMinLen is the shortest all-hex name read as a shortened
+	// commit rather than a branch or tag: git abbreviates to seven digits,
+	// and a shorter hex run is more likely a chosen name.
 	abbreviatedMinLen = 7
 )
 
@@ -47,13 +46,9 @@ func (r Ref) IsCommit() bool { return r.Kind == RefCommit }
 // String renders the canonical name.
 func (r Ref) String() string { return r.Name }
 
-// ParseRef classifies s. An empty, "*" or "HEAD" value is HEAD; forty hex
-// digits are a commit; seven to thirty-nine hex digits are refused as an
-// abbreviated commit (helpers.ErrGitAbbreviatedCommit - a branch spelled in
-// hex stays reachable as refs/heads/<name>); a refs/heads/ or refs/tags/
-// spelling is qualified; anything else is an unqualified name. Names are
-// checked against git's own check-ref-format rules, so nothing this tool
-// would ask a remote for is a value git itself would refuse to create.
+// ParseRef classifies s: empty, "*" or "HEAD" is HEAD; forty hex digits a
+// commit; seven to thirty-nine hex digits are refused as abbreviated; refs/heads/
+// or refs/tags/ is qualified; else unqualified, all under git's check-ref-format.
 func ParseRef(s string) (Ref, error) {
 	name := strings.TrimSpace(s)
 	if name == "" || name == "*" || name == headRef {
@@ -128,11 +123,9 @@ func isHex(s string) bool {
 	return true
 }
 
-// checkRefFormat applies git's check-ref-format rules to a fully qualified
-// name: no component may start with "." or end with ".lock"; no "..", "@{",
-// "//", leading or trailing "/", trailing "."; no control rune, space, or any
-// of "~^:?*[\"; the name is not "@"; and no component starts with "-", which
-// git refuses for branches and tags because it reads as an option.
+// checkRefFormat applies git's check-ref-format rules to a qualified name,
+// including git's refusal of a component starting with "-" (it reads as an
+// option), so nothing asked of a remote is a ref git would refuse to create.
 func checkRefFormat(name string) error {
 	reject := func(reason string) error {
 		return fmt.Errorf("%w: %q: %s", helpers.ErrInvalidGitRef, name, reason)

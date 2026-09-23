@@ -1,13 +1,8 @@
 package collections
 
-// This file proves buildPrefetchTasks's parallel, DownloadWorkers-bounded
-// scan: that it actually runs concurrently rather than sequentially (Test A),
-// and that the concurrent scan schedules the exact same set a sequential
-// scan would, including the fail-open-on-Has-error case and the
-// already-installed skip (Test B). Both stubs here only need to satisfy
-// cacheManager.ArtifactStore's Has probe - Fetch, TempFile, Commit, and
-// Delete are never called by buildPrefetchTasks, so they return a sentinel
-// error to make an accidental call fail loudly instead of silently.
+// Tests for buildPrefetchTasks' parallel, DownloadWorkers-bounded scan and
+// the set it schedules. The stubs serve only Has: every other ArtifactStore
+// method returns errStubNotImplemented so an accidental call fails loudly.
 
 import (
 	"context"
@@ -32,14 +27,9 @@ import (
 // instead of returning a misleadingly successful zero value.
 var errStubNotImplemented = errors.New("stub: method not implemented")
 
-// concurrentProbeArtifacts is a stub cacheManager.ArtifactStore whose Has
-// blocks every caller until `target` probes are simultaneously in flight,
-// recording peak observed concurrency along the way. This lets a test
-// distinguish a genuinely parallel scan from a sequential one: a sequential
-// scan never has more than one Has call in flight, so it never reaches
-// `target` and never unblocks on its own, escaping only via the caller's
-// ctx.Done() - which is exactly the timeout a broken (sequential)
-// implementation would hit.
+// concurrentProbeArtifacts is a stub ArtifactStore whose Has blocks until
+// `target` probes are in flight at once, recording peak concurrency; a
+// sequential scan never reaches target and escapes only via ctx.Done().
 type concurrentProbeArtifacts struct {
 	gate       chan struct{}
 	mu         sync.Mutex
@@ -49,11 +39,9 @@ type concurrentProbeArtifacts struct {
 	gateClosed bool
 }
 
-// Has blocks until concurrentProbeArtifacts.target calls are simultaneously
-// in flight (or ctx is done), tracking peak concurrency in a.peak. The gate
-// closes only once: with Workers < len(collections), inFlight can climb back
-// up to target in a later batch too, and closing an already-closed channel
-// would panic.
+// Has blocks until target calls are in flight at once (or ctx is done),
+// tracking a.peak. The gate closes only once: inFlight can reach target again
+// in a later batch, and closing a closed channel would panic.
 func (a *concurrentProbeArtifacts) Has(ctx context.Context, _ string) (bool, error) {
 	a.mu.Lock()
 	a.inFlight++
@@ -97,25 +85,9 @@ func (a *concurrentProbeArtifacts) Delete(context.Context, string) error {
 	return errStubNotImplemented
 }
 
-// TestBuildPrefetchTasksProbesConcurrentlyBoundedByDownloadWorkers proves
-// buildPrefetchTasks fans its Has probes out in parallel, bounded by
-// cfg.DownloadWorkers - not cfg.Workers, which this fixture deliberately
-// sets to a different, smaller value so the two knobs cannot be confused for
-// one another.
-//
-// Discrimination is two-layered. First, sequential vs. parallel: with
-// DownloadWorkers=4 and a gate that closes at 4 concurrent probes, a correct
-// parallel implementation reaches peak==4 almost instantly and returns all 6
-// tasks well inside the 2s timeout, while a sequential implementation never
-// has more than one Has call in flight, so it never reaches the target and
-// never closes the gate - each of its Has calls then blocks until
-// ctx.Done() fires, so the test would both record peak==1 and run out the
-// full 2s timeout before the first call even returns. Second, and the
-// reason the two knobs are set apart here: Workers=1 alongside
-// DownloadWorkers=4 means an implementation wrongly bounded by cfg.Workers
-// reaches peak==1 and then hangs on the same ctx.Done() path a sequential
-// one would, which is exactly what makes peak==4 prove the pool is bounded
-// by DownloadWorkers rather than by Workers.
+// TestBuildPrefetchTasksProbesConcurrentlyBoundedByDownloadWorkers pins that
+// the Has probes run in parallel bounded by cfg.DownloadWorkers, not Workers:
+// Workers=1 makes a sequential or Workers-bounded scan stall at peak 1.
 func TestBuildPrefetchTasksProbesConcurrentlyBoundedByDownloadWorkers(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
@@ -185,13 +157,9 @@ func (a *presenceArtifacts) Delete(context.Context, string) error {
 	return errStubNotImplemented
 }
 
-// seedAlreadyInstalled makes installRecordMatches report col as already
-// installed under cfg.DownloadPath: it creates the install directory, a
-// valid .extract-done.<sha> marker, and the sibling
-// <ns>.<name>-<version>.info/GALAXY.yml file installRecordMatches requires,
-// and records a matching entry in st. This is what drives
-// shouldSchedulePrefetch's installRecordMatches-is-true branch, which the
-// concurrent scan inherits unchanged from the pre-rewrite sequential one.
+// seedAlreadyInstalled makes installRecordMatches report col as installed:
+// install directory, valid extract marker, the <ns>.<name>-<version>.info
+// GALAXY.yml sidecar, and a matching installed entry in st.
 func seedAlreadyInstalled(t *testing.T, cfg *config.Config, st *store.Store, col collection) {
 	t.Helper()
 	const installedSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -214,18 +182,9 @@ func seedAlreadyInstalled(t *testing.T, cfg *config.Config, st *store.Store, col
 	})
 }
 
-// TestBuildPrefetchTasksSchedulesExactlyTheRightSet proves the concurrent scan
-// applies the exact same predicate a sequential scan would, including its
-// fail-open behavior on a Has() error: c1 is absent so it is scheduled, c2 is
-// present so it is skipped, c3's Has errors so it is scheduled anyway
-// (fail-open), c4 is a git source whose locator-keyed artifact is present
-// (the shape discovery leaves behind) so it is skipped and counted present,
-// c6 is a type this tool does not resolve so it is skipped regardless of
-// cache state, and c5 is already installed (canSkipInstall reports true) so
-// it is skipped without ever reaching the Has probe. It also pins
-// buildPrefetchTasks' presence set: c2 and c4 are the only ones of the six
-// whose probe both ran and found the artifact cached, so they are the only
-// keys p.presence names.
+// TestBuildPrefetchTasksSchedulesExactlyTheRightSet pins that absent and
+// Has-erroring (fail-open) rows are scheduled, present, installed and
+// unresolvable-type rows are not, and only rows probed present enter presence.
 func TestBuildPrefetchTasksSchedulesExactlyTheRightSet(t *testing.T) {
 	t.Parallel()
 	c1 := collection{Namespace: "acme", Name: "absent", Version: "1.0.0", Type: "galaxy"}
@@ -297,14 +256,9 @@ func assertPresenceNamesGitRow(t *testing.T, p *prefetcher, c4 collection) {
 	}
 }
 
-// assertPresenceNamesOnlyC2 checks buildPrefetchTasks' presence set against
-// c1 (scheduled, must be absent), c3 (probe errored, must be absent), c2
-// (probed present and left unscheduled, must be present), and finally the
-// set's total size - kept out of the calling test to stay under its
-// cyclomatic complexity budget. The four checks are ordered so each is the
-// first one a given mutation can fail: a broader check placed earlier would
-// mask a later, more specific one before it is ever reached. The size check
-// counts the git row too, which the caller asserts separately.
+// assertPresenceNamesOnlyC2 checks the presence set excludes c1 and c3 and
+// names c2, then its size (counting the git row); specific checks come first
+// so a broader one cannot mask them.
 func assertPresenceNamesOnlyC2(t *testing.T, p *prefetcher, c1, c2, c3 collection) {
 	t.Helper()
 	if p.presence[artifactKey(c1)] {

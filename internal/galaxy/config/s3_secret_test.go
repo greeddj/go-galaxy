@@ -33,41 +33,16 @@ func s3RedactionFixture() S3CacheConfig {
 	}
 }
 
-// TestS3CacheConfigRedactsSecrets drives every serialization path a Secret is
-// responsible for closing, against the whole struct rather than the fields in
-// isolation - which is the point: what leaks a credential in practice is a
-// debug print or a marshaled dump of the config that happens to contain one.
-//
-// Two killing mutations were run, and they fail different sets of rows,
-// which is why every row is asserted with Errorf rather than Fatalf.
-//
-// Declaring SecretKey as a plain string again fails every rendering at once -
-// there is no wrapper left to redact anything - reporting, among the rest,
-//
-//	%+v output contains the plaintext secret key: {SecretKey:top-secret
-//	SessionToken:[REDACTED] Endpoint: Region:r Bucket:b Prefix:
-//	AccessKey:AKIAEXAMPLE Enabled:false PathStyle:false}
-//
-// Deleting Secret.GoString instead - keeping the type, removing the one
-// method %#v consults - fails the %#v rows and only those:
-//
-//	%#v output contains the plaintext secret key:
-//	config.S3CacheConfig{SecretKey:config.Secret{value:"top-secret"}, ...}
-//
-// That second one is what earns %#v its own row: it is the single verb that
-// reflects into an unexported field regardless of String, and the only
-// rendering the other four cannot stand in for.
+// TestS3CacheConfigRedactsSecrets drives every rendering a Secret closes (%v,
+// %+v, %#v, JSON, YAML) against the whole struct, the way a debug dump leaks;
+// %#v needs Secret.GoString, since it reflects into the unexported field.
 func TestS3CacheConfigRedactsSecrets(t *testing.T) {
 	t.Parallel()
 	cfg := s3RedactionFixture()
 
-	// Encoding this struct is the subject of the test, so both encoders are
-	// exempted here rather than avoided. gosec names AccessKey, which is
-	// deliberately not a Secret - an access key id rides in cleartext in every
-	// signed request's Authorization header anyway, per S3CacheConfig's own
-	// doc comment. musttag wants serialization tags on the struct, which it
-	// has none of because production never encodes it; adding them to satisfy
-	// a test would be inventing an API this type does not offer.
+	// Encoding is the subject, so both linters are exempted: gosec flags
+	// AccessKey, deliberately not a Secret, and musttag wants tags on a struct
+	// production never encodes.
 	//nolint:gosec,musttag // see above
 	jsonBytes, err := json.Marshal(cfg)
 	if err != nil {
@@ -96,10 +71,9 @@ func TestS3CacheConfigRedactsSecrets(t *testing.T) {
 	}
 }
 
-// TestS3CacheConfigSecretsAreStillReadable is the positive control for the
-// test above, on the identical fixture: the credentials really are held, they
-// are simply not printable. Without it, "the plaintext was not found" would
-// be indistinguishable from a fixture whose fields are empty.
+// TestS3CacheConfigSecretsAreStillReadable is the positive control for
+// TestS3CacheConfigRedactsSecrets: the same fixture's credentials are held
+// and readable through Reveal, just not printable.
 func TestS3CacheConfigSecretsAreStillReadable(t *testing.T) {
 	t.Parallel()
 	cfg := s3RedactionFixture()
@@ -141,11 +115,9 @@ func newS3Cmd(t *testing.T, args []string) *cli.Command {
 	return captured
 }
 
-// TestLoadS3CacheConfigRequiresCredentials pins the emptiness check that
-// moved from a string comparison to Secret.IsSet: a bucket with no secret key
-// is still refused, and one with both credentials is still accepted and
-// carries the secret through. The accepting row is what keeps the refusing
-// one honest - without it, IsSet always reporting false would look identical.
+// TestLoadS3CacheConfigRequiresCredentials pins that a bucket without a
+// secret key is helpers.ErrS3EmptyCreds, and that one with both credentials
+// is accepted and carries the secret through, the refusal's positive control.
 func TestLoadS3CacheConfigRequiresCredentials(t *testing.T) {
 	t.Parallel()
 

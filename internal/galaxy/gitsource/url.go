@@ -24,12 +24,9 @@ const (
 	headRef = "HEAD"
 )
 
-// URL is a parsed, canonical repository URL. Scheme is one of https, http or
-// ssh; User is set only for ssh; Host is lower-cased; Port is empty when it
-// is the scheme's default; Path is the repository path exactly as written
-// after validation. SCPLike marks the user@host:path spelling, whose path is
-// relative to the remote user's home unless it starts with "/" - which is why
-// it is kept as its own canonical form and never rewritten to ssh://.
+// URL is a canonical repository URL: User only for ssh, Host lower-cased, Port
+// empty at the scheme default. SCPLike user@host:path is never rewritten to
+// ssh://, since its path is relative to the remote user's home.
 type URL struct {
 	Scheme  string
 	User    string
@@ -39,10 +36,9 @@ type URL struct {
 	SCPLike bool
 }
 
-// scpLikePattern is the user@host:path spelling. The user is required here,
-// unlike in go-git's own parser, so that a bare host:path can never be
-// mistaken for one - ansible's auto-detection keys on the "git@" prefix for
-// the same reason.
+// scpLikePattern is the user@host:path spelling; the user is required, unlike
+// in go-git's parser, so a bare host:path is never mistaken for one, which is
+// also why ansible's auto-detection keys on "git@".
 var scpLikePattern = regexp.MustCompile(`^([A-Za-z0-9._-]+)@([^:/@\s]+):(.+)$`)
 
 // sshUserPattern bounds an ssh user name to what a remote accepts in a login
@@ -53,19 +49,16 @@ var sshUserPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // IPv6 literal.
 var hostPattern = regexp.MustCompile(`^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)$`)
 
-// ParseURL parses raw as a repository URL and returns its canonical form. It
-// accepts https://, http://, ssh:// and the scp-like user@host:path spelling
-// and refuses everything else with helpers.ErrInvalidGitURL; a credential in
-// the URL is helpers.ErrGitURLUserinfo. See the package comment for why the
-// path is validated as strictly as it is.
+// ParseURL parses raw as an https, http, ssh or scp-like repository URL into
+// its canonical form; anything else is helpers.ErrInvalidGitURL, and a
+// credential in the URL is helpers.ErrGitURLUserinfo.
 func ParseURL(raw string) (URL, error) {
 	return parseURL(raw, false)
 }
 
-// ParsePrefix parses raw as a credential binding: the same grammar as
-// ParseURL, except that the path may be empty (the binding then covers the
-// whole host) and an ssh binding needs no user, since the user comes from the
-// requirement URL it is matched against.
+// ParsePrefix parses a credential binding with ParseURL's grammar, except an
+// empty path covers the whole host and an ssh binding names no user, since the
+// requirement URL supplies it.
 func ParsePrefix(raw string) (URL, error) {
 	return parseURL(raw, true)
 }
@@ -193,11 +186,9 @@ func parseSCPLike(user, host, path string) (URL, error) {
 	return URL{Scheme: schemeSSH, User: user, Host: strings.ToLower(host), Path: path, SCPLike: true}, nil
 }
 
-// checkPath refuses a repository path the remote could read as anything but a
-// path: an empty one, one whose first segment starts with "-" (an argument to
-// upload-pack), or one carrying a rune outside the conservative alphabet
-// below, which keeps quotes, whitespace, control runes and every shell
-// metacharacter out of the `git-upload-pack '<path>'` line go-git sends.
+// checkPath refuses an empty path, a first segment starting with "-" (an
+// upload-pack argument), and any rune outside a conservative alphabet, keeping
+// quotes, whitespace and control runes out of go-git's git-upload-pack line.
 func checkPath(path string) error {
 	if path == "" || path == "/" {
 		return fmt.Errorf("%w: missing repository path", helpers.ErrInvalidGitURL)
@@ -215,13 +206,9 @@ func checkPath(path string) error {
 	return checkPathSegments(path)
 }
 
-// checkPathSegments refuses a dot segment (".", "..", or either spelled with
-// a percent-encoded dot) and an empty segment inside the path. A credential
-// binding is matched against the path as written, while the remote resolves
-// "/org/../other/repo.git" to "/other/repo.git", so a dot segment would let a
-// requirements file spend a credential bound to one path prefix on any
-// repository of the host. The check runs after the rune check, so the only
-// characters a segment can carry here are the path alphabet's.
+// checkPathSegments refuses empty and dot segments, percent-encoded included:
+// the remote resolves "/org/../other" while a credential binding matches the
+// path as written, so a dot segment could spend a credential on another prefix.
 func checkPathSegments(path string) error {
 	for segment := range strings.SplitSeq(strings.TrimPrefix(path, "/"), "/") {
 		folded := strings.ReplaceAll(strings.ToLower(segment), "%2e", ".")
@@ -289,10 +276,9 @@ func (u URL) Origin() string {
 	return u.Scheme + "://" + u.Host + ":" + port
 }
 
-// IsLoopback reports whether the host is a loopback address literal or
-// "localhost", the one case a plaintext http credential is tolerated for.
-// Only a literal counts: a DNS name such as "127.example.com" resolves
-// wherever its owner points it, so it earns no exemption.
+// IsLoopback reports whether the host is "localhost" or a loopback literal,
+// the one case a plaintext http credential is tolerated for; a DNS name never
+// counts, since it resolves wherever its owner points it.
 func (u URL) IsLoopback() bool {
 	host := strings.Trim(u.Host, "[]")
 	if host == "localhost" {
@@ -302,15 +288,9 @@ func (u URL) IsLoopback() bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// SplitSCM splits a requirements pointer into its URL, ref and subdir exactly
-// as ansible's parse_scm does, so a file written for ansible-galaxy means the
-// same thing here: a ",<ref>" suffix is cut first and wins over version; an
-// empty or "*" version means HEAD; one leading "git+" is dropped; then the
-// "#<subdir>" fragment is cut at the first "#" and stripped of surrounding
-// slashes. The order matters and is ansible's: "<url>#sub,main" yields ref
-// "main" and subdir "sub", while "<url>,main#sub" yields ref "main#sub",
-// which ParseRef then refuses - the same spelling fails under ansible.
-// The results are the raw URL, the ref and the subdir, in that order.
+// SplitSCM splits a requirement pointer into raw URL, ref and subdir in the
+// order ansible's parse_scm does: ",<ref>" is cut first and wins over version,
+// then one "git+" is dropped, then "#<subdir>" is cut at the first "#".
 func SplitSCM(spec, version string) (string, string, string) {
 	rawURL := strings.TrimSpace(spec)
 	ref := strings.TrimSpace(version)
@@ -329,10 +309,9 @@ func SplitSCM(spec, version string) (string, string, string) {
 	return rawURL, ref, subdir
 }
 
-// IsPointer reports whether value is what ansible auto-detects as a git
-// source when no type: is given: a "git+" or "git@" prefix, case-insensitive,
-// and nothing else - a bare https:// URL is a tarball URL to ansible and stays
-// refused here.
+// IsPointer reports whether value is what ansible auto-detects as a git source
+// with no type: a case-insensitive "git+" or "git@" prefix, never a bare
+// https:// URL, which ansible reads as a tarball.
 func IsPointer(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	return strings.HasPrefix(lower, gitPlusPrefix) || strings.HasPrefix(lower, "git@")

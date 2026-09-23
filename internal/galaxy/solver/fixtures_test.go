@@ -9,11 +9,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// noConflictsProvider builds the reference spec's "No Conflicts" example:
-// root depends on foo ^1.0.0; foo 1.0.0 depends on bar ^1.0.0; bar 1.0.0 and
-// 2.0.0 have no dependencies. bar's highest is deliberately pointed at the
-// resolvable version, demonstrating that a resolution that never needs to
-// backtrack never needs a Universe fetch either.
+// noConflictsProvider builds the reference spec's "No Conflicts" example,
+// with bar's highest pointed at the resolvable version so a solve that never
+// backtracks is shown to need no Universe fetch either.
 func noConflictsProvider() *fakeProvider {
 	return newFakeProvider().
 		withVersions("foo", testVersion100).
@@ -41,9 +39,8 @@ func TestFixtureNoConflicts(t *testing.T) {
 }
 
 // avoidingConflictProvider builds "Avoiding Conflict During Decision
-// Making": root depends on foo ^1.0.0 and bar ^1.0.0; foo 1.1.0 depends on
-// bar ^2.0.0; foo 1.0.0 has no dependencies; bar 1.0.0, 1.1.0, 2.0.0 have no
-// dependencies.
+// Making": root needs foo ^1.0.0 and bar ^1.0.0, and foo 1.1.0 needs bar
+// ^2.0.0.
 func avoidingConflictProvider() *fakeProvider {
 	return newFakeProvider().
 		withVersions("foo", testVersion100, "1.1.0").
@@ -63,10 +60,8 @@ func TestFixtureAvoidingConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Solve: unexpected error: %v", err)
 	}
-	// Only the final resolution is asserted: our conservative relation
-	// decides foo 1.1.0 first and resolves the conflict on the next
-	// propagation round rather than avoiding it during decision making
-	// itself (section 9.2's documented deviation).
+	// Only the final resolution is asserted, not the order of decisions
+	// that reached it.
 	if result.Versions["foo"] != testVersion100 || result.Versions["bar"] != "1.1.0" {
 		t.Fatalf("Versions = %v, want foo=1.0.0 bar=1.1.0", result.Versions)
 	}
@@ -161,13 +156,9 @@ func TestFixtureLinearErrorReporting(t *testing.T) {
 		t.Fatalf("errors.Is(err, ErrNoVersionSatisfiesConstraints) = false")
 	}
 
-	// foo has exactly one version here and is itself unconditionally
-	// required (root's only path), so the proof our search path finds is
-	// free to establish the conflict entirely through bar/baz (foo's own
-	// dependency) without re-stating foo explicitly - the design's own
-	// leniency on intermediate content, not just wording, applies: what
-	// matters is that a real conflict is proven and the final line is
-	// correct, not that every package from the narrative prose appears.
+	// The proof may establish the conflict through bar and baz without
+	// restating foo; what is pinned is that a real conflict is proven and the
+	// final line has the standard shape.
 	proof := strings.Join(conflictErr.ProofLines(), "\n")
 	requireContains(t, proof, "bar")
 	requireContains(t, proof, "baz")
@@ -219,10 +210,9 @@ func TestFixtureBranchingErrorReporting(t *testing.T) {
 	requireBranchingShape(t, lines, proof)
 }
 
-// requireBranchingShape asserts the two structural markers a branching
-// (non-linear) derivation graph must produce - at least one paragraph break
-// (a blank line) and at least one numbered back-reference - plus the
-// standard final-line shape every conflict proof ends with.
+// requireBranchingShape asserts a branching derivation graph's markers, a
+// paragraph break and a numbered back-reference, plus the standard final
+// line.
 func requireBranchingShape(t *testing.T, lines []string, proof string) {
 	t.Helper()
 	hasBlank, hasLineNumber := scanProofShape(lines)
@@ -254,10 +244,9 @@ func scanProofShape(lines []string) (bool, bool) {
 	return hasBlank, hasLineNumber
 }
 
-// TestFixtureUnknownPackage pins that a full Solve for a package the provider
-// reports zero published versions for carries CauseUnknownPackage through
-// conflict resolution to a *ConflictError, never an internal-invariant
-// defect.
+// TestFixtureUnknownPackage pins that solving for a package with no
+// published versions ends in a *ConflictError through CauseUnknownPackage,
+// never an internal-invariant defect.
 func TestFixtureUnknownPackage(t *testing.T) {
 	t.Parallel()
 	p := newFakeProvider() // "ghost" has no registered versions
@@ -291,10 +280,9 @@ func unknownPackageTransitiveProvider() *fakeProvider {
 		withDeps("foo", "1.0.0", map[string]string{"ghost": "^2.0.0"})
 }
 
-// TestFixtureUnknownPackageTransitive pins that a transitively-required
-// unknown package still resolves to a *ConflictError whose proof names the
-// no-published-versions leaf exactly once, not the degenerate
-// self-resolution's duplicate.
+// TestFixtureUnknownPackageTransitive pins that a transitively required
+// unknown package yields a *ConflictError whose proof states the
+// no-published-versions leaf once, not duplicated.
 func TestFixtureUnknownPackageTransitive(t *testing.T) {
 	t.Parallel()
 	p := unknownPackageTransitiveProvider()
@@ -390,11 +378,9 @@ type determinismCase struct {
 	wantErr bool
 }
 
-// TestDeterminism runs every fixture 100 times, rebuilding the provider each
-// time (Universe returns a freshly shuffled version list and Go's map
-// iteration is independently randomized per process), and asserts every run
-// produces byte-identical resolutions and, for the failing fixtures,
-// byte-identical proofs.
+// TestDeterminism runs every fixture 100 times on a rebuilt, shuffling
+// provider and asserts byte-identical resolutions and, for failing
+// fixtures, byte-identical proofs.
 func TestDeterminism(t *testing.T) {
 	t.Parallel()
 

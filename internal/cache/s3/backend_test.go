@@ -62,14 +62,9 @@ func TestLoadStoreDropsOlderSchema(t *testing.T) {
 	}
 }
 
-// TestLoadStoreDropsV3ShapeAndRebuilds proves LoadStore's schema check
-// happens before the full payload is unmarshaled into a *store.Store: a
-// genuine v3-shape object (versions_cache as bare arrays, deps_cache as bare
-// maps, neither wrapped with a fetched_at stamp) is dropped and rebuilt with
-// a nil error, rather than failing json.Unmarshal against the current
-// wrapper structs. putStoreObject cannot exercise this: it always marshals
-// the current Store type (only the schema_version number overridden), so
-// its versions_cache/deps_cache are always already in the current shape.
+// TestLoadStoreDropsV3ShapeAndRebuilds proves the schema is checked before the
+// full decode: a v3-shape snapshot whose buckets no longer decode into the
+// current Store is dropped and rebuilt with a nil error.
 func TestLoadStoreDropsV3ShapeAndRebuilds(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -101,18 +96,9 @@ func TestLoadStoreDropsV3ShapeAndRebuilds(t *testing.T) {
 	}
 }
 
-// TestLoadStoreCurrentSchemaCorruptDataErrors locks in the boundary between
-// LoadStore's two decode stages. The lightweight meta-only probe only ever
-// authorizes the drop-and-rebuild path for an OUTDATED schema (see
-// TestLoadStoreDropsV3ShapeAndRebuilds, which plants this exact corrupt
-// versions_cache shape under schema version 3). Here the same corrupt shape
-// is stamped with the CURRENT schema version instead: the probe reports a
-// match, so the full json.Unmarshal into *store.Store runs, and it must fail
-// on the malformed bucket. That failure has to surface as an error rather
-// than being swallowed into a silent, empty store.New() - a future edit that
-// widened the drop-and-rebuild path to cover decode failures at any schema
-// version would make genuine current-schema corruption indistinguishable
-// from a legitimately empty cache, silently masking data loss.
+// TestLoadStoreCurrentSchemaCorruptDataErrors proves drop-and-rebuild is only
+// for an outdated schema: a malformed bucket under the current schema version
+// is a decode error, never a silently empty store.
 func TestLoadStoreCurrentSchemaCorruptDataErrors(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -166,13 +152,9 @@ func TestLoadStoreLoadsCurrentSchema(t *testing.T) {
 	}
 }
 
-// TestLoadStoreToleratesLegacyRootsKey confirms LoadStore ignores an unknown
-// "roots" key left over from before the field was removed from Store: a
-// current-schema payload carrying a populated legacy roots bucket alongside
-// real data must decode successfully, with the real data intact. json.Decode
-// has no DisallowUnknownFields call anywhere on this path, so an unrecognized
-// key is silently skipped rather than rejected - this test locks in that a
-// removed-but-still-present key does not turn into a decode error.
+// TestLoadStoreToleratesLegacyRootsKey proves a current-schema payload still
+// carrying the removed "roots" bucket decodes with its real data intact:
+// unknown keys are skipped, not rejected.
 func TestLoadStoreToleratesLegacyRootsKey(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -202,20 +184,9 @@ func TestLoadStoreToleratesLegacyRootsKey(t *testing.T) {
 	}
 }
 
-// TestLoadStoreToleratesNullRootsKey pins that an explicit "roots": null is
-// tolerated as an unknown key and decodes with the real data intact.
-//
-// It exists separately from TestLoadStoreToleratesLegacyRootsKey because null
-// and {} are different decoder inputs: only an explicit null overwrites a
-// pre-initialized map with a nil one, while {} and an absent key leave it
-// alone.
-//
-// This test does not, and cannot, exercise a panic from a nilled Roots map:
-// Store has no Roots field and no SetRoots mutator (see
-// TestLoadStoreToleratesLegacyRootsKey for why "roots" itself is still a
-// recognized-but-unknown key) for "roots": null to nil out, so there is no
-// production call site left for a nil map to reach. This test only pins
-// decode tolerance for the null shape itself.
+// TestLoadStoreToleratesNullRootsKey pins that an explicit "roots": null, a
+// different decoder input from {}, is tolerated as an unknown key and decodes
+// with the real data intact.
 func TestLoadStoreToleratesNullRootsKey(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -245,19 +216,9 @@ func TestLoadStoreToleratesNullRootsKey(t *testing.T) {
 	}
 }
 
-// TestLoadStoreToleratesNullBuckets pins that LoadStore survives a payload
-// where all eight of Store's nil-able map buckets are an explicit JSON null,
-// and that the loaded store's mutators for those buckets remain usable
-// afterward.
-//
-// Unlike TestLoadStoreToleratesNullRootsKey above - which documents that it
-// does NOT pin the panic, because Roots and its only mutator were deleted
-// entirely - this test DOES pin the panic: Installed, Warmed, GitPins and the
-// other six map fields, and their mutators, still exist on Store, so without
-// store.Store.UnmarshalJSON re-allocating a decode-nilled map, the SetInstalled
-// / SetWarmed calls below panic with "assignment to entry in nil map" inside
-// LoadStore's caller, exactly as production code would when the next install
-// or warm worker writes to that bucket.
+// TestLoadStoreToleratesNullBuckets pins that explicit JSON null buckets load
+// and their mutators stay usable: without store.Store.UnmarshalJSON
+// re-allocating nilled maps, the Set calls below would panic.
 func TestLoadStoreToleratesNullBuckets(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -300,12 +261,9 @@ func TestLoadStoreToleratesNullBuckets(t *testing.T) {
 	}
 }
 
-// TestSaveStoreConcurrentMutationIsRaceFree proves SaveStore never touches
-// the live store's maps directly: a goroutine hammers SetInstalled and
-// SetAPICache in a tight loop while SaveStore runs repeatedly on the same
-// *store.Store from the test goroutine. Before MarshalSnapshot existed,
-// SaveStore's json.Marshal(st) read the live maps without a lock and this
-// tripped -race; MarshalSnapshot's RLock deep-copy must be clean.
+// TestSaveStoreConcurrentMutationIsRaceFree proves SaveStore never reads the
+// live maps unlocked: under -race, it runs repeatedly while a goroutine keeps
+// mutating the same store.
 func TestSaveStoreConcurrentMutationIsRaceFree(t *testing.T) {
 	b := newTestBackend(t)
 	ctx := t.Context()
@@ -374,21 +332,16 @@ func TestSaveStoreStampsSchemaAndTimestamp(t *testing.T) {
 	}
 }
 
-// TestSaveStoreRoundTripsDataShape confirms MarshalSnapshot's JSON shape is
-// unchanged from a direct json.Marshal(st): a populated store saved through
-// SaveStore and read back through LoadStore preserves its data exactly,
-// including a warmed entry - the S3 backend's gzip-on-the-wire round trip
-// must not drop the warmed bucket any more than it drops the others.
+// TestSaveStoreRoundTripsDataShape confirms a populated store, warmed bucket
+// included, survives the gzipped SaveStore and LoadStore round trip exactly.
 func TestSaveStoreRoundTripsDataShape(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
 	ctx := t.Context()
 
 	st := store.New()
-	// FetchedAt must be within the retention window, since api_cache is now
-	// subject to CacheEntryMaxAge pruning at persist time: a zero-value
-	// FetchedAt would make this entry vanish from SaveStore's payload
-	// regardless of the shape-preservation behavior under test.
+	// A zero FetchedAt would be pruned by CacheEntryMaxAge at persist time,
+	// hiding the entry regardless of the behavior under test.
 	st.SetAPICache("api", store.APICacheEntry{URL: "https://example.com/api", ETag: "etag", FetchedAt: time.Now().UTC()})
 	st.SetInstalled("a.b@1.0.0", store.InstalledEntry{ArtifactSHA256: testArtifactSHA})
 	st.SetWarmed("c.d@1.0.0", "warmed-sha")
@@ -414,11 +367,9 @@ func TestSaveStoreRoundTripsDataShape(t *testing.T) {
 	}
 }
 
-// TestLoadProjectRegistryRejectsCorruptObject confirms a project registry
-// object that fails to decode is reported as an error rather than silently
-// replaced by an empty registry. Cleanup relies on the registry to compute
-// which installed collections are still reachable, so an empty registry
-// would make it believe nothing is reachable and delete everything.
+// TestLoadProjectRegistryRejectsCorruptObject confirms an undecodable registry
+// is ErrCorruptProjectRegistry, not an empty registry that would make cleanup
+// delete everything.
 func TestLoadProjectRegistryRejectsCorruptObject(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -481,10 +432,9 @@ func TestReadAllCappedRejectsOversizedRaw(t *testing.T) {
 	}
 }
 
-// TestReadAllCappedRejectsGzipBomb confirms the decompressed-size ceiling
-// applies on the gzip path independently of the compressed-size ceiling: a
-// gzip stream well under compressedCap that inflates past a tiny
-// decompressedCap must fail with helpers.ErrResponseTooLarge.
+// TestReadAllCappedRejectsGzipBomb confirms the decompressed-size ceiling holds
+// on its own: a gzip stream well under compressedCap that inflates past
+// decompressedCap fails with helpers.ErrResponseTooLarge.
 func TestReadAllCappedRejectsGzipBomb(t *testing.T) {
 	t.Parallel()
 
@@ -541,23 +491,9 @@ func TestReadAllCappedAcceptsNormal(t *testing.T) {
 	})
 }
 
-// TestReadObjectReclassifiesOversizedStateObject proves readObject's own
-// reclassification of a size-ceiling failure, not readAllCapped's: a state
-// object that overruns helpers.StateObjectMaxCompressedSize fails with
-// helpers.ErrStateObjectTooLarge and NOT helpers.ErrResponseTooLarge, even
-// though readAllCapped's own cap failure - the one readObject wraps - always
-// carries the latter (TestReadAllCappedRejectsOversizedRaw pins that shape
-// directly). This exercises readObject through a real HTTP round trip
-// against the fake S3 server, at the actual production ceiling, rather than
-// readAllCapped's own custom-cap unit tests above.
-//
-// The positive control lives in the same test, against the same key prefix
-// and the same readObject call: a within-cap object at a neighboring key
-// round-trips its exact bytes with a nil error, proving the oversized case
-// above is a real refusal readObject's success path could otherwise have
-// taken, not evidence the fixture never reaches that path at all. That half
-// stays a real stored object and a real upload; only the oversized half is
-// generated.
+// TestReadObjectReclassifiesOversizedStateObject proves a state object over
+// the production compressed ceiling is ErrStateObjectTooLarge and not
+// ErrResponseTooLarge, with a within-cap object as the positive control.
 func TestReadObjectReclassifiesOversizedStateObject(t *testing.T) {
 	t.Parallel()
 	b, fake := newTestBackendAndFake(t)
@@ -566,14 +502,8 @@ func TestReadObjectReclassifiesOversizedStateObject(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	// One byte past the compressed-size ceiling, on the non-gzip path, so the
-	// fixture needs no gzip compression/decompression work to trip the cap.
-	// The body is generated as it is served rather than stored: the ceiling is
-	// 256 MiB, so materializing it would cost that twice - once in this test
-	// and once in the fake - plus an upload of the same size that proves
-	// nothing. Nothing about the ceiling itself changes, so this still
-	// exercises readObject at the production constants rather than at a
-	// custom cap.
+	// One byte past the ceiling on the non-gzip path, generated as served
+	// rather than stored, since materializing 256 MiB twice proves nothing.
 	oversizedKey := b.key(statePrefix, "oversized-state-object.json")
 	fake.serveSyntheticBody(oversizedKey, helpers.StateObjectMaxCompressedSize+1)
 
@@ -581,11 +511,8 @@ func TestReadObjectReclassifiesOversizedStateObject(t *testing.T) {
 	if !errors.Is(err, helpers.ErrStateObjectTooLarge) {
 		t.Fatalf("readObject(oversized) error = %v, want errors.Is(err, ErrStateObjectTooLarge) = true", err)
 	}
-	// The load-bearing partition check: readAllCapped's own cap failure
-	// always carries helpers.ErrResponseTooLarge, since it is built on the
-	// same sizeLimitedReader every capped response uses. This must be false
-	// only because readObject deliberately breaks that errors.Is chain by
-	// rendering the cause with %v instead of %w.
+	// readAllCapped's failure carries ErrResponseTooLarge; readObject must
+	// break that chain (%v, not %w) so only one exit class matches.
 	if errors.Is(err, helpers.ErrResponseTooLarge) {
 		t.Fatalf("readObject(oversized) error = %v, want errors.Is(err, ErrResponseTooLarge) = false", err)
 	}
@@ -605,11 +532,8 @@ func TestReadObjectReclassifiesOversizedStateObject(t *testing.T) {
 	}
 }
 
-// emptyGzipMember is the smallest gzip member there is - the ten-byte header,
-// one fixed-Huffman final block carrying nothing, and an eight-byte trailer
-// over zero bytes - hand-spelled so the fixture is exactly the shape a hostile
-// writer of this bucket would put there rather than whatever a writer in this
-// process happens to emit.
+// emptyGzipMember is the smallest gzip member (header, an empty final block,
+// trailer), hand-spelled as a hostile bucket writer would plant it.
 func emptyGzipMember() []byte {
 	member := make([]byte, 0, 20)
 	member = append(member, "\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff"...)
@@ -617,29 +541,9 @@ func emptyGzipMember() []byte {
 	return append(member, 0, 0, 0, 0, 0, 0, 0, 0)
 }
 
-// TestReadObjectReclassifiesAStateObjectThatWillNotInflate proves readObject's
-// second reclassification: a state object whose gzip stream produces no bytes
-// is helpers.ErrCorruptStateObject, so a pipeline branching on
-// ExitCacheCorrupt sees the object as one to discard rather than as the
-// unclassified generic failure the bare inflate verdict would have been.
-//
-// The bare verdict is what makes the wrap load-bearing rather than cosmetic:
-// helpers.ErrEmptyGzipMember belongs to no cmd/go-galaxy/exitcode predicate -
-// deliberately, since its other readers classify through their own wraps - so
-// without this one the same failure reaches FromError as ExitError. The cause
-// stays reachable underneath, which the second assertion pins: the wrap
-// reclassifies without hiding what happened.
-//
-// The positive control lives in the same test, against the same key suffix and
-// the same readObject call: an ordinary gzipped object at a neighboring key
-// round-trips its exact bytes with a nil error, so the refusal above is a real
-// one on the gzip path rather than evidence the fixture never reached it.
-//
-// Killing mutation, run: deleting the helpers.ErrEmptyGzipMember arm from
-// readObject, leaving the failure to be returned as it arrives, fails this
-// test with
-//
-//	backend_test.go:662: readObject(empty member) = gzip stream carries a member that produces no bytes, want ErrCorruptStateObject
+// TestReadObjectReclassifiesAStateObjectThatWillNotInflate proves an empty
+// gzip member is ErrCorruptStateObject with ErrEmptyGzipMember still reachable,
+// with an ordinary gzipped object as the positive control.
 func TestReadObjectReclassifiesAStateObjectThatWillNotInflate(t *testing.T) {
 	t.Parallel()
 	b, _ := newTestBackendAndFake(t)
@@ -681,10 +585,8 @@ func TestReadObjectReclassifiesAStateObjectThatWillNotInflate(t *testing.T) {
 	}
 }
 
-// gzipBytes gzip-encodes data using the standard library's compress/gzip,
-// which produces the same on-the-wire format klauspost/pgzip reads, so it
-// stands in for a real state object without pulling the production gzip
-// writer into the test.
+// gzipBytes gzip-encodes data with compress/gzip, whose wire format is the
+// one the production reader inflates.
 func gzipBytes(t *testing.T, data []byte) []byte {
 	t.Helper()
 
@@ -699,10 +601,8 @@ func gzipBytes(t *testing.T, data []byte) []byte {
 	return buf.Bytes()
 }
 
-// putProjectsObject seeds the state/projects.json object with raw bytes,
-// mirroring saveProjectRegistry's plain (non-gzipped) JSON encoding so
-// LoadProjectRegistry's decoding path is exercised the same way it would be
-// against a real registry object.
+// putProjectsObject seeds state/projects.json with raw bytes as plain JSON,
+// the encoding saveProjectRegistry writes.
 func putProjectsObject(ctx context.Context, t *testing.T, b *Backend, data []byte) {
 	t.Helper()
 
@@ -718,10 +618,8 @@ func putProjectsObject(ctx context.Context, t *testing.T, b *Backend, data []byt
 	}
 }
 
-// putStoreObject seeds the state/store.json.gz object with a store stamped
-// at schemaVersion, mirroring exactly what SaveStore produces (marshal the
-// store JSON, gzip it) so LoadStore's decoding path is exercised the same
-// way it would be against a real snapshot.
+// putStoreObject seeds state/store.json.gz with a store stamped at
+// schemaVersion, gzipped JSON as SaveStore writes it.
 func putStoreObject(ctx context.Context, t *testing.T, b *Backend, schemaVersion int, mutate func(*store.Store)) {
 	t.Helper()
 
@@ -757,11 +655,8 @@ func putStoreObject(ctx context.Context, t *testing.T, b *Backend, schemaVersion
 	}
 }
 
-// putRawStoreObject seeds the state/store.json.gz object with raw JSON
-// bytes, gzipped exactly as SaveStore would, without going through
-// store.New()/json.Marshal(*store.Store) - letting a test inject a wire
-// shape (such as a genuine pre-schema-4 snapshot) that the current Store
-// type could never produce by construction.
+// putRawStoreObject seeds state/store.json.gz with raw JSON gzipped as
+// SaveStore would, so a test can plant a shape the current Store cannot emit.
 func putRawStoreObject(ctx context.Context, t *testing.T, b *Backend, rawJSON []byte) {
 	t.Helper()
 
@@ -786,10 +681,9 @@ func putRawStoreObject(ctx context.Context, t *testing.T, b *Backend, rawJSON []
 	}
 }
 
-// TestRecordProjectRoundTripsRolesPath proves the S3 registry object carries
-// the roles path the run recorded, resolved against the project directory
-// by store.NewProjectRecord exactly as the local registry file is, and that
-// a run recording no roles path leaves the key out of the object.
+// TestRecordProjectRoundTripsRolesPath proves the registry object carries the
+// recorded roles path resolved against the project directory, and that a run
+// recording none leaves the key out.
 func TestRecordProjectRoundTripsRolesPath(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)

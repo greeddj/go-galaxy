@@ -64,12 +64,22 @@ lockfile at the resolved path, read fresh off disk, and it is omitted whenever
 that file does not exist or fails to load - so an `install` or `warm` run in a
 project that has never run `lock` emits a report with no `lockfile_hash` key at
 all. That is not a signal about the run: read its absence as "there was no
-lockfile to hash", never as a failure.
+lockfile to hash", never as a failure. The three artifact counters,
+`cache_hits`, `cache_misses` and `bytes_downloaded`, carry no `omitempty` and
+are always present, so a `0` is an explicit zero and a report without them was
+written by a binary that predates them.
 
-A collection built from a git source counts like any other artifact: its
-fetch is a miss and the pack bytes written to disk for it count as
-`bytes_downloaded` (the pack, not the artifact built from it, is what crossed
-the wire), and a later run that installs it from the cache is a hit.
+A collection built from a git source counts like any other artifact, except
+that a cold run moves both cache counters for it: discovery counts a miss
+when it commits the built artifact to the cache, and the install phase of the
+same run then serves that artifact from the cache and counts a hit. The pack
+bytes written to disk for it count as `bytes_downloaded` (the pack, not the
+artifact built from it, is what crossed the wire). A cold `install` of one git
+collection that depends on one Galaxy collection therefore reports
+`cache_misses` 2 and `cache_hits` 1, with `bytes_downloaded` equal to the pack
+bytes plus the Galaxy tarball. A later run that installs it from the cache is
+one more hit. Under `--no-cache` the build is handed straight to the install
+phase, so neither a miss nor a hit is counted for it, only its pack bytes.
 
 `roles` is the number of roles in the run's plan - the `roles:` entries plus
 the dependencies discovered through them, for `install`/`warm`, the roles the
@@ -77,22 +87,44 @@ written lockfile holds for `lock`, and the role entries checked for
 `outdated` - and is `0`, never absent, for a run without roles. `failures`
 counts both kinds together: a failed role and a failed collection each add
 one. A role's artifact counts in the three artifact counters exactly as a git
-collection's does - the fetch at discovery is a miss and its pack bytes are
-`bytes_downloaded`, a later install from the cache is a hit - so
+collection's does - the commit at discovery is a miss, its pack bytes are
+`bytes_downloaded`, and each install from the cache is a hit - so
 `cache_hits + cache_misses` counts collection and role acquisitions alike.
 
 `cache_hits`, `cache_misses`, and `bytes_downloaded` are artifact-level counters,
 not collection-level: a hit is one artifact served from the artifact cache and a
 miss is one artifact fetched from the origin, so `cache_hits + cache_misses`
 counts artifact acquisitions rather than collections. That sum can exceed
-`collections` - the bounded evict-and-refetch recovery path makes one collection
-contribute both a hit (the cache-resident artifact that turned out corrupt) and
-a miss (the refetch that replaced it) - and it can also fall below `collections`,
-since a collection whose install is skipped touches no artifact at all. A cache
-hit always contributes zero bytes to `bytes_downloaded`, including an S3 cache
+`collections` - a cold git collection counts twice, as above, and the bounded
+[evict-and-refetch recovery](architecture.md#bounded-recovery) path can make
+one collection contribute both a hit and a miss - and it can also fall below
+`collections`, since a collection whose install is skipped touches no artifact
+at all. A hit is counted only once the cache has served the artifact, so that
+recovery path counts differently per backend. The local cache does not verify
+a tarball on read: a corrupt one is served (a hit), fails its digest or
+extraction check, and is refetched (a miss). The S3 cache checks an object's
+bytes against its recorded sha256 as part of the read, so a corrupt object
+fails before it is served and its recovery adds only the miss. A cache hit
+always contributes zero bytes to `bytes_downloaded`, including an S3 cache
 hit: that object transfer is a real network round trip to the cache backend,
 but it is not artifact-download traffic, so it is deliberately excluded. The
 `lock` command never downloads a Galaxy artifact, so for a file of Galaxy
 collections its report has `cache_hits`, `cache_misses`, and
 `bytes_downloaded` at `0`; a git collection or a role it locks is fetched and
 built during its resolve, and counts as above.
+
+`cache_misses` and `bytes_downloaded` are counted on different units, so
+neither can be derived from the other. For a Galaxy artifact, a miss is
+counted once per acquisition, after the retries succeed: a download retried
+after a transient failure is one miss, and one that fails every attempt
+records none. `bytes_downloaded` is added per attempt, a failed attempt's
+partial body included, so a download that stalled or failed still reports
+the body bytes it read, once for each attempt.
+
+On a failed `install`, the three artifact counters are a lower bound rather than an
+exact count. Installation stops after the first install level with a failure,
+but the [prefetcher](architecture.md#prefetch-and-handoff) may already have
+workers in flight for a later level, and the report is built before those
+workers are canceled and joined, so a late miss and its bytes can land after
+the report was written. On a successful run every prefetched artifact has
+been consumed first, so the totals are complete.

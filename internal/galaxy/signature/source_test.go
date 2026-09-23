@@ -18,16 +18,12 @@ import (
 )
 
 const (
-	// sourceTestTimeout is what every Fetcher in this file is built with. It is
-	// generous rather than tight on purpose: nothing here measures a timeout,
-	// and a value small enough to race an in-process httptest round trip would
-	// turn an unrelated regression into a flake.
+	// sourceTestTimeout is what every Fetcher here is built with, generous on
+	// purpose: nothing here measures a timeout, and a tight one would flake.
 	sourceTestTimeout = 5 * time.Second
 
-	// sourceBlobBody is the payload every accepting case transfers. Its bytes
-	// are never verified as a signature - this file covers the fetch and
-	// nothing below it - so an armor envelope over a token body is enough to
-	// tell "the blob arrived" from "something else did".
+	// sourceBlobBody is the payload every accepting case transfers; it is never
+	// verified as a signature, since this file covers only the fetch.
 	sourceBlobBody = "-----BEGIN PGP SIGNATURE-----\n\naGVsbG8=\n-----END PGP SIGNATURE-----\n"
 
 	// sigLeafName is the leaf every file fixture here is written to, and the
@@ -42,16 +38,13 @@ const (
 	// whatever an error page, a proxy, or a login form puts in a non-200 body.
 	serverBodyMarker = "body-marker-that-must-not-be-printed"
 
-	// sourcePassword is the password every credentialed fixture in this file
-	// carries, and the token their messages are searched for. It is spelled
-	// once so a row cannot be written that greps for something it did not
-	// embed.
+	// sourcePassword is the password every credentialed fixture carries and the
+	// token messages are searched for, spelled once so the two cannot differ.
 	sourcePassword = "s3cr3t"
 
-	// unavailablePrefix and unreadableSuffix are the file arm's one message,
-	// hand-spelled rather than built from helpers.ErrSignatureSourceUnavailable
-	// and the production format string: an expectation assembled from the
-	// values it checks cannot be killed by mutating them.
+	// unavailablePrefix and unreadableSuffix spell the file arm's one message
+	// by hand: an expectation built from the production format string cannot
+	// catch a change to it.
 	unavailablePrefix = `collection signature source unavailable: "`
 	unreadableSuffix  = `" could not be read`
 
@@ -113,11 +106,9 @@ func newTestFetcher(offline bool, limit int64) *Fetcher {
 	return newFetcher(sourceTestTimeout, offline, limit)
 }
 
-// TestNewFetcherCarriesTheRealCeiling is what keeps every test below honest:
-// they all run through the shrinking seam, so without this the public
-// constructor could pass any ceiling at all - or none - and nothing would say
-// so. The fetch on the end proves the client it built is usable, which the
-// field check alone does not.
+// TestNewFetcherCarriesTheRealCeiling pins that the public constructor uses
+// helpers.SignatureMaxSize, which every other test bypasses through the
+// shrinking seam, and that the client it builds can fetch.
 func TestNewFetcherCarriesTheRealCeiling(t *testing.T) {
 	t.Parallel()
 
@@ -140,14 +131,8 @@ func TestNewFetcherCarriesTheRealCeiling(t *testing.T) {
 }
 
 // TestFetchRequirementSourceAcceptsEveryFetchableSpelling is the positive
-// control for every refusal in this file: the same function, the same fixture
-// file and the same fixture server, accepted.
-//
-// The four file spellings are RFC 8089's. Three are here because url.Parse
-// reports each differently: an empty authority, one naming localhost, and the
-// single-slash form carrying no authority. The fourth spells that authority
-// LocalHost and pins fetchFile's case-insensitive host compare instead. All
-// four name one file, so accepting them is about spelling, not disk contents.
+// control for every refusal here: the four RFC 8089 file spellings (LocalHost
+// pins the case-insensitive host compare) and an http URL are all fetched.
 func TestFetchRequirementSourceAcceptsEveryFetchableSpelling(t *testing.T) {
 	t.Parallel()
 
@@ -183,15 +168,9 @@ func TestFetchRequirementSourceAcceptsEveryFetchableSpelling(t *testing.T) {
 	}
 }
 
-// TestFetchRequirementSourceRefusesEveryUnfetchableShape covers the whole
-// unsupported-source class in one table: a scheme outside the three, no scheme
-// at all, a file URL naming another host, one carrying a relative path, one
-// naming no path at all, and a value url.Parse itself refuses.
-//
-// The failure message names the row and logs the error separately rather than
-// rendering it inline, for the reason the mutation quotes below depend on:
-// under a mutation these rows fail carrying a rendered URL, which a quoted
-// line should not have to reproduce byte for byte.
+// TestFetchRequirementSourceRefusesEveryUnfetchableShape pins the
+// unsupported-source sentinel for a foreign or missing scheme, a file URL
+// naming another host, a relative path or no path, and an unparseable value.
 func TestFetchRequirementSourceRefusesEveryUnfetchableShape(t *testing.T) {
 	t.Parallel()
 
@@ -216,39 +195,8 @@ func TestFetchRequirementSourceRefusesEveryUnfetchableShape(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// Three mutations, one per refusal this table stands for, each
-			// applied through go test -overlay so no production file is edited.
-			//
-			// Deleting the scheme switch's default refusal - its return
-			// replaced by `return Blob{}, nil` - fails every row that reaches
-			// that arm, the ftp one among them:
-			//
-			//	source_test.go:255: ftp scheme was not refused as unfetchable
-			//
-			// Accepting any file authority - the u.Host condition in fetchFile
-			// replaced by a bare false - fails the foreign-host row, since an
-			// absent /x is then a source that is unavailable rather than one
-			// naming nothing fetchable:
-			//
-			//	source_test.go:255: file url naming a foreign host was not refused as unfetchable
-			//
-			// Dropping the absolute-path half of fetchFile's second condition -
-			// !strings.HasPrefix(u.Path, "/") replaced by a bare false - fails
-			// the no-path row, on the empty path the open is then handed:
-			//
-			//	source_test.go:255: file url naming localhost with no path was not refused as unfetchable
-			//
-			// Two rows are deliberately not among the three, and both are
-			// documentary rather than pinned: each is refused twice over, so no
-			// single deletion moves it. The relative row is caught by
-			// FetchRequirementSource's opaque check and again by the Opaque half
-			// of that same condition in fetchFile. The data row is caught by
-			// that same opaque check - url.Parse reports it as an opaque URL -
-			// and again by the default arm above, which has no "data" case to
-			// reach, so it survives either deletion on its own. The opaque
-			// check's own killing mutation is quoted on the credential test
-			// below, which reaches it through a value fetchFile would have
-			// accepted.
+			// The relative and data rows are refused twice over, by the opaque
+			// check and by a later arm, so no single deletion moves either one.
 			_, err := newTestFetcher(false, helpers.SignatureMaxSize).FetchRequirementSource(t.Context(), tc.source)
 			if !errors.Is(err, helpers.ErrUnsupportedSignatureSource) {
 				t.Logf("error = %v", err)
@@ -258,13 +206,9 @@ func TestFetchRequirementSourceRefusesEveryUnfetchableShape(t *testing.T) {
 	}
 }
 
-// TestFetchFileRefusalsAreAboutTheSpellingNotTheFile is the exact positive
-// control for the two file-shaped rows above, which name paths nothing wrote.
-//
-// One real file, three URLs for it: the localhost spelling reads it, while the
-// foreign-authority and relative spellings of that same path are refused. So
-// the refusals are shown to be about how the URL names the file rather than
-// about the file being missing, which a table of synthetic paths cannot say.
+// TestFetchFileRefusalsAreAboutTheSpellingNotTheFile reads one real file by its
+// localhost URL and refuses the foreign-authority and relative spellings of the
+// same path, so the refusals are about the URL rather than a missing file.
 func TestFetchFileRefusalsAreAboutTheSpellingNotTheFile(t *testing.T) {
 	t.Parallel()
 
@@ -286,13 +230,9 @@ func TestFetchFileRefusalsAreAboutTheSpellingNotTheFile(t *testing.T) {
 	}
 }
 
-// TestFetchRequirementSourceRefusesUserinfo pins both halves of the userinfo
-// rule: the value is refused, and the refusal does not print the credential it
-// was refused for.
-//
-// The positive control is the same server and the same path with the userinfo
-// deleted, which must be fetched normally - so the refusal is shown to be about
-// the credential rather than about anything else in the URL.
+// TestFetchRequirementSourceRefusesUserinfo pins that a source carrying
+// userinfo is refused without printing the credential, while the same URL
+// without it is fetched.
 func TestFetchRequirementSourceRefusesUserinfo(t *testing.T) {
 	t.Parallel()
 
@@ -300,12 +240,8 @@ func TestFetchRequirementSourceRefusesUserinfo(t *testing.T) {
 	clean := srv.URL + "/" + sigLeafName
 	credentialed := strings.Replace(clean, "http://", "http://user:pass@", 1) + presignedQuery
 
-	// Deleting the userinfo branch in FetchRequirementSource, applied through
-	// go test -overlay so no production file is edited, fails here: net/http
-	// sets Basic auth from the URL and the fixture server answers 200, so the
-	// fetch succeeds and no sentinel is returned.
-	//
-	//	source_test.go:311: a source carrying userinfo: error = <nil>, want the userinfo sentinel
+	// net/http would turn the userinfo into Basic auth and the fixture answers
+	// 200, so only the refusal keeps this fetch from succeeding.
 	_, err := newTestFetcher(false, helpers.SignatureMaxSize).FetchRequirementSource(t.Context(), credentialed)
 	if !errors.Is(err, helpers.ErrSignatureSourceUserinfo) {
 		t.Fatalf("a source carrying userinfo: error = %v, want the userinfo sentinel", err)
@@ -326,26 +262,9 @@ func TestFetchRequirementSourceRefusesUserinfo(t *testing.T) {
 	}
 }
 
-// TestFetchRequirementSourceNeverPrintsACredential covers the credentialed
-// spellings the userinfo refusal above never sees, because url.Parse refuses
-// four of them and reports the fifth as an opaque URL with no User to find.
-//
-// Every row is a real credential leak if the message is built from the raw
-// value: the password sits in the authority, and the reason the value was
-// refused is somewhere else entirely - an invalid port, a bad percent escape,
-// a malformed IP literal, a control character, or a shape no request can be
-// composed from. What makes the rows a class rather than five cases is that
-// display is computed before the parse, so none of them has an arm of its own.
-//
-// Both halves are asserted, because either alone is satisfiable by a broken
-// implementation: a refusal that printed nothing at all would keep the password
-// out while leaving an operator no way to find the offending entry, so the host
-// must still be named.
-//
-// The positive control is the fixture server's own clean URL, fetched by the
-// same constructor before the table runs. It is the only control these rows can
-// have: the other four values are refused for a defect in the value itself, so
-// no fixture can serve them however the fetch is built.
+// TestFetchRequirementSourceNeverPrintsACredential covers credentialed values
+// url.Parse refuses or reports as opaque: each refusal omits the password yet
+// still names the host, which holds because display precedes the parse.
 func TestFetchRequirementSourceNeverPrintsACredential(t *testing.T) {
 	t.Parallel()
 
@@ -368,12 +287,8 @@ func TestFetchRequirementSourceNeverPrintsACredential(t *testing.T) {
 		{name: "bad percent escape", source: "https://user:" + sourcePassword + "@host/%zz/sig.asc", wantHost: "host"},
 		{name: "invalid ip literal", source: "https://user:" + sourcePassword + "@[::1x]/sig.asc", wantHost: "[::1x]"},
 		{name: "control character", source: "https://user:" + sourcePassword + "@host/sig\x00.asc", wantHost: "host"},
-		// The opaque row is the one that was misclassified rather than merely
-		// leaked: before FetchRequirementSource refused Opaque, this value
-		// passed the scheme switch, reached http.Client, and came back as
-		// "no Host in request URL" wrapped in ErrSignatureSourceUnavailable -
-		// a value no host was ever contacted for, reported as a transport
-		// failure, which is the one class a CI retries forever.
+		// An opaque URL left to http.Client fails as "no Host in request URL",
+		// a transport failure a CI retries; it must be an unsupported source.
 		{name: "opaque url", source: "http:user:" + sourcePassword + "@host/sig.asc", wantHost: "host"},
 	}
 
@@ -381,31 +296,8 @@ func TestFetchRequirementSourceNeverPrintsACredential(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// Two mutations, applied through go test -overlay so no production
-			// file is edited.
-			//
-			// Computing display from helpers.WithoutQuery alone, with the
-			// userinfo cut no longer composed with it, fails every row on the
-			// second assertion. The invalid-port row, quoted as it came:
-			//
-			//	source_test.go:415: refusal message carries "s3cr3t"
-			//
-			// Deleting FetchRequirementSource's refusal of a value that names no
-			// host fails this table's opaque row alone, on the first assertion
-			// (the hostless-URL test below fails too): the value is fetched, and
-			// http.Client's own answer arrives under the other sentinel:
-			//
-			//	source_test.go:412: opaque url was not refused as an unsupported source
-			//
-			// That deletion has to take both halves of the one condition, and
-			// the row is over-determined between them: an opaque http URL is
-			// reported by url.Parse with an empty Host as well as a non-empty
-			// Opaque, so hostlessHTTP catches exactly what the Opaque test would
-			// have, and deleting either half on its own fails nothing here.
-			//
-			// The rendered error goes to the log rather than into either
-			// message, since one of these rows carries a NUL byte and another
-			// an OS-chosen rendering of a malformed address.
+			// The error goes to the log, never the failure message: one row
+			// carries a NUL byte, another an OS rendering of a malformed address.
 			_, err := newTestFetcher(false, helpers.SignatureMaxSize).FetchRequirementSource(t.Context(), tc.source)
 			if !errors.Is(err, helpers.ErrUnsupportedSignatureSource) {
 				t.Logf("error = %v", err)
@@ -422,14 +314,9 @@ func TestFetchRequirementSourceNeverPrintsACredential(t *testing.T) {
 	}
 }
 
-// TestFetchStripsQueryFromOriginAndErrors covers the asymmetry the query cut is
-// built around: the request goes out with the query, because the query may be
-// the capability that makes the source fetchable at all, while everything
-// reported back is cut off at it.
-//
-// Both directions are asserted against one shape, since either alone would be
-// satisfied by a broken implementation: stripping the query from the request
-// too would pass the reporting half while breaking every presigned source.
+// TestFetchStripsQueryFromOriginAndErrors pins the query cut's asymmetry: the
+// request carries the query, which may be the capability making the source
+// fetchable, while Blob.Origin and every error are cut at it.
 func TestFetchStripsQueryFromOriginAndErrors(t *testing.T) {
 	t.Parallel()
 
@@ -444,12 +331,7 @@ func TestFetchStripsQueryFromOriginAndErrors(t *testing.T) {
 		t.Fatalf("server saw RequestURI %q, want the query carried through to the wire", got)
 	}
 
-	// Filling Blob.Origin from source instead of display, applied through go
-	// test -overlay so no production file is edited, fails here. The rendered
-	// values go to the log rather than into the message, since both carry the
-	// fixture server's own ephemeral port and no two runs would agree:
-	//
-	//	source_test.go:455: Blob.Origin kept the capability query
+	// The rendered values go to the log: both carry the fixture's own port.
 	if blob.Origin != clean {
 		t.Logf("origin = %q, want %q", blob.Origin, clean)
 		t.Fatalf("Blob.Origin kept the capability query")
@@ -487,10 +369,8 @@ func TestFetchNon200NamesOnlyTheStatus(t *testing.T) {
 	}
 }
 
-// TestFetchFileSizeCeiling covers the ceiling on the file path, on both sides
-// of it. A file of exactly the ceiling is accepted and one byte more is
-// refused, which is what makes the read one byte longer than the ceiling
-// load-bearing rather than decorative.
+// TestFetchFileSizeCeiling pins both sides of the file path's ceiling: a file
+// of exactly the ceiling is accepted and one byte more is refused.
 func TestFetchFileSizeCeiling(t *testing.T) {
 	t.Parallel()
 
@@ -506,23 +386,17 @@ func TestFetchFileSizeCeiling(t *testing.T) {
 		t.Fatalf("a file of exactly the ceiling: read %d bytes, want %d", len(blob.Data), tinySourceLimit)
 	}
 
-	// Reading only f.limit bytes instead of f.limit+1, applied through go test
-	// -overlay so no production file is edited, fails here: the read stops at
-	// the ceiling and reports a clean EOF, so the file is indistinguishable
-	// from one that ends exactly there and is accepted.
-	//
-	//	source_test.go:517: a file one byte over the ceiling: error = <nil>, want the unavailable sentinel
+	// A read of exactly f.limit bytes would end on a clean EOF and accept this
+	// file, which is why the file path reads one byte past the ceiling.
 	_, err = newTestFetcher(false, tinySourceLimit).FetchRequirementSource(t.Context(), "file://"+over)
 	if !errors.Is(err, helpers.ErrSignatureSourceUnavailable) {
 		t.Fatalf("a file one byte over the ceiling: error = %v, want the unavailable sentinel", err)
 	}
 }
 
-// TestFetchHTTPSizeCeiling is the file ceiling's counterpart on the other path,
-// and it is a separate test rather than a row because the two caps are
-// implemented differently: helpers.NewSizeLimitedReader fails on the first byte
-// past the ceiling, so nothing here reads one byte more the way the file path
-// has to.
+// TestFetchHTTPSizeCeiling is the file ceiling's http counterpart, a separate
+// test because helpers.NewSizeLimitedReader fails on the first byte past the
+// ceiling instead of reading one extra byte.
 func TestFetchHTTPSizeCeiling(t *testing.T) {
 	t.Parallel()
 
@@ -544,21 +418,9 @@ func TestFetchHTTPSizeCeiling(t *testing.T) {
 	}
 }
 
-// TestFetchFileRefusesEveryNonRegularShape covers the mode check made against
-// the opened descriptor, with the positive control in the same table.
-//
-// The named-pipe row is the one that matters, and it is the only row that can
-// fail this test in two entirely different ways, because two independent
-// properties of one open are what make it pass. Both are quoted below, since
-// each is a separate way to break the same line.
-//
-// The other two refusal rows are documentary rather than pinned, and the mode
-// check's own deletion is what shows it: run with that check gone, only the
-// named-pipe row fails. A directory descriptor cannot be read, and an absent
-// path never opens at all, so each of those two reaches the same sentinel by a
-// route the mode check plays no part in. They stay because the shapes are worth
-// naming - and the directory row is the sole pin for the mode arm's MESSAGE in
-// the test below - not because a mutation moves them here.
+// TestFetchFileRefusesEveryNonRegularShape pins the mode check made on the
+// opened descriptor. Only the named-pipe row depends on it; the directory and
+// absent rows are refused by other routes and stay to name the shapes.
 func TestFetchFileRefusesEveryNonRegularShape(t *testing.T) {
 	t.Parallel()
 
@@ -579,27 +441,8 @@ func TestFetchFileRefusesEveryNonRegularShape(t *testing.T) {
 
 			source := "file://" + tc.build(t, t.TempDir())
 
-			// Two mutations, applied through go test -overlay so no production
-			// file is edited, both against fetchFile's open and both quoted as
-			// they came.
-			//
-			// Dropping syscall.O_NONBLOCK from the open flags does not fail the
-			// named-pipe row - it hangs it, in the blocking open that flag
-			// exists to avoid, since open(O_RDONLY) on a FIFO waits for a
-			// writer that never comes. The artifact is therefore a timeout
-			// under an explicit -timeout rather than an assertion:
-			//
-			//	panic: test timed out after 20s
-			//		running tests:
-			//			TestFetchFileRefusesEveryNonRegularShape/named_pipe (20s)
-			//
-			// Deleting the mode check - the !info.Mode().IsRegular() half of
-			// the condition below the open - fails that same row with an
-			// assertion instead: a FIFO opened non-blocking with no writer
-			// reads as a clean EOF, so the source is accepted as an empty
-			// signature blob:
-			//
-			//	source_test.go:612: named pipe: error = <nil>, want the unavailable sentinel
+			// Without O_NONBLOCK the named-pipe open blocks for a writer and
+			// hangs; without the mode check a writerless FIFO reads as empty.
 			_, err := newTestFetcher(false, helpers.SignatureMaxSize).FetchRequirementSource(t.Context(), source)
 			if tc.wantOK {
 				if err != nil {
@@ -615,18 +458,9 @@ func TestFetchFileRefusesEveryNonRegularShape(t *testing.T) {
 	}
 }
 
-// TestReadFileReportsAReadFailure covers the arm between opening a signature
-// source and holding its bytes.
-//
-// fetchFile refuses every non-regular shape before this function is reached, so
-// the arm is unreachable through the public path and is driven here directly -
-// which an unexported method taking an already-open descriptor makes cheap. A
-// directory is the one read failure a test can stage portably, and it reads as
-// one on darwin and on Linux alike.
-//
-// The regular-file row is the positive control on the same call: the identical
-// fetcher over a real file comes back with its bytes, so the row above it is the
-// descriptor and not a function that fails on everything.
+// TestReadFileReportsAReadFailure drives readFile directly, since fetchFile
+// refuses non-regular files first: a directory is the read failure every
+// platform can stage, and a regular file is the positive control.
 func TestReadFileReportsAReadFailure(t *testing.T) {
 	t.Parallel()
 
@@ -652,32 +486,16 @@ func TestReadFileReportsAReadFailure(t *testing.T) {
 	}
 	defer func() { _ = directory.Close() }()
 
-	// Killing mutation, actually run against this file: have readFile discard
-	// ReadFrom's error and return the buffer it managed to fill. This assertion
-	// then fails with
-	//
-	//	source_test.go:664: readFile(a directory) = "", <nil>, want a read failure
-	//
-	// which is what the arm exists to prevent: a source reported as read, empty,
-	// with the failure that produced it gone.
+	// A readFile that dropped ReadFrom's error would report this source as read
+	// and empty, with the failure gone.
 	if data, err = fetcher.readFile(directory, 0); err == nil {
 		t.Fatalf("readFile(a directory) = %q, %v, want a read failure", data, err)
 	}
 }
 
-// TestFetchFileFailuresRenderOneMessage pins the file arm's collapsed
-// vocabulary: four failures an attacker can select between - a path that is
-// absent, one that cannot be opened, one that is not a regular file, and one
-// whose bytes run past the ceiling - must be one observation, differing only in
-// the path they name.
-//
-// A signature source is repository content, so a message that discriminated
-// between these would be a filesystem oracle a repository could query about the
-// machine running the install. One bit is intrinsic to the message and stays:
-// whether the file was readable as a signature at all.
-//
-// The rows deliberately run at two different ceilings, since the over-ceiling
-// row needs a small one, and the message must not vary with it either.
+// TestFetchFileFailuresRenderOneMessage pins that an absent, unreadable,
+// non-regular or oversized file source renders one message naming only the
+// path, so a repository cannot use it as a filesystem oracle.
 func TestFetchFileFailuresRenderOneMessage(t *testing.T) {
 	t.Parallel()
 
@@ -707,26 +525,7 @@ func TestFetchFileFailuresRenderOneMessage(t *testing.T) {
 
 			path := tc.build(t, t.TempDir())
 
-			// Restoring one distinguishable message - the open-failure arm
-			// wrapping its own OS error again, as `fmt.Errorf("%w: %q: %w",
-			// helpers.ErrSignatureSourceUnavailable, display, err)` - applied
-			// through go test -overlay so no production file is edited, fails
-			// the absent row and the unreadable row alike. The absent one,
-			// quoted as it came:
-			//
-			//	source_test.go:736: absent path renders a message of its own
-			//
-			// Both messages go to the log rather than into the assertion: they
-			// carry an OS-chosen temporary path no two runs agree on.
-			//
-			// What those two rows pin is that arm's MESSAGE rather than its
-			// existence, and the difference is recorded once, here: deleting the
-			// arm outright fails nothing in this package at all. os.OpenFile
-			// hands back a nil *os.File alongside its error, File.Stat on a nil
-			// receiver answers fs.ErrInvalid, and the arm below renders the
-			// identical message from it. The rows claim one message for four
-			// failures and that claim stays true either way, so this is a note
-			// rather than a defect.
+			// Messages go to the log: they carry an OS-chosen temporary path.
 			_, err := newTestFetcher(false, tc.limit).FetchRequirementSource(t.Context(), "file://"+path)
 			if !errors.Is(err, helpers.ErrSignatureSourceUnavailable) {
 				t.Fatalf("FetchRequirementSource(%q) error = %v, want the unavailable sentinel", path, err)
@@ -770,13 +569,9 @@ func buildAbsentSource(_ *testing.T, dir string) string {
 	return filepath.Join(dir, sigLeafName)
 }
 
-// buildUnreadableSource writes a genuine signature file and takes every
-// permission off it, which is the one shape that reaches the open failing on a
-// path that is otherwise perfectly ordinary.
-//
-// It skips rather than fails where the mode does not bite - any run as a
-// principal that bypasses it (root, or a platform whose permissions do not work
-// this way) - since there the fixture cannot produce the condition at all.
+// buildUnreadableSource writes a signature file with every permission removed,
+// skipping where the mode does not bite (root, or a platform without it),
+// since there the fixture cannot produce an unreadable file.
 func buildUnreadableSource(t *testing.T, dir string) string {
 	t.Helper()
 
@@ -808,10 +603,8 @@ func buildRegularSource(t *testing.T, dir string) string {
 	return writeSourceFile(t, dir, sigLeafName, sourceBlobBody)
 }
 
-// TestFetchFileURLUnderOffline and TestFetchHTTPURLUnderOfflineIsRefused are
-// one pair: offline is about the network, so a local file must still be read
-// and an http source must not be attempted. Either test alone would be
-// satisfied by an implementation that got the other half backwards.
+// TestFetchFileURLUnderOffline pins that offline is about the network: a local
+// file source is still read. TestFetchHTTPURLUnderOfflineIsRefused is its pair.
 func TestFetchFileURLUnderOffline(t *testing.T) {
 	t.Parallel()
 
@@ -826,18 +619,9 @@ func TestFetchFileURLUnderOffline(t *testing.T) {
 	}
 }
 
-// TestFetchHTTPURLUnderOfflineIsRefused pins the refusal and where it is
-// raised. The message assertion is the last of the three: the offline transport
-// formats the request URL into its own message, so a refusal raised after the
-// request had been composed would print the capability query this value carries.
-//
-// The positive control is the same URL, served by the same fixture, fetched by
-// an online fetcher first - so the three refusals below are shown to be about
-// offline mode rather than about a value that could never have been fetched at
-// all. A control on a different fixture cannot say that, and neither can the
-// current call graph: two producers of helpers.ErrOfflineMode are reachable
-// from this call path, so "the check was never reached" is not reachable right
-// now - a property of who raises the sentinel rather than one of this test.
+// TestFetchHTTPURLUnderOfflineIsRefused pins that offline refuses an http
+// source before a request is composed, so the message omits the capability
+// query; the same URL fetched online is the positive control.
 func TestFetchHTTPURLUnderOfflineIsRefused(t *testing.T) {
 	t.Parallel()
 
@@ -852,14 +636,8 @@ func TestFetchHTTPURLUnderOfflineIsRefused(t *testing.T) {
 		t.Fatalf("positive control: data = %q, want the fixture blob", blob.Data)
 	}
 
-	// Deleting the offline early return in fetchHTTP - so the already-offline
-	// client's own transport produces the refusal instead - applied through go
-	// test -overlay so no production file is edited, fails on the third
-	// assertion below. The two above it still pass under that mutation, which
-	// is what makes the third one pinnable rather than documentary: the
-	// transport raises the same two sentinels, and only the message differs.
-	//
-	//	source_test.go:872: the offline refusal carries the capability query
+	// The offline transport raises the same two sentinels, so only the message
+	// assertion shows the refusal came from fetchHTTP's early return.
 	_, err = newTestFetcher(true, helpers.SignatureMaxSize).FetchRequirementSource(t.Context(), source)
 	if !errors.Is(err, helpers.ErrOfflineMode) {
 		t.Fatalf("FetchRequirementSource(an http url, offline) error = %v, want the offline sentinel", err)
@@ -873,14 +651,9 @@ func TestFetchHTTPURLUnderOfflineIsRefused(t *testing.T) {
 	}
 }
 
-// TestFetchHTTPSSurfacesCertificateVerification covers the https arm of the
-// scheme switch and, in the same assertion, the property the dedicated client
-// exists for: httptest's own self-signed certificate is refused, because this
-// client holds no relaxed TLS policy for any origin and cannot be handed one.
-//
-// The first assertion is what separates the two possible reasons for a failure:
-// an unsupported-source sentinel would mean https never reached a request at
-// all, so this row would prove nothing about the transport.
+// TestFetchHTTPSSurfacesCertificateVerification pins the https arm and that
+// the fetcher trusts no self-signed certificate: its client holds no relaxed
+// TLS policy for any origin.
 func TestFetchHTTPSSurfacesCertificateVerification(t *testing.T) {
 	t.Parallel()
 
@@ -902,11 +675,9 @@ func TestFetchHTTPSSurfacesCertificateVerification(t *testing.T) {
 	}
 }
 
-// TestFetchHTTPSurfacesContextCancellation pins that a caller's own
-// cancellation stays reachable through errors.Is. cmd/go-galaxy/exitcode checks
-// context.Canceled ahead of every other class, so an implementation that
-// rendered the cause instead of wrapping it would report an operator's Ctrl-C
-// as a network failure.
+// TestFetchHTTPSurfacesContextCancellation pins that a caller's cancellation
+// stays reachable through errors.Is, so exitcode reports a Ctrl-C as an
+// interrupt rather than a network failure.
 func TestFetchHTTPSurfacesContextCancellation(t *testing.T) {
 	t.Parallel()
 
@@ -938,10 +709,8 @@ func TestFetchHTTPSurfacesContextCancellation(t *testing.T) {
 	}
 }
 
-// TestTransportCause covers the unwrap directly, because two of its three
-// shapes are ones http.Client does not produce: it always wraps a transport
-// failure in a *url.Error carrying a non-nil Err, so the pass-through arm is
-// only reachable from here.
+// TestTransportCause covers the unwrap directly: http.Client always wraps a
+// cause in a *url.Error, so the other shapes are reachable only from here.
 func TestTransportCause(t *testing.T) {
 	t.Parallel()
 
@@ -975,20 +744,9 @@ func TestTransportCause(t *testing.T) {
 	}
 }
 
-// TestFetchRequirementSourceRefusesAHostlessHTTPURL covers the three spellings
-// url.Parse accepts while reporting neither an authority nor an opaque body, so
-// that nothing but this refusal stands between them and a request naming no
-// host to send it to.
-//
-// The exit class is asserted alongside the sentinel, because the class is the
-// whole reason the refusal is raised here rather than left to the transport:
-// http.Client answers such a URL with "no Host in request URL", which arrives
-// under the unavailable sentinel and exits 4 - the network class, which a CI
-// retries. A value no host was ever contacted for has to exit 2 instead, the
-// class an operator clears by editing something.
-//
-// The positive control is the same fetcher against the fixture server: an http
-// URL differing from every row below only in naming a host.
+// TestFetchRequirementSourceRefusesAHostlessHTTPURL pins that an http(s) URL
+// naming no host is refused as an unsupported source and exits 2; left to
+// http.Client it would exit 4, the network class a CI retries.
 func TestFetchRequirementSourceRefusesAHostlessHTTPURL(t *testing.T) {
 	t.Parallel()
 
@@ -1015,24 +773,6 @@ func TestFetchRequirementSourceRefusesAHostlessHTTPURL(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			// Two mutations, applied through go test -overlay so no production
-			// file is edited, one per assertion below.
-			//
-			// Narrowing the refusal back to opaque values alone - the
-			// hostlessHTTP half of FetchRequirementSource's condition deleted -
-			// fails every row on the first assertion, which is the defect this
-			// test exists for: the value reaches http.Client, and its answer
-			// arrives under the wrong sentinel and the wrong class:
-			//
-			//	source_test.go:1038: error = collection signature source unavailable: "https:///sig.asc": http: no Host in request URL
-			//	source_test.go:1039: "https:///sig.asc" was not refused as an unsupported source
-			//
-			// Dropping helpers.ErrUnsupportedSignatureSource from
-			// exitcode.isSignatureConfigError fails the second assertion
-			// instead, with the first still passing - which is what makes the
-			// class pinnable here rather than merely implied by the sentinel:
-			//
-			//	source_test.go:1042: "https:///sig.asc" classified as exit 1, want ExitUsage (2)
 			_, err := newTestFetcher(false, helpers.SignatureMaxSize).FetchRequirementSource(t.Context(), tc.source)
 			if !errors.Is(err, helpers.ErrUnsupportedSignatureSource) {
 				t.Logf("error = %v", err)
@@ -1045,20 +785,9 @@ func TestFetchRequirementSourceRefusesAHostlessHTTPURL(t *testing.T) {
 	}
 }
 
-// TestFetchFileNamesThePathItOpened covers the fragment cut on the one arm
-// where it decides more than what a message reads like. url.Parse splits a
-// fragment off before the Path fetchFile opens, so "file://<dir>/a#b.asc" opens
-// <dir>/a - and a display that kept the fragment would name a file this run
-// never touched, in Blob.Origin and in the file arm's one failure message
-// alike. The second is what the collapsed vocabulary's own justification rests
-// on: an operator is expected to reproduce the distinction with one ls -l, and
-// cannot if the path named is not the path opened.
-//
-// The first subtest puts a different body at the leaf the source spells out in
-// full, so which file was read is visible in the data rather than only in the
-// message. The two subtests are separate chains rather than one, because each
-// asserts the same property through a different sink and neither should be able
-// to hide the other's failure behind an earlier t.Fatalf.
+// TestFetchFileNamesThePathItOpened pins that a fragment is cut from a file
+// source's display, since url.Parse drops it before the open: Blob.Origin
+// and the failure message must name the path actually opened.
 func TestFetchFileNamesThePathItOpened(t *testing.T) {
 	t.Parallel()
 
@@ -1089,15 +818,7 @@ func TestFetchFileNamesThePathItOpened(t *testing.T) {
 			t.Fatalf("data = %q, want the bytes of the file named before the fragment", blob.Data)
 		}
 
-		// Dropping helpers.WithoutFragment from the display composition in
-		// parseRequirementSource, applied through go test -overlay so no
-		// production file is edited, fails this subtest here and the one below
-		// on its own message assertion. The rendered values go to the log
-		// rather than into either message, since each carries an OS-chosen
-		// temporary path no two runs agree on, so only the assertion line is
-		// quotable:
-		//
-		//	source_test.go:1103: Blob.Origin names a path other than the one that was opened
+		// The rendered values go to the log: each carries an OS-chosen path.
 		if blob.Origin != "file://"+opened {
 			t.Logf("origin = %q, want %q", blob.Origin, "file://"+opened)
 			t.Fatalf("Blob.Origin names a path other than the one that was opened")
@@ -1109,11 +830,7 @@ func TestFetchFileNamesThePathItOpened(t *testing.T) {
 
 		absent := filepath.Join(t.TempDir(), baseLeaf)
 
-		// The same mutation quoted above fails this subtest too, on the message
-		// rather than on the origin, and the same OS-chosen path keeps its own
-		// rendering out of that quote:
-		//
-		//	source_test.go:1124: the message names a path other than the one that was opened
+		// The same property as above, asserted through the failure message.
 		_, err := newTestFetcher(false, helpers.SignatureMaxSize).
 			FetchRequirementSource(t.Context(), "file://"+absent+"#b.asc")
 		if !errors.Is(err, helpers.ErrSignatureSourceUnavailable) {
@@ -1126,24 +843,9 @@ func TestFetchFileNamesThePathItOpened(t *testing.T) {
 	})
 }
 
-// TestSourceRequiresNetwork pins SourceRequiresNetwork's predicate against
-// samples drawn from its two sibling tables, plus one case neither carries.
-// The four file rows and the http row are exactly
-// TestFetchRequirementSourceAcceptsEveryFetchableSpelling's own five, the
-// LocalHost spelling included, so the case-insensitive host compare that
-// keeps it a file source rather than a network one is pinned here too; four
-// more rows are a representative slice of what
-// TestFetchRequirementSourceRefusesEveryUnfetchableShape refuses. The https
-// row is drawn from neither: the accepting sibling carries only an http case,
-// so this one is added on its own to prove the predicate answers true for
-// both network schemes rather than only the one that table happens to
-// exercise.
-//
-// The http and https rows are the positive control: an accepted source is not
-// automatically a network one (the four file rows right above them prove
-// that on the identical fixture file), so a row this function answers true on
-// is what shows the predicate can say yes at all, rather than one that merely
-// never says no.
+// TestSourceRequiresNetwork pins the predicate on its sibling tables' samples
+// plus an https row: only http and https need the network, and no file
+// source does, the LocalHost spelling included.
 func TestSourceRequiresNetwork(t *testing.T) {
 	t.Parallel()
 

@@ -37,11 +37,9 @@ type Tree struct {
 	skipped string
 }
 
-// Load extracts the tar.gz at tarPath into a private directory under the
-// directory tempDir supplies and returns the tree rooted at the archive's
-// single role root. The extractor owns every untrusted-archive boundary; this
-// function adds only the root-detection rule the package comment states. On
-// any error the extraction directory is already gone.
+// Load extracts the tar.gz at tarPath into a private directory under tempDir()
+// and returns the tree rooted at the single role root. On any error the
+// extraction directory is already gone.
 func Load(ctx context.Context, tarPath string, tempDir func() string) (*Tree, error) {
 	dir, err := os.MkdirTemp(tempDir(), extractDirPattern)
 	if err != nil {
@@ -71,10 +69,9 @@ func load(ctx context.Context, tarPath, dir string) (*Tree, error) {
 	return &Tree{root: root, dir: dir, skipped: skipped}, nil
 }
 
-// detectRoleRoot returns the os.Root of the role and the top-level directory
-// it stripped ("" when the role sits at the archive root). The archive root
-// wins when it carries a meta file itself - the shortest parent, as in
-// ansible's scan.
+// detectRoleRoot returns the role's os.Root and the top-level directory it
+// stripped ("" at the archive root). The archive root wins when it carries a
+// meta file, the shortest parent as in ansible's scan.
 func detectRoleRoot(outer *os.Root) (*os.Root, string, error) {
 	if hasRoleMeta(outer, ".") {
 		return outer, "", nil
@@ -131,8 +128,8 @@ func (t *Tree) Cleanup() {
 }
 
 // CommitTime is the Unix epoch: a url tarball names no commit, and the fixed
-// stamp is what keeps one origin artifact repacking to one byte sequence
-// under one toolchain (see the package comment).
+// stamp keeps one origin artifact repacking to one byte sequence under one
+// toolchain.
 func (t *Tree) CommitTime() time.Time { return time.Unix(0, 0).UTC() }
 
 // ReadDir lists the entries of a directory in byte order, each name validated
@@ -200,10 +197,9 @@ func (t *Tree) mapEntry(dir string, entry os.DirEntry) (treearchive.Entry, error
 	}
 }
 
-// checkEntryName refuses a name this tool's own extractor would refuse on the
-// way back out of the repacked artifact: a control rune or a backslash. A
-// filesystem name can carry neither a slash nor a NUL, and the extractor
-// already refused "." and "..", so those need no arm here.
+// checkEntryName refuses a name this tool's extractor would refuse on the way
+// back out of the repacked artifact: a control rune or a backslash. Slash, NUL,
+// "." and ".." cannot reach here from a filesystem listing.
 func checkEntryName(name string) error {
 	for _, r := range name {
 		if r < 0x20 || r == 0x7f || r == '\\' {

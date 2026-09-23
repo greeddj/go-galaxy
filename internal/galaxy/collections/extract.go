@@ -13,26 +13,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
 )
 
-// extractCollection materializes a collection tarball into target's install
-// directory. When extractStore is provided, the tarball is unpacked once into
-// the content-addressable store and linked via hard links into target.path.
-// Otherwise the tarball is unpacked directly into target.path.
-//
-// artifactSHAComputed declares whether artifactSHA was hashed by this process
-// over tarPath's bytes (see installPayload.artifactSHAComputed); through
-// shaProvenance it decides whether the store's ingest must hash the tarball
-// once more before extracting under that sha. The empty-artifactSHA fallback
-// below hashes the file right here, so it always yields a self-computed sha.
-//
-// The resets (RemoveAll then MkdirAll, of the tree and of the collection's
-// .info directories) and the extract-marker read/write are the only writes
-// here that go through target.root: unpack itself is handed
-// target.path, a plain string, and operates below root's own reach. This is
-// deliberate, not an oversight - rooting per-archive-entry writes was
-// measured at 1.5x-2.3x the cost of this function for zero marginal
-// coverage, because the reset immediately above always wipes and recreates
-// target.path through root right before unpack runs, so nothing can be
-// pre-planted inside it between the two calls.
+// extractCollection materializes a collection tarball into target.path, via
+// the extracted store when one is given. Only the reset and the marker go
+// through target.root; unpack gets a plain path the reset just recreated.
 func extractCollection(
 	ctx context.Context,
 	col collection,
@@ -46,13 +29,9 @@ func extractCollection(
 	return extractTree(ctx, col.Namespace+"/"+col.Name, tarPath, target, runtime, extractStore, artifactSHA, artifactSHAComputed, nil)
 }
 
-// extractTree is the tree materialization both a collection and a role go
-// through: the reset, the unpack (straight or through the extracted store)
-// and the extract marker. display names the tree in the skip line.
-// postExtract, when set, runs after the unpack and before the marker is
-// written, so whatever it adds to the tree - a role's
-// meta/.galaxy_install_info - is counted by the marker's tally rather than
-// read as drift on the next run.
+// extractTree resets, unpacks and marks a collection or role tree.
+// postExtract runs before the marker is written, so what it adds (a role's
+// meta/.galaxy_install_info) is in the tally rather than read as drift.
 func extractTree(
 	ctx context.Context,
 	display string,
@@ -72,14 +51,9 @@ func extractTree(
 		artifactSHA = hash
 		artifactSHAComputed = true
 	}
-	// Refused here, before any of the destructive work below, rather than
-	// left to writeExtractMarker's own guard at the end of this function:
-	// verifyExtractMarker, RemoveAll, MkdirAll, and a full unpack all sit
-	// between this point and that one, so deferring the refusal would
-	// guarantee target.path gets wiped and fully re-extracted for a value
-	// that was never usable, before the failure is ever reported.
-	// writeExtractMarker keeps its own guard regardless - that is its own
-	// invariant, independent of any caller, not made redundant by this one.
+	// Refused before the destructive reset, not left to writeExtractMarker's
+	// own guard, which would fire only after target.path was wiped and
+	// re-extracted for a value that was never usable.
 	if !helpers.IsSHA256Hex(artifactSHA) {
 		return fmt.Errorf("%w: %q", helpers.ErrMalformedArtifactSHA256, artifactSHA)
 	}
@@ -108,12 +82,9 @@ func extractTree(
 // rewrite: the tree, and for a collection its .info directories as well (see
 // resetCollectionInfo), before anything is unpacked.
 func resetExtractionTarget(target installTarget) error {
-	// The severest primitive in this whole pipeline: unlike every other
-	// rooted call here, a failure is not "nothing was written yet", it is
-	// "the previous tree may be gone". Its error is therefore checked and
-	// classified, not discarded - a symlinked ansible_collections (or a
-	// symlinked namespace/name component) makes this refuse atomically,
-	// inside the kernel, before anything is destroyed.
+	// A failure here may mean the previous tree is gone, so it is classified,
+	// never discarded; a symlinked ancestor makes the rooted remove refuse
+	// before anything is destroyed.
 	if err := target.root.RemoveAll(target.rel); err != nil {
 		return classifyCollectionsRootError(target.root, target.rel, err)
 	}
@@ -126,24 +97,9 @@ func resetExtractionTarget(target installTarget) error {
 	return resetCollectionInfo(target)
 }
 
-// resetCollectionInfo removes every version's .info directory of target's
-// collection and creates an empty one for target's own version, the same
-// "<namespace>.<name>-*.info" sweep ansible-galaxy makes whenever it installs
-// a collection from an artifact. It runs with the tree's own reset, before anything is unpacked,
-// because the extract marker lives in .info and .info is scoped to a version
-// while the tree is not: a marker left in an earlier version's directory
-// would outlive the tree it counted, and a later install of that version -
-// whose store record and GALAXY.yml are still there - would take it for
-// proof of an install whenever the tree now in place happened to share its
-// tally, which a same-length patch edit is enough for. Removing them here
-// leaves at most one marker for the collection, beside the version its tree
-// holds.
-//
-// A name counts only when what sits between the prefix and the ".info"
-// suffix is an exact version, so a directory merely starting with the same
-// characters is never taken for one of this collection's. The listing and
-// every removal go through target.root, which refuses to follow a symlinked
-// ansible_collections out of the tree.
+// resetCollectionInfo removes every "<namespace>.<name>-<version>.info" of
+// target's collection and recreates its own version's, as ansible-galaxy does,
+// so no stale marker outlives the tree it counted.
 func resetCollectionInfo(target installTarget) error {
 	entries, err := fs.ReadDir(target.root.FS(), collectionsDirName)
 	if err != nil {
@@ -186,10 +142,9 @@ func unpack(
 	return extracted.Materialize(src, installPath)
 }
 
-// shaProvenance maps the payload's "this process hashed these bytes" flag
-// onto the extracted store's provenance declaration: a self-computed sha lets
-// Ensure ingest the tarball without re-reading it, any other sha must still
-// be verified against the file's bytes before it keys the shared CAS.
+// shaProvenance maps "this process hashed these bytes" onto the store's
+// provenance: any sha not self-computed is re-verified against the file's
+// bytes before it keys the shared CAS.
 func shaProvenance(selfComputed bool) extracted.SHAProvenance {
 	if selfComputed {
 		return extracted.SHASelfComputed

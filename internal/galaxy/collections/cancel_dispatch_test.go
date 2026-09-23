@@ -1,20 +1,8 @@
 package collections
 
-// This file proves that runInstallLevel and warmCollections both stop
-// dispatching further collections onto their worker pool once the run's
-// context is canceled - a collection not yet started never begins, while
-// every worker already started still runs to completion and is still
-// joined (runInstallLevel via its deferred wg.Wait, warmCollections via its
-// inline one) - and that neither loop turns cancellation into an error:
-// installLevels/warmWithState both still reach their own tail
-// (finalizeInstall, or the snapshot save and metrics report) for an
-// interrupted run exactly as they do for one that finished on its own.
-//
-// Each "canceled" subtest below is paired with a "live" positive control on
-// the identical fixture, run with context.Background() instead of a
-// pre-canceled context: without it, a canceled subtest that recorded zero
-// failures would be indistinguishable from a fixture that could never
-// record a failure in the first place.
+// These tests prove runInstallLevel and warmCollections dispatch nothing new
+// after cancellation and return no error for it, so the run's tail still saves.
+// Each "canceled" subtest has a "live" control showing the fixture can fail.
 
 import (
 	"context"
@@ -31,12 +19,9 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// newCancelDispatchInstallFixture builds an installDeps and a three-key
-// level for TestRunInstallLevelStopsDispatchingAfterCancel, mirroring
-// TestRunInstallLevelZeroWorkersDoesNotDeadlock's own fixture: root is nil,
-// so installCollection fails fast through newInstallTarget's own nil-root
-// guard instead of reaching the network, which is what makes every
-// collection's failure deterministic and offline.
+// newCancelDispatchInstallFixture builds an installDeps and a three-key level
+// with a nil root, so every installCollection fails offline and
+// deterministically through newInstallTarget's nil-root guard.
 func newCancelDispatchInstallFixture(
 	t *testing.T,
 ) (installDeps, map[string]collection, map[string][]string, []string, *capturingPrinter) {
@@ -55,11 +40,8 @@ func newCancelDispatchInstallFixture(
 	return deps, collections, graph, level, printer
 }
 
-// waitRunInstallLevel blocks until done delivers runInstallLevel's result or
-// zeroWorkersDeadlockTimeout elapses, failing the test on either a timeout or
-// a non-nil result. Factored out of the two subtests below purely to keep
-// each of their own cyclomatic complexity low; the wait itself is identical
-// in both.
+// waitRunInstallLevel waits for runInstallLevel's result on done, failing on
+// a non-nil result or when zeroWorkersDeadlockTimeout elapses first.
 func waitRunInstallLevel(t *testing.T, done <-chan error) {
 	t.Helper()
 	select {
@@ -91,14 +73,8 @@ func TestRunInstallLevelStopsDispatchingAfterCancel(t *testing.T) {
 		}()
 		waitRunInstallLevel(t, done)
 
-		// Killing mutation: removing the "if ctx.Err() != nil { break }" check
-		// (install_command.go, top of runInstallLevel's dispatch loop) makes `go test
-		// -run TestRunInstallLevelStopsDispatchingAfterCancel/canceled -v`
-		// fail with the real observed output:
-		//   failures.count() = 3, want 0: a canceled run must dispatch no collection
-		// (every collection in the level is now dispatched despite the
-		// canceled context, and each fails through the fixture's nil-root
-		// guard, recording three failures instead of zero)
+		// Every dispatched collection fails, so zero failures means none was
+		// dispatched.
 		if got := failures.count(); got != 0 {
 			t.Fatalf("failures.count() = %d, want 0: a canceled run must dispatch no collection", got)
 		}
@@ -107,10 +83,7 @@ func TestRunInstallLevelStopsDispatchingAfterCancel(t *testing.T) {
 		}
 	})
 
-	// live is the mandatory positive control on the identical fixture, run
-	// with context.Background(): it proves the fixture can produce three
-	// failures at all, which is what makes the canceled subtest's zero above
-	// mean "dispatch stopped" rather than "this fixture never fails".
+	// live proves the same fixture fails three times when not canceled.
 	t.Run("live", func(t *testing.T) {
 		t.Parallel()
 		deps, collections, graph, level, printer := newCancelDispatchInstallFixture(t)
@@ -134,12 +107,9 @@ func TestRunInstallLevelStopsDispatchingAfterCancel(t *testing.T) {
 	})
 }
 
-// newCancelDispatchWarmFixture builds a cfg/runtime/state and a three-key
-// collections map for TestWarmCollectionsStopsDispatchingAfterCancel,
-// mirroring TestWarmCollectionsZeroWorkersDoesNotDeadlock's own fixture: no
-// server is configured and Offline is set, so warmOne's metadata resolve
-// fails deterministically through loadRootMetadataCached's empty
-// server-candidate list, with no network I/O.
+// newCancelDispatchWarmFixture builds a warm run over three collections with
+// no server and Offline set, so every warmOne fails offline through an empty
+// server-candidate list.
 func newCancelDispatchWarmFixture(
 	t *testing.T,
 ) (*config.Config, *infra.Infra, *installState, map[string]collection, *capturingPrinter) {
@@ -160,11 +130,8 @@ func newCancelDispatchWarmFixture(
 	return cfg, runtime, state, collections, printer
 }
 
-// waitWarmCollections blocks until done delivers warmCollections's result or
-// zeroWorkersDeadlockTimeout elapses, failing the test on a timeout.
-// warmCollections returns no error - only a failureSummary - so unlike
-// waitRunInstallLevel there is nothing to check beyond arrival; the summary
-// itself is returned for the caller's own assertions.
+// waitWarmCollections returns warmCollections's failureSummary from done,
+// failing the test when zeroWorkersDeadlockTimeout elapses first.
 func waitWarmCollections(t *testing.T, done <-chan failureSummary) failureSummary {
 	t.Helper()
 	select {
@@ -176,11 +143,9 @@ func waitWarmCollections(t *testing.T, done <-chan failureSummary) failureSummar
 	}
 }
 
-// TestWarmCollectionsStopsDispatchingAfterCancel is warm's mirror of
-// TestRunInstallLevelStopsDispatchingAfterCancel: warmCollections must stop
-// dispatching once ctx is canceled, and still return a failureSummary
-// through its own inline wg.Wait rather than an error derived from
-// ctx.Err().
+// TestWarmCollectionsStopsDispatchingAfterCancel proves warmCollections
+// dispatches nothing once ctx is canceled and still returns its
+// failureSummary rather than an error derived from ctx.Err().
 func TestWarmCollectionsStopsDispatchingAfterCancel(t *testing.T) {
 	t.Parallel()
 
@@ -196,14 +161,8 @@ func TestWarmCollectionsStopsDispatchingAfterCancel(t *testing.T) {
 		}()
 		summary := waitWarmCollections(t, done)
 
-		// Killing mutation: removing the "if ctx.Err() != nil { break }" check
-		// (warm_command.go, top of warmCollections's dispatch loop) makes `go test
-		// -run TestWarmCollectionsStopsDispatchingAfterCancel/canceled -v`
-		// fail with the real observed output:
-		//   summary.count = 3, want 0: a canceled run must dispatch no collection
-		// (every collection is now dispatched despite the canceled context,
-		// and each fails through the fixture's empty server-candidate list,
-		// recording three failures instead of zero)
+		// Every dispatched collection fails, so zero failures means none was
+		// dispatched.
 		if summary.count != 0 {
 			t.Fatalf("summary.count = %d, want 0: a canceled run must dispatch no collection", summary.count)
 		}
@@ -212,10 +171,7 @@ func TestWarmCollectionsStopsDispatchingAfterCancel(t *testing.T) {
 		}
 	})
 
-	// live is the mandatory positive control on the identical fixture, run
-	// with context.Background(): it proves the fixture can produce three
-	// failures at all, which is what makes the canceled subtest's zero above
-	// mean "dispatch stopped" rather than "this fixture never fails".
+	// live proves the same fixture fails three times when not canceled.
 	t.Run("live", func(t *testing.T) {
 		t.Parallel()
 		cfg, runtime, state, collections, printer := newCancelDispatchWarmFixture(t)
