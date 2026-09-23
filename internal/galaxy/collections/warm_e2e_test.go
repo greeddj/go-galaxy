@@ -450,3 +450,72 @@ func TestWarmMetricsWrittenForSuccessAndFailure(t *testing.T) {
 		assertMetricsCommand(t, f.cfg.MetricsFile, "warm")
 	})
 }
+
+// newCycleFixture makes acme.app and acme.lib depend on each other: frozen,
+// through the deps of a written lockfile, else through an acme.lib@2.0.0 the
+// solver picks for acme.app's ">=1.0.0" that depends on acme.app in turn.
+func newCycleFixture(t *testing.T, frozen bool) *e2eFixture {
+	t.Helper()
+	f := newE2EFixture(t)
+	if !frozen {
+		f.server.AddVersion("acme", "lib", "2.0.0", map[string]string{"acme.app": ">=1.0.0"})
+		return f
+	}
+	lf := &lockfile.File{
+		SchemaVersion: lockfile.SchemaVersion,
+		Server:        f.cfg.Server,
+		Collections: []lockfile.Entry{
+			{Name: "acme.app", Version: testVersion100, Source: f.cfg.Server, SHA256: f.appV1.SHA256, Deps: []string{"acme.lib"}},
+			{Name: "acme.lib", Version: testVersion100, Source: f.cfg.Server, SHA256: f.libV1.SHA256, Deps: []string{"acme.app"}},
+		},
+	}
+	if err := lockfile.Save(lockfile.ResolveDefaultPath(f.cfg.RequirementsFile, f.cfg.LockFile), lf); err != nil {
+		t.Fatalf("save lockfile: %v", err)
+	}
+	f.cfg.Frozen = true
+	return f
+}
+
+// TestWarmRefusesADependencyCycleAsInstallDoes pins that warm, like install,
+// fails a cyclic graph with the resolution code, from a fresh solve or the
+// lockfile and under --dry-run too, before a single artifact is fetched.
+func TestWarmRefusesADependencyCycleAsInstallDoes(t *testing.T) {
+	t.Parallel()
+	commands := []struct {
+		run  func(context.Context, *config.Config, *infra.Infra) error
+		name string
+	}{
+		{run: collections.Start, name: "install"},
+		{run: collections.Warm, name: "warm"},
+	}
+	modes := []struct {
+		name   string
+		frozen bool
+		dryRun bool
+	}{
+		{name: "fresh solve"},
+		{name: "fresh solve dry run", dryRun: true},
+		{name: "frozen", frozen: true},
+		{name: "frozen dry run", frozen: true, dryRun: true},
+	}
+	for _, command := range commands {
+		for _, mode := range modes {
+			t.Run(command.name+" "+mode.name, func(t *testing.T) {
+				t.Parallel()
+				f := newCycleFixture(t, mode.frozen)
+				f.cfg.DryRun = mode.dryRun
+
+				err := command.run(context.Background(), f.cfg, f.runtime)
+				if !errors.Is(err, helpers.ErrDependencyGraphHasACycle) {
+					t.Fatalf("%s: expected errors.Is ErrDependencyGraphHasACycle, got %v", command.name, err)
+				}
+				if got := exitcode.FromError(err); got != exitcode.ExitResolution {
+					t.Errorf("exitcode.FromError(err) = %d, want ExitResolution (%d)", got, exitcode.ExitResolution)
+				}
+				if got := f.server.Count(fakegalaxy.EndpointArtifact); got != 0 {
+					t.Errorf("EndpointArtifact count = %d, want 0 (the cycle fails the plan before any fetch)", got)
+				}
+			})
+		}
+	}
+}

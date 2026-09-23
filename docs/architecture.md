@@ -917,6 +917,12 @@ Order is load-bearing:
 8. Start the prefetcher. Roles are not prefetched: discovery has normally
    already committed their artifacts, as it has a git collection's.
 
+Steps 5 to 7 are one function, `planCollections`, and `warm` calls it too,
+right after step 3 and before its roles resolve. `warm` installs nothing, so it
+discards the levels and its prefetcher schedules in key order, but a dropped
+root or a dependency cycle fails it with the same error `install` gets, before
+a role is resolved or a collection warmed.
+
 ### Two pools, two resources
 
 `--workers` bounds extraction, which is local work bound mostly by the

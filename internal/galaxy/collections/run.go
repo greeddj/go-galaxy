@@ -253,23 +253,12 @@ func prepareInstallPlan(
 		return nil, err
 	}
 
-	collections, err := buildCollectionsMap(resolved)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := verifyRootsResolved(roots, resolved); err != nil {
-		return nil, err
-	}
-
 	// Levels are built before the prefetcher, so a dependency cycle fails
 	// before any prefetch worker exists and the queue follows level order.
-	levelStart := time.Now()
-	levels, err := buildInstallLevels(graph)
+	collections, levels, err := planCollections(runtime, roots, resolved, graph)
 	if err != nil {
 		return nil, err
 	}
-	runtime.Output.DebugSincef(levelStart, "%s", "Build install levels")
 
 	prefetchStart := time.Now()
 	prefetchDeps := newPrefetchDeps(cfg, runtime, state.store, state.backend.Artifacts(), root)
@@ -383,6 +372,28 @@ func buildCollectionsMap(resolved map[string]collection) (map[string]collection,
 		collections[key] = col
 	}
 	return collections, nil
+}
+
+// planCollections folds the resolved set into a map, checks every named root
+// came back and orders the graph into install levels, so install and warm
+// refuse a dropped root and a dependency cycle alike.
+func planCollections(
+	runtime *infra.Infra, roots []collection, resolved map[string]collection, graph map[string][]string,
+) (map[string]collection, [][]string, error) {
+	collections, err := buildCollectionsMap(resolved)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := verifyRootsResolved(roots, resolved); err != nil {
+		return nil, nil, err
+	}
+	levelStart := time.Now()
+	levels, err := buildInstallLevels(graph)
+	if err != nil {
+		return nil, nil, err
+	}
+	runtime.Output.DebugSincef(levelStart, "%s", "Build install levels")
+	return collections, levels, nil
 }
 
 // verifyRootsResolved fails with helpers.ErrMissingResolvedRoot for the first

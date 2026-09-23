@@ -1329,7 +1329,11 @@ flowchart TD
     LfRoots --> Map["fold the resolved set into a map"]
     Solve --> Map
     Map -->|"unsafe name, inexact version or duplicate key"| X2a
-    Map --> Frozen2{"--frozen set?"}
+    Map --> RootsOK{"every named root resolved?"}
+    RootsOK -->|"no"| X3(["exit 3 (resolution)"])
+    RootsOK -->|"yes"| Levels["order collections into install levels,<br/>then discard them: warm installs nothing"]
+    Levels -->|"dependency cycle"| X3
+    Levels --> Frozen2{"--frozen set?"}
     Frozen2 -->|"yes"| LfRoles["load the lockfile again,<br/>check every roles: entry against its locked role"]
     LfRoles -->|"missing, invalid or mismatched"| X6
     Frozen2 -->|"no"| RoleRes["resolve roles,<br/>see Resolving without --frozen"]
@@ -1342,10 +1346,12 @@ flowchart TD
 
 ### Resolving without --frozen
 
-Collections resolve first. The plan then folds them into a map, and only after
-that are roles resolved. A role level resolves its requests concurrently and
-merges them in declaration order. The role cap and the dependency queue are
-applied per role in that order, once the whole level has resolved.
+Collections resolve first. The plan then folds them into a map and runs the
+checks `install` runs on them, that every named root came back and that they
+order into install levels, and only after that are roles resolved. A role level
+resolves its requests concurrently and merges them in declaration order. The
+role cap and the dependency queue are applied per role in that order, once the
+whole level has resolved.
 
 ```mermaid
 flowchart TD

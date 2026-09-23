@@ -44,11 +44,13 @@ func warmWithState(ctx context.Context, cfg *config.Config, runtime *infra.Infra
 	if err != nil {
 		return err
 	}
-	resolved, _, err := resolveOrLoadLockfile(ctx, cfg, runtime, state, roots)
+	resolved, graph, err := resolveOrLoadLockfile(ctx, cfg, runtime, state, roots)
 	if err != nil {
 		return err
 	}
-	collections, err := buildCollectionsMap(resolved)
+	// Warm orders no install and discards the levels, but a graph install
+	// would refuse fails here, before a role is resolved or a collection warmed.
+	collections, _, err := planCollections(runtime, roots, resolved, graph)
 	if err != nil {
 		return err
 	}
