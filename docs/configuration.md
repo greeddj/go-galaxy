@@ -163,7 +163,8 @@ source of `--server` would count as an explicit `--server` and collapse a
 configured `server_list` to one server, where ansible treats it as the
 `[galaxy] server` fallback (see [Precedence](servers-and-auth.md#precedence)).
 `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` takes ansible's boolean spellings, which
-a flag source would refuse (see
+a flag source would refuse, and is still read only by `install` and `warm`,
+the commands that mount `--disable-gpg-verify` (see
 [Turning it on](signatures.md#turning-it-on)).
 
 ## requirements.yml

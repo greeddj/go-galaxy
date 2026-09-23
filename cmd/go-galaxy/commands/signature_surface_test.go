@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -188,4 +189,39 @@ func TestWarmParsesTheSignatureFlags(t *testing.T) {
 	if err := runCommandWith(t, "warm", Warm().Flags, args); err != nil {
 		t.Fatalf("app.Run(warm) error = %v, want nil", err)
 	}
+}
+
+// TestAnsibleDisableGPGVerifyReachesOnlyVerifyingCommands pins, over each
+// command's real flag set, that ANSIBLE_GALAXY_DISABLE_GPG_VERIFY is read by
+// install and warm alone, whether its value is refused or honored.
+func TestAnsibleDisableGPGVerifyReachesOnlyVerifyingCommands(t *testing.T) {
+	neutralizeAnsibleDiscovery(t)
+	verifying := []*cli.Command{Install(), Warm()}
+	nonVerifying := []*cli.Command{Cleanup(), Lock(), Outdated()}
+
+	t.Run("a malformed value", func(t *testing.T) {
+		t.Setenv("ANSIBLE_GALAXY_DISABLE_GPG_VERIFY", "maybe")
+		for _, cmd := range verifying {
+			if _, err := buildConfigFor(t, cmd.Name, cmd.Flags, nil); !errors.Is(err, galaxyhelpers.ErrInvalidDisableGPGVerify) {
+				t.Errorf("%s: BuildCollectionConfig() error = %v, want errors.Is ErrInvalidDisableGPGVerify", cmd.Name, err)
+			}
+		}
+		for _, cmd := range nonVerifying {
+			if _, err := buildConfigFor(t, cmd.Name, cmd.Flags, nil); err != nil {
+				t.Errorf("%s: BuildCollectionConfig() error = %v, want nil", cmd.Name, err)
+			}
+		}
+	})
+
+	t.Run("a valid value", func(t *testing.T) {
+		t.Setenv("ANSIBLE_GALAXY_DISABLE_GPG_VERIFY", "yes")
+		for _, cmd := range append(verifying, nonVerifying...) {
+			cfg, err := buildConfigFor(t, cmd.Name, cmd.Flags, nil)
+			if err != nil {
+				t.Fatalf("%s: BuildCollectionConfig() error = %v, want nil", cmd.Name, err)
+			}
+			assertConfigField(t, cmd.Name+": Signature.DisableGPGVerify", cfg.Signature.DisableGPGVerify,
+				slices.Contains(verifying, cmd))
+		}
+	})
 }

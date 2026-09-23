@@ -500,3 +500,23 @@ func TestApplySignatureConfigCountFallback(t *testing.T) {
 		t.Fatalf("applySignatureConfig() error = %v, want nil", err)
 	}
 }
+
+// TestApplySignatureConfigFlaglessIgnoresAnsibleDisable pins that a command
+// registering no signature flag neither refuses nor honors the ansible disable
+// variable, as it ignores every variable feeding one of those flags.
+func TestApplySignatureConfigFlaglessIgnoresAnsibleDisable(t *testing.T) {
+	for _, value := range []string{"maybe", "yes"} {
+		t.Run(value, func(t *testing.T) {
+			clearSignatureEnv(t)
+			t.Setenv(envDisableGPGVerifyAnsible, value)
+
+			cfg := &Config{}
+			if err := applySignatureConfig(cfg, newFlaglessCmd(t)); err != nil {
+				t.Fatalf("applySignatureConfig() error = %v, want nil", err)
+			}
+			if cfg.Signature.DisableGPGVerify {
+				t.Fatal("DisableGPGVerify = true, want false (no flag registered, so the variable is not read)")
+			}
+		})
+	}
+}

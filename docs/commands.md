@@ -225,7 +225,7 @@ flowchart TD
   S16 -->|"no"| XS7(["exit 2 (usage), ErrS3EmptyCreds"])
   S16 -->|"yes"| S17["S3 cache enabled"]
   S15 -->|"no"| S18
-  S17 --> S18{"signature settings valid?<br/>--keyring,<br/>--required-valid-signature-count,<br/>--ignore-signature-status-code,<br/>--disable-gpg-verify or<br/>ANSIBLE_GALAXY_DISABLE_GPG_VERIFY"}
+  S17 --> S18{"signature settings valid?<br/>--keyring,<br/>--required-valid-signature-count,<br/>--ignore-signature-status-code,<br/>--disable-gpg-verify or<br/>ANSIBLE_GALAXY_DISABLE_GPG_VERIFY;<br/>always yes on cleanup, lock and outdated,<br/>which mount none of them and read none"}
   S18 -->|"no"| XS8(["exit 2 (usage)"])
   S18 -->|"yes"| S19{"command mounts --timeout (not cleanup),<br/>no source set it,<br/>and ansible.cfg sets server_timeout?"}
   S19 -->|"yes"| S20{"server_timeout a positive integer<br/>or Go duration?"}
@@ -387,10 +387,11 @@ environment variable is ignored too.
   explicitly empty value exits 2. The keyring is not opened here.
 - `--required-valid-signature-count`, `--ignore-signature-status-code` (install
   and warm only): a count or status code the policy check refuses exits 2.
-- `--disable-gpg-verify` (install and warm): when it is not set,
-  `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` is read on every collection command,
-  cleanup included, and a value that does not parse exits 2. With a keyring
-  configured, it queues a warning.
+- `--disable-gpg-verify` (install and warm only): when it is not set,
+  `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` is read, and a value that does not parse
+  exits 2. cleanup, lock and outdated mount no signature flag and read no
+  signature variable, this one included. With a keyring configured, it queues
+  a warning.
 - `--dry-run` (`GO_GALAXY_DRY_RUN`): for install, warm and lock, it prints the
   dry-run banner, skips `--clear-cache` with a warning and does not record the
   project.
@@ -928,7 +929,7 @@ flowchart TD
     C -->|"yes"| X0(["print lock help, exit 0"])
     C -->|"no"| D{"positional argument given?<br/>root ArgValidator NoArguments"}
     D -->|"yes"| X2B(["unexpected arguments<br/>exit 2 (usage)"])
-    D -->|"no"| E["BuildCollectionConfig: --timeout, --workers,<br/>ansible.cfg, server list and tokens,<br/>git and url credential bindings,<br/>S3 settings, signature environment,<br/>then --offline with --s3-bucket refused"]
+    D -->|"no"| E["BuildCollectionConfig: --timeout, --workers,<br/>ansible.cfg, server list and tokens,<br/>git and url credential bindings,<br/>S3 settings,<br/>then --offline with --s3-bucket refused"]
     E -->|"error"| X2C(["exit 2 (usage),<br/>1 (generic) when no class matches"])
     E -->|"ok"| F{"--offline?"}
     F -->|"yes"| G1["Galaxy HTTP client that refuses every request"]
@@ -1222,7 +1223,8 @@ Accepted without changing the flow, since they supply values only: `--verbose`,
 reads (`[defaults] collections_path` and `roles_path`, `[galaxy] server`,
 `server_list`, `cache_dir`, `server_timeout`, and the `[galaxy_server.<id>]`
 sections); a value that cannot be used fails in diagram 1. `lock` does not mount
-the signature flags.
+the signature flags and reads none of their variables,
+`ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` included.
 
 ## warm
 
@@ -1839,7 +1841,8 @@ Accepted without changing the flow: `--verbose` and `--quiet`, which change
 output only, and `--s3-region`, `--s3-prefix`, `--s3-session-token` and
 `--s3-path-style-disabled`, which only change where and how S3 requests go (a
 bad value there shows up as the open or lock failures above). `cleanup` mounts
-nothing else: only the four global options and `cliflags.S3Flags()`.
+nothing else: only the four global options and `cliflags.S3Flags()`. It reads no
+signature variable either, `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` included.
 
 ## outdated
 
@@ -1856,7 +1859,7 @@ cache lock, so every answer is live, and it is refused under `--offline`.
 flowchart TD
     Start(["go-galaxy outdated"]) --> Args{"flags parse, and no positional argument?"}
     Args -->|"no"| E2a(["exit 2 (usage)"])
-    Args -->|"yes"| Cfg["BuildCollectionConfig: --timeout, --workers, ansible.cfg from --ansible-config or discovery,<br/>servers from --server, --token and server_list, GO_GALAXY_GIT_* and GO_GALAXY_URL_* bindings,<br/>S3 settings, ANSIBLE_GALAXY_DISABLE_GPG_VERIFY, [galaxy] server_timeout"]
+    Args -->|"yes"| Cfg["BuildCollectionConfig: --timeout, --workers, ansible.cfg from --ansible-config or discovery,<br/>servers from --server, --token and server_list, GO_GALAXY_GIT_* and GO_GALAXY_URL_* bindings,<br/>S3 settings, [galaxy] server_timeout"]
     Cfg --> CfgOK{"configuration usable?"}
     CfgOK -->|"no: a configuration sentinel"| E2b(["exit 2 (usage)<br/>for example a bad --timeout or server_timeout, missing --ansible-config file,<br/>an ansible.cfg that cannot be read, a malformed credential binding,<br/>--s3-bucket without both S3 keys or beside --offline"])
     CfgOK -->|"yes"| Wire["runCollectionCommand: printer for --verbose and --quiet,<br/>Galaxy HTTP client, git client, url client, print config warnings"]
@@ -2046,11 +2049,10 @@ there is no cache-busy or lock-lost exit (8).
   or sidecar that records no source.
 - `--ansible-config`, `--timeout`, `--token`: can fail configuration, exit 2;
   otherwise they only feed discovery, the no-progress budget and authentication.
-- `GO_GALAXY_GIT_*` and `GO_GALAXY_URL_*` credential bindings, and
-  `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY`: a malformed value fails configuration,
-  exit 2. A git binding otherwise supplies the credential for a git entry's
-  advertisement; a url binding has no further effect, since a url entry makes no
-  request.
+- `GO_GALAXY_GIT_*` and `GO_GALAXY_URL_*` credential bindings: a malformed
+  value fails configuration, exit 2. A git binding otherwise supplies the
+  credential for a git entry's advertisement; a url binding has no further
+  effect, since a url entry makes no request.
 - `--verbose` (`GO_GALAXY_VERBOSE`): prints an `Up to date:` line for each
   current entry, plus debug lines.
 - `--quiet` / `-q` (`GO_GALAXY_QUIET`, ignored when `--verbose` is set): hides
@@ -2065,7 +2067,8 @@ Accepted without changing the flow: `--cache-dir` (not named in the warning),
 `--workers` (size of each lookup pool only), `--download-workers`,
 `--s3-region`, `--s3-prefix`, `--s3-endpoint`, `--s3-session-token`,
 `--s3-path-style-disabled`, and `--s3-access-key` / `--s3-secret-key` beyond the
-credential check above.
+credential check above. `outdated` mounts no signature flag and reads none of
+their variables, `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` included.
 
 ## hash
 

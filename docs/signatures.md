@@ -69,6 +69,10 @@ other value is refused (exit `2`) rather than guessed. It is read apart from
 the flag because the flag's own variable takes Go's boolean spellings, which
 refuse `yes` and `off` by aborting the command: an environment already
 exporting `no` for ansible would otherwise fail every `install` and `warm`.
+Being read apart from the flag does not widen where it is read: like every
+variable in the table above, it is read only by `install` and `warm`, the
+commands that mount the flag, so `lock`, `outdated` and `cleanup` ignore it,
+a malformed value included.
 
 ## Keyring and signature file formats
 

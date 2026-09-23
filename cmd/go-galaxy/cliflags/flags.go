@@ -233,9 +233,9 @@ func SignatureFlags() []cli.Flag {
 			),
 		},
 		&cli.BoolFlag{
-			// ANSIBLE_GALAXY_DISABLE_GPG_VERIFY is read by resolveDisableGPGVerify
-			// instead: urfave's bool source aborts the command on the yes/no and
-			// on/off spellings ansible accepts.
+			// resolveDisableGPGVerify reads ANSIBLE_GALAXY_DISABLE_GPG_VERIFY where
+			// this flag is mounted, not as a source: urfave's bool source aborts
+			// the command on the yes/no and on/off spellings ansible accepts.
 			Name:    "disable-gpg-verify",
 			Usage:   "Skip signature verification even when a keyring is configured",
 			Sources: cli.EnvVars("GO_GALAXY_DISABLE_GPG_VERIFY"),

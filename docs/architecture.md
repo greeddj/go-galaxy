@@ -385,6 +385,11 @@ not read.
 The signature surface is resolved and validated for every command on this
 path, the non-verifying ones included, which is why an unset required count
 falls back to the default instead of handing the policy parser an empty spec.
+`ANSIBLE_GALAXY_DISABLE_GPG_VERIFY`, read apart from any flag source, is
+consulted only when the command registers `--disable-gpg-verify`, so a
+non-verifying command ignores it as it ignores the variables of the flags it
+does not register, and a malformed value cannot fail `cleanup`, `lock` or
+`outdated`.
 Validation builds a signature policy and discards it, only to move a malformed
 count or status code to configuration time (exit `2`) rather than to an install
 worker after downloads have started; the consumer builds its own from the same

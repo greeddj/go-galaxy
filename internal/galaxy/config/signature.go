@@ -129,6 +129,11 @@ func resolveIgnoreStatusCodes(c *cli.Command) []string {
 // envDisableGPGVerifyAnsible in ansible's boolean vocabulary, which a urfave/cli
 // bool source would abort on ("yes", "off"); empty is false, unparseable refused.
 func resolveDisableGPGVerify(c *cli.Command) (bool, error) {
+	// A command without the flag verifies nothing, so it ignores the variable
+	// just as it ignores the flag's own sources.
+	if !registersFlag(c, "disable-gpg-verify") {
+		return false, nil
+	}
 	if c.IsSet("disable-gpg-verify") {
 		return c.Bool("disable-gpg-verify"), nil
 	}
@@ -143,6 +148,19 @@ func resolveDisableGPGVerify(c *cli.Command) (bool, error) {
 	}
 
 	return disabled, nil
+}
+
+// registersFlag reports whether c or an ancestor, the lineage urfave/cli's own
+// lookup walks, declares the named flag. IsSet cannot tell: it reports an
+// undeclared flag and a declared one no source set alike, as unset.
+func registersFlag(c *cli.Command, name string) bool {
+	for _, cmd := range c.Lineage() {
+		if slices.ContainsFunc(cmd.Flags, func(flag cli.Flag) bool { return slices.Contains(flag.Names(), name) }) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // disabledWithKeyringWarning warns when verification is off while a keyring is
