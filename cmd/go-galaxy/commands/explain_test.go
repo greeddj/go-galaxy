@@ -130,6 +130,45 @@ func TestPrintExplainRequiredByIsNameSorted(t *testing.T) {
 	}
 }
 
+// TestPrintExplainRoleParentsByGalaxyName pins that a role explained by its
+// Galaxy name lists the same parents as by an install name that differs from
+// it, because a parent's deps hold the install name.
+func TestPrintExplainRoleParentsByGalaxyName(t *testing.T) {
+	t.Parallel()
+	lf := &lockfile.File{
+		SchemaVersion: lockfile.SchemaVersionRoles,
+		Roles: []lockfile.RoleEntry{
+			{
+				Name: "nginx", Type: lockfile.RoleTypeGalaxy, Version: "1.2.3", Galaxy: "owner.nginx",
+				Source: "https://galaxy.example", Repository: "https://github.com/owner/ansible-role-nginx",
+				Ref: "1.2.3", Commit: gitTestCommit,
+			},
+			{
+				Name: "webapp", Type: lockfile.RoleTypeGit, Version: "v1.0.0", Source: gitTestSource,
+				Ref: "v1.0.0", Commit: gitTestCommit, Deps: []string{"nginx"},
+			},
+		},
+	}
+	roleRoots := map[string]bool{"webapp": true}
+
+	outputs := make(map[string]string, 2)
+	for _, target := range []string{"nginx", "owner.nginx"} {
+		var buf strings.Builder
+		if err := printExplain(&buf, lf, target, nil, roleRoots); err != nil {
+			t.Fatalf("printExplain(%s) error = %v, want nil", target, err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "  required by:\n    - role webapp v1.0.0\n") || strings.Contains(out, "orphan") {
+			t.Errorf("printExplain(%s) does not list webapp under required by, or calls nginx an orphan; got:\n%s", target, out)
+		}
+		outputs[target] = out
+	}
+	if outputs["owner.nginx"] != outputs["nginx"] {
+		t.Errorf("explain by Galaxy name differs from explain by install name:\n%s\nwant\n%s",
+			outputs["owner.nginx"], outputs["nginx"])
+	}
+}
+
 // TestPrintExplainNotFound checks that a target absent from the lockfile
 // returns errExplainNotFound rather than printing anything misleading.
 func TestPrintExplainNotFound(t *testing.T) {

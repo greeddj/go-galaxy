@@ -98,21 +98,27 @@ func printExplain(w io.Writer, lf *lockfile.File, target string, roots, roleRoot
 }
 
 // findExplainRole matches target against the roles list by install name or
-// Galaxy name, and collects the roles whose deps name it.
+// Galaxy name, then collects the roles whose deps name the match's install
+// name, since role deps hold install names, not the Galaxy name typed.
 func findExplainRole(lf *lockfile.File, target string) (lockfile.RoleEntry, []lockfile.RoleEntry, bool) {
 	var entry lockfile.RoleEntry
 	found := false
-	rdeps := make([]lockfile.RoleEntry, 0)
 	for _, e := range lf.Roles {
 		if e.Name == target || e.Galaxy == target {
 			entry = e
 			found = true
 		}
-		if slices.Contains(e.Deps, target) {
+	}
+	rdeps := make([]lockfile.RoleEntry, 0)
+	if !found {
+		return entry, rdeps, false
+	}
+	for _, e := range lf.Roles {
+		if slices.Contains(e.Deps, entry.Name) {
 			rdeps = append(rdeps, e)
 		}
 	}
-	return entry, rdeps, found
+	return entry, rdeps, true
 }
 
 func printRoleHeader(w io.Writer, entry lockfile.RoleEntry) {

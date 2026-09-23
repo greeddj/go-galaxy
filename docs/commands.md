@@ -2499,7 +2499,7 @@ to stderr.
 ```mermaid
 flowchart TD
     FC["collection match: the entry named target<br/>parents: collections whose deps list target"]
-    FR["role match: the last role whose install name<br/>or galaxy name is target<br/>parents: roles whose deps list target"]
+    FR["role match: the last role whose install name<br/>or galaxy name is target<br/>parents: roles whose deps list<br/>the matched role's install name"]
     NF{"collection or role matched?"}
     NFX(["exit 1 (generic)<br/>collection or role not found<br/>in lockfile: target"])
     CF{"collection matched?"}
@@ -2563,9 +2563,9 @@ first. What the collection header shows follows from the entry type: a Galaxy
 entry its source and sha256, a git entry type, source, ref, commit and, when it
 is not the repository root, subdir, a url entry type, source and sha256. The
 `requirements.yml (root)` line prints that literal file name whatever
-`--requirements-file` names. A role's parents are matched against the word as
-typed, not against the matched role's install name, so a role explained by its
-Galaxy name (`owner.role`) under a different install name lists no role parents.
+`--requirements-file` names. A role's parents are matched against the matched
+role's install name, which is what a role's deps hold, so a role explained by its
+Galaxy name (`owner.role`) lists the same parents as by its install name.
 
 ### Flags that change the flow
 
