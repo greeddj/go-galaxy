@@ -219,11 +219,18 @@ func (f *fakeS3) handleBucket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleList renders one ListObjectsV2 page for keys under the requested
-// prefix (IsTruncated is always false: pagination is not simulated), or
-// defers to writeOversizedList when oversizedList is armed.
+// handleList renders one ListObjectsV2 page for keys under the requested prefix
+// (IsTruncated is always false: pagination is not simulated) unless a failNext
+// rule on bucketListKey fires first, or defers to writeOversizedList if armed.
 func (f *fakeS3) handleList(w http.ResponseWriter, r *http.Request) {
 	f.countRequest(bucketListKey, http.MethodGet)
+	if status, body, fail := f.shouldFail(bucketListKey, http.MethodGet); fail {
+		w.WriteHeader(status)
+		if len(body) > 0 {
+			_, _ = w.Write(body)
+		}
+		return
+	}
 
 	f.mu.Lock()
 	oversized := f.oversizedList
@@ -283,8 +290,11 @@ func (f *fakeS3) writeOversizedList(w http.ResponseWriter) {
 // encoding/xml, not string matching, so a key with XML metacharacters round-trips.
 func (f *fakeS3) handleDeleteObjects(w http.ResponseWriter, r *http.Request) {
 	f.countRequest(bucketDeleteObjectsKey, http.MethodPost)
-	if status, _, fail := f.shouldFail(bucketDeleteObjectsKey, http.MethodPost); fail {
+	if status, body, fail := f.shouldFail(bucketDeleteObjectsKey, http.MethodPost); fail {
 		w.WriteHeader(status)
+		if len(body) > 0 {
+			_, _ = w.Write(body)
+		}
 		return
 	}
 

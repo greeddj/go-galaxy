@@ -400,13 +400,11 @@ func (c *Client) deleteObjectsBatch(ctx context.Context, keys []string) error {
 		}
 		data, err := io.ReadAll(helpers.NewSizeLimitedReader(resp.Body, helpers.S3ListMaxSize))
 		if err != nil {
-			// Name the surface that overran; %w keeps errors.Is matching
-			// helpers.ErrResponseTooLarge.
-			return fmt.Errorf("s3 batch-delete response: %w", err)
+			return bodyReadError(ctx, errS3DeleteFailed, "s3 batch-delete response", err)
 		}
 		var result deleteResult
 		if err := xml.Unmarshal(data, &result); err != nil {
-			return err
+			return fmt.Errorf("%w: s3 batch-delete response does not decode: %w", errS3DeleteFailed, err)
 		}
 		if len(result.Errors) > 0 {
 			e := result.Errors[0]
@@ -458,13 +456,16 @@ func applyContentHeaders(req *http.Request, contentType, contentEncoding string)
 	}
 }
 
-// handlePutResponse maps a PUT response to this package's errors. A 404 on an
-// If-Match write means the object was deleted after its ETag was read, not a
-// missing bucket; a 409 on a conditional write is a race the lock loop retries.
+// handlePutResponse maps a PUT response to this package's errors. A 412 or 409
+// is control flow only for a conditional write, and an overwrite's is a failure;
+// a 404 on an If-Match write is the object deleted after its HEAD, not the bucket.
 func handlePutResponse(resp *http.Response, cond putCondition) error {
 	switch resp.StatusCode {
 	case http.StatusPreconditionFailed:
-		return errS3PreconditionFailed
+		if cond.isConditional() {
+			return errS3PreconditionFailed
+		}
+		return wrapRetryableStatus(resp.StatusCode, s3StatusError(errS3PutFailed, resp))
 	case http.StatusNotFound:
 		if cond.ifMatch != "" {
 			return errS3NotFound
@@ -503,13 +504,11 @@ func (c *Client) listObjectsPage(ctx context.Context, prefix, token string) (lis
 		data, err := io.ReadAll(helpers.NewSizeLimitedReader(resp.Body, helpers.S3ListMaxSize))
 		_ = resp.Body.Close()
 		if err != nil {
-			// Name the surface that overran; %w keeps errors.Is matching
-			// helpers.ErrResponseTooLarge.
-			return fmt.Errorf("s3 listing response: %w", err)
+			return bodyReadError(ctx, errS3BucketRequestFailed, "s3 listing response", err)
 		}
 		var parsed listBucketResult
 		if err := xml.Unmarshal(data, &parsed); err != nil {
-			return err
+			return fmt.Errorf("%w: s3 listing response does not decode: %w", errS3BucketRequestFailed, err)
 		}
 		result = parsed
 		return nil
@@ -518,6 +517,16 @@ func (c *Client) listObjectsPage(ctx context.Context, prefix, token string) (lis
 		return listBucketResult{}, err
 	}
 	return result, nil
+}
+
+// bodyReadError names surface in a failed read of a 200 body and wraps it in
+// sentinel unless ctx ended, which do leaves unclassified too; %w keeps a cause
+// such as helpers.ErrResponseTooLarge or helpers.ErrReadStalled matching.
+func bodyReadError(ctx context.Context, sentinel error, surface string, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s: %w", surface, err)
+	}
+	return fmt.Errorf("%w: %s: %w", sentinel, surface, err)
 }
 
 func appendKeys(dst []string, contents []listBucketContent) []string {

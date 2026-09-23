@@ -145,7 +145,9 @@ on the local backend, with no S3 involved at all - any permission failure
 against the cache directory, which is the wrong-uid case the [container image
 bake](ci.md#container-image-bake) describes),
 `cache backend unavailable` (exit `4` - the backend could not be reached, or
-answered with a failure that is not this program's own doing), `another
+answered with a failure that is not this program's own doing, an S3 listing or
+batch-delete response that breaks off or does not decode and a `412` refusing a
+plain overwrite included), `another
 process holds the cache` (exit `8` - a local Bolt file open timed out against
 another process's held lock, or the S3 lock's wait ceiling elapsed after this
 run observed another acquirer holding it), `another instance is running`

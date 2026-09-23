@@ -1645,6 +1645,9 @@ Ctrl-C classifies as an interrupt and a budget's expiry is relabeled by its own
 deadline normalizer (see [Exit codes](#exit-codes)); a cancellation racing a
 genuine transport error wins the same way. Only failures `Do` itself returns go
 through this funnel: a body read failing after a `200` is never labeled by it.
+A listing or batch-delete read failing that way is labeled unavailable where it
+happens, on the same live-context condition, and the label never makes it
+retryable.
 An idempotent request is signed afresh for every attempt, so `X-Amz-Date` is
 never stale, and a PUT body is reseeked first; a listing page's request is
 single-shot, so the page's one retry budget covers both a retryable status and
@@ -1665,9 +1668,10 @@ and busy (`8`) classes, which a test enumerates, since `exitcode.FromError`
 would otherwise classify it by table order rather than by meaning. The split
 is by where a failure was discovered, not by how permanent it looks.
 Unavailable is any non-2xx the remote answered, a permanent-looking `403`
-included, except the `404` and `412` consumed as control flow; a transport
-failure; a bucket found missing after `Open` created it; a `409` to a
-conditional PUT; and a lock wait that never observed a holder. Unusable, fixed
+included, except the `404` and a conditional PUT's `412` consumed as control
+flow; a listing or batch-delete body that breaks off or does not decode; a
+transport failure; a bucket found missing after `Open` created it; a `409` to
+a conditional PUT; and a lock wait that never observed a holder. Unusable, fixed
 by a configuration change and never by a retry, is an endpoint that fails
 `Open`'s conditional-write probe or answers a lock `HEAD` with no ETag, an
 invalid endpoint, and any redirect, since SigV4 signs the host and the

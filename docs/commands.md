@@ -457,7 +457,7 @@ flowchart TD
     O19 -->|"no"| O20{"a collection or role failed,<br/>or would fail on a dry run?"}
     O20 -->|"yes"| OXF(["exit 7 (integrity) or 10 (signature) when a cause is one,<br/>else 5 (install)"])
     O20 -->|"no"| O21{"snapshot save failed?"}
-    O21 -->|"yes"| OXV(["exit by the save error's class, such as 4 or 9"])
+    O21 -->|"yes"| OXV(["exit 4 (network) or 2 (usage) by cause"])
     O21 -->|"no"| OX0(["exit 0 (success)"])
 ```
 
@@ -502,7 +502,7 @@ flowchart TD
     S18 -->|"yes"| S19{"--dry-run?"}
     S19 -->|"yes"| S20["warn: --clear-cache skipped"]
     S19 -->|"no"| S21["drop metadata caches and git, url, role pins,<br/>delete cached artifacts"]
-    S21 -->|"delete failed"| SXC(["exit 1, 2 or 4 by cause"])
+    S21 -->|"delete failed"| SXC(["exit 4 (network) or 2 (usage) by cause"])
     S18 -->|"no"| S22{"--dry-run?"}
     S20 --> S22
     S21 -->|"cleared"| S22
@@ -1141,7 +1141,7 @@ flowchart TD
     MR --> DF{"--frozen and the diff not empty?"}
     DF -->|"yes"| XD(["lockfile drift, with any save failure appended<br/>exit 6 (lockfile)"])
     DF -->|"no"| SF{"snapshot save failed?"}
-    SF -->|"yes"| XS(["exit by cause,<br/>usually 4 (network) or 2 (usage)"])
+    SF -->|"yes"| XS(["exit 4 (network) or 2 (usage) by cause,<br/>8 (cache busy) when the lock was lost"])
     SF -->|"no"| X0(["exit 0 (success)"])
 ```
 
@@ -1279,7 +1279,7 @@ flowchart TD
     Dry2 -->|"yes"| ClearSkip["warn: skipping --clear-cache"]
     Dry2 -->|"no"| ClearDo["drop the metadata caches and the git, url and role pins,<br/>delete the cached artifact files"]
     ClearDo -->|"delete failed"| X4a
-    ClearDo -->|"permission denied"| X2d
+    ClearDo -->|"unusable, such as permission denied"| X2d
     Clear -->|"no"| Dry3{"--dry-run set?"}
     ClearSkip --> Dry3
     ClearDo --> Dry3
@@ -1437,7 +1437,7 @@ flowchart TD
     MetW --> Res
     Res -->|"yes"| XF(["exit 7 (integrity) or 10 (signature) when a cause is one,<br/>else exit 5 (install), a network cause included<br/>a save failure is joined to the message"])
     Res -->|"no"| SaveOK{"snapshot saved?"}
-    SaveOK -->|"no"| XS(["exit 4 (network) or 2 (usage) by cause"])
+    SaveOK -->|"no"| XS(["exit 4 (network) or 2 (usage) by cause,<br/>8 (cache busy) when the lock was lost"])
     SaveOK -->|"yes"| Done["print Warm complete: N collections cached,<br/>or N collections, M roles cached"]
     Done --> X0(["exit 0 (success)"])
 ```
@@ -1529,7 +1529,7 @@ flowchart TD
     MetSkip --> Any
     Any -->|"yes"| XF(["exit 7 (integrity) for a digest mismatch,<br/>else exit 5 (install)"])
     Any -->|"no"| SaveOK{"snapshot save failed?"}
-    SaveOK -->|"yes"| XS(["exit 4 (network) or 2 (usage) by cause"])
+    SaveOK -->|"yes"| XS(["exit 4 (network) or 2 (usage) by cause,<br/>8 (cache busy) when the lock was lost"])
     SaveOK -->|"no, or no save attempted"| X0(["exit 0 (success)"])
 ```
 
@@ -1805,7 +1805,7 @@ flowchart TD
     Pers -->|"no, never fabricate an empty one"| FDone["print 'Cleanup complete. Removed: N'"]
     Pers -->|"yes"| Save["save the snapshot, skipped when nothing changed"]
     Save --> SaveOK{"saved?"}
-    SaveOK -->|"no"| X4(["exit 4 (network),<br/>or 2 (usage) on a permission failure"])
+    SaveOK -->|"no"| X4(["exit 4 (network) or 2 (usage) by cause,<br/>8 (cache busy) when the lock was lost"])
     SaveOK -->|"yes"| FDone
     FDry --> X0(["success, back to the lock-loss check"])
     FDone --> X0
