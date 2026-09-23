@@ -45,3 +45,12 @@ func loadS3CacheConfig(c *cli.Command) (S3CacheConfig, error) {
 
 	return cfg, nil
 }
+
+// checkS3CacheOffline refuses an enabled S3 cache under --offline: its bucket
+// is reached only over the network, so the backend could never open.
+func checkS3CacheOffline(cfg *Config) error {
+	if cfg.Offline && cfg.S3Cache.Enabled {
+		return helpers.ErrS3CacheOffline
+	}
+	return nil
+}

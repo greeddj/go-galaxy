@@ -394,9 +394,9 @@ queued on `Config.Warnings`, which every command prints.
 
 The order of the steps fixes which error a configuration broken in several
 places reports first: `--timeout`, loading ansible.cfg, the server list, git
-credentials, url credentials, the S3 cache, the signature surface, then
-`[galaxy] server_timeout`. A new check goes after the existing ones, so their
-failures keep their precedence.
+credentials, url credentials, the S3 cache, the signature surface,
+`[galaxy] server_timeout`, then `--offline` beside an enabled S3 cache. A new
+check goes after the existing ones, so their failures keep their precedence.
 
 ## The version solver
 
@@ -1958,6 +1958,11 @@ all, so none of them can give an origin a Galaxy token or relaxed TLS - by
 construction, not because a caller remembered to pass an empty list. The
 command layer reveals the Galaxy and url tokens into fetch's own types
 immediately before construction, the only place either is revealed.
+
+Under `--offline` the shared client is `NewOffline`'s, so an S3 backend handed
+it could never open. The configuration refuses `--offline` beside
+`--s3-bucket` (`ErrS3CacheOffline`, exit `2`) before any client or backend is
+built, rather than letting the pair fail at `Open` as an unreachable backend.
 
 A server's `validate_certs=false` builds a second transport with verification
 off, and the dispatcher sends a request there only when its origin is exactly

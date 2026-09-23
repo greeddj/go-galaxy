@@ -71,6 +71,10 @@ var (
 
 	// ErrS3EmptyCreds indicates S3 cache credentials are required but missing.
 	ErrS3EmptyCreds = errors.New("s3 cache requires access/secret keys when GO_GALAXY_S3_BUCKET is set")
+	// ErrS3CacheOffline indicates --offline together with an S3 cache, whose
+	// bucket is reached only over the network, so the backend could never open.
+	// It is refused while the config is built, before any backend exists.
+	ErrS3CacheOffline = errors.New("--offline cannot be combined with --s3-bucket: the S3 cache is reached over the network")
 
 	// ErrArtifactCacheNotConfigured indicates the artifact cache is unavailable.
 	ErrArtifactCacheNotConfigured = errors.New("artifact cache is not configured")

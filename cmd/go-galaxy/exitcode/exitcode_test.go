@@ -189,6 +189,12 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
+		// Raised bare by BuildCollectionConfig, before any backend opens.
+		name:     "s3 cache under offline",
+		err:      helpers.ErrS3CacheOffline,
+		wantCode: ExitUsage,
+	},
+	{
 		name:     "unclassified error falls back to ExitError",
 		err:      errTestGeneric,
 		wantCode: ExitError,

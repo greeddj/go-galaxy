@@ -158,6 +158,12 @@ func BuildCollectionConfig(c *cli.Command) (*Config, error) {
 		return nil, err
 	}
 
+	// Last, so every failure above keeps its precedence. cleanup mounts no
+	// --offline, so it reads false there and cleanup is never refused.
+	if err := checkS3CacheOffline(cfg); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
 }
 

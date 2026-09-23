@@ -279,6 +279,10 @@ one named `<12 hex digits>.acme` would spell a live key.
 
 When `--s3-bucket` (or `GO_GALAXY_S3_BUCKET`) is set, go-galaxy uses S3 as the cache backend.
 Artifacts and cache metadata are stored in S3; collections are still installed locally.
+The bucket is reached only over the network, so `--offline` (or `GO_GALAXY_OFFLINE`) beside it
+exits `2` with `--offline cannot be combined with --s3-bucket: the S3 cache is reached over the
+network` while the configuration is built, before any backend opens; an offline run needs the
+local cache. `cleanup` takes no `--offline`, so `GO_GALAXY_OFFLINE` does not reach it.
 
 Under the configured `--s3-prefix` the bucket holds four kinds of object:
 `state/store.json.gz`, the snapshot as one gzipped JSON object; `state/projects.json`,

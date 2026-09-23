@@ -231,8 +231,10 @@ flowchart TD
   S19 -->|"yes"| S20{"server_timeout a positive integer<br/>or Go duration?"}
   S20 -->|"no"| XS9(["exit 2 (usage), invalid timeout"])
   S20 -->|"yes"| S21["timeout from server_timeout"]
-  S19 -->|"no"| S22(["Config ready"])
-  S21 --> S22
+  S19 -->|"no"| S23
+  S21 --> S23{"--offline set and the S3 cache enabled?<br/>never on cleanup, which lacks --offline"}
+  S23 -->|"yes"| XS10(["exit 2 (usage), ErrS3CacheOffline"])
+  S23 -->|"no"| S22(["Config ready"])
 ```
 
 ### Cache backend: selection, open and lock
@@ -250,12 +252,12 @@ flowchart TD
   B5 -->|"no"| B7
   B6 --> B7["cache.New"]
   B7 --> B8{"--s3-bucket set?"}
-  B8 -->|"yes"| B9["S3 backend over the Galaxy client,<br/>which --offline makes refuse every request"]
+  B8 -->|"yes"| B9["S3 backend over the Galaxy client,<br/>never under --offline: the config refused that"]
   B8 -->|"no"| B10["local backend<br/>at --cache-dir"]
   B9 --> B11
   B10 --> B11["wrap: per-operation state deadline,<br/>skip saving an unchanged store"]
   B11 --> B12{"Open succeeds?"}
-  B12 -->|"no"| XB1(["exit 2 (backend unusable as configured)<br/>or 4 (backend unavailable, offline)"])
+  B12 -->|"no"| XB1(["exit 2 (backend unusable as configured)<br/>or 4 (backend unavailable)"])
   B12 -->|"yes"| B13{"exclusive lock granted?"}
   B13 -->|"no"| XB2(["exit 8 (cache busy),<br/>or 2 or 4 when the backend itself fails"])
   B13 -->|"yes"| B14["the work runs under the holder context:<br/>a lock lost from here on turns any result into exit 8"]
@@ -351,9 +353,10 @@ environment variable is ignored too.
 - `--quiet`, `-q` (`GO_GALAXY_QUIET`): no spinner and no progress lines. Ignored
   under `--verbose`.
 - `--offline` (`GO_GALAXY_OFFLINE`, not on cleanup): the Galaxy client and the
-  url client refuse every request. The S3 backend uses the Galaxy client too, so
-  `--offline` with `--s3-bucket` fails at Open with exit 4. With `--refresh` it
-  prints the skip warning.
+  url client refuse every request. The S3 backend would use the Galaxy client
+  too, so `--offline` with `--s3-bucket` is refused as the last configuration
+  check, exit 2, before any backend opens. With `--refresh` it prints the skip
+  warning.
 - `--timeout` (`GO_GALAXY_SERVER_TIMEOUT`, `GO_GALAXY_TIMEOUT`,
   `ANSIBLE_GALAXY_SERVER_TIMEOUT`, not on cleanup): a zero, negative or
   unparseable value exits 2. When no source sets it, `[galaxy] server_timeout`
@@ -378,7 +381,8 @@ environment variable is ignored too.
   server's token.
 - `--s3-bucket` (`GO_GALAXY_S3_BUCKET`): a non-empty value selects the S3
   backend and makes `--s3-access-key` and `--s3-secret-key` required (exit 2
-  without both).
+  without both). Beside `--offline` it exits 2 too, after every other
+  configuration check.
 - `--keyring`, `--required-valid-signature-count` (install and warm only): an
   explicitly empty value exits 2. The keyring is not opened here.
 - `--required-valid-signature-count`, `--ignore-signature-status-code` (install
@@ -468,7 +472,7 @@ flowchart TD
     S1["urfave/cli parses the flags;<br/>the root flags --verbose,<br/>--quiet, --dry-run and<br/>--cache-dir apply too"]
     S1 --> S2{"flag parse error,<br/>or a positional argument?"}
     S2 -->|"yes"| SX2(["exit 2 (usage)"])
-    S2 -->|"no"| S3{"BuildCollectionConfig<br/>accepts every setting?<br/>--timeout, ansible.cfg,<br/>--server, --token,<br/>GO_GALAXY_GIT_* and<br/>GO_GALAXY_URL_* bindings,<br/>--s3-*, signature flags"}
+    S2 -->|"no"| S3{"BuildCollectionConfig<br/>accepts every setting?<br/>--timeout, ansible.cfg,<br/>--server, --token,<br/>GO_GALAXY_GIT_* and<br/>GO_GALAXY_URL_* bindings,<br/>--s3-*, signature flags,<br/>not --offline with --s3-bucket"}
     S3 -->|"no, an ansible.cfg that<br/>cannot be read included"| SX2
     S3 -->|"yes"| S4{"--offline?"}
     S4 -->|"yes"| S5["Galaxy and url clients refuse every request;<br/>the git client is built as usual"]
@@ -488,7 +492,7 @@ flowchart TD
     S14 --> S15
     S15 -->|"unusable as configured"| SX2
     S15 -->|"S3 endpoint does not parse"| SX1(["exit 1 (generic)"])
-    S15 -->|"unreachable, or refused under --offline"| SX4(["exit 4 (network)"])
+    S15 -->|"unreachable"| SX4(["exit 4 (network)"])
     S15 -->|"open"| S16["take the exclusive cache lock"]
     S16 -->|"held by another run"| SX8(["exit 8 (cache busy)"])
     S16 -->|"unreachable"| SX4
@@ -860,7 +864,7 @@ flowchart TD
   prefetcher, previews instead of installing, saves the snapshot only when one
   already existed, and skips the metrics report with a warning.
 - `--offline`: the Galaxy and url clients refuse every request, and with
-  `--s3-bucket` the S3 backend cannot open (exit `4`); the metadata cache and
+  `--s3-bucket` the configuration is refused (exit `2`); the metadata cache and
   the git, url and role pins are read even under `--no-cache`, and never
   written; an unrecorded pin, or a git or url role whose artifact is not cached,
   exits `4` during resolution; an artifact missing from the cache fails that
@@ -885,7 +889,7 @@ flowchart TD
   install is counted as unverified. A `signatures:` block with no keyring exits
   `2`, or only warns under `--disable-gpg-verify`.
 - `--s3-bucket`: selects the S3 backend instead of the local one at
-  `--cache-dir`.
+  `--cache-dir`; refused beside `--offline` (exit `2`).
 - `--metrics-file`: writes the JSON report after a real run.
 - `--timeout`, `--server`, `--token`, `--ansible-config`,
   `--required-valid-signature-count`, `--ignore-signature-status-code`,
@@ -924,7 +928,7 @@ flowchart TD
     C -->|"yes"| X0(["print lock help, exit 0"])
     C -->|"no"| D{"positional argument given?<br/>root ArgValidator NoArguments"}
     D -->|"yes"| X2B(["unexpected arguments<br/>exit 2 (usage)"])
-    D -->|"no"| E["BuildCollectionConfig: --timeout, --workers,<br/>ansible.cfg, server list and tokens,<br/>git and url credential bindings,<br/>S3 settings, signature environment"]
+    D -->|"no"| E["BuildCollectionConfig: --timeout, --workers,<br/>ansible.cfg, server list and tokens,<br/>git and url credential bindings,<br/>S3 settings, signature environment,<br/>then --offline with --s3-bucket refused"]
     E -->|"error"| X2C(["exit 2 (usage),<br/>1 (generic) when no class matches"])
     E -->|"ok"| F{"--offline?"}
     F -->|"yes"| G1["Galaxy HTTP client that refuses every request"]
@@ -942,7 +946,7 @@ flowchart TD
     K -->|"no"| K2["local backend in --cache-dir"]
     K1 --> L
     K2 --> L["Open the backend"]
-    L -->|"error"| X24(["exit 2 (usage) when unusable,<br/>4 (network) when unavailable,<br/>always 4 for --s3-bucket under --offline"])
+    L -->|"error"| X24(["exit 2 (usage) when unusable,<br/>4 (network) when unavailable"])
     L -->|"ok"| M["take the exclusive cache lock"]
     M -->|"held by another run,<br/>or S3 wait ceiling elapsed"| X8(["exit 8 (cache busy)"])
     M -->|"other error"| X24
@@ -1186,8 +1190,9 @@ check still applies once the lock was taken.
 - `--offline` (`GO_GALAXY_OFFLINE`): the Galaxy and url HTTP clients refuse
   every request. Sources replay only their recorded pins, and a miss exits 4.
   Pins and cached metadata are read even when `--refresh` or `--no-cache` is
-  set, and nothing new is recorded. The S3 backend shares the Galaxy HTTP
-  client, so `--s3-bucket` under `--offline` fails at Open with exit 4.
+  set, and nothing new is recorded. The S3 backend would share the Galaxy HTTP
+  client, so `--s3-bucket` under `--offline` is refused while the config is
+  built, exit 2.
 - `--no-cache` (`GO_GALAXY_NO_CACHE`): no metadata cache or pin is read or
   recorded, and each build is kept as a temporary file for the run instead of
   being committed to the artifact cache. Two exceptions: under `--refresh` a
@@ -1245,7 +1250,7 @@ flowchart TD
     Args -->|"yes"| X2a
     Args -->|"no"| Cfg["build config from flags, environment and ansible.cfg:<br/>timeout, workers, paths, servers, git and url credentials,<br/>S3 settings, signature policy"]
     Cfg --> CfgOK{"config accepted?"}
-    CfgOK -->|"no, an ansible.cfg that<br/>cannot be read included"| X2b(["exit 2 (usage)"])
+    CfgOK -->|"no, an ansible.cfg that<br/>cannot be read or --offline<br/>with --s3-bucket included"| X2b(["exit 2 (usage)"])
     CfgOK -->|"yes"| Wire["wire the printer, HTTP, git and url clients<br/>print config warnings"]
     Wire --> NoCache{"--no-cache set?"}
     NoCache -->|"yes, with or without --dry-run"| X2c(["exit 2 (usage)<br/>no backend opened, no lock taken"])
@@ -1260,7 +1265,7 @@ flowchart TD
     S3 -->|"yes: S3 backend"| Open["open the backend"]
     S3 -->|"no: local backend at --cache-dir"| Open
     Open -->|"unusable as configured"| X2d(["exit 2 (usage)"])
-    Open -->|"unreachable, or S3 refused under --offline"| X4a(["exit 4 (network)"])
+    Open -->|"unreachable"| X4a(["exit 4 (network)"])
     Open -->|"opened"| Lock["take the exclusive cache lock"]
     Lock -->|"another holder has it"| X8a(["exit 8 (cache busy)"])
     Lock -->|"S3 never answered usably"| X4a
@@ -1554,8 +1559,8 @@ flowchart TD
   failed. A bad cache hit is never evicted and refetched. In a dry run, an
   uncached item becomes a would-fail, and so does a recorded digest that
   contradicts the pin. `--offline` also outranks `--refresh`, with a warning.
-  With `--s3-bucket` the S3 client refuses every request too, so the backend
-  cannot be opened and the run exits 4 before any lock is taken.
+  With `--s3-bucket` the S3 client would refuse every request too, so the
+  configuration is refused, exit 2, before any backend is opened.
 - `--refresh` (`GO_GALAXY_REFRESH`): skips the recorded resolution and the
   cached version listings. A url pin is downloaded again. A git branch or tag
   pin, a role pin and a Galaxy role's v1 answer are asked again, and a pin is
@@ -1580,7 +1585,8 @@ flowchart TD
   snapshot and the artifacts. The extracted store stays local under
   `--cache-dir`. S3 is what makes lock loss mid-run, and so exit 8 at any point,
   possible: a lost lock also cancels the run's context, so warming stops
-  dispatching. Under `--offline` the backend cannot be opened at all (exit 4).
+  dispatching. Beside `--offline` it is refused while the config is built
+  (exit 2).
 - `--metrics-file` (`GO_GALAXY_METRICS_FILE`): writes the report after the save,
   with a warning on failure. Under `--dry-run` it prints a skip warning instead.
 
@@ -1852,7 +1858,7 @@ flowchart TD
     Args -->|"no"| E2a(["exit 2 (usage)"])
     Args -->|"yes"| Cfg["BuildCollectionConfig: --timeout, --workers, ansible.cfg from --ansible-config or discovery,<br/>servers from --server, --token and server_list, GO_GALAXY_GIT_* and GO_GALAXY_URL_* bindings,<br/>S3 settings, ANSIBLE_GALAXY_DISABLE_GPG_VERIFY, [galaxy] server_timeout"]
     Cfg --> CfgOK{"configuration usable?"}
-    CfgOK -->|"no: a configuration sentinel"| E2b(["exit 2 (usage)<br/>for example a bad --timeout or server_timeout, missing --ansible-config file,<br/>an ansible.cfg that cannot be read, a malformed credential binding,<br/>--s3-bucket without both S3 keys"])
+    CfgOK -->|"no: a configuration sentinel"| E2b(["exit 2 (usage)<br/>for example a bad --timeout or server_timeout, missing --ansible-config file,<br/>an ansible.cfg that cannot be read, a malformed credential binding,<br/>--s3-bucket without both S3 keys or beside --offline"])
     CfgOK -->|"yes"| Wire["runCollectionCommand: printer for --verbose and --quiet,<br/>Galaxy HTTP client, git client, url client, print config warnings"]
     Wire --> Off{"--offline set?"}
     Off -->|"yes"| E4a(["exit 4 (network)<br/>outdated requires network access"])
@@ -2016,13 +2022,14 @@ there is no cache-busy or lock-lost exit (8).
 
 - `--offline` (`GO_GALAXY_OFFLINE`): refuses the run once configuration is
   built, before the lockfile or the tree is read and before the inert-flag
-  warning, exit 4.
+  warning, exit 4. With `--s3-bucket` set too, configuration itself fails
+  first, exit 2.
 - `--clear-cache`, `--no-cache`, `--refresh`, `--no-deps`, `--frozen`,
   `--s3-bucket` (and their `GO_GALAXY_*` variables): one stderr warning naming
   the ones set, printed even under `--quiet`; no other effect. `--s3-bucket` set
   while either `--s3-access-key` or `--s3-secret-key` (or `AWS_ACCESS_KEY_ID` /
-  `AWS_SECRET_ACCESS_KEY`) is missing fails configuration first, exit 2, and the
-  warning never prints.
+  `AWS_SECRET_ACCESS_KEY`) is missing, or beside `--offline`, fails
+  configuration first, exit 2, and the warning never prints.
 - `--lock-file` (`GO_GALAXY_LOCK_FILE`), `--requirements-file` / `-r` /
   `--role-file` (`GO_GALAXY_REQUIREMENTS_FILE`,
   `ANSIBLE_GALAXY_REQUIREMENTS_FILE`): pick the lockfile path; absence switches

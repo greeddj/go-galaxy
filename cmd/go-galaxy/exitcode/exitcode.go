@@ -470,6 +470,7 @@ func isEnvironmentUsageError(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) ||
 		errors.Is(err, helpers.ErrConfigIsNil) ||
 		errors.Is(err, helpers.ErrS3EmptyCreds) ||
+		errors.Is(err, helpers.ErrS3CacheOffline) ||
 		errors.Is(err, helpers.ErrCacheDirEmpty) ||
 		errors.Is(err, helpers.ErrInvalidTimeout) ||
 		errors.Is(err, helpers.ErrWarmCacheDisabled) ||

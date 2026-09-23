@@ -249,7 +249,9 @@ every runner one shared artifact cache: set `GO_GALAXY_S3_BUCKET`,
 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` as masked project variables,
 which go-galaxy reads directly. Keep the `cache:` block alongside it: the
 extracted-tree store stays local to `GO_GALAXY_CACHE_DIR` even with the S3
-backend, so the job cache is what saves re-extracting every collection.
+backend, so the job cache is what saves re-extracting every collection. Such a
+job cannot also run `--offline`: the bucket is reached over the network, so the
+pair exits `2` before the cache is opened.
 
 Two runtime consequences of a shared S3 cache are worth knowing before you
 enable it. Jobs sharing one bucket serialize: a run holds the backend's
