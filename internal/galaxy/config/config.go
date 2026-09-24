@@ -1,6 +1,6 @@
-// Package config resolves one *Config per run from flags, the environment and
-// ansible.cfg; BuildCollectionConfig alone decides precedence. It makes no
-// network request, and every credential it yields is a redacting Secret.
+// Package config resolves one *Config per run from flags, the environment,
+// galaxy.toml and ansible.cfg; BuildCollectionConfig alone decides precedence.
+// It makes no network request, and every credential it yields is a Secret.
 package config
 
 import (
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
+	"github.com/greeddj/go-galaxy/internal/galaxy/projectfile"
 	"github.com/urfave/cli/v3"
 )
 
@@ -41,6 +42,10 @@ type Config struct {
 	// AnsibleSignatureKeys names the signature keys the discovered ansible.cfg
 	// carried, never their values, for AnsibleSignatureKeysWarning.
 	AnsibleSignatureKeys []string
+	// ProjectSettingsUsed names the [tool.go-galaxy] keys whose value this run
+	// took, in apply order; a key a flag outranked, or whose value a check
+	// refused, is left out. It feeds one debug line and nothing else.
+	ProjectSettingsUsed []string
 	// Servers is the resolved, non-empty server list in resolveServers' order;
 	// with no server_list it holds one entry with ID "" and no token.
 	Servers []Server
@@ -105,15 +110,14 @@ func (c *Config) IsOffline() bool {
 	return c.Offline
 }
 
-// BuildCollectionConfig builds Config from flags, environment and ansible.cfg.
-// An unregistered flag silently reads as its zero value, so a command must
-// register every flag whose Config field it reads.
+// BuildCollectionConfig builds Config from flags, environment, galaxy.toml and
+// ansible.cfg. An unregistered flag silently reads as its zero value, so a
+// command must register every flag whose Config field it reads.
 func BuildCollectionConfig(c *cli.Command) (*Config, error) {
-	cfg := newConfigFromCLI(c)
-	if err := applyTimeout(cfg, c); err != nil {
+	cfg, project, err := newConfigWithProject(c)
+	if err != nil {
 		return nil, err
 	}
-	applyWorkers(cfg, c, runtime.GOMAXPROCS(0))
 
 	ansibleConfig, ansiblePath, ansibleWarnings, err := loadAnsibleConfigFromCLI(c)
 	if err != nil {
@@ -124,8 +128,9 @@ func BuildCollectionConfig(c *cli.Command) (*Config, error) {
 	// ahead of what applying the file it did read had to say.
 	cfg.Warnings = append(cfg.Warnings, ansibleWarnings...)
 	applyAnsibleConfig(cfg, c, ansibleConfig, ansiblePath)
+	applyProjectSettings(cfg, c, project)
 
-	if err := resolveServers(cfg, c, ansibleConfig); err != nil {
+	if err := resolveServers(cfg, c, ansibleConfig, project); err != nil {
 		return nil, err
 	}
 
@@ -138,11 +143,9 @@ func BuildCollectionConfig(c *cli.Command) (*Config, error) {
 		return nil, err
 	}
 
-	s3Cfg, err := loadS3CacheConfig(c)
-	if err != nil {
+	if err := loadS3CacheConfig(cfg, c, project); err != nil {
 		return nil, err
 	}
-	cfg.S3Cache = s3Cfg
 
 	// Late, deliberately: every config error above keeps the precedence it
 	// already had, so which failure a broken configuration reports first does
@@ -165,6 +168,23 @@ func BuildCollectionConfig(c *cli.Command) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// newConfigWithProject reads the flags, then galaxy.toml ahead of --timeout:
+// a file that does not decode, breaks the schema or names an unset variable
+// fails before any other source is read, since every layer may draw on it.
+func newConfigWithProject(c *cli.Command) (*Config, projectSettings, error) {
+	cfg := newConfigFromCLI(c)
+	project, err := loadProjectSettings(cfg.RequirementsFile)
+	if err != nil {
+		return nil, projectSettings{}, err
+	}
+	if err := applyTimeout(cfg, c); err != nil {
+		return nil, projectSettings{}, err
+	}
+	applyWorkers(cfg, c, project, runtime.GOMAXPROCS(0))
+	applyDownloadWorkers(cfg, c, project)
+	return cfg, project, nil
 }
 
 func newConfigFromCLI(c *cli.Command) *Config {
@@ -229,13 +249,18 @@ func applyAnsibleTimeout(cfg *Config, c *cli.Command, raw, ansiblePath string) e
 	return nil
 }
 
-// applyWorkers alone sets cfg.Workers: a supplied value outside
-// 1..helpers.MaxAcceptedInstallWorkers(procs) becomes the default with one
-// warning, while an unset or unregistered flag takes the default silently.
-func applyWorkers(cfg *Config, c *cli.Command, procs int) {
+// applyWorkers alone sets cfg.Workers: a set flag, else galaxy.toml's workers
+// where the flag is mounted at all, else the default silently; a supplied value
+// outside 1..helpers.MaxAcceptedInstallWorkers(procs) is the default plus a warning.
+func applyWorkers(cfg *Config, c *cli.Command, project projectSettings, procs int) {
 	fallback := helpers.DefaultInstallWorkers(procs)
-	n := c.Int("workers")
-	if !c.IsSet("workers") {
+	n, source := c.Int("workers"), "--workers (or $GO_GALAXY_WORKERS)"
+	fromProject := false
+	switch {
+	case c.IsSet("workers"):
+	case project.HasWorkers && flagMounted(c, "workers"):
+		n, source, fromProject = project.Workers, "[tool.go-galaxy] workers in "+project.Path, true
+	default:
 		// The cleanup shape: an unregistered flag name reads 0, which is the
 		// absence of a value rather than a value to warn about.
 		if n < 1 {
@@ -248,13 +273,83 @@ func applyWorkers(cfg *Config, c *cli.Command, procs int) {
 	upper := helpers.MaxAcceptedInstallWorkers(procs)
 	if n < 1 || n > upper {
 		cfg.Warnings = append(cfg.Warnings, fmt.Sprintf(
-			"--workers (or $GO_GALAXY_WORKERS) = %d is outside 1..%d, the range this machine "+
+			"%s = %d is outside 1..%d, the range this machine "+
 				"accepts (the ceiling is the CPU this process is permitted to use, at least %d); "+
 				"using %d instead",
-			n, upper, helpers.MinDefaultInstallWorkers, fallback))
+			source, n, upper, helpers.MinDefaultInstallWorkers, fallback))
 		n = fallback
+	} else if fromProject {
+		cfg.useProjectSetting("workers")
 	}
 	cfg.Workers = n
+}
+
+// applyDownloadWorkers lays galaxy.toml's download_workers over the default
+// newConfigFromCLI set, for a command that mounts the flag and has it unset;
+// a non-positive value is passed over silently, as the flag's own is.
+func applyDownloadWorkers(cfg *Config, c *cli.Command, project projectSettings) {
+	if !flagMounted(c, "download-workers") || c.IsSet("download-workers") {
+		return
+	}
+	if !project.HasDownloadWorkers || project.DownloadWorkers < 1 {
+		return
+	}
+	cfg.DownloadWorkers = project.DownloadWorkers
+	cfg.useProjectSetting("download_workers")
+}
+
+// projectSettings is the [tool.go-galaxy] table of the run's galaxy.toml,
+// expanded and path-resolved, and zero for every other run. It is passed by
+// value and kept nowhere: Config must never carry the plaintext it holds.
+type projectSettings = projectfile.Settings
+
+// loadProjectSettings reads the settings of a .toml requirements file; any
+// other path yields the zero value without touching the file system.
+func loadProjectSettings(requirementsFile string) (projectSettings, error) {
+	if !projectfile.IsTOMLPath(requirementsFile) {
+		return projectSettings{}, nil
+	}
+	settings, err := projectfile.LoadSettings(requirementsFile)
+	if err != nil {
+		return projectSettings{}, fmt.Errorf("%s: %w", requirementsFile, err)
+	}
+	return settings, nil
+}
+
+// useProjectSetting records that key's value came from galaxy.toml.
+func (c *Config) useProjectSetting(key string) {
+	c.ProjectSettingsUsed = append(c.ProjectSettingsUsed, key)
+}
+
+// projectPicker resolves a string key from its flag or variable when set,
+// else from galaxy.toml where the command mounts that flag at all, else the
+// flag's default, recording every key the project file supplied.
+type projectPicker struct {
+	c    *cli.Command
+	used []string
+}
+
+func (p *projectPicker) value(flag, key, projectValue string) string {
+	if p.c.IsSet(flag) || projectValue == "" || !flagMounted(p.c, flag) {
+		return p.c.String(flag)
+	}
+	p.used = append(p.used, key)
+	return projectValue
+}
+
+// applyProjectSettings lays the galaxy.toml paths over what the flags and
+// ansible.cfg resolved. cache_dir outranks [galaxy] cache_dir, so the credit
+// applyAnsibleConfig gave the file is withdrawn when the project file wins.
+func applyProjectSettings(cfg *Config, c *cli.Command, project projectSettings) {
+	if !c.IsSet("cache-dir") && project.CacheDir != "" {
+		cfg.CacheDir = project.CacheDir
+		cfg.AnsibleCacheDirUsed = false
+		cfg.useProjectSetting("cache_dir")
+	}
+	pick := projectPicker{c: c}
+	cfg.LockFile = pick.value("lock-file", "lock_file", project.LockFile)
+	cfg.MetricsFile = pick.value("metrics-file", "metrics_file", project.MetricsFile)
+	cfg.ProjectSettingsUsed = append(cfg.ProjectSettingsUsed, pick.used...)
 }
 
 // parseTimeout accepts whole seconds (ansible's form) or a Go duration; ""
@@ -474,8 +569,8 @@ func pickConfigValue(c *cli.Command, flag, ansibleValue string) (string, bool) {
 	return c.String(flag), false
 }
 
-// The ansible.cfg keys read here, their ANSIBLE_* environment spellings and
-// the discovery order are tabulated in docs/configuration.md.
+// The ansible.cfg keys read here, their ANSIBLE_* environment spellings, the
+// discovery order and the galaxy.toml layer are tabulated in docs/configuration.md.
 
 // loadAnsibleConfig loads and parses ansible.cfg. Absence stays a bare
 // fs.ErrNotExist for the caller to judge; any other open, read or scan

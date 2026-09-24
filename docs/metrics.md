@@ -1,7 +1,7 @@
 # Metrics
 
-Pass `--metrics-file path/to/run.json` to install/warm/lock/outdated to emit a
-JSON report suitable for CI dashboards:
+Pass `--metrics-file path/to/run.json` (or `$GO_GALAXY_METRICS_FILE`) to
+install/warm/lock/outdated to emit a JSON report suitable for CI dashboards:
 
 ```json
 {
@@ -21,6 +21,11 @@ JSON report suitable for CI dashboards:
   "frozen":           true
 }
 ```
+
+A `galaxy.toml` can name the path too, as `metrics_file` in its
+`[tool.go-galaxy]` table, a relative path resolved against the file's
+directory; the flag or the variable wins whenever either is set, a variable
+exported empty included, which then names no report.
 
 The report is written atomically (temp file plus rename), so a consumer never
 reads a partial JSON, and a symlink at the operator-specified path is replaced

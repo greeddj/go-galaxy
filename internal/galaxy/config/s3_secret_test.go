@@ -125,7 +125,7 @@ func TestLoadS3CacheConfigRequiresCredentials(t *testing.T) {
 		t.Parallel()
 		c := newS3Cmd(t, []string{"--s3-bucket=b", "--s3-access-key=x"})
 
-		_, err := loadS3CacheConfig(c)
+		err := loadS3CacheConfig(&Config{}, c, projectSettings{})
 
 		if !errors.Is(err, helpers.ErrS3EmptyCreds) {
 			t.Fatalf("loadS3CacheConfig = %v, want errors.Is helpers.ErrS3EmptyCreds", err)
@@ -136,14 +136,14 @@ func TestLoadS3CacheConfigRequiresCredentials(t *testing.T) {
 		t.Parallel()
 		c := newS3Cmd(t, []string{"--s3-bucket=b", "--s3-access-key=x", "--s3-secret-key=" + s3SecretPlaintext})
 
-		cfg, err := loadS3CacheConfig(c)
-		if err != nil {
+		var cfg Config
+		if err := loadS3CacheConfig(&cfg, c, projectSettings{}); err != nil {
 			t.Fatalf("loadS3CacheConfig = %v, want nil", err)
 		}
-		if !cfg.Enabled {
+		if !cfg.S3Cache.Enabled {
 			t.Fatalf("Enabled = false, want true for a configured bucket")
 		}
-		if got := cfg.SecretKey.Reveal(); got != s3SecretPlaintext {
+		if got := cfg.S3Cache.SecretKey.Reveal(); got != s3SecretPlaintext {
 			t.Fatalf("SecretKey.Reveal() = %q, want %q", got, s3SecretPlaintext)
 		}
 	})

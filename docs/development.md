@@ -421,7 +421,12 @@ Some fixtures pass vacuously in ways worth knowing before writing one:
   outrank the file; make them differ from the flag defaults, so a row cannot
   pass with no source read; and keep `:` out of a path value, since config
   splits collections and roles paths as a POSIX search list and keeps only the
-  first entry.
+  first entry. A `Config` built over a `.toml` requirements path reads that
+  file's `[tool.go-galaxy]` table as a second source, expanding its `${VAR}`
+  references from the process environment, so a test that supplies one names
+  its variables through `t.Setenv` and cannot be parallel; the unexported
+  config functions take the table as a `projectSettings` value, so a
+  precedence row needs no file on disk at all.
 
 Two kinds of test must never call `t.Parallel`: those in the collections suite
 that call `captureStdIO`, which swaps the process-wide `os.Stdout` and

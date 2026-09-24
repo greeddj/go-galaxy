@@ -235,9 +235,9 @@ func schemaViolations() []schemaViolation {
 		{name: "a top-level collections key", src: "collections = [\"acme.app\"]\n", wantMsg: "unknown table \"collections\" in galaxy.toml"},
 		{name: "an unknown [project] key", src: "[project]\nverion = \"1\"\ncollections = []\n", wantMsg: "unknown key \"verion\" in [project]"},
 		{
-			name:    "a [tool.go-galaxy] table",
-			src:     "[project]\ncollections = []\n[tool.go-galaxy]\nx = 1\n",
-			wantMsg: "unknown table \"tool\" in galaxy.toml",
+			name:    "a foreign [tool.x] table",
+			src:     "[project]\ncollections = []\n[tool.other]\nx = 1\n",
+			wantMsg: "unknown table \"tool.other\" in galaxy.toml",
 		},
 		{name: "an integer name", src: "[project]\nname = 3\ncollections = []\n", wantMsg: "[project] name is not a string"},
 		{name: "a float version", src: "[project]\nversion = 1.0\ncollections = []\n", wantMsg: "[project] version is not a string"},

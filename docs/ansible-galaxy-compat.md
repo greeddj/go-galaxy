@@ -20,7 +20,9 @@ than a union, a fail-closed 401/5xx) apply to an unauthenticated run too. An
 *authenticated* run differs in one more way, deliberately and loudly:
 go-galaxy refuses to pair a token with a server URL a file supplied -
 unconditionally for `[galaxy] server`, and for a `[galaxy_server.<id>] url`
-unless that same section also supplied the token - which ansible does not
+unless that same section also supplied the token (a `[[tool.go-galaxy.servers]]`
+entry in `galaxy.toml` is held to the same rule, and a token it spells as
+`${VAR}` is yours rather than the file's) - which ansible does not
 check at all either way - see [Galaxy servers and
 authentication](servers-and-auth.md#galaxy-servers-and-authentication) and its `--token`
 section for the rule, its cost, and its remedies.
@@ -245,11 +247,20 @@ would wrongly conclude the environment names are dead too - they are not.
   "automation_hub" }`. The schema is strict where `requirements.yml` is
   tolerant: an unknown table, an unknown `[project]` key and an unknown key on
   a collection or role table are refused at load, where a `roles:` mapping key
-  ansible drops is only warned about. A checkout holding both files makes the
-  two tools read different files: go-galaxy reads `galaxy.toml`, warning that
-  `requirements.yml` is ignored, and `ansible-galaxy` reads
-  `requirements.yml`, so a pipeline running both keeps the two in step or
-  names one with `-r`.
+  ansible drops is only warned about. The settings `ansible-galaxy` reads
+  from `ansible.cfg` - the cache directory and the `[galaxy_server.*]` servers
+  - may live under a `[tool.go-galaxy]` table in the same file instead, beside
+  the ones `ansible.cfg` has no key for (the S3 cache, the lockfile and
+  metrics paths, the worker counts), with every `${VAR}` under that table
+  expanded from the environment; `ansible-galaxy` ignores the file entirely,
+  so a server list moved there is one only go-galaxy sees, and an
+  `ansible.cfg` kept beside it goes on serving `ansible-galaxy` unchanged (a
+  `galaxy.toml` server list makes go-galaxy skip that file's
+  `[galaxy_server.*]` sections, never merge the two). A checkout holding both
+  files makes the two tools read different files: go-galaxy reads
+  `galaxy.toml`, warning that `requirements.yml` is ignored, and
+  `ansible-galaxy` reads `requirements.yml`, so a pipeline running both keeps
+  the two in step or names one with `-r`.
 
 Resolution itself is stricter than ansible's: a constraint set with no solution
 is a failure with a proof, not a lenient pick. See [Exit codes](exit-codes.md#exit-codes) for

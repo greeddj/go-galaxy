@@ -66,16 +66,16 @@ func assertConfigField[T comparable](t *testing.T, field string, got, want T) {
 	}
 }
 
-// TestCleanupConfigSurface pins that cleanup, registering only S3Flags and the
-// globals, still builds a Config: unregistered flags read as zero values, safe
-// because cleanup consumes only DryRun, CacheDir and S3Cache.
+// TestCleanupConfigSurface pins that cleanup, registering only its own flag
+// set beside the globals, still builds a Config: unregistered flags read as
+// zero values, safe because cleanup consumes only DryRun, CacheDir and S3Cache.
 func TestCleanupConfigSurface(t *testing.T) {
 	neutralizeAnsibleDiscovery(t)
 	cacheDir := t.TempDir()
 
 	t.Run("local cache", func(t *testing.T) {
 		args := []string{"--cache-dir=" + cacheDir, "--dry-run"}
-		cfg, err := buildConfigFor(t, "cleanup", cliflags.S3Flags(), args)
+		cfg, err := buildConfigFor(t, "cleanup", Cleanup().Flags, args)
 		if err != nil {
 			t.Fatalf("BuildCollectionConfig() error = %v, want nil", err)
 		}
@@ -94,7 +94,7 @@ func TestCleanupConfigSurface(t *testing.T) {
 			"--s3-access-key=k",
 			"--s3-secret-key=s",
 		}
-		cfg, err := buildConfigFor(t, "cleanup", cliflags.S3Flags(), args)
+		cfg, err := buildConfigFor(t, "cleanup", Cleanup().Flags, args)
 		if err != nil {
 			t.Fatalf("BuildCollectionConfig() error = %v, want nil", err)
 		}
@@ -443,7 +443,13 @@ func TestRequirementsFileDiscoveryConfigSurface(t *testing.T) {
 		t.Run(row.name, func(t *testing.T) {
 			neutralizeAnsibleDiscovery(t)
 			for _, name := range row.files {
-				if err := os.WriteFile(name, []byte("collections: []\n"), galaxyhelpers.FileMod); err != nil {
+				// Each file is valid in its own format: config now decodes a
+				// discovered galaxy.toml for its settings, not only its path.
+				body := "collections: []\n"
+				if name == "galaxy.toml" {
+					body = "[project]\ncollections = []\n"
+				}
+				if err := os.WriteFile(name, []byte(body), galaxyhelpers.FileMod); err != nil {
 					t.Fatalf("write %s: %v", name, err)
 				}
 			}

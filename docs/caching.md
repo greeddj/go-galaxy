@@ -11,7 +11,12 @@ artifact cache is scoped by server rather than by content, is described in
 ## The local cache
 
 By default everything lives under `$HOME/.cache/go-galaxy`, relocatable with
-`--cache-dir` (`$GO_GALAXY_CACHE_DIR`, `$ANSIBLE_GALAXY_CACHE_DIR`). One run
+`--cache-dir` (`$GO_GALAXY_CACHE_DIR`, `$ANSIBLE_GALAXY_CACHE_DIR`). The
+directory is decided in this order: the flag or one of its variables when set,
+else `cache_dir` in the `[tool.go-galaxy]` table of the run's `galaxy.toml` (a
+relative path resolved against that file's directory, a `${VAR}` expanded; see
+[galaxy.toml](configuration.md#galaxytoml)), else `[galaxy] cache_dir` in
+`ansible.cfg`, else the default. One run
 holds it exclusively: a second run against the same directory fails fast with
 `another instance is running` rather than interleaving writes. Installed files
 are hardlinked out of the extracted store, so an installed collection and its
@@ -280,12 +285,43 @@ one named `<12 hex digits>.acme` would spell a live key.
 
 ## S3 Cache (optional)
 
-When `--s3-bucket` (or `GO_GALAXY_S3_BUCKET`) is set, go-galaxy uses S3 as the cache backend.
+When a bucket is configured - `--s3-bucket`, `GO_GALAXY_S3_BUCKET`, or `bucket` in the
+`[tool.go-galaxy.s3]` table of the run's `galaxy.toml` - go-galaxy uses S3 as the cache backend.
 Artifacts and cache metadata are stored in S3; collections are still installed locally.
-The bucket is reached only over the network, so `--offline` (or `GO_GALAXY_OFFLINE`) beside it
-exits `2` with `--offline cannot be combined with --s3-bucket: the S3 cache is reached over the
-network` while the configuration is built, before any backend opens; an offline run needs the
-local cache. `cleanup` takes no `--offline`, so `GO_GALAXY_OFFLINE` does not reach it.
+The bucket is reached only over the network, so `--offline` (or `GO_GALAXY_OFFLINE`) beside a
+bucket from any of those sources exits `2` with `--offline cannot be combined with an S3 cache
+bucket: the S3 cache is reached over the network` while the configuration is built, before any
+backend opens; an offline run needs the local cache. `cleanup` takes no `--offline`, so
+`GO_GALAXY_OFFLINE` does not reach it.
+
+Every S3 setting can be written in `galaxy.toml` instead of being passed on each run, the two
+credentials as `${VAR}` references, so that the file names where the cache lives and the
+environment supplies whose keys sign:
+
+```toml
+[tool.go-galaxy.s3]
+bucket = "ci-galaxy-cache"
+region = "eu-central-1"
+prefix = "go-galaxy/"
+endpoint = "https://s3.example.com"
+access_key = "${CI_S3_ACCESS_KEY}"
+secret_key = "${CI_S3_SECRET_KEY}"
+```
+
+The keys are `bucket`, `region`, `prefix`, `endpoint`, `access_key`, `secret_key` and
+`session_token`, strings, and `path_style_disabled`, a TOML boolean (`true`, not `"true"`); any
+other key is refused when the file loads (`unknown key "x" in [tool.go-galaxy.s3]`, exit `2`).
+Precedence is decided key by key: the flag or one of its variables when set - a variable exported
+empty counts as set and names the empty value - else the file's key, else empty. So an exported
+`AWS_ACCESS_KEY_ID`, a spelling of `--s3-access-key`, outranks an `access_key` written out in the
+file, while the `${CI_S3_ACCESS_KEY}` above reaches the file's key through a variable of the
+operator's own naming. A `${VAR}` naming a variable the environment lacks fails the run before
+any other source is read (`2`, `project file references unset environment variables:
+CI_S3_ACCESS_KEY`, every unset name of the table once, never a value), so a runner missing its
+keys stops at once rather than at the bucket. `path_style_disabled` follows the same rule against
+its flag. The backend is selected by the bucket that results, whichever source supplied it, and
+the `[tool.go-galaxy.s3]` keys a run took from the file are named on one `--verbose` line,
+`Galaxy.toml <path> supplied: s3.bucket, s3.access_key, ...`, never their values.
 
 Under the configured `--s3-prefix` the bucket holds four kinds of object:
 `state/store.json.gz`, the snapshot as one gzipped JSON object; `state/projects.json`,
@@ -299,8 +335,9 @@ endpoint. Both state objects are read under the size caps
 local backend: the read runs while the distributed lock is held, so an oversized object
 would hold up every runner sharing the bucket, not only the one reading it.
 
-Both credentials are mandatory: setting the bucket without both an access key and a secret
-key exits `2` with `s3 cache requires access/secret keys when GO_GALAXY_S3_BUCKET is set`.
+Both credentials are mandatory: a bucket from any source without both an access key and a
+secret key from any source exits `2` with `s3 cache requires access and secret keys when an S3
+bucket is configured`.
 Requests are signed by go-galaxy's own SigV4 implementation rather than by the AWS SDK, so
 there is no credential chain behind those two values - no IAM role or instance profile, no
 `~/.aws/credentials`, no `AWS_PROFILE`. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
@@ -316,6 +353,26 @@ check it performs - go-galaxy does not detect which route you used and will not 
 `--s3-access-key` is deliberately not in this list: an AWS access key id travels in
 cleartext inside every signed request's `Authorization` header by construction, so hiding
 it from argv would prevent no disclosure.
+
+A bucket the file chose, signed with keys the environment supplied, is accepted, where the
+Galaxy side refuses a token from the environment for a server address a file chose (see
+[--token](servers-and-auth.md#--token)). The two credentials are not the same kind of thing. A
+Galaxy token is a bearer secret: it travels in the request, so whoever chooses the destination
+chooses who holds it. SigV4 sends no secret. Each request carries an HMAC-SHA256 signature
+computed from the secret key over the request itself - its method, path and query, its `Host`
+among the signed headers, and a scope of date, region and service - and the secret never leaves
+the process. An endpoint the file pointed the run at receives the access key id, which rides in
+cleartext in every signed request anyway, a session token if one is configured, which is as
+useless without the secret as the id is, and signatures valid only for those requests to that
+host, from which the secret cannot be recovered. What a `galaxy.toml` decides is where the cache
+lives, the decision it already makes for the local backend through `cache_dir`, while the
+environment still decides whose keys sign. That holds for the choice of endpoint alone: a
+`${VAR}` reads any variable exported to the run into any string of the table, the endpoint and
+the prefix included, so a `galaxy.toml` is trusted with every variable the environment exports
+to the run, and which variables those are is the responsibility of whoever prepares the
+environment (see [Security](security.md#loading-requirementsyml-and-the-lockfile)). What the
+file can still do is aim keys the runner holds at another bucket those keys can reach, so give
+a project keys scoped to its own bucket, as any CI credential is scoped.
 
 **The endpoint must support conditional writes - both of them.** The distributed lock that
 keeps concurrent runs off each other's cache is built on `If-None-Match: *` to take the

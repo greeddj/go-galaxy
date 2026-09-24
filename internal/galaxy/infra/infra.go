@@ -6,6 +6,7 @@ package infra
 import (
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
@@ -98,30 +99,17 @@ func (i *Infra) SignatureDeadline() time.Duration {
 	return i.SignatureFetchDeadline
 }
 
-// DebugAnsibleConfig logs which settings came from ansible.cfg, then the
-// resolved server list and credential bindings, whatever their source.
-func (i *Infra) DebugAnsibleConfig(cfg *config.Config) {
+// DebugConfigSources logs which settings came from ansible.cfg and which keys
+// galaxy.toml supplied, then the resolved server list and credential bindings,
+// whatever their source.
+func (i *Infra) DebugConfigSources(cfg *config.Config) {
 	if i == nil || i.Output == nil || cfg == nil {
 		return
 	}
-	if cfg.AnsibleConfigPath != "" {
-		i.debugAnsiblePaths(cfg)
-		if cfg.AnsibleCacheDirUsed {
-			i.Output.Debugf("Ansible.cfg %s: galaxy.cache_dir=%s", cfg.AnsibleConfigPath, cfg.CacheDir)
-		}
-		if cfg.AnsibleServerUsed && !cfg.AnsibleServerEnvUsed {
-			i.Output.Debugf("Ansible.cfg %s: galaxy.server=%s", cfg.AnsibleConfigPath, cfg.Server)
-		}
-		if cfg.AnsibleServerTimeoutUsed {
-			i.Output.Debugf("Ansible.cfg %s: galaxy.server_timeout=%s", cfg.AnsibleConfigPath, cfg.Timeout)
-		}
+	if len(cfg.ProjectSettingsUsed) > 0 {
+		i.Output.Debugf("Galaxy.toml %s supplied: %s", cfg.RequirementsFile, strings.Join(cfg.ProjectSettingsUsed, ", "))
 	}
-	// Outside the block above on purpose: ANSIBLE_GALAXY_SERVER supplies this
-	// value whether or not an ansible.cfg was found at all, and crediting the
-	// file for it would name a source that did not provide it.
-	if cfg.AnsibleServerEnvUsed {
-		i.Output.Debugf("Env ANSIBLE_GALAXY_SERVER: galaxy.server=%s", cfg.Server)
-	}
+	i.debugAnsibleSources(cfg)
 	i.debugServerList(cfg.Servers)
 	i.debugGitCredentials(cfg.GitCredentials)
 	i.debugURLCredentials(cfg.URLCredentials)
@@ -150,6 +138,27 @@ func (i *Infra) warn(cfg *config.Config, queue func(*config.Config) []string) {
 	}
 	for _, w := range queue(cfg) {
 		i.Output.Warnf("%s", w)
+	}
+}
+
+// debugAnsibleSources logs each value ansible.cfg supplied, then the one
+// ANSIBLE_GALAXY_SERVER supplies whether or not a file was found at all,
+// since crediting the file for it would name a source that did not provide it.
+func (i *Infra) debugAnsibleSources(cfg *config.Config) {
+	if cfg.AnsibleConfigPath != "" {
+		i.debugAnsiblePaths(cfg)
+		if cfg.AnsibleCacheDirUsed {
+			i.Output.Debugf("Ansible.cfg %s: galaxy.cache_dir=%s", cfg.AnsibleConfigPath, cfg.CacheDir)
+		}
+		if cfg.AnsibleServerUsed && !cfg.AnsibleServerEnvUsed {
+			i.Output.Debugf("Ansible.cfg %s: galaxy.server=%s", cfg.AnsibleConfigPath, cfg.Server)
+		}
+		if cfg.AnsibleServerTimeoutUsed {
+			i.Output.Debugf("Ansible.cfg %s: galaxy.server_timeout=%s", cfg.AnsibleConfigPath, cfg.Timeout)
+		}
+	}
+	if cfg.AnsibleServerEnvUsed {
+		i.Output.Debugf("Env ANSIBLE_GALAXY_SERVER: galaxy.server=%s", cfg.Server)
 	}
 }
 

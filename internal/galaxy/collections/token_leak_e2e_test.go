@@ -173,7 +173,7 @@ func TestTokenNeverLeaksDuringVerboseInstall(t *testing.T) {
 		printer := progress.New(cfg.Verbose, cfg.Quiet)
 		defer printer.Close()
 		runtime := tokenLeakRuntime(cfg, printer)
-		runtime.DebugAnsibleConfig(cfg)
+		runtime.DebugConfigSources(cfg)
 		runtime.WarnConfig(cfg)
 
 		installErr = collections.Start(ctx, cfg, runtime)
@@ -242,7 +242,7 @@ func TestTokenNeverLeaksOnAuthFailure(t *testing.T) {
 		printer := progress.New(cfg.Verbose, cfg.Quiet)
 		defer printer.Close()
 		runtime := tokenLeakRuntime(cfg, printer)
-		runtime.DebugAnsibleConfig(cfg)
+		runtime.DebugConfigSources(cfg)
 		runtime.WarnConfig(cfg)
 		installErr = collections.Start(context.Background(), cfg, runtime)
 	})

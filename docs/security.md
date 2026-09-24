@@ -79,7 +79,12 @@ listed in the same `checksums.txt`.
   `GO_GALAXY_S3_SESSION_TOKEN` / `AWS_SESSION_TOKEN` do not. go-galaxy cannot tell the
   two routes apart and issues no warning: a value's source is not observable once
   urfave has resolved it, so a warning would have to fire on every run, including the
-  environment-driven majority it exists to encourage.
+  environment-driven majority it exists to encourage. A `galaxy.toml` reaches the same
+  route through a `${VAR}` reference: an S3 secret key, a session token or a server
+  token written that way under `[tool.go-galaxy]` is expanded from the environment by
+  go-galaxy itself as the file loads, so the value never sits in the repository, while a
+  literal written there is the file's own credential, readable by everyone who can read
+  the file.
 - The shared S3 snapshot object and the project registry object are a trust boundary:
   go-galaxy serves cached Galaxy metadata (including a collection's download URL and
   sha256) from them without re-validating against the origin on every use, so anyone
@@ -300,7 +305,7 @@ listed in the same `checksums.txt`.
   reachability oracle for whoever can edit the repository's
   `requirements.yml`, not a closed one, on the same grounds go-galaxy already
   accepts for a discovered `ansible.cfg`'s own `[galaxy] server`/`server_list`/
-  `url` values.
+  `url` values and a `galaxy.toml`'s `[[tool.go-galaxy.servers]]` entries.
 - **A `file://` signature source reads a repository-chosen local path, and a
   failed read collapses into one message - but a read that succeeds can still
   disclose more than that message would suggest.** An absent path, an
@@ -397,17 +402,32 @@ never overwritten, and the transport prints itself as a count of origins, never
 an origin or a token.
 
 The pairing rule described under [--token](servers-and-auth.md#--token) rests
-on provenance `config` records for each server as it builds it: whether its URL
-and its token came from the ansible.cfg file rather than from the environment
-or a flag, and whether the file, not the environment, disabled its certificate
-verification - a server whose certificates are verified never reads as relaxed
-by the file. `applyTokenFlag` clears the token's file provenance when it
-installs an operator token, so the pairing check has to run after it, or it
-would exempt that token as the file's own. The bare `[galaxy]` server can only
-commit the destination offense, since `[galaxy]` has no `validate_certs` key.
+on three provenance bits `config` records for each server as it builds it,
+whichever file supplied the section: an `ansible.cfg` `[galaxy_server.<id>]`
+section, or a `galaxy.toml` `[[tool.go-galaxy.servers]]` entry, which
+`projectSections` shapes into the same `url`/`token`/`validate_certs` section
+before `buildServer` reads either, so the per-id environment overrides and
+the bits below have one implementation. The bits are whether its URL came
+from the file rather than from the environment or a flag; whether its token
+did; and whether the file, not the environment, disabled its certificate
+verification - a server whose certificates are verified never reads as
+relaxed by the file. The file's path travels with the server (`sourceFile`)
+for the refusal's message alone. A `galaxy.toml` token holding a `${VAR}`
+reference is recorded as the operator's, not the file's, once the entry is
+built: the author chose that a variable would supply the secret, but the
+secret is whoever exported the variable's, and the rule exists so that the
+party who chose the destination cannot spend a secret that is not theirs on
+it. A `url` written as `${VAR}` stays the file's by the same reasoning - the
+file chose the destination, the variable only spelled it - and a literal
+`token` is exempt because the file spends its own secret. `applyTokenFlag`
+clears the token's file provenance when it installs an operator token, so the
+pairing check has to run after it, or it would exempt that token as the
+file's own. The bare `[galaxy]` server can only commit the destination
+offense, since `[galaxy]` has no `validate_certs` key; a `galaxy.toml` has no
+single-server key at all, so every server it supplies carries all three bits.
 
 The rule protects only a token you supplied, and two shapes pass it by design.
-A file that disables verification for an anonymous run, or pairs its own
+Either file that disables verification for an anonymous run, or pairs its own
 `validate_certs` with its own token, draws only the warning described under
 [TLS: validate_certs](servers-and-auth.md#tls-validate_certs). And a URL or TLS
 policy you supplied, paired with a token the file supplied, is accepted,
@@ -562,8 +582,10 @@ from the first. What the format adds is held to the same discipline. A TOML
 syntax error is rendered as its line and last key only, because the lexer's
 own messages can echo a string body or a bare token from the file into the
 output; the schema is closed, so an unknown top-level table, an unknown
-`[project]` key and an unknown key on a collection or role inline table are
-refused by name rather than ignored or warned about; a scalar of the wrong
+`[project]` key, an unknown key on a collection or role inline table, a
+`[tool]` table holding anything but `go-galaxy`, and an unknown key under
+`[tool.go-galaxy]`, its `s3` table or a `servers` entry are all refused by
+name rather than ignored or warned about; a scalar of the wrong
 type is named by its key and Go type, never its value; and a version
 constraint is checked with `semver` at load and rendered without the library's
 own message. Discovery only `Stat`s, and admits only a regular file: a
@@ -576,6 +598,66 @@ for either requirements file: the requirements file is the input being
 installed, not a setting that redirects where an install lands or which cache
 it deletes beneath, `./requirements.yml` was never defended that way either,
 and a `0777` CI workspace has to keep working.
+
+`[tool.go-galaxy]`, the settings table a `galaxy.toml` may carry, is a second
+boundary in the same file, and what it may decide is bounded by what a
+checked-out repository is trusted with. It may say where a run's state lives:
+`cache_dir`, an S3 bucket with its `endpoint`, `region` and `prefix`, the
+lockfile and metrics paths (`lock_file` and `metrics_file`, a relative one
+resolved against the file's own directory), the two worker counts, and the
+server list, under exactly the pairing rule the ansible.cfg sections are
+under. It may not decide the signature policy, a git or url credential,
+`--offline`, `--frozen` or `--no-cache`: those stay flags and variables, the
+schema is closed, and a key naming one of them is refused as unknown rather
+than read. Every key it does hold is outranked by its flag or variable
+whenever that is set, an exported-empty variable included, so a pipeline
+keeps the last word without editing the file. Two keys have an ansible.cfg
+layer beneath the table: `cache_dir`, whose `[galaxy] cache_dir` the file
+outranks by value, and the servers, whose `[galaxy] server_list` and
+`[galaxy_server.<id>]` sections are read only when the table has no entries.
+A `${VAR}` reads any variable exported to the run into any string value of
+the table, a server `url`, an S3 `endpoint` and a path included, so a
+`galaxy.toml` is trusted with every variable the environment exports to the
+run. Which variables the run sees, and what a file may name, is the
+responsibility of whoever prepares the environment; the token pairing rule is
+the one check this tool makes on top of that.
+
+Two readers see the file, and only one of them sees the environment.
+`cleanup` re-reads a recorded project's `galaxy.toml` through `Decode`, which
+validates the schema and expands nothing, so the roots that keep a project's
+installs alive never depend on the cleaning process's environment; a `${VAR}`
+under `[project]` is a literal in every reader. `LoadSettings`, which the
+commands that use `[tool.go-galaxy]` call, expands `${VAR}` in every string
+value under that table and nowhere else - never in a key, never under
+`[project]` - by one form: `${NAME}`, with a bare `$NAME` a literal, no
+escape and no recursion. Every unset name across the whole table is collected
+and reported once, sorted, by name and never by value (`project file
+references unset environment variables: A, B`, exit `2`), which is why
+`hash`, `tree` and `explain`, which take only `lock_file` from the table,
+still refuse such a file unless `--lock-file` or its variable is set: the
+table is expanded by one rule, not key by key.
+
+The S3 keys deserve the reasoning spelled out. A bucket and an endpoint from
+the file with the access and secret keys from the environment is accepted,
+where a file-sourced server URL with an operator token is refused, because
+the two credentials are spent differently: a Galaxy token is sent to whatever
+host the URL names, while SigV4 never puts the secret key on the wire - it
+signs each request with it, and the signature binds the request to the host
+and the bucket the request names. The file can therefore direct where a cache
+is read from and written to, which it already decides through `cache_dir`,
+and choosing the endpoint alone does not hand it the key; a `${VAR}` naming
+the key's variable inside the endpoint or the prefix would, which is the
+environment trust stated above, not something SigV4 guards. The redirect
+refusal under [The S3 endpoint](#the-s3-endpoint) keeps the signed request on
+the endpoint the run composed. The keys may be written in the file too,
+literal or as `${VAR}`, and a bucket from any source with fewer than both keys
+from any source is refused (`s3 cache requires access and secret keys when an
+S3 bucket is configured`), as is `--offline` beside a bucket the file named,
+exactly as beside `--s3-bucket`. What `config` keeps of the table is bounded the way a
+flag's value is: the S3 secret key and session token and a server token
+become `Secret` values as they are read, the settings value is passed by
+value and retained nowhere, and the one line `--verbose` prints about the
+table names the keys it supplied, never a value.
 
 ### Archive extraction
 

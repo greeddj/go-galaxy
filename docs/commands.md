@@ -121,7 +121,7 @@ flowchart TD
   D13 -->|"yes"| XA2(["exit 2 (usage),<br/>ErrUnexpectedArguments"])
   D13 -->|"no"| D14{"which command?"}
   D14 -->|"install, warm, lock,<br/>outdated, cleanup"| RC["runCollectionCommand<br/>see Shared setup"]
-  D14 -->|"hash, tree"| F1["pick the requirements file,<br/>see Requirements file discovery,<br/>read it and the lockfile at --lock-file,<br/>else galaxy.lock beside it:<br/>no config, no ansible.cfg, no cache"]
+  D14 -->|"hash, tree"| F1["pick the requirements file,<br/>see Requirements file discovery,<br/>read it and the lockfile at --lock-file,<br/>else a galaxy.toml's lock_file,<br/>else galaxy.lock beside it:<br/>no config, no ansible.cfg, no cache"]
 ```
 
 ### Requirements file discovery
@@ -130,13 +130,16 @@ Every command that reads a requirements file picks it by one rule,
 `config.RequirementsPath`, before anything is opened: `install`, `warm`, `lock`
 and `outdated` inside `newConfigFromCLI`, with the warning queued ahead of every
 other configuration warning, and `hash`, `tree` and `explain` on their own,
-printing the warning on stderr before their output. `cleanup` mounts no
-`--requirements-file` and never enters this diagram: it reloads the path each
-registry record holds.
+printing the warning on stderr before their output. `cleanup` enters it the
+same way, inside `newConfigFromCLI`, for one reason: a picked `galaxy.toml`
+can name the cache directory, the S3 settings and the servers of the cache to
+clean. The roots it resolves still come from the path each registry record
+holds, never from the picked file, and an explicitly named file that is absent
+contributes nothing to it.
 
 ```mermaid
 flowchart TD
-  Q1{"command mounts --requirements-file?<br/>cleanup does not"} -->|"no"| Q0["path empty, no warning,<br/>no file examined"]
+  Q1{"command mounts --requirements-file?<br/>every command does, cleanup included;<br/>the no branch is the function's own"} -->|"no"| Q0["path empty, no warning,<br/>no file examined"]
   Q1 -->|"yes"| Q2{"--requirements-file, -r, --role-file,<br/>GO_GALAXY_REQUIREMENTS_FILE or<br/>ANSIBLE_GALAXY_REQUIREMENTS_FILE set?<br/>a variable exported empty counts as set"}
   Q2 -->|"yes"| Q3["path = that value verbatim,<br/>an empty one included;<br/>no file examined, no warning"]
   Q2 -->|"no"| Q4{"./galaxy.toml: Stat result?<br/>Stat, so a symlink to a file counts"}
@@ -150,7 +153,7 @@ flowchart TD
   Q6 --> QF
   Q8 --> QF
   Q9 --> QF{"when the file is read:<br/>path ends in .toml, in any case?"}
-  QF -->|"yes"| QT["requirements.ParseTOML:<br/>galaxy.toml, the [project] table"]
+  QF -->|"yes"| QT["requirements.ParseTOML:<br/>galaxy.toml, the [project] table;<br/>[tool.go-galaxy] held to its schema,<br/>nothing in it expanded"]
   QF -->|"no"| QY["requirements.Parse: YAML,<br/>every requirements.yml shape"]
 ```
 
@@ -165,7 +168,15 @@ collection named `project`. A world-writable working directory is no bar here,
 unlike for `./ansible.cfg`, because the file is what the run installs rather
 than a setting it obeys. The picked path is what `galaxy.lock` is looked for
 beside, what `hash` hashes with no lockfile, and, made absolute, what `install`
-records in the project registry.
+records in the project registry. A picked `.toml` path is also the file whose
+`[tool.go-galaxy]` table supplies settings: `install`, `warm`, `lock`,
+`outdated` and `cleanup` load it through `projectfile.LoadSettings` as the
+first step of building the configuration (see [Configuration resolution, part
+1](#configuration-resolution-part-1-flags-timeout-and-ansiblecfg)), and `hash`,
+`tree` and `explain` load it for its `lock_file` alone, which then stands
+between `--lock-file` and `galaxy.lock` beside the file. An absent
+`galaxy.toml` named explicitly yields no settings and no error there; the read
+for requirements fails on it as before.
 
 ### Shared setup: runCollectionCommand
 
@@ -189,7 +200,7 @@ flowchart TD
   C12 --> C13["infra.New: printer, Galaxy client,<br/>clock, temp dir, metrics, deadlines"]
   C13 --> C14["git client over fetch.NewGit,<br/>GO_GALAXY_GIT_* credentials revealed"]
   C14 --> C15["url client fetch.NewURLDownload:<br/>refuses every request under --offline,<br/>else carries the GO_GALAXY_URL_* bindings"]
-  C15 --> C16["DebugAnsibleConfig: value sources, servers,<br/>bindings, printed only under --verbose"]
+  C15 --> C16["DebugConfigSources: the galaxy.toml keys used,<br/>ansible.cfg value sources, servers,<br/>bindings, printed only under --verbose"]
   C16 --> C17["WarnConfig prints the queued warnings"]
   C17 --> C18{"which command?"}
   C18 -->|"install"| C19["collections.Start"]
@@ -211,13 +222,26 @@ flowchart TD
 flowchart TD
   K1["newConfigFromCLI reads the flag values,<br/>their environment sources already applied by urfave,<br/>and picks the requirements file first,<br/>see Requirements file discovery"] --> K2{"--download-workers below 1?"}
   K2 -->|"yes"| K3["use the derived default"]
-  K2 -->|"no"| K4
-  K3 --> K4{"--timeout a positive integer<br/>or Go duration?<br/>unset or not mounted (cleanup): the default"}
+  K2 -->|"no"| KT
+  K3 --> KT{"requirements path ends in .toml?"}
+  KT -->|"no"| K4
+  KT -->|"yes"| KP["projectfile.LoadSettings: decode galaxy.toml,<br/>hold [tool.go-galaxy] to its closed schema,<br/>expand ${VAR} in its string values,<br/>join a relative lock_file, cache_dir<br/>and metrics_file under the file's directory"]
+  KP -->|"absent file: no settings"| K4
+  KP -->|"cannot be read, not TOML,<br/>an unknown table or key, a wrong type,<br/>an unset ${VAR}"| XKP(["exit 2 (usage),<br/>before any other source is read"])
+  KP -->|"loaded"| K4{"--timeout a positive integer<br/>or Go duration?<br/>unset or not mounted (cleanup): the default"}
   K4 -->|"no"| XK1(["exit 2 (usage), invalid timeout"])
-  K4 -->|"yes"| K5{"--workers set and outside<br/>1 to the permitted CPU count?"}
-  K5 -->|"yes"| K6["queue a warning, use the default"]
-  K5 -->|"no"| K7
-  K6 --> K7{"--ansible-config set?<br/>never on cleanup, which lacks it"}
+  K4 -->|"yes"| K5{"--workers set?"}
+  K5 -->|"yes, outside 1 to the<br/>permitted CPU count"| K6["queue the --workers warning,<br/>use the default"]
+  K5 -->|"yes, in range"| K5D
+  K5 -->|"no"| K5T{"[tool.go-galaxy] workers present?"}
+  K5T -->|"yes, outside the same range"| K6T["queue the warning naming the file,<br/>use the default"]
+  K5T -->|"yes, in range"| K5D
+  K5T -->|"no: the default, silently"| K5D{"--download-workers unset and<br/>[tool.go-galaxy] download_workers<br/>at least 1?"}
+  K6 --> K5D
+  K6T --> K5D
+  K5D -->|"yes"| K5E["download pool size from the file"]
+  K5D -->|"no"| K7
+  K5E --> K7{"--ansible-config set?<br/>never on cleanup, which lacks it"}
   K7 -->|"yes"| K8{"that file loads?"}
   K8 -->|"does not exist"| XK2(["exit 2 (usage),<br/>ErrAnsibleConfigNotFound"])
   K8 -->|"exists, cannot be read to the end:<br/>permission, a directory,<br/>a line past 64 KiB"| XK3(["exit 2 (usage),<br/>ErrAnsibleConfigUnreadable"])
@@ -233,7 +257,8 @@ flowchart TD
   K12 -->|"yes"| K15
   K14 --> K15["--download-path, --roles-path,<br/>--cache-dir, --server:<br/>the flag or its environment wins,<br/>then ansible.cfg, then the flag default<br/>ANSIBLE_GALAXY_SERVER stands in<br/>for the ansible.cfg server"]
   K15 --> K16["collections_path and roles_path keep their first entry,<br/>a warning names the rest"]
-  K16 --> K17["continue with part 2"]
+  K16 --> K18["applyProjectSettings: cache_dir, lock_file and metrics_file<br/>from [tool.go-galaxy] when the flag and its variable are unset;<br/>cache_dir outranks [galaxy] cache_dir and withdraws its credit"]
+  K18 --> K17["continue with part 2"]
 ```
 
 ### Configuration resolution, part 2: servers, credentials, S3 and signatures
@@ -243,8 +268,8 @@ flowchart TD
   S1{"--server set?"} -->|"yes"| S2{"value equals a server_list id?"}
   S2 -->|"yes"| S3["that id's section alone"]
   S2 -->|"no"| S4["one anonymous server at that URL"]
-  S1 -->|"no"| S5{"server_list non-empty?<br/>ANSIBLE_GALAXY_SERVER_LIST over the file"}
-  S5 -->|"yes"| S6["every listed server, ANSIBLE_GALAXY_SERVER_ID_URL,<br/>_TOKEN and _VALIDATE_CERTS over its section"]
+  S1 -->|"no"| S5{"server list non-empty?<br/>ANSIBLE_GALAXY_SERVER_LIST when exported, even empty,<br/>else the [[tool.go-galaxy.servers]] ids in file order,<br/>else [galaxy] server_list"}
+  S5 -->|"yes"| S6["every listed server, ANSIBLE_GALAXY_SERVER_ID_URL,<br/>_TOKEN and _VALIDATE_CERTS over its section:<br/>a galaxy.toml entry when that file has servers,<br/>else the ansible.cfg section, never both files"]
   S5 -->|"no"| S7["one anonymous server at the URL part 1 resolved"]
   S3 --> S8
   S4 --> S8
@@ -257,16 +282,16 @@ flowchart TD
   S10 -->|"yes"| XS3(["exit 2 (usage),<br/>ErrInsecureTokenTransport"])
   S10 -->|"no"| S11["the token replaces the server's own"]
   S9 -->|"no"| S12
-  S11 --> S12{"a token from --token or the environment<br/>paired with an ansible.cfg URL<br/>or validate_certs false?"}
-  S12 -->|"yes"| XS4(["exit 2 (usage)"])
+  S11 --> S12{"an operator token: --token, GO_GALAXY_TOKEN,<br/>ANSIBLE_GALAXY_SERVER_ID_TOKEN, or a galaxy.toml<br/>token written as a ${VAR} reference,<br/>paired with a URL or validate_certs false<br/>from ansible.cfg or galaxy.toml?"}
+  S12 -->|"yes"| XS4(["exit 2 (usage),<br/>ErrTokenDestinationFromFile or<br/>ErrTokenTLSPolicyFromFile"])
   S12 -->|"no"| S13{"GO_GALAXY_GIT_CREDENTIALS<br/>bindings valid?"}
   S13 -->|"no"| XS5(["exit 2 (usage)"])
   S13 -->|"yes"| S14{"GO_GALAXY_URL_CREDENTIALS<br/>bindings valid?"}
   S14 -->|"no"| XS6(["exit 2 (usage)"])
-  S14 -->|"yes"| S15{"--s3-bucket non-empty?"}
-  S15 -->|"yes"| S16{"--s3-access-key and<br/>--s3-secret-key both set?"}
+  S14 -->|"yes"| S15{"S3 bucket non-empty?<br/>--s3-bucket or its variable,<br/>else [tool.go-galaxy.s3] bucket"}
+  S15 -->|"yes"| S16{"an access key and a secret key,<br/>each from its flag, its variable<br/>or [tool.go-galaxy.s3]?"}
   S16 -->|"no"| XS7(["exit 2 (usage), ErrS3EmptyCreds"])
-  S16 -->|"yes"| S17["S3 cache enabled"]
+  S16 -->|"yes"| S17["S3 cache enabled; path_style_disabled<br/>from the flag when set, else the file"]
   S15 -->|"no"| S18
   S17 --> S18{"signature settings valid?<br/>--keyring,<br/>--required-valid-signature-count,<br/>--ignore-signature-status-code,<br/>--disable-gpg-verify or<br/>ANSIBLE_GALAXY_DISABLE_GPG_VERIFY;<br/>always yes on cleanup, lock and outdated,<br/>which mount none of them and read none"}
   S18 -->|"no"| XS8(["exit 2 (usage)"])
@@ -294,7 +319,7 @@ flowchart TD
   B5 -->|"yes"| B6["warn: --refresh skipped offline"]
   B5 -->|"no"| B7
   B6 --> B7["cache.New"]
-  B7 --> B8{"--s3-bucket set?"}
+  B7 --> B8{"S3 cache enabled?<br/>a bucket from --s3-bucket, its variable<br/>or [tool.go-galaxy.s3]"}
   B8 -->|"yes"| B9["S3 backend over the Galaxy client,<br/>never under --offline: the config refused that"]
   B8 -->|"no"| B10["local backend<br/>at --cache-dir"]
   B9 --> B11
@@ -358,7 +383,7 @@ flowchart TD
   E9 -->|"yes"| X9(["exit 9 (cache corrupt)"])
   E9 -->|"no"| E10{"resolution: conflict, no candidate,<br/>cycle, bad dependency key?"}
   E10 -->|"yes"| X3(["exit 3 (resolution)"])
-  E10 -->|"no"| E11{"usage: arguments, config, requirements,<br/>sources, backend unusable, newer snapshot schema,<br/>a path that does not exist, a requirements file<br/>or ansible.cfg that cannot be read?"}
+  E10 -->|"no"| E11{"usage: arguments, config, requirements,<br/>sources, backend unusable, newer snapshot schema,<br/>a path that does not exist, a requirements file<br/>or ansible.cfg that cannot be read,<br/>a galaxy.toml naming an unset ${VAR}?"}
   E11 -->|"yes"| X2(["exit 2 (usage)"])
   E11 -->|"no"| X1(["exit 1 (generic)"])
 ```
@@ -375,10 +400,12 @@ environment variable is ignored too.
   `-v` is accepted and does nothing.
 - install and warm: the collection flags, the signature flags and the S3 flags.
 - lock and outdated: the collection flags and the S3 flags.
-- cleanup: the S3 flags only, so it has no `--offline`, `--timeout`,
-  `--workers`, `--download-workers`, `--download-path`, `--roles-path`,
-  `--server`, `--token`, `--ansible-config`, `--no-cache`, `--refresh`,
-  `--clear-cache` or signature flags.
+- cleanup: `--requirements-file` (`-r`, `--role-file`) and the S3 flags, so it
+  has no `--offline`, `--timeout`, `--workers`, `--download-workers`,
+  `--download-path`, `--roles-path`, `--server`, `--token`,
+  `--ansible-config`, `--no-cache`, `--refresh`, `--clear-cache` or signature
+  flags. The requirements flag is there only so a `galaxy.toml` can name the
+  cache to clean; the file is never read for roots.
 - hash, tree and explain: `--requirements-file` (`-r`, `--role-file`) and
   `--lock-file`. They accept the root flags but never read them.
 
@@ -391,48 +418,63 @@ environment variable is ignored too.
   there is accepted and does nothing (urfave's short-option handling finds the
   root's flag), so the command runs normally.
 - `--verbose` (`GO_GALAXY_VERBOSE`): no spinner, the stdlib log goes through the
-  printer, and the `DebugAnsibleConfig` lines print. It also switches `--quiet`
-  off.
+  printer, and the `DebugConfigSources` lines print: one `Galaxy.toml <file>
+  supplied: <keys>` line naming the `[tool.go-galaxy]` keys the run took a
+  value from, when there are any, then the `Ansible.cfg` lines, the server list
+  (a token as a presence boolean only) and the credential bindings. It also
+  switches `--quiet` off.
 - `--quiet`, `-q` (`GO_GALAXY_QUIET`): no spinner and no progress lines. Ignored
   under `--verbose`.
 - `--offline` (`GO_GALAXY_OFFLINE`, not on cleanup): the Galaxy client and the
   url client refuse every request. The S3 backend would use the Galaxy client
-  too, so `--offline` with `--s3-bucket` is refused as the last configuration
-  check, exit 2, before any backend opens. With `--refresh` it prints the skip
-  warning.
+  too, so `--offline` with an S3 bucket from any source - `--s3-bucket`, its
+  variable or `[tool.go-galaxy.s3]` - is refused as the last configuration
+  check, exit 2 (`ErrS3CacheOffline`), before any backend opens. With
+  `--refresh` it prints the skip warning.
 - `--timeout` (`GO_GALAXY_SERVER_TIMEOUT`, `GO_GALAXY_TIMEOUT`,
   `ANSIBLE_GALAXY_SERVER_TIMEOUT`, not on cleanup): a zero, negative or
   unparseable value exits 2. When no source sets it, `[galaxy] server_timeout`
   decides. cleanup always runs with the default and never reads
   `server_timeout`.
 - `--workers` (`GO_GALAXY_WORKERS`): a value outside 1 to the permitted CPU
-  count gets a warning and the derived default.
+  count gets a warning and the derived default. Unset, `[tool.go-galaxy]`
+  `workers` takes its place under the same range check, with a warning that
+  names the file instead of the flag.
 - `--download-workers` (`GO_GALAXY_DOWNLOAD_WORKERS`): a value below 1 silently
-  becomes the derived default.
+  becomes the derived default. Unset, `[tool.go-galaxy]` `download_workers`
+  applies when it is at least 1, and a lower value is passed over silently.
 - `--ansible-config` (`GO_GALAXY_ANSIBLE_CONFIG`, not on cleanup): replaces
   discovery with a strict load. A missing file exits 2. An ansible.cfg that
   exists but cannot be read, named or discovered, exits 2 too.
 - `--requirements-file`, `-r`, `--role-file` (`GO_GALAXY_REQUIREMENTS_FILE`,
-  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`, not on cleanup): set, even to the empty
+  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`, on cleanup too): set, even to the empty
   string, it names the file verbatim and nothing is examined; unset, discovery
   picks `./galaxy.toml` when it is a regular file, else `requirements.yml`, and
   queues a warning when both are present or `./galaxy.toml` is not a regular
   file (see [Requirements file discovery](#requirements-file-discovery)). The
-  `.toml` extension alone selects the TOML parser when the file is read.
+  `.toml` extension alone selects the TOML parser when the file is read, and
+  makes the file the one whose `[tool.go-galaxy]` table is loaded first, before
+  `--timeout`: one that does not decode, breaks the schema or names an unset
+  `${VAR}` exits 2 as the run's first error, while an absent one supplies
+  nothing.
 - `--download-path` (`-p`), `--roles-path`, `--cache-dir`: when set from the
-  flag or its environment, they outrank ansible.cfg. cleanup mounts only
-  `--cache-dir`.
-- `--server` (`GO_GALAXY_SERVER`): picks one server_list section by id, or one
-  anonymous server. The rest of the list is never read. Without it, cleanup
-  still resolves server_list, so a broken one fails cleanup with exit 2.
+  flag or its environment, they outrank ansible.cfg. `--cache-dir` unset,
+  `[tool.go-galaxy]` `cache_dir` outranks `[galaxy] cache_dir`. cleanup mounts
+  only `--cache-dir`.
+- `--server` (`GO_GALAXY_SERVER`): picks one server list section by id - a
+  `[[tool.go-galaxy.servers]]` entry when the file has any, else an ansible.cfg
+  section - or one anonymous server. The rest of the list is never read.
+  Without it, cleanup still resolves the server list, so a broken one fails
+  cleanup with exit 2.
 - `--token` (`GO_GALAXY_TOKEN`): exits 2 when several servers are in effect,
   when the server is plain http to a non-loopback host, or when the server's URL
-  or `validate_certs false` came from ansible.cfg. Otherwise it replaces the
-  server's token.
-- `--s3-bucket` (`GO_GALAXY_S3_BUCKET`): a non-empty value selects the S3
-  backend and makes `--s3-access-key` and `--s3-secret-key` required (exit 2
-  without both). Beside `--offline` it exits 2 too, after every other
-  configuration check.
+  or `validate_certs false` came from ansible.cfg or galaxy.toml. Otherwise it
+  replaces the server's token.
+- `--s3-bucket` (`GO_GALAXY_S3_BUCKET`, else `[tool.go-galaxy.s3]` `bucket`): a
+  non-empty value selects the S3 backend and makes an access key and a secret
+  key required, each from its flag, its variable or the file (exit 2 without
+  both, `ErrS3EmptyCreds`). Beside `--offline` it exits 2 too, after every
+  other configuration check.
 - `--keyring`, `--required-valid-signature-count` (install and warm only): an
   explicitly empty value exits 2. The keyring is not opened here.
 - `--required-valid-signature-count`, `--ignore-signature-status-code` (install
@@ -456,7 +498,9 @@ environment variable is ignored too.
 These flags are accepted but do not branch the shared setup, because they only
 pass values on to a command or the backend: `--lock-file`, `--metrics-file`,
 `--no-deps`, `--frozen`, `--s3-region`, `--s3-prefix`, `--s3-endpoint`,
-`--s3-session-token` and `--s3-path-style-disabled`.
+`--s3-session-token` and `--s3-path-style-disabled`. Each of them except
+`--no-deps` and `--frozen` takes its value from the matching `[tool.go-galaxy]`
+or `[tool.go-galaxy.s3]` key when the flag and its variable are unset.
 
 ## install
 
@@ -470,7 +514,9 @@ A caught SIGINT, SIGTERM or SIGHUP at any point exits `128 + signal number`
 (130, 143, 129); every other exit is decided by the cause's class, as the
 diagrams show. Each flag also reads its `GO_GALAXY_*` variable, and
 `--download-path`, `--roles-path` and `--cache-dir` fall back to `ansible.cfg`
-when neither is set.
+when neither is set, `--cache-dir` to a `galaxy.toml`'s `cache_dir` first;
+`--workers`, `--download-workers`, `--lock-file`, `--metrics-file` and the
+`--s3-*` flags fall back to `[tool.go-galaxy]` alone.
 
 ### Overview
 
@@ -500,7 +546,7 @@ flowchart TD
     O13 --> O14["when verifying signatures, report how many<br/>already-installed collections went unverified"]
     O12 -->|"yes: roles not attempted"| O14
     O14 --> O15["save snapshot, print the summary line"]
-    O15 --> O16{"--metrics-file set?"}
+    O15 --> O16{"--metrics-file set,<br/>or a galaxy.toml's metrics_file?"}
     O16 -->|"yes"| O17["write JSON metrics report,<br/>a write failure only warns"]
     O16 -->|"no"| O18{"signal caught?"}
     O17 --> O18
@@ -522,8 +568,8 @@ flowchart TD
     S1["urfave/cli parses the flags;<br/>the root flags --verbose,<br/>--quiet, --dry-run and<br/>--cache-dir apply too"]
     S1 --> S2{"flag parse error,<br/>or a positional argument?"}
     S2 -->|"yes"| SX2(["exit 2 (usage)"])
-    S2 -->|"no"| S3{"BuildCollectionConfig<br/>accepts every setting?<br/>--timeout, ansible.cfg,<br/>--server, --token,<br/>GO_GALAXY_GIT_* and<br/>GO_GALAXY_URL_* bindings,<br/>--s3-*, signature flags,<br/>not --offline with --s3-bucket"}
-    S3 -->|"no, an ansible.cfg that<br/>cannot be read included"| SX2
+    S2 -->|"no"| S3{"BuildCollectionConfig<br/>accepts every setting?<br/>a galaxy.toml's [tool.go-galaxy] first,<br/>then --timeout, ansible.cfg,<br/>--server, --token,<br/>GO_GALAXY_GIT_* and<br/>GO_GALAXY_URL_* bindings,<br/>--s3-*, signature flags,<br/>not --offline with an S3 bucket"}
+    S3 -->|"no, a galaxy.toml that does not load<br/>or an ansible.cfg that<br/>cannot be read included"| SX2
     S3 -->|"yes"| S4{"--offline?"}
     S4 -->|"yes"| S5["Galaxy and url clients refuse every request;<br/>the git client is built as usual"]
     S4 -->|"no"| S6["Galaxy client with per-origin tokens;<br/>git and url clients carry<br/>no Galaxy token"]
@@ -534,10 +580,10 @@ flowchart TD
     S8 -->|"no"| S10{"--refresh and --offline?"}
     S9 --> S10
     S10 -->|"yes"| S11["warn: --refresh skipped"]
-    S10 -->|"no"| S12{"--s3-bucket set?"}
+    S10 -->|"no"| S12{"S3 bucket set, by flag,<br/>variable or galaxy.toml?"}
     S11 --> S12
     S12 -->|"yes"| S13["S3 backend"]
-    S12 -->|"no"| S14["local backend at --cache-dir"]
+    S12 -->|"no"| S14["local backend at --cache-dir,<br/>else galaxy.toml cache_dir,<br/>else ansible.cfg cache_dir"]
     S13 --> S15["construct and open the backend"]
     S14 --> S15
     S15 -->|"unusable as configured"| SX2
@@ -584,7 +630,7 @@ flowchart TD
     P6 -->|"verifying"| P9{"--frozen?"}
     P8 --> P9
     P7 -->|"no"| P9
-    P9 -->|"yes"| P10["load the lockfile<br/>--lock-file, else galaxy.lock<br/>beside the requirements file"]
+    P9 -->|"yes"| P10["load the lockfile<br/>--lock-file, else a galaxy.toml's<br/>lock_file, else galaxy.lock<br/>beside the requirements file"]
     P10 -->|"missing or invalid"| PX6(["exit 6 (lockfile)"])
     P10 -->|"loaded"| P11{"every collection root locked, with its<br/>constraint, ref or url version satisfied?"}
     P11 -->|"no"| PX6
@@ -906,17 +952,19 @@ flowchart TD
 ### Flags that change the flow
 
 - `--frozen`: collections and roles come from the lockfile (`--lock-file`, else
-  `galaxy.lock` beside the requirements file) instead of discovery and the
-  solver. A missing, invalid or mismatched lockfile exits `6`, every locked
-  entry is installed, lockfile sha256 pins are checked before extraction, and
-  `--refresh` and `--no-deps` have nothing to act on. Without `--frozen` the
-  lockfile is not read, except for the hash the metrics report carries.
+  a `galaxy.toml`'s `lock_file`, else `galaxy.lock` beside the requirements
+  file) instead of discovery and the solver. A missing, invalid or mismatched
+  lockfile exits `6`, every locked entry is installed, lockfile sha256 pins
+  are checked before extraction, and `--refresh` and `--no-deps` have nothing
+  to act on. Without `--frozen` the lockfile is not read, except for the hash
+  the metrics report carries.
 - `--dry-run`: prints the banner, skips `--clear-cache` and the project record,
   creates neither install root, discards what discovery built, starts no
   prefetcher, previews instead of installing, saves the snapshot only when one
   already existed, and skips the metrics report with a warning.
-- `--offline`: the Galaxy and url clients refuse every request, and with
-  `--s3-bucket` the configuration is refused (exit `2`); the metadata cache and
+- `--offline`: the Galaxy and url clients refuse every request, and with an S3
+  bucket from any source the configuration is refused (exit `2`); the metadata
+  cache and
   the git, url and role pins are read even under `--no-cache`, and never
   written, and the resolve snapshot is replayed even under `--no-cache`; an
   unrecorded pin, or a git or url role whose artifact is not cached, exits `4`
@@ -942,9 +990,11 @@ flowchart TD
   it is extracted, a cache hit still loads its version metadata, and a skipped
   install is counted as unverified. A `signatures:` block with no keyring exits
   `2`, or only warns under `--disable-gpg-verify`.
-- `--s3-bucket`: selects the S3 backend instead of the local one at
-  `--cache-dir`; refused beside `--offline` (exit `2`).
-- `--metrics-file`: writes the JSON report after a real run.
+- `--s3-bucket`, else `[tool.go-galaxy.s3]` `bucket`: selects the S3 backend
+  instead of the local one at `--cache-dir`; refused beside `--offline` (exit
+  `2`).
+- `--metrics-file`, else `[tool.go-galaxy]` `metrics_file`: writes the JSON
+  report after a real run.
 - `--timeout`, `--server`, `--token`, `--ansible-config`,
   `--required-valid-signature-count`, `--ignore-signature-status-code`,
   `--s3-access-key`, `--s3-secret-key`: branch only when refused at startup,
@@ -955,7 +1005,10 @@ Accepted without changing the flow: `--verbose`, `--quiet`, `--cache-dir`,
 (locations), `--workers`, `--download-workers` (pool sizes), `--s3-region`,
 `--s3-prefix`, `--s3-endpoint`, `--s3-session-token` and
 `--s3-path-style-disabled`, beyond the startup validation of the ones listed
-above and the S3 backend refusing an endpoint it cannot use when it opens.
+above and the S3 backend refusing an endpoint it cannot use when it opens. A
+`.toml` requirements file is the one exception among the locations: its
+`[tool.go-galaxy]` table is loaded before any other setting, and one that does
+not load ends the run at startup with exit `2`.
 
 ## lock
 
@@ -983,7 +1036,7 @@ flowchart TD
     C -->|"yes"| X0(["print lock help, exit 0"])
     C -->|"no"| D{"positional argument given?<br/>root ArgValidator NoArguments"}
     D -->|"yes"| X2B(["unexpected arguments<br/>exit 2 (usage)"])
-    D -->|"no"| E["BuildCollectionConfig: --timeout, --workers,<br/>ansible.cfg, server list and tokens,<br/>git and url credential bindings,<br/>S3 settings,<br/>then --offline with --s3-bucket refused"]
+    D -->|"no"| E["BuildCollectionConfig: a galaxy.toml's<br/>[tool.go-galaxy] first, then --timeout, --workers,<br/>ansible.cfg, server list and tokens,<br/>git and url credential bindings,<br/>S3 settings,<br/>then --offline with an S3 bucket refused"]
     E -->|"error"| X2C(["exit 2 (usage),<br/>1 (generic) when no class matches"])
     E -->|"ok"| F{"--offline?"}
     F -->|"yes"| G1["Galaxy HTTP client that refuses every request"]
@@ -996,7 +1049,7 @@ flowchart TD
     I1 --> J{"--refresh and --offline both set?"}
     J -->|"yes"| J1["warn: --offline skips --refresh"]
     J -->|"no"| K
-    J1 --> K{"--s3-bucket set?"}
+    J1 --> K{"S3 bucket set, by flag,<br/>variable or galaxy.toml?"}
     K -->|"yes"| K1["S3 backend"]
     K -->|"no"| K2["local backend in --cache-dir"]
     K1 --> L
@@ -1165,7 +1218,7 @@ applies and `--dry-run` controls only the snapshot save and the metrics report.
 
 ```mermaid
 flowchart TD
-    IN(["lockfile built in memory"]) --> PA["path: --lock-file, else galaxy.lock<br/>beside --requirements-file"]
+    IN(["lockfile built in memory"]) --> PA["path: --lock-file, else a galaxy.toml's lock_file,<br/>else galaxy.lock beside --requirements-file"]
     PA --> FR{"--frozen?"}
     FR -->|"yes"| LR["LoadRequired: read and validate the file at path"]
     LR -->|"absent"| XM(["lockfile missing<br/>exit 6 (lockfile)"])
@@ -1246,8 +1299,8 @@ check still applies once the lock was taken.
   every request. Sources replay only their recorded pins, and a miss exits 4.
   Pins, cached metadata and the recorded resolve are read even when `--refresh`
   or `--no-cache` is set, and no pin or metadata is recorded. The S3 backend
-  would share the Galaxy HTTP client, so `--s3-bucket` under `--offline` is
-  refused while the config is built, exit 2.
+  would share the Galaxy HTTP client, so an S3 bucket from any source under
+  `--offline` is refused while the config is built, exit 2.
 - `--no-cache` (`GO_GALAXY_NO_CACHE`): no metadata cache, pin or recorded
   resolve is read, no metadata or pin is recorded, and each build is kept as a
   temporary file for the run instead of being committed to the artifact cache.
@@ -1261,10 +1314,12 @@ check still applies once the lock was taken.
   metadata caches and every pin and deletes the cached artifact files. It is
   skipped under `--dry-run`. The recorded resolve is kept, so when the
   requirements are unchanged it is still replayed.
-- `--s3-bucket` (`GO_GALAXY_S3_BUCKET`): chooses the S3 backend instead of the
-  local one. Only the S3 lock can be lost mid-run (exit 8).
-- `--metrics-file` (`GO_GALAXY_METRICS_FILE`): writes the JSON report at the end
-  of a run that reaches the save step. It is skipped under `--dry-run`.
+- `--s3-bucket` (`GO_GALAXY_S3_BUCKET`, else `[tool.go-galaxy.s3]` `bucket`):
+  chooses the S3 backend instead of the local one. Only the S3 lock can be lost
+  mid-run (exit 8).
+- `--metrics-file` (`GO_GALAXY_METRICS_FILE`, else `[tool.go-galaxy]`
+  `metrics_file`): writes the JSON report at the end of a run that reaches the
+  save step. It is skipped under `--dry-run`.
 - `--help`, `-h`: prints the command help and exits 0.
 
 Accepted without changing the flow, since they supply values only: `--verbose`,
@@ -1276,9 +1331,11 @@ Accepted without changing the flow, since they supply values only: `--verbose`,
 `--s3-path-style-disabled`. The same holds for the `ansible.cfg` keys `lock`
 reads (`[defaults] collections_path` and `roles_path`, `[galaxy] server`,
 `server_list`, `cache_dir`, `server_timeout`, and the `[galaxy_server.<id>]`
-sections); a value that cannot be used fails in diagram 1. `lock` does not mount
-the signature flags and reads none of their variables,
-`ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` included.
+sections) and for a `galaxy.toml`'s `[tool.go-galaxy]` table, read ahead of
+every other source when the requirements file is a `.toml`; a value that
+cannot be used fails in diagram 1. `lock` does not mount the signature flags
+and reads none of their variables, `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY`
+included.
 
 ## warm
 
@@ -1304,9 +1361,9 @@ flowchart TD
     Parse -->|"no"| X2a(["exit 2 (usage)"])
     Parse -->|"yes"| Args{"positional arguments given?"}
     Args -->|"yes"| X2a
-    Args -->|"no"| Cfg["build config from flags, environment and ansible.cfg:<br/>timeout, workers, paths, servers, git and url credentials,<br/>S3 settings, signature policy"]
+    Args -->|"no"| Cfg["build config from flags, environment, galaxy.toml and ansible.cfg:<br/>a galaxy.toml's [tool.go-galaxy] first, then timeout, workers, paths,<br/>servers, git and url credentials, S3 settings, signature policy"]
     Cfg --> CfgOK{"config accepted?"}
-    CfgOK -->|"no, an ansible.cfg that<br/>cannot be read or --offline<br/>with --s3-bucket included"| X2b(["exit 2 (usage)"])
+    CfgOK -->|"no, a galaxy.toml that does not load,<br/>an ansible.cfg that cannot be read<br/>or --offline with an S3 bucket included"| X2b(["exit 2 (usage)"])
     CfgOK -->|"yes"| Wire["wire the printer, HTTP, git and url clients<br/>print config warnings"]
     Wire --> NoCache{"--no-cache set?"}
     NoCache -->|"yes, with or without --dry-run"| X2c(["exit 2 (usage)<br/>no backend opened, no lock taken"])
@@ -1316,7 +1373,7 @@ flowchart TD
     Dry1 -->|"no"| RefOff{"--refresh and --offline both set?"}
     DryWarn --> RefOff
     RefOff -->|"yes"| RefWarn["warn: --offline skips --refresh"]
-    RefOff -->|"no"| S3{"--s3-bucket set?"}
+    RefOff -->|"no"| S3{"S3 bucket set, by flag,<br/>variable or galaxy.toml?"}
     RefWarn --> S3
     S3 -->|"yes: S3 backend"| Open["open the backend"]
     S3 -->|"no: local backend at --cache-dir"| Open
@@ -1374,7 +1431,7 @@ flowchart TD
     DryNote --> OffSig["with --offline, warn once on a declared<br/>network signature source"]
     VerOn --> OffSig
     OffSig --> Frozen1
-    Frozen1 -->|"yes"| Lf["print Frozen: using lockfile<br/>load --lock-file, else galaxy.lock beside the requirements file"]
+    Frozen1 -->|"yes"| Lf["print Frozen: using lockfile<br/>load --lock-file, else a galaxy.toml's lock_file,<br/>else galaxy.lock beside the requirements file"]
     Lf -->|"missing or invalid"| X6(["exit 6 (lockfile)"])
     Lf --> LfRoots["check every root against its locked entry,<br/>take the pinned versions, sha256 and commits"]
     LfRoots -->|"root missing or constraint unmet"| X6
@@ -1621,8 +1678,8 @@ flowchart TD
   failed. A bad cache hit is never evicted and refetched. In a dry run, an
   uncached item becomes a would-fail, and so does a recorded digest that
   contradicts the pin. `--offline` also outranks `--refresh`, with a warning.
-  With `--s3-bucket` the S3 client would refuse every request too, so the
-  configuration is refused, exit 2, before any backend is opened.
+  With an S3 bucket from any source the S3 client would refuse every request
+  too, so the configuration is refused, exit 2, before any backend is opened.
 - `--refresh` (`GO_GALAXY_REFRESH`): skips the recorded resolution and the
   cached version listings. A url pin is downloaded again. A git branch or tag
   pin, a role pin and a Galaxy role's v1 answer are asked again, and a pin is
@@ -1643,14 +1700,15 @@ flowchart TD
   failed check exits 10. When it is off and a root declares `signatures:`, the
   run exits 2 unless verification was disabled explicitly. No ansible.cfg key
   can turn verification on.
-- `--s3-bucket` (`GO_GALAXY_S3_BUCKET`): picks the S3 backend for the lock, the
-  snapshot and the artifacts. The extracted store stays local under
-  `--cache-dir`. S3 is what makes lock loss mid-run, and so exit 8 at any point,
-  possible: a lost lock also cancels the run's context, so warming stops
-  dispatching. Beside `--offline` it is refused while the config is built
-  (exit 2).
-- `--metrics-file` (`GO_GALAXY_METRICS_FILE`): writes the report after the save,
-  with a warning on failure. Under `--dry-run` it prints a skip warning instead.
+- `--s3-bucket` (`GO_GALAXY_S3_BUCKET`, else `[tool.go-galaxy.s3]` `bucket`):
+  picks the S3 backend for the lock, the snapshot and the artifacts. The
+  extracted store stays local under `--cache-dir`. S3 is what makes lock loss
+  mid-run, and so exit 8 at any point, possible: a lost lock also cancels the
+  run's context, so warming stops dispatching. Beside `--offline` it is refused
+  while the config is built (exit 2).
+- `--metrics-file` (`GO_GALAXY_METRICS_FILE`, else `[tool.go-galaxy]`
+  `metrics_file`): writes the report after the save, with a warning on failure.
+  Under `--dry-run` it prints a skip warning instead.
 
 Accepted without changing the flow: `--verbose`, `--quiet`, `--cache-dir`,
 `--server`, `--token`, `--timeout`, `--download-path` and `--roles-path` (warm
@@ -1659,7 +1717,8 @@ writes neither directory, it only records them in the project registry),
 `--lock-file` (only the path `--frozen` reads),
 `--required-valid-signature-count`, `--ignore-signature-status-code`, and the
 other `--s3-*` flags. A malformed value of several of them fails the config step
-with exit 2.
+with exit 2, as does a `.toml` requirements file whose `[tool.go-galaxy]` table
+does not load.
 
 ## cleanup
 
@@ -1670,6 +1729,10 @@ file (`galaxy.toml` or `requirements.yml`) still reaches, and removes the
 rest: their install directories, their cached artifacts and their snapshot
 records. After that it sweeps legacy artifact keys
 and extracted-store entries that nothing references, and saves the snapshot.
+It mounts `--requirements-file` for one reason: the `galaxy.toml` it picks, or
+discovers, can name the cache directory, the S3 settings and the servers of
+the cache to clean. That file is never read for roots; the roots come from the
+requirements path each registry record holds.
 
 Two rules hold at every step below. A caught SIGINT, SIGTERM or SIGHUP ends the
 run with 130, 143 or 129, whatever the diagram says. On the S3 backend,
@@ -1685,10 +1748,10 @@ flowchart TD
     Parse -->|"no"| X2a(["exit 2 (usage)"])
     Parse -->|"yes"| Args{"positional arguments given?"}
     Args -->|"yes"| X2a
-    Args -->|"no"| Cfg["build config from flags, environment and ansible.cfg<br/>cache dir: --cache-dir, else ansible.cfg galaxy cache_dir, else the default"]
+    Args -->|"no"| Cfg["build config from flags, environment, galaxy.toml and ansible.cfg<br/>the requirements file: --requirements-file, else discovery (see Requirements file discovery),<br/>its [tool.go-galaxy] loaded first when it is a .toml, an absent file supplying nothing<br/>cache dir: --cache-dir, else galaxy.toml cache_dir, else ansible.cfg galaxy cache_dir, else the default"]
     Cfg --> CfgOK{"config accepted?"}
-    CfgOK -->|"no, for example --s3-bucket without<br/>--s3-access-key or --s3-secret-key,<br/>or a discovered ansible.cfg that cannot be read"| X2b(["exit 2 (usage)"])
-    CfgOK -->|"yes"| S3{"--s3-bucket set?"}
+    CfgOK -->|"no, for example an S3 bucket without<br/>an access key or a secret key from any source,<br/>a galaxy.toml that does not load,<br/>or a discovered ansible.cfg that cannot be read"| X2b(["exit 2 (usage)"])
+    CfgOK -->|"yes"| S3{"S3 bucket set, by flag,<br/>variable or galaxy.toml?"}
     S3 -->|"yes"| S3B["S3 backend"]
     S3 -->|"no"| LB["local backend at the cache dir"]
     S3B --> Open["open the backend<br/>local: create the cache dir<br/>S3: check the bucket, probe conditional writes"]
@@ -1775,7 +1838,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    R1["for each recorded project, sorted by path,<br/>against the complete index of every project"] --> Req{"recorded requirements file loads?<br/>reloaded by the extension the recorded path carries:<br/>.toml as galaxy.toml, anything else as YAML"}
+    R1["for each recorded project, sorted by path,<br/>against the complete index of every project"] --> Req{"recorded requirements file loads?<br/>reloaded by the extension the recorded path carries:<br/>.toml as galaxy.toml, its [tool.go-galaxy] held to<br/>its schema and expanded nowhere, anything else as YAML"}
     Req -->|"no longer exists"| RMiss["warn: contributes no roots this run"]
     Req -->|"not a regular file, unreadable, unparseable,<br/>or a galaxy.toml schema this tool refuses"| X2(["exit 2 (usage)"])
     Req -->|"collections: read, roles: list refused"| RKeep["warn: its roles are kept<br/>mark every indexed role under this project's roles_path reachable,<br/>then the deps of every indexed copy, transitively"]
@@ -1883,26 +1946,41 @@ flowchart TD
   sweep prints only the keys that exist, and the extracted sweep prints its
   plan. The snapshot is never saved, and the summary reports `Candidates: N`
   instead of `Removed: N`.
+- `--requirements-file`, `-r`, `--role-file` (`GO_GALAXY_REQUIREMENTS_FILE`,
+  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`; unset, `./galaxy.toml` when it is a
+  regular file, else `requirements.yml`, with the both-present warning queued
+  with the other configuration warnings, see
+  [Requirements file discovery](#requirements-file-discovery)): the file whose
+  `[tool.go-galaxy]` table, when the path ends in `.toml`, supplies the cache
+  directory, the S3 settings and the servers below. It is loaded before any
+  other setting, and one that does not decode, breaks the schema or names an
+  unset `${VAR}` fails the config with exit 2; an absent one, explicitly named
+  included, supplies nothing. The file is never read for roots, which come
+  from each registry record's own path.
 - `--cache-dir` (`GO_GALAXY_CACHE_DIR`, `ANSIBLE_GALAXY_CACHE_DIR`, else
-  ansible.cfg `[galaxy] cache_dir`): sets the local backend's directory, which
-  holds the flock, the Bolt snapshot and the project registry. It also sets the
-  extracted store that the sweep walks, and this happens on the S3 backend too.
-  An explicitly empty value skips the extracted sweep, and on the local backend
-  it fails the open with exit 2.
-- `--s3-bucket` (`GO_GALAXY_S3_BUCKET`): picks the S3 backend over the local
-  one. The S3 backend is what makes lock loss mid-run possible (exit 8 at any
-  point).
-- `--s3-access-key` (`GO_GALAXY_S3_ACCESS_KEY`, `AWS_ACCESS_KEY_ID`),
-  `--s3-secret-key` (`GO_GALAXY_S3_SECRET_KEY`, `AWS_SECRET_ACCESS_KEY`): with
-  `--s3-bucket` set, either one missing fails the config with exit 2.
+  `[tool.go-galaxy]` `cache_dir`, else ansible.cfg `[galaxy] cache_dir`): sets
+  the local backend's directory, which holds the flock, the Bolt snapshot and
+  the project registry. It also sets the extracted store that the sweep walks,
+  and this happens on the S3 backend too. An explicitly empty value skips the
+  extracted sweep, and on the local backend it fails the open with exit 2.
+- `--s3-bucket` (`GO_GALAXY_S3_BUCKET`, else `[tool.go-galaxy.s3]` `bucket`):
+  picks the S3 backend over the local one. The S3 backend is what makes lock
+  loss mid-run possible (exit 8 at any point).
+- `--s3-access-key` (`GO_GALAXY_S3_ACCESS_KEY`, `AWS_ACCESS_KEY_ID`, else
+  `[tool.go-galaxy.s3]` `access_key`), `--s3-secret-key`
+  (`GO_GALAXY_S3_SECRET_KEY`, `AWS_SECRET_ACCESS_KEY`, else `secret_key`
+  there): with a bucket from any source, either one missing from every source
+  fails the config with exit 2 (`ErrS3EmptyCreds`).
 - `--s3-endpoint`: an endpoint with no host fails the backend open with exit 2,
   and one that does not parse as a URL fails it with exit 1.
 
 Accepted without changing the flow: `--verbose` and `--quiet`, which change
 output only, and `--s3-region`, `--s3-prefix`, `--s3-session-token` and
 `--s3-path-style-disabled`, which only change where and how S3 requests go (a
-bad value there shows up as the open or lock failures above). `cleanup` mounts
-nothing else: only the four global options and `cliflags.S3Flags()`. It reads no
+bad value there shows up as the open or lock failures above), each taken from
+`[tool.go-galaxy.s3]` when the flag and its variable are unset. `cleanup`
+mounts nothing else: only the four global options,
+`cliflags.RequirementsFileFlag()` and `cliflags.S3Flags()`. It reads no
 signature variable either, `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` included.
 
 ## outdated
@@ -1920,15 +1998,15 @@ cache lock, so every answer is live, and it is refused under `--offline`.
 flowchart TD
     Start(["go-galaxy outdated"]) --> Args{"flags parse, and no positional argument?"}
     Args -->|"no"| E2a(["exit 2 (usage)"])
-    Args -->|"yes"| Cfg["BuildCollectionConfig: --timeout, --workers, ansible.cfg from --ansible-config or discovery,<br/>servers from --server, --token and server_list, GO_GALAXY_GIT_* and GO_GALAXY_URL_* bindings,<br/>S3 settings, [galaxy] server_timeout"]
+    Args -->|"yes"| Cfg["BuildCollectionConfig: a galaxy.toml's [tool.go-galaxy] first, then --timeout, --workers,<br/>ansible.cfg from --ansible-config or discovery, servers from --server, --token and the server list,<br/>GO_GALAXY_GIT_* and GO_GALAXY_URL_* bindings, S3 settings, [galaxy] server_timeout"]
     Cfg --> CfgOK{"configuration usable?"}
-    CfgOK -->|"no: a configuration sentinel"| E2b(["exit 2 (usage)<br/>for example a bad --timeout or server_timeout, missing --ansible-config file,<br/>an ansible.cfg that cannot be read, a malformed credential binding,<br/>--s3-bucket without both S3 keys or beside --offline"])
+    CfgOK -->|"no: a configuration sentinel"| E2b(["exit 2 (usage)<br/>for example a galaxy.toml that does not load, a bad --timeout or server_timeout,<br/>a missing --ansible-config file, an ansible.cfg that cannot be read, a malformed credential binding,<br/>an S3 bucket without both S3 keys or beside --offline"])
     CfgOK -->|"yes"| Wire["runCollectionCommand: printer for --verbose and --quiet,<br/>Galaxy HTTP client, git client, url client, print config warnings"]
     Wire --> Off{"--offline set?"}
     Off -->|"yes"| E4a(["exit 4 (network)<br/>outdated requires network access"])
-    Off -->|"no"| Inert{"any of --clear-cache, --no-cache, --refresh,<br/>--no-deps, --frozen, --s3-bucket set?"}
+    Off -->|"no"| Inert{"any of --clear-cache, --no-cache, --refresh,<br/>--no-deps, --frozen set, or an S3 bucket configured<br/>by flag, variable or galaxy.toml?"}
     Inert -->|"yes"| Warn["one stderr warning naming them; nothing else changes"]
-    Inert -->|"no"| Path["lockfile path: --lock-file, else galaxy.lock beside the requirements file:<br/>--requirements-file, else discovery (see Requirements file discovery)"]
+    Inert -->|"no"| Path["lockfile path: --lock-file, else a galaxy.toml's lock_file,<br/>else galaxy.lock beside the requirements file:<br/>--requirements-file, else discovery (see Requirements file discovery)"]
     Warn --> Path
     Path --> Load{"lockfile.Load result?"}
     Load -->|"loaded"| FromLock["current side: the lockfile's collections and roles<br/>report label: the lockfile path"]
@@ -2086,18 +2164,22 @@ there is no cache-busy or lock-lost exit (8).
 
 - `--offline` (`GO_GALAXY_OFFLINE`): refuses the run once configuration is
   built, before the lockfile or the tree is read and before the inert-flag
-  warning, exit 4. With `--s3-bucket` set too, configuration itself fails
-  first, exit 2.
+  warning, exit 4. With an S3 bucket configured too, from any source,
+  configuration itself fails first, exit 2.
 - `--clear-cache`, `--no-cache`, `--refresh`, `--no-deps`, `--frozen`,
-  `--s3-bucket` (and their `GO_GALAXY_*` variables): one stderr warning naming
-  the ones set, printed even under `--quiet`; no other effect. `--s3-bucket` set
-  while either `--s3-access-key` or `--s3-secret-key` (or `AWS_ACCESS_KEY_ID` /
-  `AWS_SECRET_ACCESS_KEY`) is missing, or beside `--offline`, fails
-  configuration first, exit 2, and the warning never prints.
-- `--lock-file` (`GO_GALAXY_LOCK_FILE`), `--requirements-file` / `-r` /
-  `--role-file` (`GO_GALAXY_REQUIREMENTS_FILE`,
+  `--s3-bucket` (and their `GO_GALAXY_*` variables, and for the bucket
+  `[tool.go-galaxy.s3]`): one stderr warning naming the ones set, printed even
+  under `--quiet`; no other effect. A bucket configured while an access key or
+  a secret key is missing from every source (`--s3-access-key`,
+  `--s3-secret-key`, `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, the file),
+  or beside `--offline`, fails configuration first, exit 2, and the warning
+  never prints.
+- `--lock-file` (`GO_GALAXY_LOCK_FILE`, else `[tool.go-galaxy]` `lock_file`),
+  `--requirements-file` / `-r` / `--role-file` (`GO_GALAXY_REQUIREMENTS_FILE`,
   `ANSIBLE_GALAXY_REQUIREMENTS_FILE`): pick the lockfile path; absence switches
-  to the installed-tree fallback. The requirements file itself is never read.
+  to the installed-tree fallback. The requirements file itself is never read
+  for requirements; a `.toml` one has its `[tool.go-galaxy]` table loaded while
+  the configuration is built, and one that does not load exits 2 there.
 - `--download-path` / `-p` (`GO_GALAXY_COLLECTIONS_PATH`,
   `GO_GALAXY_DOWNLOAD_PATH`, `ANSIBLE_COLLECTIONS_PATH`,
   `[defaults] collections_path`): the tree the fallback scans, and the report
@@ -2119,8 +2201,8 @@ there is no cache-busy or lock-lost exit (8).
 - `--quiet` / `-q` (`GO_GALAXY_QUIET`, ignored when `--verbose` is set): hides
   the fallback's progress notice; every report line, warning and the summary
   still print.
-- `--metrics-file` (`GO_GALAXY_METRICS_FILE`): writes the JSON report after the
-  lookups.
+- `--metrics-file` (`GO_GALAXY_METRICS_FILE`, else `[tool.go-galaxy]`
+  `metrics_file`): writes the JSON report after the lookups.
 - `--dry-run` (`GO_GALAXY_DRY_RUN`): skips that report with a warning; nothing
   else changes.
 
@@ -2136,7 +2218,9 @@ their variables, `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` included.
 `hash` (alias `h`) prints one line, `sha256:<hex>`, for use as a CI cache key:
 the SHA256 of the lockfile's canonical re-encoding when a lockfile exists, or of
 the requirements file's raw bytes when it does not. It resolves nothing, reads
-no `ansible.cfg`, opens no cache backend and makes no request.
+no `ansible.cfg`, opens no cache backend and makes no request. The one setting
+it reads is a `galaxy.toml`'s `[tool.go-galaxy]` `lock_file`, through the
+`lockfilePath` helper it shares with `tree` and `explain`.
 
 ### From the command line to the key
 
@@ -2154,14 +2238,21 @@ flowchart TD
     D -->|"no"| E{"any positional argument?<br/>root ArgValidator NoArguments"}
     E -->|"yes"| X2b(["unexpected arguments<br/>exit 2 (usage)"])
     E -->|"no"| F["req = --requirements-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>then ANSIBLE_GALAXY_REQUIREMENTS_FILE;<br/>unset: ./galaxy.toml when a regular file,<br/>else requirements.yml, a warning printed<br/>when both are present,<br/>see Requirements file discovery"]
-    F --> G{"--lock-file or GO_GALAXY_LOCK_FILE<br/>set and non-empty?"}
-    G -->|"yes"| P1["lockPath = that value"]
-    G -->|"no"| H{"req empty?"}
+    F --> G{"--lock-file or GO_GALAXY_LOCK_FILE set?<br/>a variable exported empty counts as set"}
+    G -->|"yes, non-empty"| P1["lockPath = that value"]
+    G -->|"yes, empty"| H
+    G -->|"no"| GT{"req ends in .toml?"}
+    GT -->|"no"| H{"req empty?"}
+    GT -->|"yes"| GS["projectfile.LoadSettings: decode req,<br/>hold [tool.go-galaxy] to its schema,<br/>expand ${VAR} in its string values"]
+    GS -->|"absent file, or no lock_file"| H
+    GS -->|"cannot be read, not TOML,<br/>a refused table or key, an unset ${VAR}"| X2f(["exit 2 (usage),<br/>nothing hashed"])
+    GS -->|"lock_file set"| P4["lockPath = lock_file,<br/>a relative one joined under req's directory"]
     H -->|"yes"| P2["lockPath = galaxy.lock in the cwd"]
     H -->|"no"| P3["lockPath = galaxy.lock beside req"]
     P1 --> R["lockfile.Load reads lockPath"]
     P2 --> R
     P3 --> R
+    P4 --> R
     R --> J{"read result?"}
     J -->|"file does not exist"| Q["fallback: read req"]
     J -->|"other read error:<br/>permission, is a directory"| X6(["lockfile is invalid<br/>exit 6 (lockfile)"])
@@ -2191,8 +2282,8 @@ interrupt.
 flowchart TD
     A["app.Run returns to main"] --> B{"SIGINT, SIGTERM or SIGHUP<br/>caught during the run?"}
     B -->|"yes"| XS(["exit 128 + signal number:<br/>130 SIGINT, 143 SIGTERM, 129 SIGHUP (interrupt)"])
-    B -->|"no"| C{"error delivered to ExitErrHandler?<br/>argument, lockfile or read error"}
-    C -->|"yes"| D["exitcode.FromError, first match wins:<br/>ErrLockfileInvalid gives 6,<br/>ErrUnexpectedArguments, fs.ErrNotExist<br/>or ErrRequirementsUnreadable gives 2,<br/>anything else gives 1"]
+    B -->|"no"| C{"error delivered to ExitErrHandler?<br/>argument, galaxy.toml, lockfile or read error"}
+    C -->|"yes"| D["exitcode.FromError, first match wins:<br/>ErrLockfileInvalid gives 6,<br/>ErrUnexpectedArguments, fs.ErrNotExist,<br/>ErrRequirementsUnreadable, ErrInvalidRequirementsTOML,<br/>ErrUnsupportedRequirementsFormat<br/>or ErrProjectFileEnvUnset gives 2,<br/>anything else gives 1"]
     D --> XE(["error printed on stderr,<br/>exit with that code"])
     C -->|"no"| E{"Run returned an error?<br/>flag parse failure or a global<br/>flag's variable that is not a boolean"}
     E -->|"yes"| XU(["exit 2 (usage), printed on stderr<br/>unless urfave already printed it"])
@@ -2209,18 +2300,28 @@ flowchart TD
   to the empty string counts as set, so an empty `GO_GALAXY_REQUIREMENTS_FILE`
   outranks `ANSIBLE_GALAXY_REQUIREMENTS_FILE` and switches discovery off): the
   file hashed when there is no lockfile, as bytes whichever format it holds,
-  and the directory the default lockfile path is taken from. An empty value
-  puts the default lockfile in the current directory, and the fallback read of
-  the empty path then exits 2.
-- `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile path, replacing
-  `galaxy.lock` beside the requirements file; an empty value counts as unset. A
-  path that does not exist falls back to the requirements file rather than
-  failing.
+  and the directory the default lockfile path is taken from. A `.toml` path is
+  also loaded first, with `--lock-file` unset, for its `[tool.go-galaxy]`
+  `lock_file`: one that is not TOML, breaks the schema or names an unset
+  `${VAR}` exits 2 before anything is hashed, even though only `lock_file` is
+  read, since the whole table is expanded by one rule - so a `galaxy.toml`
+  that is not TOML no longer yields a key over its raw bytes, while a
+  `requirements.yml` that is not YAML still does. An absent `galaxy.toml`
+  supplies nothing, and the fallback then fails on it exactly as before. An
+  empty value puts the default lockfile in the current directory, and the
+  fallback read of the empty path then exits 2.
+- `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile path, replacing a
+  `galaxy.toml`'s `lock_file` and `galaxy.lock` beside the requirements file.
+  Set at all, an empty value included, it also stops the `galaxy.toml` from
+  being loaded for `lock_file`; an empty value then falls to `galaxy.lock`
+  beside the requirements file. A path that does not exist falls back to the
+  requirements file rather than failing.
 - `--help`, `-h`: prints the command's help and exits 0 before arguments are
   checked or any file is read, even when a flag after it fails to parse; an
   unparseable flag before it wins and exits 2.
 
-None of these has an `ansible.cfg` equivalent: `hash` builds no configuration.
+None of these has an `ansible.cfg` equivalent: `hash` builds no configuration,
+and the one file setting it obeys is the `lock_file` above.
 The four global flags the root declares, `--verbose`, `--quiet`/`-q`,
 `--dry-run` and `--cache-dir` (and their `GO_GALAXY_*` /
 `ANSIBLE_GALAXY_CACHE_DIR` variables), are accepted and change nothing, with one
@@ -2247,8 +2348,12 @@ flowchart TD
     A{"positional arguments given?"}
     AX(["exit 2 (usage)<br/>unexpected arguments"])
     RP["reqPath = --requirements-file, -r, --role-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>ANSIBLE_GALAXY_REQUIREMENTS_FILE;<br/>unset: ./galaxy.toml when a regular file,<br/>else requirements.yml, a warning printed<br/>when both are present,<br/>see Requirements file discovery"]
-    LF{"--lock-file or<br/>GO_GALAXY_LOCK_FILE set?"}
+    LF{"--lock-file or<br/>GO_GALAXY_LOCK_FILE set?<br/>an empty value counts"}
     LP1["lockPath = that value"]
+    LT{"reqPath ends in .toml?"}
+    LS["projectfile.LoadSettings: decode reqPath,<br/>hold [tool.go-galaxy] to its schema,<br/>expand ${VAR} in its string values"]
+    LSX(["exit 2 (usage)<br/>cannot be read, not TOML,<br/>a refused table or key,<br/>an unset ${VAR}"])
+    LP4["lockPath = lock_file, a relative one<br/>joined under reqPath's directory"]
     RE{"reqPath empty?"}
     LP2["lockPath = galaxy.lock<br/>in the working directory"]
     LP3["lockPath = galaxy.lock<br/>beside reqPath"]
@@ -2278,13 +2383,20 @@ flowchart TD
     A -->|"yes"| AX
     A -->|"no"| RP
     RP --> LF
-    LF -->|"yes"| LP1
-    LF -->|"no"| RE
+    LF -->|"yes, non-empty"| LP1
+    LF -->|"yes, empty"| RE
+    LF -->|"no"| LT
+    LT -->|"no"| RE
+    LT -->|"yes"| LS
+    LS -->|"fails"| LSX
+    LS -->|"absent file, or no lock_file"| RE
+    LS -->|"lock_file set"| LP4
     RE -->|"yes"| LP2
     RE -->|"no"| LP3
     LP1 --> LX
     LP2 --> LX
     LP3 --> LX
+    LP4 --> LX
     LX -->|"no"| LXX
     LX -->|"yes"| LV
     LV -->|"no"| LVX
@@ -2305,8 +2417,14 @@ flowchart TD
 ```
 
 The lockfile is loaded before the requirements file, so with both files missing
-the run exits 6, not 2. Flag parsing and the help check are drawn in their usual
-order, but urfave/cli stops parsing command-line flags at `-h`: `tree -h --nope`
+the run exits 6, not 2. The one read that comes before the lockfile is a
+`.toml` requirements file's `[tool.go-galaxy]` table, loaded for its
+`lock_file` when `--lock-file` is unset: a `galaxy.toml` that does not decode,
+breaks the schema or names an unset `${VAR}` exits 2 before the lockfile is
+looked for, even when the lockfile is fine, while an absent one supplies
+nothing and the lockfile decides as before. Flag parsing and the help check
+are drawn in their usual order, but urfave/cli stops parsing command-line
+flags at `-h`: `tree -h --nope`
 prints help and exits 0, while `tree --nope -h` exits 2. A variable such as
 `GO_GALAXY_DRY_RUN=maybe` fails with exit 2 even beside `-h`.
 
@@ -2432,11 +2550,16 @@ reached. Lockfile entries no root reaches are not printed.
   on stderr before the tree, see
   [Requirements file discovery](#requirements-file-discovery)): the file the
   roots are read from, parsed as TOML by its `.toml` extension and as YAML
-  otherwise, and, when `--lock-file` is unset, the directory the default
-  `galaxy.lock` is looked up in (an empty value counts as set, makes it
-  `galaxy.lock` in the working directory and fails the read of the empty path).
-- `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile read instead of
-  `galaxy.lock` beside the requirements file.
+  otherwise, and, when `--lock-file` is unset, what names the lockfile: a
+  `.toml` path is loaded first for its `[tool.go-galaxy]` `lock_file` (one
+  that does not load exits 2 before the lockfile is read), and otherwise the
+  default `galaxy.lock` is looked up in the file's directory (an empty value
+  counts as set, makes it `galaxy.lock` in the working directory and fails the
+  read of the empty path).
+- `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile read instead of a
+  `galaxy.toml`'s `lock_file` or `galaxy.lock` beside the requirements file.
+  Set at all, an empty value included, it also stops the `galaxy.toml` from
+  being loaded for `lock_file`.
 - `--help`, `-h`: prints the command's help and exits 0 before anything is read.
 
 Accepted without changing the flow: the global `--verbose`, `--quiet`/`-q`,
@@ -2508,8 +2631,12 @@ as an answer about both.
 ```mermaid
 flowchart TD
     RP["reqPath = --requirements-file, -r, --role-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>ANSIBLE_GALAXY_REQUIREMENTS_FILE;<br/>unset: ./galaxy.toml when a regular file,<br/>else requirements.yml, a warning printed<br/>when both are present,<br/>see Requirements file discovery"]
-    LF{"--lock-file or<br/>GO_GALAXY_LOCK_FILE non-empty?"}
+    LF{"--lock-file or<br/>GO_GALAXY_LOCK_FILE set?<br/>an empty value counts"}
     LP1["lockPath = that value"]
+    LT{"reqPath ends in .toml?"}
+    LS["projectfile.LoadSettings: decode reqPath,<br/>hold [tool.go-galaxy] to its schema,<br/>expand ${VAR} in its string values"]
+    LSX(["exit 2 (usage)<br/>cannot be read, not TOML,<br/>a refused table or key,<br/>an unset ${VAR}"])
+    LP4["lockPath = lock_file, a relative one<br/>joined under reqPath's directory"]
     RE{"reqPath empty?"}
     LP2["lockPath = galaxy.lock<br/>in the working directory"]
     LP3["lockPath = galaxy.lock<br/>beside reqPath"]
@@ -2529,13 +2656,20 @@ flowchart TD
     NX["continue in Lookup and output"]
 
     RP --> LF
-    LF -->|"yes"| LP1
-    LF -->|"no"| RE
+    LF -->|"yes, non-empty"| LP1
+    LF -->|"yes, empty"| RE
+    LF -->|"no"| LT
+    LT -->|"no"| RE
+    LT -->|"yes"| LS
+    LS -->|"fails"| LSX
+    LS -->|"absent file, or no lock_file"| RE
+    LS -->|"lock_file set"| LP4
     RE -->|"yes"| LP2
     RE -->|"no"| LP3
     LP1 --> LX
     LP2 --> LX
     LP3 --> LX
+    LP4 --> LX
     LX -->|"no"| LXX
     LX -->|"yes"| LV
     LV -->|"no"| LVX
@@ -2556,11 +2690,16 @@ flowchart TD
 ```
 
 The lockfile is loaded before the requirements file, and the requirements file
-cannot fail the run: unlike `tree`, which exits on its load error, `explain`
-discards it. A missing, unparseable or refused requirements file (a `file`
-source, a malformed role entry) therefore leaves both root sets empty, and a
-real top-level entry then prints as an orphan instead of as a root. The root
-selection is the one `tree` uses, drawn in [Root selection](#root-selection).
+cannot fail the run as requirements: unlike `tree`, which exits on its load
+error, `explain` discards it. A missing, unparseable or refused requirements
+file (a `file` source, a malformed role entry) therefore leaves both root sets
+empty, and a real top-level entry then prints as an orphan instead of as a
+root. The one way the file ends the run is as settings: with `--lock-file`
+unset, a `.toml` path is loaded for its `[tool.go-galaxy]` `lock_file` before
+the lockfile, and a `galaxy.toml` that does not decode, breaks the schema or
+names an unset `${VAR}` exits 2 there, while an absent one supplies nothing.
+The root selection is the one `tree` uses, drawn in [Root
+selection](#root-selection).
 
 ### Lookup and output
 
@@ -2656,12 +2795,16 @@ parents as by its install name.
   on stderr before the report, see
   [Requirements file discovery](#requirements-file-discovery)): the file the
   `(root)` line is decided from and named after, parsed as TOML by its `.toml`
-  extension and as YAML otherwise, and, when `--lock-file` is unset, the
-  directory the default `galaxy.lock` is looked up in. An empty value counts
-  as set, looks up `galaxy.lock` in the working directory and leaves both root
-  sets empty.
-- `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile read instead of
-  `galaxy.lock` beside the requirements file.
+  extension and as YAML otherwise, and, when `--lock-file` is unset, what
+  names the lockfile: a `.toml` path is loaded first for its `[tool.go-galaxy]`
+  `lock_file` (one that does not load exits 2 before the lockfile is read),
+  and otherwise the default `galaxy.lock` is looked up in the file's
+  directory. An empty value counts as set, looks up `galaxy.lock` in the
+  working directory and leaves both root sets empty.
+- `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile read instead of a
+  `galaxy.toml`'s `lock_file` or `galaxy.lock` beside the requirements file.
+  Set at all, an empty value included, it also stops the `galaxy.toml` from
+  being loaded for `lock_file`.
 - `--help`, `-h`: with no positional word, prints the command's help and exits 0
   before anything is read; with one, urfave reads the word as a help topic and
   the run exits 2. Read before a command-line flag that fails to parse, it still

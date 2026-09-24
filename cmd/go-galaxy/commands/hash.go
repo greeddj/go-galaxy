@@ -28,7 +28,10 @@ func Hash() *cli.Command {
 			if warning != "" {
 				progress.Warnf("%s", warning)
 			}
-			lockPath := lockfile.ResolveDefaultPath(req, c.String("lock-file"))
+			lockPath, err := lockfilePath(c, req)
+			if err != nil {
+				return err
+			}
 			key, err := computeHash(req, lockPath)
 			if err != nil {
 				return err

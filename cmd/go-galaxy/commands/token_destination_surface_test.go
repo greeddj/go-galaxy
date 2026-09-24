@@ -45,8 +45,8 @@ func TestTokenDestinationEndToEnd(t *testing.T) {
 		t.Setenv("GO_GALAXY_TOKEN", "leaked-if-this-ever-resolves")
 
 		_, err := buildConfigFor(t, "install", cliflags.CollectionFlags(), nil)
-		if !errors.Is(err, helpers.ErrTokenDestinationFromAnsibleConfig) {
-			t.Fatalf("BuildCollectionConfig() error = %v, want helpers.ErrTokenDestinationFromAnsibleConfig", err)
+		if !errors.Is(err, helpers.ErrTokenDestinationFromFile) {
+			t.Fatalf("BuildCollectionConfig() error = %v, want helpers.ErrTokenDestinationFromFile", err)
 		}
 	})
 
@@ -99,8 +99,8 @@ func TestTokenTLSPolicyEndToEnd(t *testing.T) {
 		t.Setenv("ANSIBLE_GALAXY_SERVER_CORP_TOKEN", "leaked-if-this-ever-resolves")
 
 		_, err := buildConfigFor(t, "install", cliflags.CollectionFlags(), nil)
-		if !errors.Is(err, helpers.ErrTokenTLSPolicyFromAnsibleConfig) {
-			t.Fatalf("BuildCollectionConfig() error = %v, want helpers.ErrTokenTLSPolicyFromAnsibleConfig", err)
+		if !errors.Is(err, helpers.ErrTokenTLSPolicyFromFile) {
+			t.Fatalf("BuildCollectionConfig() error = %v, want helpers.ErrTokenTLSPolicyFromFile", err)
 		}
 	})
 

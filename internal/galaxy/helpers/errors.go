@@ -69,12 +69,13 @@ var (
 	// ErrFileIsEmpty indicates a file is empty.
 	ErrFileIsEmpty = errors.New("file is empty")
 
-	// ErrS3EmptyCreds indicates S3 cache credentials are required but missing.
-	ErrS3EmptyCreds = errors.New("s3 cache requires access/secret keys when GO_GALAXY_S3_BUCKET is set")
+	// ErrS3EmptyCreds indicates an S3 bucket configured, by flag, variable or
+	// galaxy.toml, without both keys from any of those sources.
+	ErrS3EmptyCreds = errors.New("s3 cache requires access and secret keys when an S3 bucket is configured")
 	// ErrS3CacheOffline indicates --offline together with an S3 cache, whose
 	// bucket is reached only over the network, so the backend could never open.
 	// It is refused while the config is built, before any backend exists.
-	ErrS3CacheOffline = errors.New("--offline cannot be combined with --s3-bucket: the S3 cache is reached over the network")
+	ErrS3CacheOffline = errors.New("--offline cannot be combined with an S3 cache bucket: the S3 cache is reached over the network")
 
 	// ErrArtifactCacheNotConfigured indicates the artifact cache is unavailable.
 	ErrArtifactCacheNotConfigured = errors.New("artifact cache is not configured")
@@ -118,6 +119,10 @@ var (
 	// parse as TOML; a document that parses into the wrong shape is
 	// ErrUnsupportedRequirementsFormat or an entry sentinel instead.
 	ErrInvalidRequirementsTOML = errors.New("requirements file is not valid TOML")
+	// ErrProjectFileEnvUnset indicates a ${VAR} under [tool.go-galaxy] naming a
+	// variable the environment lacks; every such name is reported in one error,
+	// sorted, and no value is ever rendered. projectfile.LoadSettings raises it.
+	ErrProjectFileEnvUnset = errors.New("project file references unset environment variables")
 
 	// ErrCacheDirEmpty indicates the cache directory is empty.
 	ErrCacheDirEmpty = errors.New("cache directory is empty")
@@ -355,15 +360,15 @@ var (
 	// multi-entry server_list: it names no server, and guessing could send a
 	// private hub's token to the public Galaxy.
 	ErrAmbiguousGalaxyToken = errors.New("--token is ambiguous with a multi-entry server_list")
-	// ErrTokenDestinationFromAnsibleConfig indicates a token paired with a server
-	// URL an ansible.cfg chose, while the token came from elsewhere. It is refused,
-	// never warned; config.checkTokenPairing is its single producer.
-	ErrTokenDestinationFromAnsibleConfig = errors.New("galaxy server token destination came from ansible.cfg")
-	// ErrTokenTLSPolicyFromAnsibleConfig indicates a token paired with a server
-	// whose certificate checks an ansible.cfg disabled, while the token came from
-	// elsewhere: the second half of config.checkTokenPairing's rule.
-	ErrTokenTLSPolicyFromAnsibleConfig = errors.New(
-		"galaxy server certificate verification was disabled by ansible.cfg for a token it did not supply")
+	// ErrTokenDestinationFromFile indicates a token paired with a server URL an
+	// ansible.cfg or galaxy.toml chose, while the token came from elsewhere. It
+	// is refused, never warned; config.checkTokenPairing is its single producer.
+	ErrTokenDestinationFromFile = errors.New("galaxy server token destination came from a configuration file")
+	// ErrTokenTLSPolicyFromFile indicates a token paired with a server whose
+	// certificate checks an ansible.cfg or galaxy.toml disabled, while the token
+	// came from elsewhere: the second half of config.checkTokenPairing's rule.
+	ErrTokenTLSPolicyFromFile = errors.New(
+		"galaxy server certificate verification was disabled by a configuration file for a token it did not supply")
 
 	// ErrGalaxyAuthFailed indicates a server answered root metadata with 401 or 403.
 	// Fail-closed: unlike a 404 it aborts the run rather than falling through to a

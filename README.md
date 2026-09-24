@@ -29,7 +29,10 @@ It is a drop-in for the `install` subset of `ansible-galaxy`: the same
 keys, the same `ANSIBLE_*` environment variables. It also has a project file
 of its own, `galaxy.toml`, read in place of `requirements.yml` when it is
 present: the same two lists under a `[project]` table, with each collection's
-constraint spelled in its string. Where it deliberately
+constraint spelled in its string, and, under `[tool.go-galaxy]`, the settings
+`ansible.cfg` has no key for - the S3 cache, the lockfile and metrics paths,
+the worker counts - beside the cache directory and the Galaxy servers, which
+may move there out of `ansible.cfg`. Where it deliberately
 behaves differently - one server per collection rather than a union, a
 fail-closed 401/5xx, a resolver that refuses an unsatisfiable constraint set
 instead of picking leniently, a role fetched by git at its tag rather than as
@@ -89,15 +92,20 @@ and is checked against a brute-force oracle and a fuzzer. See
   carries the same two lists under a `[project]` table, each entry a string
   (`"community.crypto >= 2.0, < 3.0"`, a git pointer, a URL, ansible's
   `src,version,name` for a role) or an inline table with the mapping form's
-  keys. Its schema is strict: an unknown table or key is refused rather than
-  ignored, and an unparsable constraint fails at load.
+  keys. A `[tool.go-galaxy]` table beside it holds this tool's own settings -
+  `lock_file`, `cache_dir`, `metrics_file`, `workers`, `download_workers`, an
+  `s3` table and a `servers` list - with every `${VAR}` under it expanded from
+  the environment and a flag or its variable outranking the file key by key.
+  Its schema is strict: an unknown table or key is refused rather than
+  ignored, an unparsable constraint fails at load, and so does a `${VAR}`
+  the environment lacks.
 - `ansible.cfg` is read for `[defaults] collections_path`,
   `[defaults] roles_path`, `[galaxy] server`, `[galaxy] server_list`,
   `[galaxy] cache_dir`, `[galaxy] server_timeout`, and `[galaxy_server.<id>]`
   sections (`url`, `token`, `validate_certs`). Everything else in that file is ignored or refused - see
   [Configuration](docs/configuration.md).
 - A token you supply is never paired with a server address, or a relaxed TLS
-  policy, that an `ansible.cfg` file chose rather than you. See
+  policy, that an `ansible.cfg` or a `galaxy.toml` chose rather than you. See
   [Galaxy servers and authentication](docs/servers-and-auth.md).
 
 ## Features
@@ -206,11 +214,24 @@ roles = [
   "geerlingguy.docker,7.4.1",
   { name = "postgres", src = "geerlingguy.postgresql", version = "3.5.0" },
 ]
+
+[tool.go-galaxy]
+workers = 8
+
+[tool.go-galaxy.s3]
+bucket = "ci-galaxy-cache"
+access_key = "${S3_CACHE_ACCESS_KEY}"
+secret_key = "${S3_CACHE_SECRET_KEY}"
 ```
 
 ```bash
 go-galaxy lock                 # after editing galaxy.toml: rewrites galaxy.lock
 ```
+
+`[tool.go-galaxy]` is optional and holds this tool's own settings: a `${VAR}`
+there is expanded from the environment, one the environment lacks fails the
+run (exit `2`) naming the variable, and a set flag or `GO_GALAXY_*` variable
+outranks the file key by key.
 
 For reproducible CI, pin every transitive collection and role once and install
 from the lockfile thereafter:

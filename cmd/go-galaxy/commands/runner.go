@@ -40,7 +40,7 @@ func runCollectionCommand(ctx context.Context, c *cli.Command, action collection
 	// The url client is wired the same way, and fetch.NewURLDownload keeps
 	// any Galaxy token and relaxed TLS policy away from an artifact host.
 	runtime.URLHTTP = fetch.NewURLDownload(cfg.Timeout, cfg.Offline, urlBindings(cfg))
-	runtime.DebugAnsibleConfig(cfg)
+	runtime.DebugConfigSources(cfg)
 	runtime.WarnConfig(cfg)
 	return action(ctx, cfg, runtime)
 }

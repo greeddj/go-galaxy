@@ -479,13 +479,14 @@ func isEnvironmentUsageError(err error) bool {
 }
 
 // isInputFileUsageError reports whether the requirements file or ansible.cfg
-// cannot be used: an explicit ansible.cfg that is missing, either file
-// unreadable, or requirements that are not YAML or TOML or not a supported shape.
+// cannot be used: a missing explicit ansible.cfg, either file unreadable, or
+// requirements not YAML or TOML, not a supported shape, or naming an unset variable.
 func isInputFileUsageError(err error) bool {
 	return errors.Is(err, helpers.ErrUnsupportedRequirementsFormat) ||
 		errors.Is(err, helpers.ErrRequirementsUnreadable) ||
 		errors.Is(err, helpers.ErrInvalidRequirementsYAML) ||
 		errors.Is(err, helpers.ErrInvalidRequirementsTOML) ||
+		errors.Is(err, helpers.ErrProjectFileEnvUnset) ||
 		errors.Is(err, helpers.ErrAnsibleConfigNotFound) ||
 		errors.Is(err, helpers.ErrAnsibleConfigUnreadable)
 }
@@ -527,8 +528,8 @@ func isGalaxyServerPolicyError(err error) bool {
 		errors.Is(err, helpers.ErrConflictingServerTLSPolicy) ||
 		errors.Is(err, helpers.ErrConflictingServerToken) ||
 		errors.Is(err, helpers.ErrAmbiguousGalaxyToken) ||
-		errors.Is(err, helpers.ErrTokenDestinationFromAnsibleConfig) ||
-		errors.Is(err, helpers.ErrTokenTLSPolicyFromAnsibleConfig)
+		errors.Is(err, helpers.ErrTokenDestinationFromFile) ||
+		errors.Is(err, helpers.ErrTokenTLSPolicyFromFile)
 }
 
 // isCollectionNameUsageError reports whether a requirements entry's collection

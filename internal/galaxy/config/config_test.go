@@ -507,7 +507,7 @@ func TestApplyWorkers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := newIntFlagCmd(t, "workers", "GO_GALAXY_WORKERS", fixtureValue, tt.registerFlag, tt.args)
 			cfg := &Config{}
-			applyWorkers(cfg, c, tt.procs)
+			applyWorkers(cfg, c, projectSettings{}, tt.procs)
 			assertWorkersOutcome(t, cfg, tt)
 		})
 	}
@@ -518,7 +518,7 @@ func TestApplyWorkers(t *testing.T) {
 		t.Setenv("GO_GALAXY_WORKERS", "0")
 		c := newIntFlagCmd(t, "workers", "GO_GALAXY_WORKERS", fixtureValue, true, nil)
 		cfg := &Config{}
-		applyWorkers(cfg, c, 8)
+		applyWorkers(cfg, c, projectSettings{}, 8)
 		assertWorkersOutcome(t, cfg, workersRow{wantWorkers: 8, wantWarn: true, wantWarnHas: "= 0"})
 	})
 
@@ -528,7 +528,7 @@ func TestApplyWorkers(t *testing.T) {
 		t.Setenv("GO_GALAXY_WORKERS", "")
 		c := newIntFlagCmd(t, "workers", "GO_GALAXY_WORKERS", fixtureValue, true, nil)
 		cfg := &Config{}
-		applyWorkers(cfg, c, 8)
+		applyWorkers(cfg, c, projectSettings{}, 8)
 		assertWorkersOutcome(t, cfg, workersRow{wantWorkers: 8})
 	})
 }

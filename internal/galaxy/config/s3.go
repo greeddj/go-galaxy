@@ -20,30 +20,41 @@ type S3CacheConfig struct {
 	PathStyle    bool
 }
 
-// loadS3CacheConfig builds S3 cache config from CLI flags.
-func loadS3CacheConfig(c *cli.Command) (S3CacheConfig, error) {
-	cfg := S3CacheConfig{
-		Bucket:       c.String("s3-bucket"),
-		Prefix:       c.String("s3-prefix"),
-		Endpoint:     c.String("s3-endpoint"),
-		Region:       c.String("s3-region"),
-		AccessKey:    c.String("s3-access-key"),
-		SecretKey:    NewSecret(c.String("s3-secret-key")),
-		SessionToken: NewSecret(c.String("s3-session-token")),
+// loadS3CacheConfig sets cfg.S3Cache: each key from its flag or variable when
+// set, else from [tool.go-galaxy.s3]. A bucket from either source needs both
+// keys from either source, and the two secrets are wrapped before anything else.
+func loadS3CacheConfig(cfg *Config, c *cli.Command, project projectSettings) error {
+	pick := projectPicker{c: c}
+	s3 := S3CacheConfig{
+		Bucket:       pick.value("s3-bucket", "s3.bucket", project.S3.Bucket),
+		Prefix:       pick.value("s3-prefix", "s3.prefix", project.S3.Prefix),
+		Endpoint:     pick.value("s3-endpoint", "s3.endpoint", project.S3.Endpoint),
+		Region:       pick.value("s3-region", "s3.region", project.S3.Region),
+		AccessKey:    pick.value("s3-access-key", "s3.access_key", project.S3.AccessKey),
+		SecretKey:    NewSecret(pick.value("s3-secret-key", "s3.secret_key", project.S3.SecretKey)),
+		SessionToken: NewSecret(pick.value("s3-session-token", "s3.session_token", project.S3.SessionToken)),
 	}
-
-	if cfg.Bucket == "" {
-		return cfg, nil
+	if s3.Bucket == "" {
+		cfg.S3Cache = s3
+		return nil
 	}
-	cfg.Enabled = true
+	s3.Enabled = true
 
-	if cfg.AccessKey == "" || !cfg.SecretKey.IsSet() {
-		return cfg, helpers.ErrS3EmptyCreds
+	if s3.AccessKey == "" || !s3.SecretKey.IsSet() {
+		return helpers.ErrS3EmptyCreds
 	}
+	// Credited only for a cache that is on: a prefix or region the table
+	// supplies for no bucket is read but decides nothing.
+	cfg.ProjectSettingsUsed = append(cfg.ProjectSettingsUsed, pick.used...)
 
-	cfg.PathStyle = !c.Bool("s3-path-style-disabled")
-
-	return cfg, nil
+	pathStyleDisabled := c.Bool("s3-path-style-disabled")
+	if !c.IsSet("s3-path-style-disabled") && project.S3.PathStyleDisabled {
+		pathStyleDisabled = true
+		cfg.useProjectSetting("s3.path_style_disabled")
+	}
+	s3.PathStyle = !pathStyleDisabled
+	cfg.S3Cache = s3
+	return nil
 }
 
 // checkS3CacheOffline refuses an enabled S3 cache under --offline: its bucket

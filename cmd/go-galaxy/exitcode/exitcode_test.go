@@ -196,6 +196,11 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
+		name:     "galaxy.toml names an unset variable",
+		err:      fmt.Errorf("galaxy.toml: %w: HUB_TOKEN", helpers.ErrProjectFileEnvUnset),
+		wantCode: ExitUsage,
+	},
+	{
 		name:     "warm cache disabled",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrWarmCacheDisabled),
 		wantCode: ExitUsage,
@@ -442,8 +447,8 @@ var galaxyServerConfigSentinels = []struct {
 	{name: "conflicting tls policy", err: helpers.ErrConflictingServerTLSPolicy},
 	{name: "conflicting token", err: helpers.ErrConflictingServerToken},
 	{name: "ambiguous --token", err: helpers.ErrAmbiguousGalaxyToken},
-	{name: "token destination from ansible.cfg", err: helpers.ErrTokenDestinationFromAnsibleConfig},
-	{name: "token tls policy from ansible.cfg", err: helpers.ErrTokenTLSPolicyFromAnsibleConfig},
+	{name: "token destination from a configuration file", err: helpers.ErrTokenDestinationFromFile},
+	{name: "token tls policy from a configuration file", err: helpers.ErrTokenTLSPolicyFromFile},
 }
 
 // TestGalaxyServerConfigErrorsMapToUsage pins every Galaxy server config

@@ -1,7 +1,9 @@
 package infra
 
 import (
+	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -44,10 +46,10 @@ func assertContainsAll(t *testing.T, line string, want ...string) {
 	}
 }
 
-// TestDebugAnsibleConfigReportsServerListWithoutLeakingToken pins that each
+// TestDebugConfigSourcesReportsServerListWithoutLeakingToken pins that each
 // server's debug line names its id, URL and TLS policy and reports the token
 // only as a presence boolean.
-func TestDebugAnsibleConfigReportsServerListWithoutLeakingToken(t *testing.T) {
+func TestDebugConfigSourcesReportsServerListWithoutLeakingToken(t *testing.T) {
 	t.Parallel()
 	const secretToken = "tok3n-must-not-appear-in-debug-output"
 
@@ -61,7 +63,7 @@ func TestDebugAnsibleConfigReportsServerListWithoutLeakingToken(t *testing.T) {
 		},
 	}
 
-	i.DebugAnsibleConfig(cfg)
+	i.DebugConfigSources(cfg)
 
 	if len(printer.debugLines) != 3 {
 		t.Fatalf("expected 3 debug lines, got %d: %v", len(printer.debugLines), printer.debugLines)
@@ -77,10 +79,10 @@ func TestDebugAnsibleConfigReportsServerListWithoutLeakingToken(t *testing.T) {
 	assertContainsAll(t, printer.debugLines[2], `""`, "url=https://c.example", "token=false", "insecure_skip_tls_verify=false")
 }
 
-// TestDebugAnsibleConfigReportsURLCredentialsWithoutLeakingToken pins the url
+// TestDebugConfigSourcesReportsURLCredentialsWithoutLeakingToken pins the url
 // credential debug line: id, binding URL and kind, never the token - not
 // even as a presence boolean, since a binding without a token cannot exist.
-func TestDebugAnsibleConfigReportsURLCredentialsWithoutLeakingToken(t *testing.T) {
+func TestDebugConfigSourcesReportsURLCredentialsWithoutLeakingToken(t *testing.T) {
 	t.Parallel()
 	const secretToken = "url-tok3n-must-not-appear-in-debug-output" //nolint:gosec // the fixture under test, not a credential
 
@@ -94,7 +96,7 @@ func TestDebugAnsibleConfigReportsURLCredentialsWithoutLeakingToken(t *testing.T
 		URLCredentials: []config.URLCredential{{ID: "hub", URL: prefix, Token: config.NewSecret(secretToken)}},
 	}
 
-	i.DebugAnsibleConfig(cfg)
+	i.DebugConfigSources(cfg)
 
 	if len(printer.debugLines) != 1 {
 		t.Fatalf("expected 1 debug line, got %d: %v", len(printer.debugLines), printer.debugLines)
@@ -109,17 +111,70 @@ func TestDebugAnsibleConfigReportsURLCredentialsWithoutLeakingToken(t *testing.T
 	}
 }
 
-// TestDebugAnsibleConfigNilSafe checks that the nil-guard contract
+// assertNoneContains fails the test when any of lines carries secret, kept
+// apart so the caller stays under the cyclomatic-complexity budget.
+func assertNoneContains(t *testing.T, lines []string, secret string) {
+	t.Helper()
+	for _, line := range lines {
+		if strings.Contains(line, secret) {
+			t.Fatalf("output leaked the secret: %q", line)
+		}
+	}
+}
+
+// TestDebugConfigSourcesNamesProjectSettingsWithoutLeakingToken pins the one
+// galaxy.toml line: printed once, naming the keys taken and never a value, and
+// not at all for a Config that took nothing from the file.
+func TestDebugConfigSourcesNamesProjectSettingsWithoutLeakingToken(t *testing.T) {
+	t.Parallel()
+	const secretToken = "s3cr3t-toml-token"
+	const wantLine = "Galaxy.toml galaxy.toml supplied: lock_file, servers"
+
+	cfg := &config.Config{
+		RequirementsFile:    "galaxy.toml",
+		ProjectSettingsUsed: []string{"lock_file", "servers"},
+		Servers:             []config.Server{{ID: "hub", URL: "https://hub.example", Token: config.NewSecret(secretToken)}},
+	}
+	printer := &recordingPrinter{}
+	New(printer, nil).DebugConfigSources(cfg)
+
+	if len(printer.debugLines) != 2 {
+		t.Fatalf("expected 2 debug lines, got %d: %v", len(printer.debugLines), printer.debugLines)
+	}
+	assertNoneContains(t, printer.debugLines, secretToken)
+	first := slices.Index(printer.debugLines, wantLine)
+	if first < 0 || slices.Contains(printer.debugLines[first+1:], wantLine) {
+		t.Errorf("debug lines = %q, want exactly one equal to %q", printer.debugLines, wantLine)
+	}
+	assertContainsAll(t, printer.debugLines[1], `"hub"`, "url=https://hub.example", "token=true")
+
+	// The Config itself must not carry the plaintext into a dump either; musttag
+	// is exempted because production never encodes a Config.
+	jsonBytes, err := json.Marshal(cfg) //nolint:musttag // see above
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	assertNoneContains(t, []string{fmt.Sprintf("%v", cfg), fmt.Sprintf("%+v", cfg), fmt.Sprintf("%#v", cfg), string(jsonBytes)}, secretToken)
+
+	cfg.ProjectSettingsUsed = nil
+	silent := &recordingPrinter{}
+	New(silent, nil).DebugConfigSources(cfg)
+	if len(silent.debugLines) != 1 || strings.Contains(silent.debugLines[0], "Galaxy.toml") {
+		t.Errorf("debug lines = %q, want the server line alone when nothing came from galaxy.toml", silent.debugLines)
+	}
+}
+
+// TestDebugConfigSourcesNilSafe checks that the nil-guard contract
 // (nil Infra, nil Output, nil cfg) holds even though the method does
 // more than the ansible.cfg-sourced branch.
-func TestDebugAnsibleConfigNilSafe(t *testing.T) {
+func TestDebugConfigSourcesNilSafe(t *testing.T) {
 	t.Parallel()
 	var nilInfra *Infra
-	nilInfra.DebugAnsibleConfig(&config.Config{})
+	nilInfra.DebugConfigSources(&config.Config{})
 
 	i := &Infra{}
-	i.DebugAnsibleConfig(&config.Config{})
-	i.DebugAnsibleConfig(nil)
+	i.DebugConfigSources(&config.Config{})
+	i.DebugConfigSources(nil)
 }
 
 // TestArtifactDeadlineDefaultsToTheConstantAndHonorsAnOverride pins that a

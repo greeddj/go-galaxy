@@ -59,7 +59,7 @@ func runResolveServers(t *testing.T, c *cli.Command, ansCfg ansibleConfig) (*Con
 	serverValue, serverFromEnv := ansibleGalaxyServer(ansCfg.Galaxy.Server)
 	cfg.Server, cfg.AnsibleServerUsed = pickConfigValue(c, "server", serverValue)
 	cfg.AnsibleServerEnvUsed = cfg.AnsibleServerUsed && serverFromEnv
-	err := resolveServers(cfg, c, ansCfg)
+	err := resolveServers(cfg, c, ansCfg, projectSettings{})
 	return cfg, err
 }
 
@@ -126,7 +126,7 @@ func TestResolveServersAnsibleServerFallback(t *testing.T) {
 		t.Fatalf("resolveServers() error = %v, want nil", err)
 	}
 
-	want := []Server{{URL: "https://ansible.example", urlFromAnsibleConfig: true}}
+	want := []Server{{URL: "https://ansible.example", sourceFile: cwdAnsibleCfgName, urlFromFile: true}}
 	if !reflect.DeepEqual(cfg.Servers, want) {
 		t.Errorf("Servers = %+v, want %+v", cfg.Servers, want)
 	}
@@ -153,10 +153,10 @@ func TestResolveServersListBeatsAnsibleServer(t *testing.T) {
 		t.Fatalf("resolveServers() error = %v, want nil", err)
 	}
 
-	// tokenFromAnsibleConfig reads true even with no token configured: it is
+	// tokenFromFile reads true even with no token configured: it is
 	// envOrIni's provenance bit negated, and tokenPairingOffense consults it
 	// only when a token is set.
-	want := []Server{{ID: "prod", URL: "https://prod.example", urlFromAnsibleConfig: true, tokenFromAnsibleConfig: true}}
+	want := []Server{{ID: "prod", URL: "https://prod.example", sourceFile: cwdAnsibleCfgName, urlFromFile: true, tokenFromFile: true}}
 	if !reflect.DeepEqual(cfg.Servers, want) {
 		t.Errorf("Servers = %+v, want %+v", cfg.Servers, want)
 	}
@@ -227,7 +227,7 @@ func TestResolveServerListEnvBeatsIni(t *testing.T) {
 	t.Run("env overrides ini", func(t *testing.T) {
 		t.Setenv("ANSIBLE_GALAXY_SERVER_LIST", "from-env")
 		ansCfg := ansibleConfig{Galaxy: ansibleGalaxyConfig{ServerList: "from-ini"}}
-		got := resolveServerList(ansCfg)
+		got := resolveServerList(ansCfg, nil)
 		want := []string{"from-env"}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("resolveServerList() = %v, want %v", got, want)
@@ -237,7 +237,7 @@ func TestResolveServerListEnvBeatsIni(t *testing.T) {
 	t.Run("env set to whitespace means unset, not fall back to ini", func(t *testing.T) {
 		t.Setenv("ANSIBLE_GALAXY_SERVER_LIST", "   ")
 		ansCfg := ansibleConfig{Galaxy: ansibleGalaxyConfig{ServerList: "from-ini"}}
-		got := resolveServerList(ansCfg)
+		got := resolveServerList(ansCfg, nil)
 		if got != nil {
 			t.Errorf("resolveServerList() = %v, want nil", got)
 		}
@@ -1078,11 +1078,11 @@ func checkTokenOverridesConfiguredToken(t *testing.T, cfg *Config, err error) {
 }
 
 // checkTokenRefusedAgainstFileSourcedURL asserts that row's refusal:
-// helpers.ErrTokenDestinationFromAnsibleConfig, naming server "hub".
+// helpers.ErrTokenDestinationFromFile, naming server "hub".
 func checkTokenRefusedAgainstFileSourcedURL(t *testing.T, _ *Config, err error) {
 	t.Helper()
-	if !errors.Is(err, helpers.ErrTokenDestinationFromAnsibleConfig) {
-		t.Fatalf("resolveServers() error = %v, want helpers.ErrTokenDestinationFromAnsibleConfig", err)
+	if !errors.Is(err, helpers.ErrTokenDestinationFromFile) {
+		t.Fatalf("resolveServers() error = %v, want helpers.ErrTokenDestinationFromFile", err)
 	}
 	if !strings.Contains(err.Error(), `"hub"`) {
 		t.Errorf("error = %v, want it to name server %q", err, "hub")
@@ -1167,14 +1167,14 @@ type tokenDestinationCase struct {
 	args   []string
 }
 
-// tokenDestinationRefused asserts ErrTokenDestinationFromAnsibleConfig naming
+// tokenDestinationRefused asserts ErrTokenDestinationFromFile naming
 // wantID and wantOrigin but not wantToken, so a row's token must never be a
 // substring of its own id or origin.
 func tokenDestinationRefused(wantID, wantOrigin, wantToken string) func(t *testing.T, cfg *Config, err error) {
 	return func(t *testing.T, _ *Config, err error) {
 		t.Helper()
-		if !errors.Is(err, helpers.ErrTokenDestinationFromAnsibleConfig) {
-			t.Fatalf("resolveServers() error = %v, want helpers.ErrTokenDestinationFromAnsibleConfig", err)
+		if !errors.Is(err, helpers.ErrTokenDestinationFromFile) {
+			t.Fatalf("resolveServers() error = %v, want helpers.ErrTokenDestinationFromFile", err)
 		}
 		msg := err.Error()
 		if !strings.Contains(msg, fmt.Sprintf("%q", wantID)) {
@@ -1190,15 +1190,15 @@ func tokenDestinationRefused(wantID, wantOrigin, wantToken string) func(t *testi
 }
 
 // tokenDestinationRefusedNotTLS adds to tokenDestinationRefused that the error
-// is never also ErrTokenTLSPolicyFromAnsibleConfig: checkTokenPairing reports
+// is never also ErrTokenTLSPolicyFromFile: checkTokenPairing reports
 // one sentinel or the other, never both.
 func tokenDestinationRefusedNotTLS(wantID, wantOrigin, wantToken string) func(t *testing.T, cfg *Config, err error) {
 	inner := tokenDestinationRefused(wantID, wantOrigin, wantToken)
 	return func(t *testing.T, cfg *Config, err error) {
 		t.Helper()
 		inner(t, cfg, err)
-		if errors.Is(err, helpers.ErrTokenTLSPolicyFromAnsibleConfig) {
-			t.Errorf("resolveServers() error = %v, must not also be helpers.ErrTokenTLSPolicyFromAnsibleConfig", err)
+		if errors.Is(err, helpers.ErrTokenTLSPolicyFromFile) {
+			t.Errorf("resolveServers() error = %v, must not also be helpers.ErrTokenTLSPolicyFromFile", err)
 		}
 	}
 }
@@ -1347,7 +1347,7 @@ func tokenDestinationCasesGroupTwo() []tokenDestinationCase {
 		},
 		{
 			// section url, no token anywhere: exempt twice over, since
-			// Token.IsSet() is false and tokenFromAnsibleConfig reads true for
+			// Token.IsSet() is false and tokenFromFile reads true for
 			// an absent key.
 			name: "accepted: section url with no token at all",
 			ansCfg: ansibleConfig{
@@ -1432,13 +1432,13 @@ func tokenDestinationCasesGroupThree() []tokenDestinationCase {
 const tlsPolicyServerID = "corp"
 
 // tlsPolicyRefused mirrors tokenDestinationRefused for
-// ErrTokenTLSPolicyFromAnsibleConfig. The id is fixed: only a section can reach
+// ErrTokenTLSPolicyFromFile. The id is fixed: only a section can reach
 // the TLS arm, and every fixture names its section tlsPolicyServerID.
 func tlsPolicyRefused(wantOrigin, wantToken string) func(t *testing.T, cfg *Config, err error) {
 	return func(t *testing.T, _ *Config, err error) {
 		t.Helper()
-		if !errors.Is(err, helpers.ErrTokenTLSPolicyFromAnsibleConfig) {
-			t.Fatalf("resolveServers() error = %v, want helpers.ErrTokenTLSPolicyFromAnsibleConfig", err)
+		if !errors.Is(err, helpers.ErrTokenTLSPolicyFromFile) {
+			t.Fatalf("resolveServers() error = %v, want helpers.ErrTokenTLSPolicyFromFile", err)
 		}
 		msg := err.Error()
 		if !strings.Contains(msg, fmt.Sprintf("%q", tlsPolicyServerID)) {
@@ -1613,7 +1613,7 @@ func tokenTLSPolicyCasesGroupTwo() []tokenTLSPolicyCase {
 			check: tlsPolicyAccepted("https://corp.example", "a2-secret-token", false),
 		},
 		{
-			// a section token is exempt by tokenFromAnsibleConfig before the
+			// a section token is exempt by tokenFromFile before the
 			// TLS arm is reached: the file may pair its own credential with its
 			// own TLS policy.
 			name: "accepted: section token pairs with section validate_certs",
@@ -1711,11 +1711,11 @@ func tokenTLSPolicyCasesGroupFour() []tokenTLSPolicyCase {
 			env: map[string]string{"ANSIBLE_GALAXY_SERVER_CORP_TOKEN": "x1-secret-token"},
 			check: func(t *testing.T, _ *Config, err error) {
 				t.Helper()
-				if !errors.Is(err, helpers.ErrTokenDestinationFromAnsibleConfig) {
-					t.Fatalf("resolveServers() error = %v, want helpers.ErrTokenDestinationFromAnsibleConfig", err)
+				if !errors.Is(err, helpers.ErrTokenDestinationFromFile) {
+					t.Fatalf("resolveServers() error = %v, want helpers.ErrTokenDestinationFromFile", err)
 				}
-				if errors.Is(err, helpers.ErrTokenTLSPolicyFromAnsibleConfig) {
-					t.Errorf("resolveServers() error = %v, must not also be helpers.ErrTokenTLSPolicyFromAnsibleConfig", err)
+				if errors.Is(err, helpers.ErrTokenTLSPolicyFromFile) {
+					t.Errorf("resolveServers() error = %v, must not also be helpers.ErrTokenTLSPolicyFromFile", err)
 				}
 			},
 		},

@@ -31,7 +31,14 @@ lockfile change misses by construction, because the key just changed.
 
 `go-galaxy hash` prints a deterministic `sha256:…` of the lockfile (or of the
 requirements file, `galaxy.toml` or `requirements.yml`, when no lockfile is
-present) - perfect as a CI cache key.
+present) - perfect as a CI cache key. The lockfile it looks for is
+`--lock-file` (or `GO_GALAXY_LOCK_FILE`) when set, else, with `galaxy.toml`,
+the one `[tool.go-galaxy] lock_file` names, else `galaxy.lock` beside the
+requirements file. Reading that one key means decoding the file and expanding
+every `${VAR}` under `[tool.go-galaxy]`: a `galaxy.toml` that is not TOML,
+breaks the schema or names a variable the job did not export exits `2` rather
+than yielding a key, where a `requirements.yml` that is not YAML still hashes
+as the bytes it is.
 
 **Upgrade note (after v1.2.3):** the lockfile is now written with a two-space
 indent instead of yaml's default four. The hash is computed over the file as
@@ -152,13 +159,70 @@ is the one this tool documents for every secret it takes, and the reason
 `--token` exists only for interactive use. See
 [Security](security.md#security--trust-model).
 
+### Settings in galaxy.toml
+
+A project on `galaxy.toml` can keep some of that surface in the file instead
+of the workflow, under `[tool.go-galaxy]`: the S3 bucket and endpoint in an
+`s3` table, with the two keys written as `${VAR}` references rather than
+literals, and the Galaxy servers as a `[[tool.go-galaxy.servers]]` list in
+place of the `[galaxy_server.*]` sections of an `ansible.cfg`. Every `${VAR}`
+under `[tool.go-galaxy]` is expanded from the environment go-galaxy runs in,
+a flag or `GO_GALAXY_*` variable that is set still outranks the file key by
+key, and a reference to a variable that is not exported fails the run with
+exit `2`, naming the variable and never a value:
+
+```toml
+[tool.go-galaxy.s3]
+bucket = "ci-galaxy-cache"
+endpoint = "https://s3.example.com"
+access_key = "${S3_CACHE_ACCESS_KEY}"
+secret_key = "${S3_CACHE_SECRET_KEY}"
+
+[[tool.go-galaxy.servers]]
+id = "hub"
+url = "https://hub.example.com/api/galaxy/"
+token = "${HUB_TOKEN}"
+```
+
+```yaml
+      - uses: greeddj/go-galaxy@v1
+        env:
+          S3_CACHE_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          S3_CACHE_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+          HUB_TOKEN: ${{ secrets.HUB_TOKEN }}
+          ANSIBLE_GALAXY_SERVER_HUB_URL: https://hub.example.com/api/galaxy/
+        with:
+          frozen: true
+```
+
+The action's cache-key step runs `go-galaxy hash` over that same file and
+inherits the same environment as its install step, so a variable the file
+names has to be exported where both steps see it - the workflow, the job or
+the step that calls the action, as above - and one that is not set fails the
+key step with exit `2` before any cache is restored. The same holds for the
+by-hand workflow [below](#without-the-action), whose `Compute cache key` step
+is a step of its own: a variable set on the install step alone is unset when
+`hash` reads the file, so export it on the job.
+
+`ANSIBLE_GALAXY_SERVER_HUB_URL` is there for the same reason it would be
+beside an `ansible.cfg` section. A `token` spelled as `${VAR}` is your token,
+not the file's, and a checked-out file must not pick where your token goes,
+so a `${VAR}` token paired with the `url` the file wrote is refused (exit `2`)
+until the address is on your channel too: export
+`ANSIBLE_GALAXY_SERVER_<ID>_URL` with the same address (and
+`_VALIDATE_CERTS`, when the entry disables certificate checks). A token
+written into the file as a literal is the file's own and is not refused - not
+recommended, since the file is committed. See [Galaxy servers and
+authentication](servers-and-auth.md#--token).
+
 Outputs are `version`, the release actually installed, and `cache-hit`.
 
 Three of those are worth a sentence. `install: false` is for a job that drives
 go-galaxy itself - several commands, or `lock` and `outdated` rather than
 `install` - and wants only the binary on PATH. Set `cache: false` if the job
-sets `GO_GALAXY_CACHE_DIR` itself, because the action caches the default path
-and would otherwise save an empty one. And `version` will not go below 1.1.0,
+sets `GO_GALAXY_CACHE_DIR` itself, or its `galaxy.toml` names a `cache_dir`,
+because the action caches the default path and would otherwise save an empty
+one. And `version` will not go below 1.1.0,
 which is the first release to publish the raw per-platform binaries the action
 fetches; earlier releases shipped archives only.
 
@@ -253,11 +317,17 @@ rebuilds its own copy. Pointing go-galaxy at its own S3 cache instead gives
 every runner one shared artifact cache: set `GO_GALAXY_S3_BUCKET`,
 `GO_GALAXY_S3_REGION` and `GO_GALAXY_S3_PREFIX` in `variables:`, and
 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` as masked project variables,
-which go-galaxy reads directly. Keep the `cache:` block alongside it: the
-extracted-tree store stays local to `GO_GALAXY_CACHE_DIR` even with the S3
-backend, so the job cache is what saves re-extracting every collection. Such a
-job cannot also run `--offline`: the bucket is reached over the network, so the
-pair exits `2` before the cache is opened.
+which go-galaxy reads directly. A project on `galaxy.toml` can keep the
+bucket, region, prefix and endpoint in the file instead, under
+`[tool.go-galaxy.s3]`, with the two keys written as `${VAR}` references to the
+masked variables: a `GO_GALAXY_S3_*` variable that is set still outranks the
+file key by key, no key enters the repository as a literal, and a reference to
+a variable the job does not export fails the run with exit `2` naming it. Keep
+the `cache:` block alongside either: the extracted-tree store stays local to
+`GO_GALAXY_CACHE_DIR` even with the S3 backend, so the job cache is what saves
+re-extracting every collection. Such a job cannot also run `--offline`: the
+bucket, from a variable or from `galaxy.toml`, is reached over the network, so
+the pair exits `2` before the cache is opened.
 
 Two runtime consequences of a shared S3 cache are worth knowing before you
 enable it. Jobs sharing one bucket serialize: a run holds the backend's

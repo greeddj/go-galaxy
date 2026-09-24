@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
@@ -88,22 +90,25 @@ func (s Secret) redacted() string {
 // credential and TLS policy applied to it. ID is "" for the implicit single
 // server and the server_list id as written otherwise.
 type Server struct {
-	ID                    string
-	URL                   string
+	ID  string
+	URL string
+	// sourceFile names the ansible.cfg or galaxy.toml the server's section came
+	// from, for the pairing rule's message alone; "" for an anonymous server.
+	sourceFile            string
 	Token                 Secret
 	InsecureSkipTLSVerify bool
-	// urlFromAnsibleConfig reports whether URL came from an ansible.cfg file
+	// urlFromFile reports whether URL came from an ansible.cfg or galaxy.toml
 	// rather than an operator channel. Provenance never leaves this package;
 	// tokenPairingOffense is the sole reader.
-	urlFromAnsibleConfig bool
-	// tokenFromAnsibleConfig reports whether Token came from a section's token
-	// key; it also reads true when no token was set at all, which is
+	urlFromFile bool
+	// tokenFromFile reports whether Token came from a section's token key as
+	// a literal; it also reads true when no token was set at all, which is
 	// harmless only because tokenPairingOffense checks Token.IsSet() first.
-	tokenFromAnsibleConfig bool
-	// insecureFromAnsibleConfig is true only when InsecureSkipTLSVerify is true
+	tokenFromFile bool
+	// insecureFromFile is true only when InsecureSkipTLSVerify is true
 	// and came from a validate_certs key rather than the environment, so a
 	// server with no validate_certs key never reads as file-sourced.
-	insecureFromAnsibleConfig bool
+	insecureFromFile bool
 }
 
 // galaxyServerHardErrorKeys are ansible's Basic auth and Keycloak keys, which
@@ -137,15 +142,66 @@ var galaxyServerKnownKeys = map[string]bool{
 // ANSIBLE_GALAXY_SERVER_<ID>_* variable name.
 var serverIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// serverSections is the per-server configuration one file supplies: the
+// [galaxy_server.<id>] sections of an ansible.cfg, or the
+// [[tool.go-galaxy.servers]] entries of a galaxy.toml, never a mix of both.
+type serverSections struct {
+	byID          map[string]map[string]string
+	operatorToken map[string]bool
+	file          string
+	ids           []string
+}
+
+// ansibleSections wraps ansible.cfg's sections; path is "" only when no file
+// was loaded, and then no section exists for a message to name.
+func ansibleSections(ansCfg ansibleConfig, path string) serverSections {
+	return serverSections{byID: ansCfg.GalaxyServers, file: cmp.Or(path, cwdAnsibleCfgName)}
+}
+
+// projectSections shapes [[tool.go-galaxy.servers]] as ansible.cfg sections, so
+// buildServer and the ANSIBLE_GALAXY_SERVER_<ID>_* overrides treat both files
+// alike; validate_certs is spelled as the boolean it was.
+func projectSections(project projectSettings) serverSections {
+	sections := serverSections{
+		byID:          make(map[string]map[string]string, len(project.Servers)),
+		operatorToken: make(map[string]bool, len(project.Servers)),
+		ids:           make([]string, 0, len(project.Servers)),
+		file:          project.Path,
+	}
+	for _, s := range project.Servers {
+		kv := map[string]string{"url": s.URL}
+		if s.Token != "" {
+			kv["token"] = s.Token
+		}
+		if s.ValidateCerts != nil {
+			kv["validate_certs"] = strconv.FormatBool(*s.ValidateCerts)
+		}
+		sections.byID[s.ID] = kv
+		sections.operatorToken[s.ID] = s.TokenExpanded
+		sections.ids = append(sections.ids, s.ID)
+	}
+	return sections
+}
+
 // resolveServers computes cfg.Servers, never empty on success, and sets
 // cfg.Server to its head. An explicit --server wins, then server_list, then
 // the cfg.Server that applyAnsibleConfig resolved, so that must run first.
-func resolveServers(cfg *Config, c *cli.Command, ansCfg ansibleConfig) error {
-	ids := resolveServerList(ansCfg)
+func resolveServers(cfg *Config, c *cli.Command, ansCfg ansibleConfig, project projectSettings) error {
+	sections := ansibleSections(ansCfg, cfg.AnsibleConfigPath)
+	if len(project.Servers) > 0 {
+		sections = projectSections(project)
+	}
+	ids := resolveServerList(ansCfg, sections.ids)
 
-	servers, err := resolveServerCandidates(cfg, c, ids, ansCfg.GalaxyServers)
+	servers, err := resolveServerCandidates(cfg, c, ids, sections)
 	if err != nil {
 		return err
+	}
+	// Credited only when a resolved server was built from a galaxy.toml entry:
+	// an exported-empty server list or an anonymous --server leaves the
+	// entries unread, and the anonymous server's "" id names no entry.
+	if len(project.Servers) > 0 && slices.ContainsFunc(servers, func(s Server) bool { return sections.byID[s.ID] != nil }) {
+		cfg.useProjectSetting("servers")
 	}
 	if err := applyTokenFlag(c, servers); err != nil {
 		return err
@@ -185,16 +241,14 @@ func applyTokenFlag(c *cli.Command, servers []Server) error {
 		return err
 	}
 	servers[0].Token = token
-	servers[0].tokenFromAnsibleConfig = false
+	servers[0].tokenFromFile = false
 	return nil
 }
 
 // resolveServerCandidates applies the precedence chain of resolveServers and
 // returns the origin-checked server list; non-fatal unknown-key warnings go
 // straight to cfg.Warnings.
-func resolveServerCandidates(
-	cfg *Config, c *cli.Command, ids []string, sections map[string]map[string]string,
-) ([]Server, error) {
+func resolveServerCandidates(cfg *Config, c *cli.Command, ids []string, sections serverSections) ([]Server, error) {
 	if c.IsSet("server") {
 		server, warnings, err := resolveExplicitServer(c.String("server"), ids, sections)
 		cfg.Warnings = append(cfg.Warnings, warnings...)
@@ -225,13 +279,16 @@ func resolveServerCandidates(
 	if err != nil {
 		return nil, err
 	}
+	if server.urlFromFile {
+		server.sourceFile = cmp.Or(cfg.AnsibleConfigPath, cwdAnsibleCfgName)
+	}
 	return []Server{server}, nil
 }
 
 // resolveExplicitServer selects the server_list entry whose id equals value
 // exactly, built as the list path builds it; any other value is an anonymous
 // URL, and the rest of server_list is never consulted or validated.
-func resolveExplicitServer(value string, ids []string, sections map[string]map[string]string) (Server, []string, error) {
+func resolveExplicitServer(value string, ids []string, sections serverSections) (Server, []string, error) {
 	for _, id := range ids {
 		if id != value {
 			continue
@@ -239,7 +296,7 @@ func resolveExplicitServer(value string, ids []string, sections map[string]map[s
 		if !serverIDPattern.MatchString(id) {
 			return Server{}, nil, fmt.Errorf("%w: %q", helpers.ErrInvalidGalaxyServerID, id)
 		}
-		return buildServer(id, sections[id])
+		return buildSectionServer(id, sections)
 	}
 	// value is --server's own value or GO_GALAXY_SERVER - both operator
 	// channels - so the resulting anonymous server's URL is never
@@ -248,13 +305,15 @@ func resolveExplicitServer(value string, ids []string, sections map[string]map[s
 	return server, nil, err
 }
 
-// resolveServerList returns the trimmed, non-empty ids of server_list, with
-// ANSIBLE_GALAXY_SERVER_LIST winning whenever it is set, even to "". A
-// whitespace-only value is treated as unset.
-func resolveServerList(ansCfg ansibleConfig) []string {
+// resolveServerList returns the trimmed, non-empty ids of server_list:
+// ANSIBLE_GALAXY_SERVER_LIST whenever it is set, even to "", else galaxy.toml's
+// entries in file order, else [galaxy] server_list; whitespace-only is unset.
+func resolveServerList(ansCfg ansibleConfig, projectIDs []string) []string {
 	raw := ansCfg.Galaxy.ServerList
 	if v, ok := os.LookupEnv("ANSIBLE_GALAXY_SERVER_LIST"); ok {
 		raw = v
+	} else if len(projectIDs) > 0 {
+		return projectIDs
 	}
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -291,11 +350,11 @@ func validateServerIDs(ids []string) error {
 // buildServerList builds every server_list id in order, collecting
 // unknown-key warnings, and stops at the first hard error with the warnings
 // gathered so far.
-func buildServerList(ids []string, sections map[string]map[string]string) ([]Server, []string, error) {
+func buildServerList(ids []string, sections serverSections) ([]Server, []string, error) {
 	servers := make([]Server, 0, len(ids))
 	var warnings []string
 	for _, id := range ids {
-		server, w, err := buildServer(id, sections[id])
+		server, w, err := buildSectionServer(id, sections)
 		warnings = append(warnings, w...)
 		if err != nil {
 			return nil, warnings, err
@@ -303,6 +362,21 @@ func buildServerList(ids []string, sections map[string]map[string]string) ([]Ser
 		servers = append(servers, server)
 	}
 	return servers, warnings, nil
+}
+
+// buildSectionServer builds id from its section and stamps what a section
+// alone cannot tell: the file it came from, and a token that was a ${VAR}
+// reference in galaxy.toml, which the pairing rule treats as the operator's.
+func buildSectionServer(id string, sections serverSections) (Server, []string, error) {
+	server, warnings, err := buildServer(id, sections.byID[id])
+	if err != nil {
+		return Server{}, warnings, err
+	}
+	server.sourceFile = sections.file
+	if sections.operatorToken[id] {
+		server.tokenFromFile = false
+	}
+	return server, warnings, nil
 }
 
 // buildServer resolves one [galaxy_server.<id>] section into a Server. kv may
@@ -339,9 +413,9 @@ func buildServer(id string, kv map[string]string) (Server, []string, error) {
 
 	return Server{
 		ID: id, URL: normalized, Token: token, InsecureSkipTLSVerify: insecure,
-		urlFromAnsibleConfig:      !urlFromEnv,
-		tokenFromAnsibleConfig:    !tokenFromEnv,
-		insecureFromAnsibleConfig: insecure && !validateCertsFromEnv,
+		urlFromFile:      !urlFromEnv,
+		tokenFromFile:    !tokenFromEnv,
+		insecureFromFile: insecure && !validateCertsFromEnv,
 	}, warnings, nil
 }
 
@@ -427,7 +501,7 @@ func envOrIni(id, key, iniValue string) (string, bool) {
 // buildImplicitServer builds the anonymous server used when no server_list
 // entry applies. An empty rawURL yields a zero Server rather than an error,
 // since a command that registers no --server flag, such as cleanup, reads "".
-func buildImplicitServer(rawURL string, urlFromAnsibleConfig bool) (Server, error) {
+func buildImplicitServer(rawURL string, urlFromFile bool) (Server, error) {
 	if rawURL == "" {
 		return Server{}, nil
 	}
@@ -438,7 +512,7 @@ func buildImplicitServer(rawURL string, urlFromAnsibleConfig bool) (Server, erro
 	if parsed.User != nil {
 		return Server{}, helpers.ErrGalaxyServerURLUserinfo
 	}
-	return Server{URL: normalized, urlFromAnsibleConfig: urlFromAnsibleConfig}, nil
+	return Server{URL: normalized, urlFromFile: urlFromFile}, nil
 }
 
 // normalizeServerURL trims raw, strips one pair of surrounding double quotes
@@ -515,23 +589,23 @@ func checkOriginConflicts(servers []Server) error {
 
 // tokenPairingOffense reports which pairing violation s commits, if any: an
 // operator token sent to a file-sourced URL, checked first as the graver
-// fault, or over a file-disabled TLS check. A section's own token is exempt.
+// fault, or over a file-disabled TLS check. A section's literal token is exempt.
 func tokenPairingOffense(s Server) error {
-	if !s.Token.IsSet() || s.tokenFromAnsibleConfig {
+	if !s.Token.IsSet() || s.tokenFromFile {
 		return nil
 	}
-	if s.urlFromAnsibleConfig {
-		return helpers.ErrTokenDestinationFromAnsibleConfig
+	if s.urlFromFile {
+		return helpers.ErrTokenDestinationFromFile
 	}
-	if s.insecureFromAnsibleConfig {
-		return helpers.ErrTokenTLSPolicyFromAnsibleConfig
+	if s.insecureFromFile {
+		return helpers.ErrTokenTLSPolicyFromFile
 	}
 	return nil
 }
 
 // checkTokenPairing refuses an operator-supplied token paired with a server
-// URL or relaxed TLS policy an ansible.cfg file chose, since a checked-out
-// repository could otherwise pick where the credential goes.
+// URL or relaxed TLS policy an ansible.cfg or galaxy.toml chose, since a
+// checked-out repository could otherwise pick where the credential goes.
 func checkTokenPairing(servers []Server) error {
 	for _, s := range servers {
 		offense := tokenPairingOffense(s)
@@ -545,7 +619,7 @@ func checkTokenPairing(servers []Server) error {
 			// always reparses cleanly.
 			return fmt.Errorf("%w: server %q", helpers.ErrInvalidGalaxyServerURL, s.ID)
 		}
-		return fmt.Errorf("%w: server %q (%s)", offense, s.ID, helpers.Origin(parsed))
+		return fmt.Errorf("%w: server %q (%s) in %s", offense, s.ID, helpers.Origin(parsed), s.sourceFile)
 	}
 	return nil
 }

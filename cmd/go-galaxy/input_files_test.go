@@ -13,12 +13,14 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 )
 
-// inputFileCase is one row of TestUnusableInputFilesExitUsage: a command line
-// and the sentinel its failure must carry.
+// inputFileCase is one row of TestUnusableInputFilesExitUsage: a command line,
+// the sentinel its failure must carry and, when "" is not enough, a fragment
+// the printed error must carry.
 type inputFileCase struct {
-	want error
-	name string
-	args []string
+	want     error
+	name     string
+	wantText string
+	args     []string
 }
 
 // inputFileFixture holds the paths inputFileCases builds its rows from.
@@ -26,6 +28,8 @@ type inputFileFixture struct {
 	notYAML  string
 	notTOML  string
 	badTOML  string
+	toolKey  string
+	toolEnv  string
 	dir      string
 	cfg      string
 	cfgDir   string
@@ -35,7 +39,7 @@ type inputFileFixture struct {
 }
 
 // newInputFileFixture writes requirements that are not YAML, a .toml that is
-// not TOML, a galaxy.toml with a key [project] has no room for, a directory in
+// not TOML, three galaxy.toml files each breaking one rule, a directory in
 // place of a file, two ansible.cfg files and an empty lockfile for tree.
 func newInputFileFixture(t *testing.T) inputFileFixture {
 	t.Helper()
@@ -44,6 +48,8 @@ func newInputFileFixture(t *testing.T) inputFileFixture {
 		notYAML:  filepath.Join(root, "broken.yml"),
 		notTOML:  filepath.Join(root, "broken.toml"),
 		badTOML:  filepath.Join(root, "unknown-key", "galaxy.toml"),
+		toolKey:  filepath.Join(root, "unknown-tool-key", "galaxy.toml"),
+		toolEnv:  filepath.Join(root, "unset-variable", "galaxy.toml"),
 		dir:      filepath.Join(root, "dir"),
 		cfg:      filepath.Join(root, "empty.cfg"),
 		cfgDir:   filepath.Join(root, "cfgdir"),
@@ -51,13 +57,17 @@ func newInputFileFixture(t *testing.T) inputFileFixture {
 		lockPath: filepath.Join(root, lockfile.DefaultName),
 		cache:    filepath.Join(root, "cache"),
 	}
-	if err := os.Mkdir(filepath.Dir(f.badTOML), 0o700); err != nil {
-		t.Fatalf("mkdir %s: %v", filepath.Dir(f.badTOML), err)
+	for _, path := range []string{f.badTOML, f.toolKey, f.toolEnv} {
+		if err := os.Mkdir(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
 	}
 	files := map[string]string{
 		f.notYAML: "collections:\n  - name: [unclosed\n",
 		f.notTOML: "[project]\ncollections = [\n",
 		f.badTOML: "[project]\nlicense = \"MIT\"\ncollections = [\"acme.widgets\"]\n",
+		f.toolKey: "[project]\ncollections = [\"acme.widgets\"]\n\n[tool.go-galaxy]\nbogus = 1\n",
+		f.toolEnv: "[project]\ncollections = [\"acme.widgets\"]\n\n[tool.go-galaxy.s3]\nsecret_key = \"${INPUT_FILES_UNSET}\"\n",
 		f.cfg:     "",
 		f.longCfg: "[defaults]\nx = " + strings.Repeat("a", bufio.MaxScanTokenSize) + "\n",
 	}
@@ -125,16 +135,62 @@ func inputFileCases(f inputFileFixture) []inputFileCase {
 	}
 }
 
+// projectSettingsCases covers every command that reads a galaxy.toml with one
+// whose [tool.go-galaxy] table breaks the schema or names an unset variable.
+// hash, tree and explain carry no --lock-file, so the table names their lockfile.
+func projectSettingsCases(f inputFileFixture) []inputFileCase {
+	argsFor := func(cmd, req string) []string {
+		switch cmd {
+		case "tree", "hash":
+			return []string{cmd, "-r", req}
+		case "explain":
+			return []string{cmd, "-r", req, "acme.widgets"}
+		case "cleanup":
+			return []string{cmd, "--quiet", "--cache-dir", f.cache, "-r", req}
+		default:
+			return []string{cmd, "--quiet", "--offline", "--cache-dir", f.cache, "--ansible-config", f.cfg, "-r", req}
+		}
+	}
+	commands := []string{"install", "warm", "lock", "outdated", "tree", "hash", "explain", "cleanup"}
+	cases := make([]inputFileCase, 0, 2*len(commands))
+	for _, cmd := range commands {
+		cases = append(cases,
+			inputFileCase{
+				name:     cmd + ", galaxy.toml with an unknown [tool.go-galaxy] key",
+				args:     argsFor(cmd, f.toolKey),
+				want:     helpers.ErrUnsupportedRequirementsFormat,
+				wantText: `unknown key "bogus" in [tool.go-galaxy]`,
+			},
+			inputFileCase{
+				name:     cmd + ", galaxy.toml naming an unset variable",
+				args:     argsFor(cmd, f.toolEnv),
+				want:     helpers.ErrProjectFileEnvUnset,
+				wantText: "unset environment variables: INPUT_FILES_UNSET",
+			})
+	}
+	return cases
+}
+
 // TestUnusableInputFilesExitUsage pins, through the root command main runs,
 // that a requirements file or ansible.cfg that exists but cannot be read or
 // parsed exits ExitUsage. Not parallel: t.Setenv.
 func TestUnusableInputFilesExitUsage(t *testing.T) {
+	// The unset-variable fixture needs its name unset; t.Setenv registers the
+	// restore, and an exported-empty value would expand rather than refuse.
+	t.Setenv("INPUT_FILES_UNSET", "")
+	if err := os.Unsetenv("INPUT_FILES_UNSET"); err != nil {
+		t.Fatalf("os.Unsetenv(%q) error = %v, want nil", "INPUT_FILES_UNSET", err)
+	}
 	f := newInputFileFixture(t)
 	t.Setenv("ANSIBLE_CONFIG", filepath.Join(t.TempDir(), "absent.cfg"))
 	t.Setenv("HOME", t.TempDir())
 	t.Chdir(t.TempDir())
-	for _, tc := range inputFileCases(f) {
-		assertExitsUsageWith(t, tc.name, runRootCommand(t, tc.args), tc.want)
+	for _, tc := range append(inputFileCases(f), projectSettingsCases(f)...) {
+		captured := runRootCommand(t, tc.args)
+		assertExitsUsageWith(t, tc.name, captured, tc.want)
+		if tc.wantText != "" && (captured == nil || !strings.Contains(captured.Error(), tc.wantText)) {
+			t.Errorf("%s: captured error = %v, want it to carry %q", tc.name, captured, tc.wantText)
+		}
 	}
 
 	// Discovery, the only path cleanup has, since it takes no --ansible-config.

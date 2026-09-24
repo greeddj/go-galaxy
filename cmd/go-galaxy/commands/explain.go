@@ -47,7 +47,10 @@ func Explain() *cli.Command {
 			if warning != "" {
 				progress.Warnf("%s", warning)
 			}
-			lockPath := lockfile.ResolveDefaultPath(reqPath, c.String("lock-file"))
+			lockPath, err := lockfilePath(c, reqPath)
+			if err != nil {
+				return err
+			}
 			lf, err := lockfile.LoadRequired(lockPath)
 			if err != nil {
 				return err
