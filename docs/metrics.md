@@ -29,7 +29,7 @@ rather than followed.
 The report is written whenever a run reaches its finalize step - including a
 run that failed to install some collections, a run whose snapshot save itself
 failed, and a `lock --frozen` run that found drift - and is not written when
-the run aborts earlier (unreadable `requirements.yml`, a resolution failure,
+the run aborts earlier (an unreadable requirements file, a resolution failure,
 or a missing or unloadable lockfile). A `--dry-run` run is the one exception on
 the other side: it reaches finalize and still writes nothing, because the report
 carries no field that would distinguish a preview from a real run. All four

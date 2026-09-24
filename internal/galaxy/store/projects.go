@@ -14,9 +14,12 @@ import (
 // version and an older binary re-recording a project drops fields it does not
 // know, so a field's reader must take its absence as the conservative answer.
 type ProjectRecord struct {
-	LastRun          time.Time `json:"last_run"`
-	RequirementsFile string    `json:"requirements_file"`
-	CollectionsPath  string    `json:"collections_path"`
+	LastRun time.Time `json:"last_run"`
+	// RequirementsFile is the absolute path of whichever file was read,
+	// galaxy.toml included; kept in this one field so an older binary's
+	// cleanup fails closed on it instead of reading the record as stale.
+	RequirementsFile string `json:"requirements_file"`
+	CollectionsPath  string `json:"collections_path"`
 	// RolesPath is the absolute roles directory, or "" when none was
 	// configured; omitempty keeps a collections-only record unchanged, and
 	// cleanup reads an absent path as "do not scan", never as a guess.

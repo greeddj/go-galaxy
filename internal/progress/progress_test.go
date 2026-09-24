@@ -528,6 +528,16 @@ func TestPackageLevelErrorf(t *testing.T) {
 	}
 }
 
+// TestPackageLevelWarnf verifies the standalone package-level Warnf helper
+// writes a warning line to os.Stderr, since hash, tree and explain own no
+// Progress and still have a discovery warning to report.
+func TestPackageLevelWarnf(t *testing.T) {
+	got := capturePipe(t, &os.Stderr, func() { Warnf("both %s", "files") })
+	if want := warnGlyph + " both files\n"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
 // hostileCallerText carries an ANSI escape and a lone CR; its clean form is
 // spelled by hand, not computed with safeout.Clean, so a broken Clean cannot
 // also break the expectation. Every sanitization test here shares the pair.

@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
@@ -12,6 +13,13 @@ import (
 
 // brokenRequirementsYAML is a requirements file whose bytes are not YAML.
 const brokenRequirementsYAML = "collections:\n  - name: [unclosed\n"
+
+// validGalaxyTOML is a galaxy.toml with one collection. Read as YAML, its
+// first line is the one-item list ["project"], which fails as a name.
+const validGalaxyTOML = "[project]\ncollections = [\"ns.name >= 1.0\"]\n"
+
+// brokenGalaxyTOML is a galaxy.toml whose bytes are not TOML.
+const brokenGalaxyTOML = "[project]\ncollections = [\"ns.name\"\n"
 
 // loadFailureCase is one row of TestLoadClassifiesFileFailures: the sentinel
 // Load's error must carry and one it must not.
@@ -32,10 +40,25 @@ func TestLoadClassifiesFileFailures(t *testing.T) {
 	if err := os.WriteFile(broken, []byte(brokenRequirementsYAML), helpers.FileMod); err != nil {
 		t.Fatalf("write %s: %v", broken, err)
 	}
+	brokenTOML := filepath.Join(dir, "broken.toml")
+	if err := os.WriteFile(brokenTOML, []byte(brokenGalaxyTOML), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", brokenTOML, err)
+	}
+	tomlAsYAML := filepath.Join(dir, "galaxy.txt")
+	if err := os.WriteFile(tomlAsYAML, []byte(validGalaxyTOML), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", tomlAsYAML, err)
+	}
+	tomlDir := filepath.Join(dir, "x.toml")
+	if err := os.Mkdir(tomlDir, helpers.DirMod); err != nil {
+		t.Fatalf("mkdir %s: %v", tomlDir, err)
+	}
 	cases := []loadFailureCase{
 		{name: "missing", path: filepath.Join(dir, "missing.yml"), want: fs.ErrNotExist, notWant: helpers.ErrRequirementsUnreadable},
 		{name: "a directory", path: dir, want: helpers.ErrRequirementsUnreadable, notWant: helpers.ErrInvalidRequirementsYAML},
 		{name: "not YAML", path: broken, want: helpers.ErrInvalidRequirementsYAML, notWant: helpers.ErrRequirementsUnreadable},
+		{name: "not TOML", path: brokenTOML, want: helpers.ErrInvalidRequirementsTOML, notWant: helpers.ErrInvalidRequirementsYAML},
+		{name: "a directory named .toml", path: tomlDir, want: helpers.ErrRequirementsUnreadable, notWant: helpers.ErrInvalidRequirementsTOML},
+		{name: "TOML under a .txt name", path: tomlAsYAML, want: helpers.ErrInvalidCollectionName, notWant: helpers.ErrInvalidRequirementsTOML},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,6 +71,24 @@ func TestLoadClassifiesFileFailures(t *testing.T) {
 				t.Fatalf("Load(%q) error = %v, must not match %v", tc.path, err, tc.notWant)
 			}
 		})
+	}
+}
+
+// TestLoadDispatchesOnExtension pins that the format is picked by extension
+// alone, without regard to case: deps.TOML is read as galaxy.toml.
+func TestLoadDispatchesOnExtension(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "deps.TOML")
+	if err := os.WriteFile(path, []byte(validGalaxyTOML), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	f, err := Load(path, "https://default")
+	if err != nil {
+		t.Fatalf("Load(%q) error = %v, want nil", path, err)
+	}
+	want := Collections{{Namespace: "ns", Name: "name", Version: ">= 1.0", Source: "https://default"}}
+	if !reflect.DeepEqual(f.Collections, want) {
+		t.Fatalf("Load(%q) collections = %+v, want %+v", path, f.Collections, want)
 	}
 }
 

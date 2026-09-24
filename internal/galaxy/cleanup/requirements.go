@@ -15,7 +15,7 @@ var errRequirementsNotRegular = errors.New("requirements file is not a regular f
 
 // loadRequirements reads a recorded requirements file only after Stat finds a
 // regular file: a fifo would block open() under the held cache lock. Stat, not
-// Lstat, keeps a symlinked requirements.yml legal.
+// Lstat, keeps a symlinked galaxy.toml or requirements.yml legal.
 func loadRequirements(path, defaultSource string) (requirements.File, error) {
 	// #nosec G703 -- path is a registry-recorded requirements file path (a
 	// fixed set of candidates this program itself wrote via

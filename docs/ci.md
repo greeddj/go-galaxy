@@ -3,7 +3,7 @@
 Pin transitive collections with a lockfile, then drive CI from it:
 
 ```bash
-# once, when you change requirements.yml:
+# once, when you change the requirements file (galaxy.toml or requirements.yml):
 go-galaxy lock             # writes galaxy.lock
 
 # in CI:
@@ -29,8 +29,9 @@ bake](#container-image-bake) below), or a restored CI cache your job treats as
 mandatory. A restored CI cache is not that by default: the first run after any
 lockfile change misses by construction, because the key just changed.
 
-`go-galaxy hash` prints a deterministic `sha256:…` of the lockfile (or `requirements.yml`
-when no lockfile is present) - perfect as a CI cache key.
+`go-galaxy hash` prints a deterministic `sha256:…` of the lockfile (or of the
+requirements file, `galaxy.toml` or `requirements.yml`, when no lockfile is
+present) - perfect as a CI cache key.
 
 **Upgrade note (after v1.2.3):** the lockfile is now written with a two-space
 indent instead of yaml's default four. The hash is computed over the file as
@@ -40,12 +41,17 @@ after it misses the cache. An existing four-space file still loads and still
 passes `--frozen` unchanged; the next plain `lock` rewrites it with the new
 indent, which shows as a whitespace-only diff. Both binaries read either
 layout, but they print different hashes for the same file, so jobs sharing a
-cache key must run the same release.
+cache key must run the same release. Adopting `galaxy.toml` is the same kind
+of change: a release that predates it still reads `requirements.yml`, so a
+checkout holding only `galaxy.toml` fails it, and one holding both hashes a
+different file whenever no lockfile is present, so the jobs sharing a cache
+key have to move together.
 
 ## Roles
 
-A `roles:` list in the same `requirements.yml` is installed by the same `install`,
-locked by the same `lock` and warmed by the same `warm`; nothing in the jobs below
+A `roles:` list in the same requirements file (`galaxy.toml` or `requirements.yml`)
+is installed by the same `install`, locked by the same `lock` and warmed by the
+same `warm`; nothing in the jobs below
 changes for it except where the roles land and how the playbook step finds them.
 Roles install under `--roles-path` (`GO_GALAXY_ROLES_PATH`, `ANSIBLE_ROLES_PATH`,
 `[defaults] roles_path`), `.roles` beside the working directory by default, so a
@@ -107,7 +113,7 @@ and any other is refused by name rather than left to fail on a download.
 
 | Input | Default | What it does |
 | :-- | :-- | :-- |
-| `requirements` | go-galaxy's default | `-r` |
+| `requirements` | go-galaxy's default | `-r`; the cache-key step hashes the same file the install reads |
 | `collections-path` | go-galaxy's default | `-p` |
 | `roles-path` | go-galaxy's default | `--roles-path` |
 | `frozen` | `false` | Install exactly what the lockfile pins |
@@ -263,15 +269,17 @@ Trust model](security.md#security--trust-model) for why a prefix alone is not a 
 
 ## Lockfile drift gate
 
-Fail a pull request when `galaxy.lock` no longer matches
-`requirements.yml` - a root added, removed, or repinned without regenerating
+Fail a pull request when `galaxy.lock` no longer matches the requirements
+file (`galaxy.toml` or `requirements.yml`) - a root added, removed, or
+repinned without regenerating
 the lockfile. `lock --frozen` reads the lockfile as the thing to check rather
 than as the answer, which is the opposite of what install/warm `--frozen` do -
 it still resolves fresh, and only a warm resolve cache lets that stay off the
 network - so this is a separate job from the install above, not a replacement
 for it. Add
 `--refresh` for a second, distinct gate on the same file: `lock --frozen`
-alone only catches a `requirements.yml` change, since it reuses the cached
+alone only catches a change to the requirements file (`galaxy.toml` or
+`requirements.yml`), since it reuses the cached
 resolve; `lock --frozen --refresh` also catches a newer version simply
 having been published upstream, since `--refresh` makes the comparison's
 fresh resolve reach the live servers instead:
@@ -292,7 +300,7 @@ jobs:
             -o /usr/local/bin/go-galaxy
           chmod +x /usr/local/bin/go-galaxy
 
-      - name: Check galaxy.lock matches requirements.yml
+      - name: Check galaxy.lock matches the requirements file
         run: go-galaxy lock --frozen
 
       - name: Check galaxy.lock is not stale against upstream
@@ -326,6 +334,7 @@ RUN apt-get update -qq \
 ENV GO_GALAXY_CACHE_DIR=/var/cache/go-galaxy
 
 WORKDIR /src
+# For a project on galaxy.toml: COPY galaxy.toml galaxy.lock ./
 COPY requirements.yml galaxy.lock ./
 # The uid your jobs run as. A run needs the cache lock and writes the
 # snapshot back, so a job user that can only read the baked cache fails to

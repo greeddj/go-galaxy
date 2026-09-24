@@ -5,7 +5,8 @@
 `ansible.cfg` is discovered in ansible's own order - `$ANSIBLE_CONFIG`,
 `./ansible.cfg`, `~/.ansible.cfg`, `/etc/ansible/ansible.cfg` - and parsed as
 INI the way ansible parses it (CPython's `configparser`, with `;` as its only
-inline comment marker), not as TOML. Four consequences follow from matching
+inline comment marker); the strict grammar [galaxy.toml](#galaxytoml) below is
+held to is that file's alone. Four consequences follow from matching
 ansible rather than a stricter parser: a quoted value keeps its quotes, so
 `collections_path = "./c"` sets the literal `"./c"` and you should drop the
 quotes; a `#` after a value is part of it, so
@@ -84,7 +85,8 @@ rather than ansible's `~/.ansible/roles`. A roles path that is the same
 directory as the collections path is accepted with a warning.
 
 Both of those warnings are printed only to a run that has roles to install,
-which means a `requirements.yml` carrying a non-empty `roles:` block. A run
+which means a requirements file (`galaxy.toml` or `requirements.yml`) carrying
+a non-empty roles list. A run
 without one never reads `roles_path`, so how it was spelled cannot affect its
 outcome, and the warning would be noise about a setting that went unused. The
 `collections_path` warning has no such condition: every run installs into that
@@ -96,9 +98,14 @@ ansible option: ansible-core declares no requirements-file setting, and
 `ansible-galaxy` takes that path only as `-r/--role-file`. It is read anyway,
 and it is not going away, because pipelines already set it; it is documented
 here rather than in the table so that nobody expects `ansible-galaxy` to
-honour it. The flag itself does port: `--role-file` is accepted as an alias of
-`--requirements-file`, naming the one file that carries both the `collections:`
-and the `roles:` lists.
+honour it. It names the requirements file (`galaxy.toml` or
+`requirements.yml`), and it may name a `.toml` file: the format is decided by
+the extension of whatever path it holds, exactly as for `--requirements-file`,
+and a value exported empty counts as a name (the empty path) rather than as
+unset, so it also switches off the discovery described under
+[galaxy.toml](#galaxytoml). The flag itself does port: `--role-file` is
+accepted as an alias of `--requirements-file`, naming the one file that carries
+both the collections and the roles lists.
 `GO_GALAXY_TOKEN` is the other name with no ansible counterpart, for the
 separate reason described under
 [Galaxy servers and authentication](servers-and-auth.md#galaxy-servers-and-authentication).
@@ -166,6 +173,236 @@ configured `server_list` to one server, where ansible treats it as the
 a flag source would refuse, and is still read only by `install` and `warm`,
 the commands that mount `--disable-gpg-verify` (see
 [Turning it on](signatures.md#turning-it-on)).
+
+## galaxy.toml
+
+`galaxy.toml` is go-galaxy's own project file. `ansible-galaxy` cannot read
+it, and nothing about `requirements.yml` changes: that file stays the drop-in
+both tools read, in every shape the [next section](#requirementsyml)
+describes, and a project keeps whichever of the two it prefers. What
+`galaxy.toml` adds is a dependency grammar that puts the version constraint on
+the same line as the name, a schema checked in full when the file loads, and a
+file this tool is free to define. Today it holds the `[project]` table and
+nothing else: no server, token, path or cache setting lives in it, and those
+stay where [What go-galaxy reads](#what-go-galaxy-reads) puts them -
+`ansible.cfg`, the environment and the flags.
+
+```toml
+[project]
+name = "infra"
+version = "1.0.0"
+description = "My infra collections"
+collections = [
+  "sc.internal >= 0.0.20",
+  "ansible.utils",
+  "community.crypto >= 2.0, < 3.0",
+  "community.general == 11.1.0",
+  "acme.legacy ~1.5",
+  "git+https://git.example.com/acme/mono.git#collections/app,main",
+  "https://dl.example.com/acme-app-1.4.0.tar.gz",
+  { name = "acme.app", version = ">= 1.4.0", source = "automation_hub" },
+  { name = "acme.signed", version = "*", signatures = ["https://keys.example.com/a.asc"] },
+  { name = "acme.net", type = "git", source = "https://git.example.com/acme/net.git", version = "v2.0.1" },
+  { name = "https://dl.example.com/acme-lib-2.1.0.tar.gz", type = "url", version = "2.1.0" },
+]
+roles = [
+  "geerlingguy.docker,7.4.1",
+  "git+https://github.com/acme/ansible-role-nginx.git,v1.2.0,nginx",
+  "https://dl.example.com/acme-role-1.0.0.tar.gz",
+  { name = "postgres", src = "geerlingguy.postgresql", version = "3.5.0" },
+]
+```
+
+### The `[project]` table
+
+`[project]` takes five keys. `name`, `version` and `description` are optional
+strings that describe the project to whoever reads the file: each is checked
+to be a string and nothing more - `version = 1.0` is refused, since TOML reads
+that as a number - and none of them is persisted anywhere, printed anywhere or
+compared with anything, so a project's `version` neither has to be semver nor
+has to move when its dependencies do. `collections` and `roles` are arrays of
+strings and inline tables in any mix, or the array-of-tables spelling shown
+below. At least one of the two keys must be present: a file that names
+neither is refused, while `collections = []` is a valid file that installs
+nothing. A file with no `[project]` table at all - an empty file, a
+comments-only file - is refused the same way.
+
+The schema is closed, unlike `requirements.yml`'s. Any other top-level table
+or key (`[tool]`, `[servers]`, a `collections` array outside `[project]`), any
+other `[project]` key, and any key on an inline table outside the sets listed
+below is refused when the file loads, with the usage code (`2`) and a message
+naming the key - never its value. The two files are held to different rules
+because they belong to different tools. `requirements.yml` is ansible's file,
+and a key this tool does not read there may be one `ansible-galaxy` does, so
+that parser keeps ansible's tolerance (an unknown key on a role entry is warned
+about and dropped). `galaxy.toml` is nobody's file but this tool's: a key it
+does not know is a typo or a feature this build lacks, and both are things to
+stop for rather than install past. That is also why a settings table is refused
+rather than ignored: a file written for a build that reads one is never
+silently half-read by a build that does not.
+
+Values are literal. A `${VAR}` inside a string - a name, a constraint, a URL -
+is not expanded today; write the value out.
+
+### Dependency strings
+
+A `collections` string is one of three things, judged in this order. A git
+pointer (`git+...` or `git@...`), an http(s) URL, or anything shaped like a
+path or another source (`./x`, `../x`, `/abs`, `~/x`, `ssh://h/r.git`,
+`file:///x`) is handed whole to the rules the equivalent `requirements.yml`
+entry gets: a git pointer keeps its `#subdir` and `,ref`, a URL is never cut,
+and the path-shaped forms are refused as unsupported sources exactly as they
+are in YAML. A bare name (`ansible.utils`) is the name alone at any version, as
+a bare YAML string is. Everything else is a name followed by a constraint: the
+name is the longest run of `A-Za-z0-9_.` at the start of the string, and what
+follows must begin with a space, a tab or a version operator (`=`, `<`, `>`,
+`!`, `~`, `^`, `*`), so `ns.name >= 1.0` and `ns.name>=1.0` are the same
+requirement. A remainder that begins with anything else - `ns.name@1.0`,
+`ns.name:1.0`, `ns.name-1.0` - is refused as an invalid collection name with
+the hint `put a space or a version operator between the name and its
+constraint`, since guessing where the name ends would install the wrong thing
+silently. Upper case is deliberately inside the name run: `Acme.App >= 1` is
+refused by the collection-name alphabet, as it is in YAML, rather than being
+split at the first capital letter.
+
+The constraint is what `requirements.yml`'s `version:` takes, so each spelling
+means what the same `version:` string means there:
+
+| Spelling                                               | Meaning                                                                                                       |
+|:-------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------|
+| `ns.name`, `ns.name *`                                 | any version                                                                                                   |
+| `ns.name 1.2.3`, `ns.name = 1.2.3`, `ns.name == 1.2.3` | exactly `1.2.3`; `==` is ansible's spelling of `=`, and a bare full triple is the exact pin, as in YAML       |
+| `ns.name 1.0`                                          | the `~1.0` range, `>= 1.0.0, < 1.1.0`, as `version: "1.0"` is in YAML: a bare version missing a part is a range |
+| `ns.name >= 1.0`, `ns.name>=1.0`                       | at least `1.0.0`; `>`, `<`, `<=` and `!=` likewise, with or without the space                                 |
+| `ns.name >= 2.0, < 3.0`, `ns.name >= 2.0 < 3.0`        | both: a comma and whitespace are each an AND                                                                  |
+| `ns.name ^1 \|\| ^2`                                   | either: `\|\|` is an OR                                                                                       |
+| `ns.name ~1.5`, `ns.name ^1.2`                         | semver's tilde and caret ranges                                                                               |
+| `ns.name 1.2 - 1.4`                                    | the hyphen range: from `1.2.0` up to and including every `1.4.x`                                              |
+| `ns.name 1.x`                                          | the x-range, `>= 1.0.0, < 2.0.0`                                                                              |
+
+A constraint's grammar is checked when the file loads. One the solver could not
+parse (`ns.name >>= 1.0`) is refused as `invalid collection version
+constraint`, naming the constraint and the collection, with the usage code
+(`2`), before any root is resolved or any server is asked; the cache lock is
+already held at that point, as it is for every read of the requirements file.
+The same constraint in `requirements.yml` loads without complaint and fails
+only once resolution reaches it, after every other root was prepared, with the
+generic code (`1`), since that file's `version:` has always been
+handed to the solver as written. Only the grammar is judged at load, never
+whether a version exists: `ns.name >= 99` loads and fails in the solver, as it
+does from YAML, and `ns.name1.0.0` is refused as a four-part name, not as a
+constraint, since nothing separates the two.
+
+### Inline tables and `[[project.collections]]`
+
+An inline table is a `requirements.yml` mapping entry in TOML syntax, with the
+closed key set `namespace`, `name`, `version`, `source`, `type` and
+`signatures`. Once its keys pass, it is judged by every rule the
+[requirements.yml](#requirementsyml) section states for the same mapping: a
+`type = "git"` entry's `version` is a ref, a `type = "url"` entry's is an exact
+version asserted against the manifest, and `signatures` and `source` are
+refused where YAML refuses them. A Galaxy entry (no `type`, or
+`type = "galaxy"`, with a name that is neither a git pointer nor a URL) has
+its `version` checked as a constraint exactly as the string form is. Every one
+of `namespace`, `name`, `version`, `source` and `type` must be a string:
+`version = 1.0` is refused naming the key and the TOML type it was found to
+be, never the value, since a TOML float `1.0` would print as `1` and read as a
+range other than the one written. Keys are checked in sorted order, so a table
+with two faults is always refused for the same one.
+
+The array-of-tables spelling is the same list written one table per block;
+TOML itself forbids spelling one key both ways, so a file that does is not
+valid TOML:
+
+```toml
+[project]
+name = "infra"
+
+[[project.collections]]
+name = "acme.app"
+version = ">= 1.4.0"
+source = "automation_hub"
+
+[[project.collections]]
+name = "acme.lib"
+
+[[project.roles]]
+name = "postgres"
+src = "geerlingguy.postgresql"
+version = "3.5.0"
+```
+
+### Roles
+
+`roles` strings and tables are `requirements.yml`'s [roles](#roles) entries,
+unchanged: a string is ansible's `src[,version[,name]]` form and is never
+split, since its commas are field separators rather than a constraint, and a
+table takes `name`, `role`, `src`, `scm`, `version` and `include`, with
+`include` refused as it is in YAML. Two things are stricter than YAML: an
+unknown key on a role table is refused rather than warned about and dropped,
+and `name`, `role`, `src`, `scm` and `version` must be strings. A refused
+roles list still leaves the collections readable, as it does from
+`requirements.yml`, so the tolerance `cleanup` extends to such a file (see
+[cleanup options](cli.md#cleanup-options)) holds for a `galaxy.toml` too.
+
+### Discovery
+
+Which file a run reads is decided before anything is opened, by a rule that
+mirrors the strict-versus-discovery split `ansible.cfg` has. A file named
+explicitly - `--requirements-file` (`-r`, `--role-file`),
+`$GO_GALAXY_REQUIREMENTS_FILE` or `$ANSIBLE_GALAXY_REQUIREMENTS_FILE` - is
+read as named, and its format is decided by its extension alone: a `.toml`
+path, in any case (`.TOML` included), is parsed as `galaxy.toml`, and every
+other path as `requirements.yml`, so `galaxy.txt` holding TOML is parsed as
+YAML and refused with the usage code (`2`) - the example above as
+`invalid collection name: "project"`, since YAML reads its `[project]` line as
+a bare list holding one collection. Nothing sniffs the content. With none of the
+three set, `./galaxy.toml` is read when it is a regular file (a symlink to one
+counts), and `./requirements.yml` otherwise - that second candidate is not
+examined at all, so a directory holding neither file fails exactly as it
+always did, with `open requirements.yml: no such file or directory`. When
+both files are present the run reads `galaxy.toml` and warns on stderr:
+
+```text
+galaxy.toml and requirements.yml are both present in the current directory; using galaxy.toml and ignoring requirements.yml (name one with --requirements-file to choose)
+```
+
+A `galaxy.toml` that exists but is not a regular file - a directory, a fifo -
+is skipped with `./galaxy.toml is not a regular file and is ignored; reading
+requirements.yml instead (name a file with --requirements-file to read it)`,
+and the run continues with `requirements.yml`; a fifo is what the regular-file
+rule exists to exclude, since opening one would park the run on whoever writes
+to it. `install`, `warm`, `lock` and `outdated` print either warning with
+their other configuration warnings, `hash`, `tree` and `explain` on their own
+before their output. A variable exported empty counts as set:
+`GO_GALAXY_REQUIREMENTS_FILE=` names the empty path, switches discovery off,
+and the read then fails on that empty path as it did before discovery existed.
+`cleanup` mounts no requirements flag and runs no discovery: it reloads the
+path each project's registry record holds, by the extension that path carries.
+
+Unlike `ansible.cfg` discovery, a world-writable current directory is no bar,
+deliberately. That rule keeps the process from obeying a setting another user
+planted, and a requirements file is not a setting the process obeys but the
+thing it was asked to install: a planted `galaxy.toml` there could do nothing a
+planted `requirements.yml` could not already do.
+
+### What changes for a project that migrates
+
+The registry records the absolute path of the file that was read, in the same
+field a `requirements.yml` path always went into, so `cleanup` finds a project
+by whichever file it installed from (an older binary sharing the cache fails
+closed on that record instead; see the
+[upgrade note](cli.md#cleanup-options)). The lockfile does not care which file
+the roots came from: `galaxy.lock` is byte-identical for identical roots, and
+`lock --frozen` passes across a migration that keeps every requirement the
+same. The cached resolution is narrower. A constraint's spelling, its inner
+whitespace included, is part of the requirements signature that decides
+whether the last resolution is replayed, so a migration that respells a
+constraint (`">= 1.0"` in YAML to `>=1.0` in TOML, or `"1.0.0"` to
+`== 1.0.0`) re-resolves once against the servers and is replayed from then on,
+while one that copies each constraint character for character replays at
+once. `hash` with no lockfile hashes the raw bytes of whichever file was
+picked, so that key changes with the migration; with a lockfile it does not.
 
 ## requirements.yml
 

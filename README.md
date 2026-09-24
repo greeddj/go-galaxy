@@ -26,7 +26,10 @@ go-galaxy hardlinks out of an extracted cache and pays one inode per file.
 
 It is a drop-in for the `install` subset of `ansible-galaxy`: the same
 `requirements.yml` (collections and roles in one file), the same `ansible.cfg`
-keys, the same `ANSIBLE_*` environment variables. Where it deliberately
+keys, the same `ANSIBLE_*` environment variables. It also has a project file
+of its own, `galaxy.toml`, read in place of `requirements.yml` when it is
+present: the same two lists under a `[project]` table, with each collection's
+constraint spelled in its string. Where it deliberately
 behaves differently - one server per collection rather than a union, a
 fail-closed 401/5xx, a resolver that refuses an unsatisfiable constraint set
 instead of picking leniently, a role fetched by git at its tag rather than as
@@ -82,7 +85,12 @@ and is checked against a brute-force oracle and a fuzzer. See
   `ansible-galaxy role list` reads it.
 - `requirements.yml` is either a mapping carrying a `collections` list, a
   `roles` list, or both, or a bare top-level list of collection entries;
-  anything else is refused.
+  anything else is refused. `galaxy.toml`, read instead when it is present,
+  carries the same two lists under a `[project]` table, each entry a string
+  (`"community.crypto >= 2.0, < 3.0"`, a git pointer, a URL, ansible's
+  `src,version,name` for a role) or an inline table with the mapping form's
+  keys. Its schema is strict: an unknown table or key is refused rather than
+  ignored, and an unparsable constraint fails at load.
 - `ansible.cfg` is read for `[defaults] collections_path`,
   `[defaults] roles_path`, `[galaxy] server`, `[galaxy] server_list`,
   `[galaxy] cache_dir`, `[galaxy] server_timeout`, and `[galaxy_server.<id>]`
@@ -181,6 +189,29 @@ nothing is named on the command line. One `install` handles the
 `collections:` and the `roles:` lists of the same file, as `ansible-galaxy
 install -r` does; there is no separate role subcommand.
 
+The same project can be described in `galaxy.toml`, which is read in place of
+`requirements.yml` when both are present (with a warning) and which
+`ansible-galaxy` does not read:
+
+```toml
+[project]
+name = "infra"
+collections = [
+  "ansible.utils",
+  "community.crypto >= 2.0, < 3.0",
+  "git+https://git.example.com/acme/mono.git#collections/app,main",
+  { name = "acme.app", version = ">= 1.4.0", source = "automation_hub" },
+]
+roles = [
+  "geerlingguy.docker,7.4.1",
+  { name = "postgres", src = "geerlingguy.postgresql", version = "3.5.0" },
+]
+```
+
+```bash
+go-galaxy lock                 # after editing galaxy.toml: rewrites galaxy.lock
+```
+
 For reproducible CI, pin every transitive collection and role once and install
 from the lockfile thereafter:
 
@@ -199,7 +230,7 @@ pipeline can branch on the failure type without parsing log output. See
 | :-- | :-- |
 | [CLI reference](docs/cli.md) | Every command and option, `--dry-run`, output and color |
 | [Command flows](docs/commands.md) | Each command's control flow as a diagram, branch by branch over its flags |
-| [Configuration](docs/configuration.md) | `ansible.cfg` discovery and keys, the environment surface, `requirements.yml` |
+| [Configuration](docs/configuration.md) | `ansible.cfg` discovery and keys, the environment surface, `requirements.yml` and `galaxy.toml` |
 | [Galaxy servers and authentication](docs/servers-and-auth.md) | `server_list`, tokens, precedence, TLS, refused configurations |
 | [Signature verification](docs/signatures.md) | Keyrings, required counts, tolerated statuses, the manifest chain |
 | [Compatibility with ansible-galaxy](docs/ansible-galaxy-compat.md) | Every deliberate difference, and what a migration runs into |

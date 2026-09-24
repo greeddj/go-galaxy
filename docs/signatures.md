@@ -218,6 +218,18 @@ collections:
       - file:///etc/pki/collections/community-general.asc
 ```
 
+In `galaxy.toml` the same entry is an inline table whose `signatures` is a
+string or an array of strings, judged by the same rules; the
+`[[project.collections]]` spelling takes the same keys when a list grows past
+one line:
+
+```toml
+[project]
+collections = [
+  { name = "community.general", version = "11.1.0", signatures = ["file:///etc/pki/collections/community-general.asc"] },
+]
+```
+
 Each source has to be one of: an absolute `http` or `https` URL, or a
 `file://` URL naming an absolute local path with an empty authority or
 `localhost` only (`file:///etc/...` or `file://localhost/etc/...`). Every

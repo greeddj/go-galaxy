@@ -158,7 +158,7 @@ func TestPrintExplainGitEntry(t *testing.T) {
 	lf := saveAndLoad(t, &lockfile.File{Collections: []lockfile.Entry{gitEntry("acme.one", source, "collections/one")}})
 
 	var buf strings.Builder
-	if err := printExplain(&buf, lf, "acme.one", map[string]bool{"acme.one": true}, nil); err != nil {
+	if err := printExplain(&buf, lf, "acme.one", "requirements.yml", map[string]bool{"acme.one": true}, nil); err != nil {
 		t.Fatalf("printExplain() error = %v", err)
 	}
 	out := buf.String()

@@ -45,7 +45,8 @@ internal/galaxy/collectionbuild  what makes a tree a collection: ignore rules, M
 internal/galaxy/rolebuild     what makes a tree a role: meta/main.yml, its dependencies,
                               no lead documents; drives treearchive
 internal/galaxy/galaxyv1      the Galaxy v1 role API client and ansible's version selection
-internal/galaxy/requirements  requirements.yml parsing, collections and roles
+internal/galaxy/projectfile   galaxy.toml decoding, the only BurntSushi/toml importer
+internal/galaxy/requirements  requirements.yml and galaxy.toml parsing, collections and roles
 internal/galaxy/config        flags + ansible.cfg + environment -> one Config
 internal/galaxy/lockfile      galaxy.lock
 internal/galaxy/infra         the per-run DI container
@@ -170,12 +171,16 @@ blocks consumes wire bytes without producing any and the decompressed-side
 checks in `archive` and `manifest` never fire on it; it returns `ctx.Err()`
 unwrapped, so the exit code still classifies a cancellation or a deadline.
 
-`internal/galaxy/requirements` is where requirements.yml, which is repository
-content, enters the program, and every value in it is judged there rather than
-downstream. The file itself is judged there first: one that exists and cannot
-be read is `ErrRequirementsUnreadable`, bytes that are not YAML
-`ErrInvalidRequirementsYAML`, and `hash`, which keys on the raw bytes, reads
-them through the same `Read`, so an unreadable file fails it the same way. The
+`internal/galaxy/requirements` is where the requirements file - requirements.yml
+or galaxy.toml, both repository content - enters the program, and every value
+in it is judged there rather than downstream. The file itself is judged there
+first: one that exists and cannot be read is `ErrRequirementsUnreadable`, bytes
+that are not YAML `ErrInvalidRequirementsYAML`, bytes of a `.toml` file that
+are not TOML `ErrInvalidRequirementsTOML`, and `hash`, which keys on the raw
+bytes, reads them through the same `Read`, so an unreadable file fails it the
+same way. `Load` picks the format by the path's extension alone, without regard
+to case - `.toml` goes to `ParseTOML`, anything else to `Parse` - so a
+`galaxy.txt` holding TOML is read as YAML and fails as such. The
 collection name alphabet is applied once an entry's string and mapping shapes
 converge, not inside `helpers.SplitFQDN`, which a mapping's explicit
 `namespace:`/`name:` pair never passes through. A `signatures:` source is
@@ -188,6 +193,44 @@ those same grammars. An unnamed git entry and every url entry have no identity
 at load, so their name is judged at discovery instead: `IsCollectionNamePart`
 over the repository's `galaxy.yml`, `IsURLCollectionNamePart` over the
 artifact's `MANIFEST.json`.
+
+`ParseTOML` is a front end to that same judgement, not a second parser.
+`internal/galaxy/projectfile`, the module's only importer of
+`BurntSushi/toml`, decodes galaxy.toml into the `any` tree yaml would have
+produced (the `[[project.collections]]` spelling, which decodes as a slice of
+tables, is folded into the `[]any` an inline array gives) and holds the
+document to its closed schema: a `[project]` table and nothing beside it, in
+it only `name`, `version` and `description` - strings, checked for type and
+otherwise unused - plus `collections` and `roles`, at least one of them
+present. Anything else is `ErrUnsupportedRequirementsFormat` naming the key,
+never its value. The requirements side then reshapes each entry into what
+`parseRaw` already judges and hands the tree over, so a galaxy.toml entry
+meets every rule a requirements.yml entry meets, in the same order, and a
+refusal of the roles list still arrives as a `RolesError` beside the parsed
+collections. A collection string is split into name and constraint - the
+longest run of `[A-Za-z0-9_.]` is the name, and the rest, which must open
+with a space, a tab or an operator byte, is the constraint - and becomes the
+`name`/`version` mapping; a git pointer, an http(s) URL and any other value
+`looksLikeSourceName` admits pass whole, since a ref, a subdir or a query is
+not a constraint, and so does a bare name. The constraint is checked at load
+with `semver`, after `helpers.NormalizeConstraint`, which requirements.yml
+leaves to the solver: one semver refuses is `ErrInvalidCollectionConstraint`,
+rendered without semver's own message, which echoes the input in a shape of
+its own. An inline table is held to a closed key set - `namespace`, `name`,
+`version`, `source`, `type` and `signatures` on a collection; `name`, `role`,
+`src`, `scm`, `version` and `include` on a role, the last kept so
+`parseRoleMap` refuses it as an include rather than as an unknown key - and
+each scalar key to a string, refused by key and Go type and never by value,
+since a TOML float `1.0` would render as `1` and read as a `1.x` range. Keys
+are visited in sorted order, so the first refusal of a table with several
+faults is deterministic. Where an unknown key on a `roles:` mapping only warns
+in YAML, the same key on a galaxy.toml table is refused: the YAML rule is
+ansible's, the TOML file is this tool's own. A role string is never split,
+since ansible's `src[,version[,name]]` form uses the comma as its field
+separator. A TOML syntax error is `ErrInvalidRequirementsTOML` rendered as
+its line and last key only: the library's `ParseError` is a value, matched
+with `errors.As` as one, and its message echoes string bodies and bare tokens
+from the file, which the output must not carry.
 
 `internal/galaxy/gitfetch` drives go-git at the upload-pack session level
 rather than through its `Remote`, and the advertisement decides everything: the
@@ -366,6 +409,30 @@ with a `roles:` block has been read. `Config.Server` is always
 `Config.Servers[0].URL` and exists for single-server consumers (metrics,
 `GALAXY.yml`, the lockfile's `server`); anything that dispatches credentials or
 TLS per origin reads `Config.Servers`.
+
+`config.RequirementsPath` is the one place the default requirements path is
+decided, and `newConfigFromCLI` is where its answer becomes
+`Config.RequirementsFile`. A command that mounts no `--requirements-file` gets
+`""` and no file system access at all. A set flag - `-r`, `--role-file` or
+either variable, an exported-empty one included, since urfave counts that as
+set - is returned verbatim with no `Stat`, so discovery never outranks a
+source the operator chose. Only with the flag unset does it `Stat`
+`./galaxy.toml`, and take it when it is a regular file (`Stat` rather than
+`Lstat`, so a symlink to one counts), with a warning when `./requirements.yml`
+is a regular file too; a galaxy.toml that is something else - a directory, a
+fifo - is skipped with a warning naming it. Otherwise the answer is the
+relative name `requirements.yml` without a `Stat`, so a directory holding
+neither file opens it exactly as every earlier release did and every message,
+exit code and lockfile path there is unchanged. The candidate stays relative,
+like the ansible.cfg one, and resolves against the working directory at open
+time; a world-writable directory is deliberately no bar here, for the reasons
+[Security](security.md#loading-requirementsyml-and-the-lockfile) gives. The
+warning is a return value rather than a print, because the function runs
+before a printer exists: `newConfigFromCLI` queues it first on
+`Config.Warnings`, ahead of every later warning, since picking the file is the
+run's first event, while `hash`, `tree` and `explain`, which build no
+`Config`, call `RequirementsPath` themselves and print it through
+`progress.Warnf`, the one printer-less warning path.
 
 `BuildCollectionConfig` reads the union of every flag a command on the
 `runCollectionCommand` path may register, and urfave returns the zero value
@@ -896,7 +963,7 @@ left alone, since the key needs the record.
 
 Order is load-bearing:
 
-1. Load `requirements.yml`: the `collections:` list and the `roles:` list,
+1. Load the requirements file: the `collections:` list and the `roles:` list,
    both judged at load, with the parse warnings (an unknown key on a role
    entry) printed.
 2. Build the verification context. This runs **ahead of the prefetcher**, so an
@@ -1516,6 +1583,17 @@ the roles path. Both backends build a record through
 file, with each path resolved against that directory and an empty path left
 empty rather than becoming the project directory itself, so the local file and
 the S3 object keep one shape.
+
+A galaxy.toml project records the absolute path of its `.toml` file in that
+same `requirements_file` field, not in a new one, and that is the point: an
+older binary sharing the cache reloads the recorded path through its own
+`requirements.Load`, which reads the bytes as YAML, so its `cleanup` fails
+closed - exit `2`, nothing deleted - where a field it does not know would have
+read as no requirements file and a stale record to reap. A directory holding
+both files is one project: galaxy.toml and requirements.yml share one record,
+keyed by the directory, and one `galaxy.lock` beside them, and the record
+names whichever file the last run picked - discovery's galaxy.toml, or the one
+`--requirements-file` named.
 
 `--dry-run` skips registering the project, since that is the only persistent,
 non-cache, non-reconstructible write in the startup path, and it feeds a

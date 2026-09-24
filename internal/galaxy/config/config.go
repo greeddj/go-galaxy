@@ -169,19 +169,25 @@ func BuildCollectionConfig(c *cli.Command) (*Config, error) {
 
 func newConfigFromCLI(c *cli.Command) *Config {
 	cfg := &Config{
-		DownloadWorkers:  c.Int("download-workers"),
-		RequirementsFile: c.String("requirements-file"),
-		LockFile:         c.String("lock-file"),
-		MetricsFile:      c.String("metrics-file"),
-		ClearCache:       c.Bool("clear-cache"),
-		NoCache:          c.Bool("no-cache"),
-		Refresh:          c.Bool("refresh"),
-		NoDeps:           c.Bool("no-deps"),
-		DryRun:           c.Bool("dry-run"),
-		Offline:          c.Bool("offline"),
-		Frozen:           c.Bool("frozen"),
-		DownloadPath:     c.String("download-path"),
-		RolesPath:        c.String("roles-path"),
+		DownloadWorkers: c.Int("download-workers"),
+		LockFile:        c.String("lock-file"),
+		MetricsFile:     c.String("metrics-file"),
+		ClearCache:      c.Bool("clear-cache"),
+		NoCache:         c.Bool("no-cache"),
+		Refresh:         c.Bool("refresh"),
+		NoDeps:          c.Bool("no-deps"),
+		DryRun:          c.Bool("dry-run"),
+		Offline:         c.Bool("offline"),
+		Frozen:          c.Bool("frozen"),
+		DownloadPath:    c.String("download-path"),
+		RolesPath:       c.String("roles-path"),
+	}
+	// Discovery may decline ./galaxy.toml with a warning; queued first, ahead
+	// of every later warning, because picking the file is the run's first event.
+	requirementsPath, requirementsWarning := RequirementsPath(c)
+	cfg.RequirementsFile = requirementsPath
+	if requirementsWarning != "" {
+		cfg.Warnings = append(cfg.Warnings, requirementsWarning)
 	}
 
 	// An unregistered or non-positive value becomes the default silently and

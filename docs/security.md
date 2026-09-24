@@ -553,6 +553,30 @@ before it; a git or url entry refuses a `signatures:` key before anything
 echoes the entry, and a `signatures:` value of the wrong shape is named by its
 Go type, never its content.
 
+galaxy.toml is repository content on the same terms and is judged by the same
+validators in the same order: the TOML front end only reshapes the decoded
+document into the tree `parseRaw` judges - a dependency string into the
+`name`/`version` mapping the YAML entry would be - and never builds a
+requirement of its own, so no rule above has a second implementation to drift
+from the first. What the format adds is held to the same discipline. A TOML
+syntax error is rendered as its line and last key only, because the lexer's
+own messages can echo a string body or a bare token from the file into the
+output; the schema is closed, so an unknown top-level table, an unknown
+`[project]` key and an unknown key on a collection or role inline table are
+refused by name rather than ignored or warned about; a scalar of the wrong
+type is named by its key and Go type, never its value; and a version
+constraint is checked with `semver` at load and rendered without the library's
+own message. Discovery only `Stat`s, and admits only a regular file: a
+`./galaxy.toml` that is a directory or a fifo is skipped with a warning rather
+than opened, since the open happens under the exclusive cache lock, where a
+fifo would block the run and, on S3, every other runner sharing the bucket.
+The rule that drops `./ansible.cfg` in a world-writable directory (see
+[Configuration](configuration.md#ansiblecfg)) is deliberately not mirrored
+for either requirements file: the requirements file is the input being
+installed, not a setting that redirects where an install lands or which cache
+it deletes beneath, `./requirements.yml` was never defended that way either,
+and a `0777` CI workspace has to keep working.
+
 ### Archive extraction
 
 `internal/galaxy/archive` owns extraction and refuses each unsafe shape under
@@ -903,8 +927,9 @@ anything is deleted: opening a fifo blocks until a writer appears, while
 `cleanup` holds the exclusive cache lock with no deadline of its own - and on S3
 the lock heartbeat keeps renewing, so one planted pipe would lock every runner
 sharing the bucket out indefinitely. `Stat` rather than `Lstat` keeps a
-symlinked `requirements.yml` legal, and a dangling one reads as a stale registry
-entry. A `MANIFEST.json` is gated the same way but with `Lstat`, so a symlinked
+symlinked `requirements.yml` or `galaxy.toml` legal, and a dangling one reads
+as a stale registry entry. A `MANIFEST.json` is gated the same way but with
+`Lstat`, so a symlinked
 one is skipped too, because `os.Root` follows a relative link inside the root.
 
 `outdated`'s installed-tree fallback keeps the same discipline. Every file it

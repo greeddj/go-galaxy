@@ -233,3 +233,51 @@ func mustLoadProjectRecord(t *testing.T, cacheDir, projectDir string) ProjectRec
 	}
 	return record
 }
+
+// TestNewProjectRecordKeysGalaxyTOMLByItsDirectory pins that a galaxy.toml
+// project is keyed by its directory like a requirements.yml one and records
+// the TOML file's own path in requirements_file, the one field cleanup reads.
+func TestNewProjectRecordKeysGalaxyTOMLByItsDirectory(t *testing.T) {
+	t.Parallel()
+	key, record := NewProjectRecord("/p/galaxy.toml", "collections", "")
+	if key != "/p" {
+		t.Fatalf("key = %q, want /p", key)
+	}
+	if record.RequirementsFile != "/p/galaxy.toml" {
+		t.Fatalf("RequirementsFile = %q, want /p/galaxy.toml", record.RequirementsFile)
+	}
+	if record.CollectionsPath != "/p/collections" {
+		t.Fatalf("CollectionsPath = %q, want /p/collections", record.CollectionsPath)
+	}
+}
+
+// TestRecordProjectOneRecordPerDirectory pins that galaxy.toml and
+// requirements.yml in one directory share one registry entry: the later run
+// overwrites the earlier, so a directory is never counted as two projects.
+func TestRecordProjectOneRecordPerDirectory(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	projectDir := t.TempDir()
+	tomlPath := filepath.Join(projectDir, "galaxy.toml")
+	yamlPath := filepath.Join(projectDir, "requirements.yml")
+
+	if err := RecordProject(cacheDir, tomlPath, "collections", ""); err != nil {
+		t.Fatalf("RecordProject (galaxy.toml): %v", err)
+	}
+	if got := mustLoadProjectRecord(t, cacheDir, projectDir).RequirementsFile; got != tomlPath {
+		t.Fatalf("RequirementsFile = %q, want %q", got, tomlPath)
+	}
+	if err := RecordProject(cacheDir, yamlPath, "collections", ""); err != nil {
+		t.Fatalf("RecordProject (requirements.yml): %v", err)
+	}
+	registry, err := LoadProjectRegistry(cacheDir)
+	if err != nil {
+		t.Fatalf("LoadProjectRegistry: %v", err)
+	}
+	if len(registry.Projects) != 1 {
+		t.Fatalf("registry holds %d projects, want 1: %#v", len(registry.Projects), registry.Projects)
+	}
+	if got := registry.Projects[projectDir].RequirementsFile; got != yamlPath {
+		t.Fatalf("RequirementsFile = %q, want the later %q", got, yamlPath)
+	}
+}

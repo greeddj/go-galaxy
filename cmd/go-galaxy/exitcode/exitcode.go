@@ -480,11 +480,12 @@ func isEnvironmentUsageError(err error) bool {
 
 // isInputFileUsageError reports whether the requirements file or ansible.cfg
 // cannot be used: an explicit ansible.cfg that is missing, either file
-// unreadable, or requirements that are not YAML or not a supported shape.
+// unreadable, or requirements that are not YAML or TOML or not a supported shape.
 func isInputFileUsageError(err error) bool {
 	return errors.Is(err, helpers.ErrUnsupportedRequirementsFormat) ||
 		errors.Is(err, helpers.ErrRequirementsUnreadable) ||
 		errors.Is(err, helpers.ErrInvalidRequirementsYAML) ||
+		errors.Is(err, helpers.ErrInvalidRequirementsTOML) ||
 		errors.Is(err, helpers.ErrAnsibleConfigNotFound) ||
 		errors.Is(err, helpers.ErrAnsibleConfigUnreadable)
 }
@@ -553,7 +554,8 @@ func isCollectionListUsageError(err error) bool {
 		errors.Is(err, helpers.ErrDuplicateCollectionRequirement) ||
 		errors.Is(err, helpers.ErrDuplicateCollectionKey) ||
 		errors.Is(err, helpers.ErrUnsafeCollectionIdentifier) ||
-		errors.Is(err, helpers.ErrInvalidCollectionVersion)
+		errors.Is(err, helpers.ErrInvalidCollectionVersion) ||
+		errors.Is(err, helpers.ErrInvalidCollectionConstraint)
 }
 
 // FromSignal converts an OS signal into a shell-convention exit code

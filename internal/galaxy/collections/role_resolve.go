@@ -3,11 +3,13 @@ package collections
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
+	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
@@ -54,8 +56,9 @@ func resolveRoles(ctx context.Context, deps collectionDeps, roots []requirements
 	}
 	deps.runtime.Output.Printf("Resolve roles")
 	queue := make([]roleRequest, 0, len(roots))
+	declaredBy := rootDeclaredBy(deps.cfg)
 	for _, root := range roots {
-		queue = append(queue, roleRequest{req: root, declaredBy: "requirements.yml"})
+		queue = append(queue, roleRequest{req: root, declaredBy: declaredBy})
 	}
 	for len(queue) > 0 {
 		level := dedupeRoleLevel(deps, res.roles, queue)
@@ -81,6 +84,16 @@ func resolveRoles(ctx context.Context, deps collectionDeps, roots []requirements
 	}
 	fillRoleDeps(&res, deps)
 	return res, nil
+}
+
+// rootDeclaredBy names the requirements file a root role was declared in, by
+// base name so a message reads galaxy.toml or requirements.yml, whichever was
+// read; the conventional name stands in when no path is configured.
+func rootDeclaredBy(cfg *config.Config) string {
+	if cfg == nil || cfg.RequirementsFile == "" {
+		return helpers.RequirementsYAMLName
+	}
+	return filepath.Base(cfg.RequirementsFile)
 }
 
 // roleRequest is one requirement waiting to be resolved and the role (or

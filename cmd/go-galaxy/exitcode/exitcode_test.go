@@ -154,6 +154,13 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
+		// A galaxy.toml constraint semver refuses at load, before any cache or
+		// network work, so it classifies as usage like the version row above.
+		name:     "invalid collection constraint",
+		err:      fmt.Errorf("%w: %q for acme.app", helpers.ErrInvalidCollectionConstraint, ">= 0..20"),
+		wantCode: ExitUsage,
+	},
+	{
 		name:     "invalid timeout",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrInvalidTimeout),
 		wantCode: ExitUsage,
@@ -181,6 +188,11 @@ var fromErrorCases = []exitCase{
 	{
 		name:     "requirements not valid YAML",
 		err:      fmt.Errorf("load requirements requirements.yml: %w: %w", helpers.ErrInvalidRequirementsYAML, errTestUnreadableCause),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "requirements not valid TOML",
+		err:      fmt.Errorf("load requirements galaxy.toml: %w: line 3", helpers.ErrInvalidRequirementsTOML),
 		wantCode: ExitUsage,
 	},
 	{

@@ -204,8 +204,9 @@ deliberate ways:
   token or a brief outage on your private hub must never quietly redirect an
   install to the public Galaxy instead.
 
-A `requirements.yml` collection's `source:` pins it to one server for the whole
-run: an exact `server_list` id match, or a URL matching a configured server's
+A collection entry's `source:`, in `requirements.yml` or `galaxy.toml`, pins it
+to one server for the whole run: an exact `server_list` id match, or a URL
+matching a configured server's
 network origin (so `source: https://hub.example.internal/content/published/`
 still gets that server's own token and TLS policy, even though the path differs
 from the configured `url`). The server URL a collection resolved against is
@@ -454,9 +455,10 @@ value explicitly under `GO_GALAXY_URL_*` when a host takes it as Bearer.
 
 These are refused before any request is made, exiting with the usage exit code
 (`2`) - the operator has to fix `ansible.cfg`, an environment variable, or
-`requirements.yml`, not retry:
+the requirements file, not retry:
 
-- A server URL, or a `requirements.yml` `source:`, with embedded userinfo
+- A server URL, or a requirements file collection's `source:`, with embedded
+  userinfo
   (`https://user:pass@hub/`).
 - A server URL that is not absolute (no scheme or no host), or a `server_list`
   entry left with no URL, including one whose `ANSIBLE_GALAXY_SERVER_<ID>_URL`

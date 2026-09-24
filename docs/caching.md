@@ -92,7 +92,8 @@ only so that `--clear-cache` recognizes leftovers from an older binary and
 reclaims them.
 
 `go-galaxy hash` prints a deterministic `sha256:...` of the lockfile, or of
-`requirements.yml` when no lockfile is present, for use as a CI cache key.
+the requirements file (`galaxy.toml` or `requirements.yml`) when no lockfile
+is present, for use as a CI cache key.
 `go-galaxy warm` populates the caches without installing anything, and
 `go-galaxy cleanup` removes cached collections and roles no registered project
 reaches any more - both are described in the [CLI reference](cli.md#commands),
@@ -177,7 +178,7 @@ collection sharing a `name@version` cannot overwrite each other's entry; the
 extracted-store sweep keeps the trees of every installed role that is not
 being removed, plus the warmed ones within their retention window. The
 resolve-side snapshot reuse that replays a collection resolution while
-`requirements.yml`, the server list and `--no-deps` are unchanged is not
+the requirements file, the server list and `--no-deps` are unchanged is not
 involved in roles at all: a `roles:` list is replayed through its pins, entry
 by entry, so editing a role line re-resolves that role and nothing else.
 

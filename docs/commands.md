@@ -38,8 +38,8 @@ Every command starts in the shared entry point. Each command's own section then
 draws its path, repeating the startup steps as they apply to that command.
 
 - [Entry point and shared setup](#entry-point-and-shared-setup): dispatch,
-  configuration, the cache backend and its lock, and how an error becomes an
-  exit code.
+  requirements file discovery, configuration, the cache backend and its lock,
+  and how an error becomes an exit code.
 - [install](#install): resolve the requirements, or read the lockfile under
   `--frozen`, then install collections and roles.
 - [lock](#lock): resolve and write `galaxy.lock`, or gate on drift under
@@ -121,8 +121,51 @@ flowchart TD
   D13 -->|"yes"| XA2(["exit 2 (usage),<br/>ErrUnexpectedArguments"])
   D13 -->|"no"| D14{"which command?"}
   D14 -->|"install, warm, lock,<br/>outdated, cleanup"| RC["runCollectionCommand<br/>see Shared setup"]
-  D14 -->|"hash, tree"| F1["read the requirements file and the lockfile<br/>at --lock-file, else galaxy.lock beside it:<br/>no config, no ansible.cfg, no cache"]
+  D14 -->|"hash, tree"| F1["pick the requirements file,<br/>see Requirements file discovery,<br/>read it and the lockfile at --lock-file,<br/>else galaxy.lock beside it:<br/>no config, no ansible.cfg, no cache"]
 ```
+
+### Requirements file discovery
+
+Every command that reads a requirements file picks it by one rule,
+`config.RequirementsPath`, before anything is opened: `install`, `warm`, `lock`
+and `outdated` inside `newConfigFromCLI`, with the warning queued ahead of every
+other configuration warning, and `hash`, `tree` and `explain` on their own,
+printing the warning on stderr before their output. `cleanup` mounts no
+`--requirements-file` and never enters this diagram: it reloads the path each
+registry record holds.
+
+```mermaid
+flowchart TD
+  Q1{"command mounts --requirements-file?<br/>cleanup does not"} -->|"no"| Q0["path empty, no warning,<br/>no file examined"]
+  Q1 -->|"yes"| Q2{"--requirements-file, -r, --role-file,<br/>GO_GALAXY_REQUIREMENTS_FILE or<br/>ANSIBLE_GALAXY_REQUIREMENTS_FILE set?<br/>a variable exported empty counts as set"}
+  Q2 -->|"yes"| Q3["path = that value verbatim,<br/>an empty one included;<br/>no file examined, no warning"]
+  Q2 -->|"no"| Q4{"./galaxy.toml: Stat result?<br/>Stat, so a symlink to a file counts"}
+  Q4 -->|"absent, or Stat failed"| Q5["path = requirements.yml, relative;<br/>not examined, no warning"]
+  Q4 -->|"exists, not a regular file:<br/>a directory, a fifo"| Q6["path = requirements.yml, relative;<br/>warning: ./galaxy.toml is not a regular file<br/>and is ignored; reading requirements.yml instead"]
+  Q4 -->|"a regular file"| Q7{"./requirements.yml also<br/>a regular file?"}
+  Q7 -->|"no"| Q8["path = galaxy.toml, relative;<br/>no warning"]
+  Q7 -->|"yes"| Q9["path = galaxy.toml, relative;<br/>warning: both are present, using galaxy.toml<br/>and ignoring requirements.yml"]
+  Q3 --> QF
+  Q5 --> QF
+  Q6 --> QF
+  Q8 --> QF
+  Q9 --> QF{"when the file is read:<br/>path ends in .toml, in any case?"}
+  QF -->|"yes"| QT["requirements.ParseTOML:<br/>galaxy.toml, the [project] table"]
+  QF -->|"no"| QY["requirements.Parse: YAML,<br/>every requirements.yml shape"]
+```
+
+A picked path stays relative, so it resolves against the working directory
+when it is opened, and only `./galaxy.toml` decides anything: `./requirements.yml`
+is examined only to decide the both-present warning, never to pick it, so a
+directory holding neither file fails where it always did, on
+`open requirements.yml`. The format follows the extension alone and never the
+content: a `.TOML` path is TOML, and `galaxy.txt` holding TOML is parsed as YAML
+and refused with exit 2, its `[project]` line read as a bare list holding one
+collection named `project`. A world-writable working directory is no bar here,
+unlike for `./ansible.cfg`, because the file is what the run installs rather
+than a setting it obeys. The picked path is what `galaxy.lock` is looked for
+beside, what `hash` hashes with no lockfile, and, made absolute, what `install`
+records in the project registry.
 
 ### Shared setup: runCollectionCommand
 
@@ -166,7 +209,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  K1["newConfigFromCLI reads the flag values,<br/>their environment sources already applied by urfave"] --> K2{"--download-workers below 1?"}
+  K1["newConfigFromCLI reads the flag values,<br/>their environment sources already applied by urfave,<br/>and picks the requirements file first,<br/>see Requirements file discovery"] --> K2{"--download-workers below 1?"}
   K2 -->|"yes"| K3["use the derived default"]
   K2 -->|"no"| K4
   K3 --> K4{"--timeout a positive integer<br/>or Go duration?<br/>unset or not mounted (cleanup): the default"}
@@ -369,6 +412,13 @@ environment variable is ignored too.
 - `--ansible-config` (`GO_GALAXY_ANSIBLE_CONFIG`, not on cleanup): replaces
   discovery with a strict load. A missing file exits 2. An ansible.cfg that
   exists but cannot be read, named or discovered, exits 2 too.
+- `--requirements-file`, `-r`, `--role-file` (`GO_GALAXY_REQUIREMENTS_FILE`,
+  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`, not on cleanup): set, even to the empty
+  string, it names the file verbatim and nothing is examined; unset, discovery
+  picks `./galaxy.toml` when it is a regular file, else `requirements.yml`, and
+  queues a warning when both are present or `./galaxy.toml` is not a regular
+  file (see [Requirements file discovery](#requirements-file-discovery)). The
+  `.toml` extension alone selects the TOML parser when the file is read.
 - `--download-path` (`-p`), `--roles-path`, `--cache-dir`: when set from the
   flag or its environment, they outrank ansible.cfg. cleanup mounts only
   `--cache-dir`.
@@ -404,10 +454,9 @@ environment variable is ignored too.
   any backend is opened. Install and lock run with no extracted store.
 
 These flags are accepted but do not branch the shared setup, because they only
-pass values on to a command or the backend: `--requirements-file` (`-r`,
-`--role-file`), `--lock-file`, `--metrics-file`, `--no-deps`, `--frozen`,
-`--s3-region`, `--s3-prefix`, `--s3-endpoint`, `--s3-session-token` and
-`--s3-path-style-disabled`.
+pass values on to a command or the backend: `--lock-file`, `--metrics-file`,
+`--no-deps`, `--frozen`, `--s3-region`, `--s3-prefix`, `--s3-endpoint`,
+`--s3-session-token` and `--s3-path-style-disabled`.
 
 ## install
 
@@ -510,7 +559,7 @@ flowchart TD
     S18 -->|"no"| S22{"--dry-run?"}
     S20 --> S22
     S21 -->|"cleared"| S22
-    S22 -->|"no"| S23["record the project: requirements file,<br/>--download-path, --roles-path;<br/>a failure only warns"]
+    S22 -->|"no"| S23["record the project: the requirements file's<br/>absolute path (galaxy.toml or requirements.yml),<br/>--download-path, --roles-path;<br/>a failure only warns"]
     S22 -->|"yes"| S24["continue in Overview"]
     S23 --> S24
 ```
@@ -519,8 +568,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    P1["read the requirements file<br/>--requirements-file"]
-    P1 -->|"missing, unreadable, not YAML,<br/>or an invalid shape"| PX2(["exit 2 (usage)"])
+    P1["read the requirements file:<br/>--requirements-file, else discovery,<br/>see Requirements file discovery;<br/>TOML by the .toml extension, else YAML"]
+    P1 -->|"missing, unreadable, not YAML or TOML,<br/>a galaxy.toml schema this tool refuses,<br/>or an invalid shape"| PX2(["exit 2 (usage)"])
     P1 -->|"read"| P2{"roles: list non-empty?"}
     P2 -->|"yes"| P3["print queued roles_path warnings"]
     P2 -->|"no"| P4["prepare collection roots:<br/>type matches source, names, duplicates"]
@@ -910,8 +959,9 @@ above and the S3 backend refusing an endpoint it cannot use when it opens.
 
 ## lock
 
-`lock` (alias `l`) resolves `requirements.yml` fresh (collections and the
-`roles:` list) under the exclusive cache lock and writes `galaxy.lock`. With
+`lock` (alias `l`) resolves the requirements file (`galaxy.toml` or
+`requirements.yml`) fresh, collections and the roles list, under the exclusive
+cache lock and writes `galaxy.lock`. With
 `--frozen` it compares the fresh result with the file already on disk and fails
 on drift instead of writing. With `--dry-run` it prints the same diff and writes
 nothing. It never installs anything, but it saves the resolve work into the
@@ -975,8 +1025,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    IN(["cache locked, snapshot loaded"]) --> LR["loadRoots: parse the file --requirements-file names,<br/>print its warnings"]
-    LR -->|"error"| X2L(["exit 2 (usage): missing, unreadable,<br/>not YAML or malformed"])
+    IN(["cache locked, snapshot loaded"]) --> LR["loadRoots: parse the requirements file,<br/>--requirements-file, else discovery (see Requirements file discovery),<br/>TOML by the .toml extension, else YAML;<br/>print its warnings"]
+    LR -->|"error"| X2L(["exit 2 (usage): missing, unreadable,<br/>not YAML or TOML, a galaxy.toml schema<br/>this tool refuses, or malformed"])
     LR -->|"ok"| RW{"roles: list non-empty?"}
     RW -->|"yes"| RWW["print queued roles_path warnings"]
     RW -->|"no"| PRR
@@ -1232,7 +1282,7 @@ the signature flags and reads none of their variables,
 
 ## warm
 
-`warm` (alias `w`) resolves `requirements.yml` the way `install` does, then
+`warm` (alias `w`) resolves the requirements file the way `install` does, then
 fills the artifact cache and the extracted store for every resolved collection
 and role without touching the collections or roles directories, so a baked CI
 image's later installs only hardlink. Each warmed item gets a warmed entry in
@@ -1304,8 +1354,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    Req["load the requirements file, --requirements-file"] --> ReqOK{"file readable and valid?"}
-    ReqOK -->|"missing, unreadable, not YAML,<br/>or not a requirements shape"| X2a(["exit 2 (usage)"])
+    Req["load the requirements file: --requirements-file, else discovery,<br/>see Requirements file discovery; TOML by the .toml extension, else YAML"] --> ReqOK{"file readable and valid?"}
+    ReqOK -->|"missing, unreadable, not YAML or TOML,<br/>a galaxy.toml schema this tool refuses,<br/>or not a requirements shape"| X2a(["exit 2 (usage)"])
     ReqOK -->|"yes"| Warn["print requirement warnings<br/>with roles: entries, print the queued roles_path warnings"]
     Warn --> Roots["prepare the collection roots"]
     Roots -->|"invalid entry"| X2a
@@ -1615,9 +1665,10 @@ with exit 2.
 
 `cleanup` (alias `c`) takes the cache backend's exclusive lock and loads the
 snapshot and the project registry. It then works out, across every recorded
-project, which installed collections and roles some project's `requirements.yml`
-still reaches, and removes the rest: their install directories, their cached
-artifacts and their snapshot records. After that it sweeps legacy artifact keys
+project, which installed collections and roles some project's requirements
+file (`galaxy.toml` or `requirements.yml`) still reaches, and removes the
+rest: their install directories, their cached artifacts and their snapshot
+records. After that it sweeps legacy artifact keys
 and extracted-store entries that nothing references, and saves the snapshot.
 
 Two rules hold at every step below. A caught SIGINT, SIGTERM or SIGHUP ends the
@@ -1724,9 +1775,9 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    R1["for each recorded project, sorted by path,<br/>against the complete index of every project"] --> Req{"recorded requirements file loads?"}
+    R1["for each recorded project, sorted by path,<br/>against the complete index of every project"] --> Req{"recorded requirements file loads?<br/>reloaded by the extension the recorded path carries:<br/>.toml as galaxy.toml, anything else as YAML"}
     Req -->|"no longer exists"| RMiss["warn: contributes no roots this run"]
-    Req -->|"not a regular file, unreadable or unparseable"| X2(["exit 2 (usage)"])
+    Req -->|"not a regular file, unreadable, unparseable,<br/>or a galaxy.toml schema this tool refuses"| X2(["exit 2 (usage)"])
     Req -->|"collections: read, roles: list refused"| RKeep["warn: its roles are kept<br/>mark every indexed role under this project's roles_path reachable,<br/>then the deps of every indexed copy, transitively"]
     Req -->|"yes"| RRoots["mark each name in roles: reachable,<br/>then the deps of every indexed copy, transitively"]
     RMiss --> NextR
@@ -1877,7 +1928,7 @@ flowchart TD
     Off -->|"yes"| E4a(["exit 4 (network)<br/>outdated requires network access"])
     Off -->|"no"| Inert{"any of --clear-cache, --no-cache, --refresh,<br/>--no-deps, --frozen, --s3-bucket set?"}
     Inert -->|"yes"| Warn["one stderr warning naming them; nothing else changes"]
-    Inert -->|"no"| Path["lockfile path: --lock-file, else galaxy.lock beside --requirements-file"]
+    Inert -->|"no"| Path["lockfile path: --lock-file, else galaxy.lock beside the requirements file:<br/>--requirements-file, else discovery (see Requirements file discovery)"]
     Warn --> Path
     Path --> Load{"lockfile.Load result?"}
     Load -->|"loaded"| FromLock["current side: the lockfile's collections and roles<br/>report label: the lockfile path"]
@@ -2102,7 +2153,7 @@ flowchart TD
     D -->|"yes"| X0a
     D -->|"no"| E{"any positional argument?<br/>root ArgValidator NoArguments"}
     E -->|"yes"| X2b(["unexpected arguments<br/>exit 2 (usage)"])
-    E -->|"no"| F["req = --requirements-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>then ANSIBLE_GALAXY_REQUIREMENTS_FILE,<br/>default requirements.yml"]
+    E -->|"no"| F["req = --requirements-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>then ANSIBLE_GALAXY_REQUIREMENTS_FILE;<br/>unset: ./galaxy.toml when a regular file,<br/>else requirements.yml, a warning printed<br/>when both are present,<br/>see Requirements file discovery"]
     F --> G{"--lock-file or GO_GALAXY_LOCK_FILE<br/>set and non-empty?"}
     G -->|"yes"| P1["lockPath = that value"]
     G -->|"no"| H{"req empty?"}
@@ -2152,12 +2203,15 @@ flowchart TD
 
 - `--requirements-file`, `-r`, also `--role-file`
   (`GO_GALAXY_REQUIREMENTS_FILE`, then `ANSIBLE_GALAXY_REQUIREMENTS_FILE`;
-  default `requirements.yml`; a variable set to the empty string counts as set,
-  so an empty `GO_GALAXY_REQUIREMENTS_FILE` outranks
-  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`): the file hashed when there is no
-  lockfile, and the directory the default lockfile path is taken from. An empty
-  value puts the default lockfile in the current directory, and the fallback
-  read of the empty path then exits 2.
+  unset, `./galaxy.toml` when it is a regular file, else `requirements.yml`,
+  with the both-present warning printed on stderr before the key, see
+  [Requirements file discovery](#requirements-file-discovery); a variable set
+  to the empty string counts as set, so an empty `GO_GALAXY_REQUIREMENTS_FILE`
+  outranks `ANSIBLE_GALAXY_REQUIREMENTS_FILE` and switches discovery off): the
+  file hashed when there is no lockfile, as bytes whichever format it holds,
+  and the directory the default lockfile path is taken from. An empty value
+  puts the default lockfile in the current directory, and the fallback read of
+  the empty path then exits 2.
 - `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile path, replacing
   `galaxy.lock` beside the requirements file; an empty value counts as unset. A
   path that does not exist falls back to the requirements file rather than
@@ -2177,9 +2231,9 @@ looked at.
 ## tree
 
 `tree` (alias `t`) prints the dependency tree the lockfile records, one tree per
-root named in `requirements.yml`, then a second `roles:` group when either file
-has roles. It reads only those two files: no cache backend, no network, no
-write.
+root named in the requirements file (`galaxy.toml` or `requirements.yml`), then
+a second `roles:` group when either file has roles. It reads only those two
+files: no cache backend, no network, no write.
 
 ### Command flow
 
@@ -2192,7 +2246,7 @@ flowchart TD
     HX(["print help, exit 0<br/>a positional word read as a<br/>help topic instead: exit 2"])
     A{"positional arguments given?"}
     AX(["exit 2 (usage)<br/>unexpected arguments"])
-    RP["reqPath = --requirements-file, -r, --role-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>ANSIBLE_GALAXY_REQUIREMENTS_FILE<br/>default requirements.yml"]
+    RP["reqPath = --requirements-file, -r, --role-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>ANSIBLE_GALAXY_REQUIREMENTS_FILE;<br/>unset: ./galaxy.toml when a regular file,<br/>else requirements.yml, a warning printed<br/>when both are present,<br/>see Requirements file discovery"]
     LF{"--lock-file or<br/>GO_GALAXY_LOCK_FILE set?"}
     LP1["lockPath = that value"]
     RE{"reqPath empty?"}
@@ -2206,9 +2260,9 @@ flowchart TD
     RNF{"not found?"}
     RNFX(["exit 2 (usage)<br/>requirements file not found"])
     RDX(["exit 2 (usage)<br/>requirements file is unreadable:<br/>permission denied, a directory"])
-    RY{"valid YAML?"}
-    RYX(["exit 2 (usage)<br/>requirements file is not valid YAML"])
-    RS{"top level is a list of collections,<br/>or a mapping with collections: or roles:,<br/>and every entry validates?"}
+    RY{"valid YAML, or, for a .toml path,<br/>valid TOML?"}
+    RYX(["exit 2 (usage)<br/>requirements file is not valid YAML,<br/>or requirements file is not valid TOML"])
+    RS{"YAML: top level is a list of collections,<br/>or a mapping with collections: or roles:;<br/>TOML: a [project] table with collections or roles<br/>and no other table or key;<br/>and every entry validates?"}
     RSX(["exit 2 (usage)<br/>unsupported format or invalid entry"])
     ROOTS["collect collection roots and role roots<br/>see Root selection"]
     PT["print reqPath header and one tree<br/>per sorted collection root<br/>see Tree walk"]
@@ -2373,10 +2427,14 @@ reached. Lockfile entries no root reaches are not printed.
 ### Flags that change the flow
 
 - `--requirements-file`, `-r`, `--role-file` (`GO_GALAXY_REQUIREMENTS_FILE`,
-  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`; default `requirements.yml`): the file the
-  roots are read from, and, when `--lock-file` is unset, the directory the
-  default `galaxy.lock` is looked up in (an empty value makes it `galaxy.lock`
-  in the working directory).
+  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`; unset, `./galaxy.toml` when it is a
+  regular file, else `requirements.yml`, with the both-present warning printed
+  on stderr before the tree, see
+  [Requirements file discovery](#requirements-file-discovery)): the file the
+  roots are read from, parsed as TOML by its `.toml` extension and as YAML
+  otherwise, and, when `--lock-file` is unset, the directory the default
+  `galaxy.lock` is looked up in (an empty value counts as set, makes it
+  `galaxy.lock` in the working directory and fails the read of the empty path).
 - `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile read instead of
   `galaxy.lock` beside the requirements file.
 - `--help`, `-h`: prints the command's help and exits 0 before anything is read.
@@ -2395,7 +2453,9 @@ root's version alias) after `tree` and ignores it: no version is printed, while
 command line, what the lockfile pinned it to, what requires it and what it
 depends on. It reads only the lockfile and the requirements file: no cache
 backend, no network, no write, and every printed line comes from the lockfile
-except the `requirements.yml (root)` line, which the requirements file decides.
+except the `<file> (root)` line - `galaxy.toml (root)` or
+`requirements.yml (root)`, the base name of the requirements file that was
+read - which that file decides.
 
 ### Arguments and flags
 
@@ -2447,7 +2507,7 @@ as an answer about both.
 
 ```mermaid
 flowchart TD
-    RP["reqPath = --requirements-file, -r, --role-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>ANSIBLE_GALAXY_REQUIREMENTS_FILE<br/>default requirements.yml"]
+    RP["reqPath = --requirements-file, -r, --role-file<br/>or GO_GALAXY_REQUIREMENTS_FILE,<br/>ANSIBLE_GALAXY_REQUIREMENTS_FILE;<br/>unset: ./galaxy.toml when a regular file,<br/>else requirements.yml, a warning printed<br/>when both are present,<br/>see Requirements file discovery"]
     LF{"--lock-file or<br/>GO_GALAXY_LOCK_FILE non-empty?"}
     LP1["lockPath = that value"]
     RE{"reqPath empty?"}
@@ -2457,7 +2517,7 @@ flowchart TD
     LXX(["exit 6 (lockfile)<br/>lockfile not found"])
     LV{"readable, valid YAML,<br/>schema_version 1 to 4,<br/>every entry validates?"}
     LVX(["exit 6 (lockfile)<br/>lockfile is invalid"])
-    RQ{"requirements file reads, parses<br/>and every entry validates?"}
+    RQ{"requirements file reads, parses<br/>(TOML by the .toml extension, else YAML)<br/>and every entry validates?"}
     RQN["error discarded:<br/>collection roots and role roots empty"]
     C0["for each collections: entry"]
     CG{"type git?"}
@@ -2521,7 +2581,7 @@ flowchart TD
     C1["print name version"]
     C2["print type, source, ref, commit,<br/>subdir, sha256, each only when non-empty"]
     C4{"target is a collection root?"}
-    C5["print - requirements.yml (root)"]
+    C5["print - base name of the requirements file (root):<br/>galaxy.toml (root) or requirements.yml (root)"]
     C6["print - name version for each parent,<br/>sorted by name"]
     C7{"not a root and no parents?"}
     C8["print - (no parents - orphan in lockfile)"]
@@ -2531,7 +2591,7 @@ flowchart TD
     R1["print role name version"]
     R2["print type and source always;<br/>galaxy, repository, ref, commit<br/>and sha256 only when non-empty"]
     R4{"matched role's install name<br/>is a role root?"}
-    R5["print - requirements.yml (root)"]
+    R5["print - base name of the requirements file (root):<br/>galaxy.toml (root) or requirements.yml (root)"]
     R6["print - role name version for each<br/>parent, sorted by name"]
     R7{"not a root and no parents?"}
     R8["print - (no parents - orphan in lockfile)"]
@@ -2579,8 +2639,11 @@ entry its source and sha256, a git entry type, source, ref, commit and, when it
 is not the repository root, subdir, a url entry type, source and sha256. The
 role header follows the role type the same way: a Galaxy role its type, galaxy,
 source, repository, ref and commit, a git role type, source, ref and commit, a
-url role type, source and sha256. The `requirements.yml (root)` line prints that
-literal file name whatever `--requirements-file` names. A role's parents are
+url role type, source and sha256. The `(root)` line names the base name of the
+requirements file that was read - `galaxy.toml (root)`, `requirements.yml
+(root)`, or the base name of whatever `--requirements-file` named, its
+directory dropped - so the line reads the same wherever the file sits. A
+role's parents are
 matched against the matched role's install name, which is what a role's deps
 hold, so a role explained by its Galaxy name (`owner.role`) lists the same
 parents as by its install name.
@@ -2588,11 +2651,15 @@ parents as by its install name.
 ### Flags that change the flow
 
 - `--requirements-file`, `-r`, `--role-file` (`GO_GALAXY_REQUIREMENTS_FILE`,
-  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`; default `requirements.yml`): the file the
-  `requirements.yml (root)` line is decided from, and, when `--lock-file` is
-  unset, the directory the default `galaxy.lock` is looked up in. An empty value
-  looks up `galaxy.lock` in the working directory and leaves both root sets
-  empty.
+  `ANSIBLE_GALAXY_REQUIREMENTS_FILE`; unset, `./galaxy.toml` when it is a
+  regular file, else `requirements.yml`, with the both-present warning printed
+  on stderr before the report, see
+  [Requirements file discovery](#requirements-file-discovery)): the file the
+  `(root)` line is decided from and named after, parsed as TOML by its `.toml`
+  extension and as YAML otherwise, and, when `--lock-file` is unset, the
+  directory the default `galaxy.lock` is looked up in. An empty value counts
+  as set, looks up `galaxy.lock` in the working directory and leaves both root
+  sets empty.
 - `--lock-file` (`GO_GALAXY_LOCK_FILE`): the lockfile read instead of
   `galaxy.lock` beside the requirements file.
 - `--help`, `-h`: with no positional word, prints the command's help and exits 0

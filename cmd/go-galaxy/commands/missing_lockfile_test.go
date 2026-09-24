@@ -18,16 +18,26 @@ import (
 // lockfile.LoadRequired, as helpers.ErrLockfileMissing in the lockfile exit
 // class, and that hash still falls back to the requirements file.
 
-// missingLockfileFixture writes a requirements file into a fresh directory
+// missingLockfileFixture writes a requirements.yml into a fresh directory
 // and returns that directory, with no lockfile beside it.
 func missingLockfileFixture(t *testing.T) string {
 	t.Helper()
+	return missingLockfileDir(t, "requirements.yml", "collections:\n  - name: acme.widgets\n    version: \"*\"\n")
+}
+
+// missingLockfileTOMLFixture is missingLockfileFixture with a galaxy.toml as
+// the only file, so the lockfile is looked for beside a discovered file.
+func missingLockfileTOMLFixture(t *testing.T) string {
+	t.Helper()
+	return missingLockfileDir(t, "galaxy.toml", "[project]\ncollections = [\"acme.widgets\"]\n")
+}
+
+func missingLockfileDir(t *testing.T, name, body string) string {
+	t.Helper()
 
 	dir := t.TempDir()
-	reqPath := filepath.Join(dir, "requirements.yml")
-	body := []byte("collections:\n  - name: acme.widgets\n    version: \"*\"\n")
-	if err := os.WriteFile(reqPath, body, helpers.FileMod); err != nil {
-		t.Fatalf("write requirements: %v", err)
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", name, err)
 	}
 	return dir
 }
@@ -46,9 +56,10 @@ func runCommandInDir(t *testing.T, dir string, cmd *cli.Command, args ...string)
 // exit code for each command here that requires a lockfile, so a sentinel that
 // no longer maps to ExitLock is caught.
 func TestMissingLockfileClassifiesAsLockfileError(t *testing.T) {
+	clearRequirementsFileEnv(t)
 	for _, tc := range missingLockfileCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := missingLockfileFixture(t)
+			dir := tc.fixture(t)
 
 			err := runCommandInDir(t, dir, tc.command(), tc.args...)
 			if !errors.Is(err, helpers.ErrLockfileMissing) {
@@ -70,16 +81,19 @@ func TestMissingLockfileClassifiesAsLockfileError(t *testing.T) {
 // missingLockfileCase is one row of TestMissingLockfileClassifiesAsLockfileError.
 type missingLockfileCase struct {
 	command func() *cli.Command
+	fixture func(t *testing.T) string
 	name    string
 	args    []string
 }
 
 // missingLockfileCases returns one row per command in this package that
-// requires a lockfile to exist.
+// requires a lockfile to exist, once per requirements file it can discover.
 func missingLockfileCases() []missingLockfileCase {
 	return []missingLockfileCase{
-		{name: "tree", command: Tree},
-		{name: "explain", command: Explain, args: []string{"acme.widgets"}},
+		{name: "tree", command: Tree, fixture: missingLockfileFixture},
+		{name: "explain", command: Explain, args: []string{"acme.widgets"}, fixture: missingLockfileFixture},
+		{name: "tree, galaxy.toml", command: Tree, fixture: missingLockfileTOMLFixture},
+		{name: "explain, galaxy.toml", command: Explain, args: []string{"acme.widgets"}, fixture: missingLockfileTOMLFixture},
 	}
 }
 

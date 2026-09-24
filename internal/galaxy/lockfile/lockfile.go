@@ -46,7 +46,8 @@ const (
 // SchemaVersionFor picks it from the entries.
 const SchemaVersionURL = 4
 
-// DefaultName is the conventional lockfile name beside requirements.yml.
+// DefaultName is the conventional lockfile name beside the requirements file,
+// galaxy.toml or requirements.yml, whichever the run read.
 const DefaultName = "galaxy.lock"
 
 // Entry is one pinned collection: a Galaxy entry pins version and SHA256, a

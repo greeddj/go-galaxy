@@ -354,6 +354,9 @@ func TestResolveDefaultPath(t *testing.T) {
 	if got := ResolveDefaultPath("", ""); got != DefaultName {
 		t.Fatalf("got %q", got)
 	}
+	if got := ResolveDefaultPath("/proj/galaxy.toml", ""); got != "/proj/galaxy.lock" {
+		t.Fatalf("beside galaxy.toml: got %q, want /proj/galaxy.lock", got)
+	}
 }
 
 // TestLoadRejectsAnInvalidCollectionName pins that a name outside the Galaxy

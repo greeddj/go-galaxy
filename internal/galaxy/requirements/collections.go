@@ -1,6 +1,6 @@
-// Package requirements parses requirements.yml into collection and role
-// entries. It is the boundary where every name, URL and signature source in
-// the file is validated, and it refuses any shape this tool cannot install.
+// Package requirements parses requirements.yml and galaxy.toml into collection
+// and role entries. It is the boundary where every name, URL and signature
+// source is validated, and it refuses any shape this tool cannot install.
 package requirements
 
 import (
@@ -13,6 +13,7 @@ import (
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
+	"github.com/greeddj/go-galaxy/internal/galaxy/projectfile"
 	"github.com/greeddj/go-galaxy/internal/galaxy/signature"
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 	"go.yaml.in/yaml/v3"
@@ -59,11 +60,15 @@ type File struct {
 	Warnings    []string
 }
 
-// Load reads and parses a requirements file.
+// Load reads and parses a requirements file. The format is picked by the
+// path's extension alone: a .toml file is galaxy.toml, anything else YAML.
 func Load(path, defaultSource string) (File, error) {
 	data, err := Read(path)
 	if err != nil {
 		return File{}, err
+	}
+	if projectfile.IsTOMLPath(path) {
+		return ParseTOML(data, defaultSource)
 	}
 	return Parse(data, defaultSource)
 }
@@ -191,7 +196,7 @@ func parseCollectionStringItem(value string, defaultSource string) (CollectionRe
 	}
 	if looksLikeSourceName(name) {
 		return CollectionRequirement{}, fmt.Errorf("%w %q (only Galaxy API, git and url sources are supported)",
-			helpers.ErrUnsupportedCollectionSource, name)
+			helpers.ErrUnsupportedCollectionSource, helpers.URLForMessage(name))
 	}
 	namespace, collection, ok := helpers.SplitFQDN(name)
 	if !ok {
@@ -309,7 +314,8 @@ func validateRequirement(req CollectionRequirement, raw any) error {
 		return fmt.Errorf("%w %q (only galaxy, git and url are supported)", helpers.ErrUnsupportedCollectionType, req.Type)
 	}
 	if req.Type == "" && looksLikeSourceName(req.Name) {
-		return fmt.Errorf("%w %q (only Galaxy API, git and url sources are supported)", helpers.ErrUnsupportedCollectionSource, req.Name)
+		return fmt.Errorf("%w %q (only Galaxy API, git and url sources are supported)",
+			helpers.ErrUnsupportedCollectionSource, helpers.URLForMessage(req.Name))
 	}
 	return checkGalaxySourceShape(req)
 }

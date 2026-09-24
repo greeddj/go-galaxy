@@ -325,9 +325,9 @@ func resolveOrLoadLockfile(
 	return resolved, graph, nil
 }
 
-// loadRoots parses requirements.yml into collection and role roots. A
-// collection without source: keeps an empty Source, so it walks the whole
-// configured server list rather than being nailed to cfg.Server.
+// loadRoots parses the requirements file, galaxy.toml or requirements.yml,
+// into collection and role roots. A collection without source: keeps an empty
+// Source, so it walks the whole server list rather than being nailed to one.
 func loadRoots(cfg *config.Config, runtime *infra.Infra) ([]collection, []requirements.RoleRequirement, error) {
 	runtime.Output.Printf("Load collections from requirements file")
 	collectionsDirect, file, err := loadRequirements(cfg.RequirementsFile, "")

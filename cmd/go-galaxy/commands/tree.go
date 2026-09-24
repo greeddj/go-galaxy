@@ -9,11 +9,13 @@ import (
 	"slices"
 
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/cliflags"
+	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
+	"github.com/greeddj/go-galaxy/internal/progress"
 	"github.com/greeddj/go-galaxy/internal/safeout"
 	"github.com/urfave/cli/v3"
 )
@@ -27,7 +29,10 @@ func Tree() *cli.Command {
 		Usage:   "Print the resolved dependency tree from the lockfile",
 		Flags:   cliflags.LockInspectFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
-			reqPath := c.String("requirements-file")
+			reqPath, warning := config.RequirementsPath(c)
+			if warning != "" {
+				progress.Warnf("%s", warning)
+			}
 			lockPath := lockfile.ResolveDefaultPath(reqPath, c.String("lock-file"))
 			lf, err := lockfile.LoadRequired(lockPath)
 			if err != nil {

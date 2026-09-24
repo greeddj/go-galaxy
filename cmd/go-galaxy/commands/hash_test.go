@@ -179,6 +179,32 @@ func checkRequirementsNotYAMLHashed(t *testing.T, got string, err error) {
 	}
 }
 
+// notTOMLContent is a .toml requirements file whose bytes are not TOML; the
+// fallback hashes it as it is, exactly as it does the not-YAML file.
+const notTOMLContent = "[project]\ncollections = [\n"
+
+// setupRequirementsNotTOML writes only a broken.toml, so the fallback reads a
+// file the TOML parser would refuse.
+func setupRequirementsNotTOML(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	reqPath := filepath.Join(dir, "broken.toml")
+	writeTestFile(t, reqPath, []byte(notTOMLContent))
+	return reqPath, filepath.Join(dir, lockfile.DefaultName)
+}
+
+// checkRequirementsNotTOMLHashed asserts the fallback key is the SHA256 of the
+// raw bytes: a .toml path does not make hash decode the file it keys on.
+func checkRequirementsNotTOMLHashed(t *testing.T, got string, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("computeHash() error = %v, want nil", err)
+	}
+	sum := sha256.Sum256([]byte(notTOMLContent))
+	if want := "sha256:" + hex.EncodeToString(sum[:]); got != want {
+		t.Errorf("computeHash() = %q, want %q", got, want)
+	}
+}
+
 // setupRequirementsDirectory puts a directory where the requirements file
 // should be, with no lockfile, so the fallback read fails.
 func setupRequirementsDirectory(t *testing.T, dir string) (string, string) {
@@ -208,6 +234,11 @@ func TestComputeHash(t *testing.T) {
 		{name: "valid lockfile present", setup: setupValidLockfile, check: checkValidLockfile},
 		{name: "lockfile absent, requirements present falls back", setup: setupLockfileAbsent, check: checkLockfileAbsentFallback},
 		{name: "lockfile absent, requirements not YAML still hashed", setup: setupRequirementsNotYAML, check: checkRequirementsNotYAMLHashed},
+		{
+			name:  "lockfile absent, .toml requirements not TOML still hashed",
+			setup: setupRequirementsNotTOML,
+			check: checkRequirementsNotTOMLHashed,
+		},
 		{
 			name:  "lockfile absent, requirements unreadable surfaces ErrRequirementsUnreadable",
 			setup: setupRequirementsDirectory,

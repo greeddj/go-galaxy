@@ -2,9 +2,11 @@
 
 Drop-in means the same `requirements.yml`, the same `ansible.cfg` keys and the
 same `ANSIBLE_*` environment variables, for the `install` subset - collections
-and roles - the README's [Scope](../README.md#scope) names. It does not mean identical
-behavior everywhere: each deliberate difference is called out below rather
-than left to be discovered in CI.
+and roles - the README's [Scope](../README.md#scope) names. `requirements.yml`
+is the drop-in file; `galaxy.toml`, this tool's own project file, is one
+`ansible-galaxy` cannot read at all, and is listed below as a difference. It
+does not mean identical behavior everywhere: each deliberate difference is
+called out below rather than left to be discovered in CI.
 
 Token handling is a second surface where that sentence splits, though less
 sharply than signature verification does below, where the four `[galaxy]`
@@ -223,6 +225,31 @@ would wrongly conclude the environment names are dead too - they are not.
     writes nothing to the cache.
   - `file` and `dir` sources remain refused at load; a `url` source is
     supported, with its own divergences (see the url bullet under Notes).
+- **`galaxy.toml` is this tool's own file, and `ansible-galaxy` cannot read
+  it.** `requirements.yml` stays the drop-in. `galaxy.toml` carries the same
+  `collections` and `roles` lists under a `[project]` table (with `name`,
+  `version` and `description` beside them, checked for type and otherwise
+  unused), and extends the grammar in one place: a collection entry may be a
+  single string carrying its constraint, `"community.crypto >= 2.0, < 3.0"`.
+  The name is the leading run of `[A-Za-z0-9_.]`; what follows, after a space
+  or straight after an operator, is read by the same grammar `version:` is
+  (see the constraint bullet under
+  [Differences a migration runs into](#differences-a-migration-runs-into)),
+  so `"ns.name 1.0"` is the `~1.0` range that `version: "1.0"` is, and
+  `"ns.name == 1.2.3"`, `"ns.name = 1.2.3"` and `"ns.name 1.2.3"` are the
+  exact pin - and it is checked at load, with the usage code (`2`), where
+  `requirements.yml` leaves an unparsable constraint to the resolve. A git
+  pointer, an http(s) URL and a role string are never split: a role string is
+  ansible's `src[,version[,name]]`, comma and all. An inline table spells the
+  mapping form, `{ name = "acme.app", version = ">= 1.4.0", source =
+  "automation_hub" }`. The schema is strict where `requirements.yml` is
+  tolerant: an unknown table, an unknown `[project]` key and an unknown key on
+  a collection or role table are refused at load, where a `roles:` mapping key
+  ansible drops is only warned about. A checkout holding both files makes the
+  two tools read different files: go-galaxy reads `galaxy.toml`, warning that
+  `requirements.yml` is ignored, and `ansible-galaxy` reads
+  `requirements.yml`, so a pipeline running both keeps the two in step or
+  names one with `-r`.
 
 Resolution itself is stricter than ansible's: a constraint set with no solution
 is a failure with a proof, not a lenient pick. See [Exit codes](exit-codes.md#exit-codes) for
@@ -326,7 +353,10 @@ without them.
   ansible's `==` is rewritten to `=` in every comma-separated clause;
   `===` and `>==` are left alone and fail as invalid constraints rather
   than becoming an exact pin. A file that uses the wider forms does not
-  carry back to `ansible-galaxy`.
+  carry back to `ansible-galaxy`. The constraint a `galaxy.toml` dependency
+  string carries after its name is read by this same grammar, and refused at
+  load rather than at the resolve when it does not parse (see the
+  `galaxy.toml` bullet under [Deliberate differences](#deliberate-differences)).
 - **Prereleases are excluded and admitted on different rules than ansible's.**
   Stricter in one direction: a collection publishing only prerelease versions
   satisfies no plain constraint here, so the resolve fails with its proof plus

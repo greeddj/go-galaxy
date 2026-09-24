@@ -72,7 +72,8 @@ func TestLoadRootFQDNsReadsRoles(t *testing.T) {
 func TestPrintExplainRole(t *testing.T) {
 	t.Parallel()
 	var buf strings.Builder
-	if err := printExplain(&buf, roleLockfile(), "geerlingguy.docker", nil, map[string]bool{"geerlingguy.docker": true}); err != nil {
+	roots := map[string]bool{"geerlingguy.docker": true}
+	if err := printExplain(&buf, roleLockfile(), "geerlingguy.docker", "requirements.yml", nil, roots); err != nil {
 		t.Fatalf("printExplain: %v", err)
 	}
 	for _, want := range []string{
@@ -91,7 +92,7 @@ func TestPrintExplainRole(t *testing.T) {
 func TestPrintExplainRoleParents(t *testing.T) {
 	t.Parallel()
 	var base strings.Builder
-	if err := printExplain(&base, roleLockfile(), "base", nil, nil); err != nil {
+	if err := printExplain(&base, roleLockfile(), "base", "requirements.yml", nil, nil); err != nil {
 		t.Fatalf("printExplain(base): %v", err)
 	}
 	if !strings.Contains(base.String(), "    - role geerlingguy.docker 7.4.1") || strings.Contains(base.String(), "orphan") {
@@ -129,7 +130,7 @@ func TestPrintExplainRoleHeaderByType(t *testing.T) {
 			"  source     : https://example.com/roles/myrole.tar.gz", "  sha256     : " + digest},
 	} {
 		var buf strings.Builder
-		if err := printExplain(&buf, lf, target, nil, roots); err != nil {
+		if err := printExplain(&buf, lf, target, "requirements.yml", nil, roots); err != nil {
 			t.Fatalf("printExplain(%s): %v", target, err)
 		}
 		want := strings.Join(append(header, "  required by:", "    - requirements.yml (root)", ""), "\n")
@@ -149,13 +150,13 @@ func TestPrintExplainBothKinds(t *testing.T) {
 		Name: "acme.app", Type: lockfile.RoleTypeGit, Version: "v1", Source: gitTestSource, Ref: "v1", Commit: gitTestCommit,
 	})
 	var out strings.Builder
-	if err := printExplain(&out, both, "acme.app", map[string]bool{"acme.app": true}, nil); err != nil {
+	if err := printExplain(&out, both, "acme.app", "requirements.yml", map[string]bool{"acme.app": true}, nil); err != nil {
 		t.Fatalf("printExplain(both): %v", err)
 	}
 	if !strings.HasPrefix(out.String(), "acme.app 1.0.0\n") || !strings.Contains(out.String(), "\nrole acme.app v1\n") {
 		t.Fatalf("a name that is both prints both sections, collection first:\n%s", out.String())
 	}
-	err := printExplain(&strings.Builder{}, both, "nothing", nil, nil)
+	err := printExplain(&strings.Builder{}, both, "nothing", "requirements.yml", nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "collection or role") {
 		t.Fatalf("unknown target: %v", err)
 	}

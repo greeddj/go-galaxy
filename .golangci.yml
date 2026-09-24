@@ -37,6 +37,7 @@ linters:
             - github.com/urfave/cli/v3
             - go.etcd.io/bbolt
             - go.yaml.in/yaml/v3
+            - github.com/BurntSushi/toml
     goconst:
       exclude-types:
         - Call

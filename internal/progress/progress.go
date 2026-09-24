@@ -201,6 +201,14 @@ func Errorf(format string, args ...any) {
 	writeLine(s.w, decorated{prefix: s.fail(), msg: safeout.Clean(fmt.Sprintf(format, args...))})
 }
 
+// Warnf prints a warning line to stderr for a caller that owns no Progress,
+// resolving color per call as Errorf does; hash, tree and explain report a
+// requirements discovery warning through it.
+func Warnf(format string, args ...any) {
+	s := stream{w: os.Stderr, color: colorEnabled(os.Stderr)}
+	writeLine(s.w, decorated{prefix: s.warn(), msg: safeout.Clean(fmt.Sprintf(format, args...))})
+}
+
 // Printf updates the spinner suffix when a spinner is active, otherwise
 // prints a log line unless quiet mode is enabled.
 func (p *Progress) Printf(format string, args ...any) {

@@ -113,7 +113,7 @@ against `.goreleaser.yml`.
 
 Every gate is an ordinary test, run by `go test ./...` like anything else. Three
 test-only packages - `internal/proseaudit`, `internal/lockaudit`,
-`internal/ciaudit` - hold nothing but gates, and nothing imports them; four
+`internal/ciaudit` - hold nothing but gates, and nothing imports them; five
 more gates are audit files sitting inside the package they gate.
 Either way they need no Justfile target and no CI step, and the only cost they
 carry is three depguard entries for `go/ast`, `go/parser` and `go/token`.
@@ -315,6 +315,18 @@ constructors, because a blocklist was measured missing two evasions: a
 constructor held as a function value, and a zero value turned into a reader by
 `Reset`. Open gzip readers through `internal/gzipstream` instead.
 
+### `internal/galaxy/projectfile` - the toml monopoly
+
+No non-test file outside `internal/galaxy/projectfile` may import
+`github.com/BurntSushi/toml`; test files, `vendor/` and dot-directories are out
+of scope, as for pgzip. Resolution is by import path, so an alias, a dot import
+or a blank import cannot hide a second importer, and the gate first checks that
+it sees the package's own decoder importing the library, so a rename cannot
+leave it passing over nothing. One importer keeps one place rendering a TOML
+parse error, and that rendering is deliberately position-only - line and last
+key, never the library's message, which echoes the file's own tokens (see
+[Security](security.md#loading-requirementsyml-and-the-lockfile)).
+
 ### `internal/cache/s3` - a class row for every sentinel
 
 Every package-level variable in the S3 backend's non-test files named like a
@@ -338,12 +350,15 @@ linters most projects leave off. Two settings matter beyond that.
 **depguard** carries an explicit import allow-list. Anything outside it is a
 lint error on import: the standard library, `go/ast`, `go/parser` and `go/token`
 (which the audit packages need and which the standard-library expansion does not
-cover), this module, and the ten direct dependencies -
+cover), this module, and the eleven direct dependencies -
 `Masterminds/semver/v3`, `ProtonMail/go-crypto`, `go-git/go-git/v5`,
 `go-git/go-billy/v5`, the `ssh` subtree of `golang.org/x/crypto` (the entry
 is a prefix: `ssh`, `ssh/knownhosts` and `ssh/agent` pass, the rest of the
 module does not), `klauspost/pgzip`, `psvmcc/hub`, `urfave/cli/v3`,
-`go.etcd.io/bbolt` and `go.yaml.in/yaml/v3`.
+`go.etcd.io/bbolt`, `go.yaml.in/yaml/v3` and `github.com/BurntSushi/toml`,
+which is imported by exactly `internal/galaxy/projectfile` (the
+[toml monopoly gate](#internalgalaxyprojectfile---the-toml-monopoly) keeps it
+so).
 
 **No test-file exclusions.** Every linter applies to `_test.go` too.
 
@@ -680,7 +695,8 @@ different place:
    `just lint` and CI reject the import (the list names go-git, go-billy and
    `golang.org/x/crypto/ssh` for the git transport and its test double, and
    those three are imported by exactly `internal/galaxy/gitfetch` and
-   `internal/testing/fakegit`);
+   `internal/testing/fakegit`; `BurntSushi/toml` for galaxy.toml, imported by
+   exactly `internal/galaxy/projectfile`, which its gate enforces);
 2. run `just deps`, or Go's own vendor-consistency check fails the build and
    names what is out of sync.
 
@@ -755,7 +771,9 @@ defect is not reported as the remote's integrity failure.
 
 The exit-code tests are closed tables, and nothing enumerates the sentinels in
 `helpers`: a new sentinel needs both a predicate and a row in the matching
-table, or it silently exits 1. Those deliberately left at 1 are listed in
+table, or it silently exits 1 - `ErrInvalidRequirementsTOML`, for instance,
+joined `isInputFileUsageError` and its test table in one change. Those
+deliberately left at 1 are listed in
 `genericSentinels` with their reason. The sentinels `internal/galaxy/extracted`
 exports are not classified by name either, because every path that raises one
 runs inside an install or warm worker, whose failures arrive behind

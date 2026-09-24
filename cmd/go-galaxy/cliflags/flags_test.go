@@ -25,11 +25,12 @@ func envKeys(t *testing.T, chain cli.ValueSourceChain) []string {
 
 // wantStringFlag is the expected shape of one LockInspectFlags entry.
 type wantStringFlag struct {
-	name    string
-	usage   string
-	value   string
-	aliases []string
-	envKeys []string
+	name        string
+	usage       string
+	value       string
+	defaultText string
+	aliases     []string
+	envKeys     []string
 }
 
 // assertStringFlag checks flag against want, reporting every mismatch.
@@ -50,6 +51,9 @@ func assertStringFlag(t *testing.T, flag cli.Flag, want wantStringFlag) {
 	}
 	if sf.Value != want.value {
 		t.Errorf("Value = %q, want %q", sf.Value, want.value)
+	}
+	if sf.DefaultText != want.defaultText {
+		t.Errorf("DefaultText = %q, want %q", sf.DefaultText, want.defaultText)
 	}
 	if got := envKeys(t, sf.Sources); !slices.Equal(got, want.envKeys) {
 		t.Errorf("env sources = %v, want %v", got, want.envKeys)
@@ -74,16 +78,7 @@ func TestLockInspectFlags(t *testing.T) {
 		{
 			name: "requirements-file",
 			flag: flags[0],
-			want: wantStringFlag{
-				name: "requirements-file",
-				// The default keeps hash, tree and explain reading the same file
-				// as install when nobody says; the lock-file row's empty Value is
-				// the control that this assertion tells the two apart.
-				value:   "requirements.yml",
-				aliases: []string{"r", "role-file"},
-				usage:   "Path to requirements.yml",
-				envKeys: []string{"GO_GALAXY_REQUIREMENTS_FILE", "ANSIBLE_GALAXY_REQUIREMENTS_FILE"},
-			},
+			want: wantRequirementsFileFlag(),
 		},
 		{
 			name: "lock-file",
@@ -103,6 +98,34 @@ func TestLockInspectFlags(t *testing.T) {
 			assertStringFlag(t, tt.flag, tt.want)
 		})
 	}
+}
+
+// wantRequirementsFileFlag is the one shape every command's requirements-file
+// flag must have: no Value, since discovery decides the default, and a
+// DefaultText that states the discovery order; the lock-file row is the control.
+func wantRequirementsFileFlag() wantStringFlag {
+	return wantStringFlag{
+		name:        "requirements-file",
+		aliases:     []string{"r", "role-file"},
+		defaultText: "galaxy.toml if present, else requirements.yml",
+		usage: "Path to the requirements file: requirements.yml, or galaxy.toml by its .toml extension; " +
+			"unset, ./galaxy.toml is read when present, else ./requirements.yml",
+		envKeys: []string{"GO_GALAXY_REQUIREMENTS_FILE", "ANSIBLE_GALAXY_REQUIREMENTS_FILE"},
+	}
+}
+
+// TestCollectionFlagsRequirementsFile pins that the install set mounts the
+// same requirements-file declaration hash, tree and explain do, so the two
+// cannot drift apart in help text, default or environment sources.
+func TestCollectionFlagsRequirementsFile(t *testing.T) {
+	t.Parallel()
+	for _, flag := range CollectionFlags() {
+		if slices.Contains(flag.Names(), "requirements-file") {
+			assertStringFlag(t, flag, wantRequirementsFileFlag())
+			return
+		}
+	}
+	t.Fatal("CollectionFlags() mounts no requirements-file flag")
 }
 
 // TestDryRunEnv checks that the persistent --dry-run flag can be set via

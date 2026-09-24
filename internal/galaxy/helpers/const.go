@@ -21,6 +21,14 @@ const (
 	// directory or a role's directory; verifyExtractMarker also checks a tally.
 	ExtractMarkerPrefix = ".extract-done."
 
+	// RequirementsTOMLName is the file discovery looks for first when no flag
+	// or variable names a requirements file.
+	RequirementsTOMLName = "galaxy.toml"
+
+	// RequirementsYAMLName is the file discovery falls back to when
+	// RequirementsTOMLName is absent; it is also the default lockfile sibling.
+	RequirementsYAMLName = "requirements.yml"
+
 	// CollectionNameParts is the expected number of parts in a collection name like "namespace.collection".
 	CollectionNameParts = 2
 

@@ -114,6 +114,10 @@ var (
 	// parse as YAML; a document that parses into the wrong shape is
 	// ErrUnsupportedRequirementsFormat or an entry sentinel instead.
 	ErrInvalidRequirementsYAML = errors.New("requirements file is not valid YAML")
+	// ErrInvalidRequirementsTOML indicates a galaxy.toml whose bytes do not
+	// parse as TOML; a document that parses into the wrong shape is
+	// ErrUnsupportedRequirementsFormat or an entry sentinel instead.
+	ErrInvalidRequirementsTOML = errors.New("requirements file is not valid TOML")
 
 	// ErrCacheDirEmpty indicates the cache directory is empty.
 	ErrCacheDirEmpty = errors.New("cache directory is empty")
@@ -285,6 +289,10 @@ var (
 	// IsExactVersion ("*", ">=1.0.0") where an installable version is required.
 	// Unlike ErrUnsafeCollectionIdentifier, it is path-safe but names no release.
 	ErrInvalidCollectionVersion = errors.New("collection version is not an exact version")
+	// ErrInvalidCollectionConstraint indicates a galaxy.toml version constraint
+	// semver refuses at load; requirements.yml leaves that check to the solver,
+	// so only the TOML path raises it.
+	ErrInvalidCollectionConstraint = errors.New("invalid collection version constraint")
 	// ErrUnsafeRemovalPath indicates a computed removal path failed a
 	// containment check against its expected root directory.
 	ErrUnsafeRemovalPath = errors.New("unsafe removal path")
