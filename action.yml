@@ -19,10 +19,12 @@ inputs:
     default: ''
   requirements:
     description: >-
-      Path to the requirements file to install from. Empty leaves go-galaxy's
-      own resolution alone, which is `requirements.yml` unless
-      `GO_GALAXY_REQUIREMENTS_FILE` says otherwise - passing `-r` here would
-      win over that variable and make it look ignored.
+      Path to the requirements file to install from, `requirements.yml` or a
+      `galaxy.toml`. Empty leaves go-galaxy's own resolution alone: `galaxy.toml`
+      in the workspace when present, else `requirements.yml`, unless
+      `GO_GALAXY_REQUIREMENTS_FILE` or `ANSIBLE_GALAXY_REQUIREMENTS_FILE` says
+      otherwise - passing `-r` here would win over those variables and make
+      them look ignored. The cache key is computed over the same file.
     required: false
     default: ''
   collections-path:
@@ -148,7 +150,15 @@ runs:
       id: cache-key
       if: inputs.cache == 'true' && inputs.install == 'true'
       shell: bash
-      run: echo "value=$(go-galaxy hash)" >> "$GITHUB_OUTPUT"
+      env:
+        INPUT_REQUIREMENTS: ${{ inputs.requirements }}
+      run: |
+        set -euo pipefail
+        # The same -r the install step passes, so the key covers the file that
+        # is installed rather than whatever the workspace holds by default.
+        args=(hash)
+        if [ -n "$INPUT_REQUIREMENTS" ]; then args+=(-r "$INPUT_REQUIREMENTS"); fi
+        echo "value=$(go-galaxy "${args[@]}")" >> "$GITHUB_OUTPUT"
 
     - name: Restore cache
       id: cache
