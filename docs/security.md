@@ -333,7 +333,8 @@ listed in the same `checksums.txt`.
   vacuous-pass warning it prints names the metadata as unavailable rather than
   reading like "no signatures found".
 - **`--frozen` and `--no-deps` normally skip a per-collection metadata request
-  for an already-cached artifact; a verifying run cannot.** A server's own
+  for an already-cached artifact, and `--frozen` for a cache miss too; a
+  verifying run cannot.** A server's own
   signatures live in that same version-metadata document, so turning on
   `--keyring` under either flag reintroduces a metadata request per collection
   that would otherwise have been skipped.

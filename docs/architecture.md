@@ -2359,8 +2359,9 @@ urfave told the operator.
 `exitcode.FromError` walks `exitClasses` top to bottom and returns the first
 match, so the table's order is the exit-code contract, and a test pins it:
 interrupt `130`, integrity `7`, signature `10`, lockfile `6`, a server-supplied
-URL carrying userinfo `5`, install `5`, network `4`, cache busy `8`, cache
-corrupt `9`, resolution `3`, usage `2`, else `1`. Per-collection failures
+URL carrying userinfo or a download URL `lock` will not commit `5`, install
+`5`, network `4`, cache busy `8`, cache corrupt `9`, resolution `3`, usage `2`,
+else `1`. Per-collection failures
 arrive aggregated: the failure summary joins a headline -
 `ErrInstallationFailed` for `install` and `warm`,
 `ErrLatestVersionLookupFailed` for `outdated` - with every cause, and

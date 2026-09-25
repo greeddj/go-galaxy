@@ -43,7 +43,7 @@ draws its path, repeating the startup steps as they apply to that command.
 - [install](#install): resolve the requirements, or read the lockfile under
   `--frozen`, then install collections and roles.
 - [lock](#lock): resolve and write `galaxy.lock`, or gate on drift under
-  `--frozen`.
+  `--check`.
 - [warm](#warm): fill the artifact cache and the extracted store without
   installing anything.
 - [cleanup](#cleanup): remove the collections and roles no recorded project
@@ -371,7 +371,7 @@ flowchart TD
   E3 -->|"yes"| X10(["exit 10 (signature)"])
   E3 -->|"no"| E4{"lockfile missing, invalid,<br/>mismatched or drifted?"}
   E4 -->|"yes"| X6(["exit 6 (lockfile)"])
-  E4 -->|"no"| E5{"server-supplied URL<br/>carrying userinfo?"}
+  E4 -->|"no"| E5{"server-supplied URL carrying userinfo,<br/>or a download_url lock will not commit:<br/>a query, or not its server's artifact?"}
   E5 -->|"yes"| X5A(["exit 5 (install)"])
   E5 -->|"no"| E6{"install-time: the joined install failure,<br/>archive, symlink, empty file,<br/>git build, foreign role directory?"}
   E6 -->|"yes"| X5B(["exit 5 (install)"])
@@ -399,7 +399,8 @@ environment variable is ignored too.
   only before a command word; after one, `--version` is undefined (exit 2) and
   `-v` is accepted and does nothing.
 - install and warm: the collection flags, the signature flags and the S3 flags.
-- lock and outdated: the collection flags and the S3 flags.
+- lock and outdated: the collection flags and the S3 flags, lock with
+  `--check` in place of `--frozen`.
 - cleanup: `--requirements-file` (`-r`, `--role-file`) and the S3 flags, so it
   has no `--offline`, `--timeout`, `--workers`, `--download-workers`,
   `--download-path`, `--roles-path`, `--server`, `--token`,
@@ -497,10 +498,11 @@ environment variable is ignored too.
 
 These flags are accepted but do not branch the shared setup, because they only
 pass values on to a command or the backend: `--lock-file`, `--metrics-file`,
-`--no-deps`, `--frozen`, `--s3-region`, `--s3-prefix`, `--s3-endpoint`,
-`--s3-session-token` and `--s3-path-style-disabled`. Each of them except
-`--no-deps` and `--frozen` takes its value from the matching `[tool.go-galaxy]`
-or `[tool.go-galaxy.s3]` key when the flag and its variable are unset.
+`--no-deps`, `--frozen`, `--check`, `--s3-region`, `--s3-prefix`,
+`--s3-endpoint`, `--s3-session-token` and `--s3-path-style-disabled`. Each of
+them except `--no-deps`, `--frozen` and `--check` takes its value from the
+matching `[tool.go-galaxy]` or `[tool.go-galaxy.s3]` key when the flag and its
+variable are unset.
 
 ## install
 
@@ -1276,7 +1278,7 @@ flowchart TD
     F -->|"yes"| XS(["exit 130, 143 or 129 (interrupt)"])
     F -->|"no"| G{"error?"}
     G -->|"no"| X0(["exit 0 (success)"])
-    G -->|"yes"| H["exitcode.FromError, first match wins:<br/>canceled 130, integrity 7, signature 10,<br/>lockfile 6, server URL userinfo 5,<br/>install 5, network 4,<br/>cache busy 8, cache corrupt 9,<br/>resolution 3, usage 2, else 1"]
+    G -->|"yes"| H["exitcode.FromError, first match wins:<br/>canceled 130, integrity 7, signature 10,<br/>lockfile 6, server URL userinfo<br/>or uncommittable download_url 5,<br/>install 5, network 4,<br/>cache busy 8, cache corrupt 9,<br/>resolution 3, usage 2, else 1"]
     H --> XE(["error printed on stderr,<br/>exit with that code"])
 ```
 
