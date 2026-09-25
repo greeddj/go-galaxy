@@ -36,6 +36,8 @@ archives:
       - README.md
       - CONTRIBUTING.md
       - docs/*.md
+      - docs/*.svg
+      - docs/assets/logo*.svg
   - id: binary
     ids:
       - go-galaxy
