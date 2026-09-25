@@ -253,9 +253,10 @@ func TestOutdatedReportsInNameOrder(t *testing.T) {
 	for _, i := range []int{2, 0, 1} {
 		srv.AddVersion("acme", names[i], "1.0.0", nil)
 		entries = append(entries, lockfile.Entry{
-			Name:    "acme." + names[i],
-			Version: "1.0.0",
-			Source:  srv.URL(),
+			Name:        "acme." + names[i],
+			Version:     "1.0.0",
+			Source:      srv.URL(),
+			DownloadURL: lockedDownloadURLFor(srv.URL(), "acme."+names[i], "1.0.0"),
 		})
 	}
 	mustWriteFile(t, reqPath, []byte("collections: []\n"))

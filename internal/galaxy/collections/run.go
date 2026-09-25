@@ -241,7 +241,7 @@ func prepareInstallPlan(
 		return nil, err
 	}
 
-	resolved, graph, err := resolveOrLoadLockfile(ctx, cfg, runtime, state, roots)
+	resolved, graph, err := resolveOrLoadLockfile(ctx, cfg, runtime, state, roots, verify)
 	if err != nil {
 		return nil, err
 	}
@@ -292,13 +292,15 @@ func resolveOrLoadRoles(
 }
 
 // resolveOrLoadLockfile resolves through the solver, or under --frozen
-// builds resolved and graph from the lockfile with no network calls.
+// builds resolved and graph from the lockfile with no network calls; the
+// locked download URLs stand in for metadata only when verify is off.
 func resolveOrLoadLockfile(
 	ctx context.Context,
 	cfg *config.Config,
 	runtime *infra.Infra,
 	state *installState,
 	roots []collection,
+	verify *verifyContext,
 ) (map[string]collection, map[string][]string, error) {
 	if cfg.Frozen {
 		path := lockfile.ResolveDefaultPath(cfg.RequirementsFile, cfg.LockFile)
@@ -307,7 +309,9 @@ func resolveOrLoadLockfile(
 		if err != nil {
 			return nil, nil, err
 		}
-		return resolveFromLockfile(cfg, lf, roots)
+		// A server's signatures ride on the version metadata, so a verifying
+		// run must still fetch it and cannot take the locked URL alone.
+		return resolveFromLockfile(cfg, lf, roots, !verify.enabled())
 	}
 
 	resolveStart := time.Now()

@@ -129,7 +129,9 @@ func TestOutdatedHeadlineCountsRolesApart(t *testing.T) {
 			reqPath := filepath.Join(t.TempDir(), "requirements.yml")
 			entries := make([]lockfile.Entry, 0, len(tc.collections))
 			for _, name := range tc.collections {
-				entries = append(entries, lockfile.Entry{Name: name, Version: "1.0.0", Source: s.URL()})
+				entries = append(entries, lockfile.Entry{
+					Name: name, Version: "1.0.0", Source: s.URL(), DownloadURL: lockedDownloadURLFor(s.URL(), name, "1.0.0"),
+				})
 			}
 			locked := roles(s.URL())
 			lf := &lockfile.File{

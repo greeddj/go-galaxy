@@ -173,10 +173,12 @@ func isCacheBusyError(err error) bool {
 }
 
 // isServerSuppliedURLPolicyError reports whether a Galaxy server supplied a
-// download or metadata URL embedding userinfo. It is ExitInstall, not
-// ExitNetwork: the refusal is deterministic, so a CI retry would only loop.
+// download or metadata URL embedding userinfo, or a download URL `lock` will
+// not commit. ExitInstall, not ExitNetwork: a CI retry would only loop.
 func isServerSuppliedURLPolicyError(err error) bool {
 	return errors.Is(err, helpers.ErrDownloadURLUserinfo) ||
+		errors.Is(err, helpers.ErrDownloadURLQuery) ||
+		errors.Is(err, helpers.ErrDownloadURLNotServerArtifact) ||
 		errors.Is(err, helpers.ErrMetadataURLUserinfo)
 }
 

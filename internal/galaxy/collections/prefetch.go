@@ -197,7 +197,7 @@ func prefetchOne(
 		result, err := gitFetchToCache(ctx, sourceDeps, col, true)
 		return nil, result, err
 	}
-	meta, err := loadCollectionMetadata(ctx, deps.collectionDeps, col)
+	meta, err := versionMetadata(ctx, deps.collectionDeps, col)
 	if err != nil {
 		return nil, downloadResult{}, err
 	}

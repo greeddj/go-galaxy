@@ -20,8 +20,11 @@ type collection struct {
 	Ref        string `yaml:"-"`
 	// SHA256 is the artifact pin the install enforces byte for byte: the
 	// frozen-lockfile pin, or a url collection's locator digest; never serialized.
-	SHA256     string   `yaml:"-"`
-	Signatures []string `yaml:"signatures"`
+	SHA256 string `yaml:"-"`
+	// DownloadURL is a frozen Galaxy entry's locked download_url, fetched in
+	// place of the version metadata; empty when this run verifies signatures.
+	DownloadURL string   `yaml:"-"`
+	Signatures  []string `yaml:"signatures"`
 }
 
 const (

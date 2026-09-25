@@ -13,8 +13,11 @@ go-galaxy install --frozen # install exactly the locked versions
 A frozen install never installs an artifact that does not match the lockfile's recorded
 SHA256, so a poisoned cache or a mutated upstream artifact cannot be installed: a cached
 artifact that does not match is evicted and downloaded again once (never under
-`--offline`), and a mismatch that is still there fails the run (exit `7`). Lockfiles with
-no recorded SHA (older lockfiles) are not pin-checked. A git or Galaxy role is pinned by
+`--offline`), and a mismatch that is still there fails the run (exit `7`). A Galaxy entry
+with no recorded SHA (its server publishes none) is not pin-checked. On a cold cache a
+frozen install downloads each Galaxy artifact from the `download_url` the lockfile
+records, asking the server for no metadata at all unless it verifies signatures, so a
+fresh runner spends its requests on the artifacts alone. A git or Galaxy role is pinned by
 commit rather than by digest: a frozen install serves it from the cache, and on a miss
 fetches exactly the pinned commit and refuses a repository that serves another one (exit
 `7`); a url role is pinned by its origin bytes' SHA256 and refused the same way when the
@@ -76,13 +79,15 @@ steps:
   - run: ansible-playbook site.yml
 ```
 
-A lockfile that holds a role is written as `schema_version: 3`, and one that
-holds a url source (a collection's or a role's) as `schema_version: 4`; a
-go-galaxy binary predating those features refuses such a file (exit `6`)
-rather than installing what it understands and silently skipping the rest;
-pin the binary version across the jobs that share the lockfile. A file
-without roles or url sources keeps the schema its collections warrant, which
-every release reads.
+A lockfile that holds a Galaxy collection is written as `schema_version: 5`,
+since each Galaxy entry carries its `download_url`; one without that holds a
+url source (a collection's or a role's) as `schema_version: 4`, and one
+holding a role as `schema_version: 3`. A go-galaxy binary predating those
+features refuses such a file (exit `6`) rather than installing what it
+understands and silently skipping the rest; pin the binary version across the
+jobs that share the lockfile. The reverse holds for schema 5: a lockfile an
+older release wrote carries no `download_url`, so this one refuses it (exit
+`6`) until `go-galaxy lock` rewrites it.
 
 ## GitHub Actions
 

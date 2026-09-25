@@ -109,8 +109,14 @@ func discoveryLockfile(t *testing.T, dir string) {
 	lf := &lockfile.File{
 		SchemaVersion: lockfile.SchemaVersion,
 		Collections: []lockfile.Entry{
-			{Name: "acme.widgets", Version: "1.0.0", Source: "galaxy", SHA256: strings.Repeat("ab", 32)},
-			{Name: "acme.other", Version: "2.0.0", Source: "galaxy", SHA256: strings.Repeat("cd", 32)},
+			{
+				Name: "acme.widgets", Version: "1.0.0", Source: "galaxy",
+				DownloadURL: testDownloadURL("acme.widgets", "1.0.0"), SHA256: strings.Repeat("ab", 32),
+			},
+			{
+				Name: "acme.other", Version: "2.0.0", Source: "galaxy",
+				DownloadURL: testDownloadURL("acme.other", "2.0.0"), SHA256: strings.Repeat("cd", 32),
+			},
 		},
 	}
 	if err := lockfile.Save(filepath.Join(dir, lockfile.DefaultName), lf); err != nil {

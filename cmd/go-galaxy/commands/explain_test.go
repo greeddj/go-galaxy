@@ -62,6 +62,30 @@ func TestPrintExplainOrphan(t *testing.T) {
 	}
 }
 
+// TestPrintExplainGalaxyEntryNamesItsDownloadURL pins that a Galaxy entry's
+// header carries the download_url a frozen install fetches, between its
+// source and its sha256, as the lockfile spells them.
+func TestPrintExplainGalaxyEntryNamesItsDownloadURL(t *testing.T) {
+	t.Parallel()
+	downloadURL := testDownloadURL("acme.app", "1.0.0")
+	lf := &lockfile.File{Collections: []lockfile.Entry{{
+		Name: "acme.app", Version: "1.0.0", Source: "https://galaxy.example", DownloadURL: downloadURL,
+		SHA256: strings.Repeat("ab", 32),
+	}}}
+
+	var buf strings.Builder
+	if err := printExplain(&buf, lf, "acme.app", "requirements.yml", map[string]bool{"acme.app": true}, nil); err != nil {
+		t.Fatalf("printExplain() error = %v", err)
+	}
+	want := "acme.app 1.0.0\n" +
+		"  source       : https://galaxy.example\n" +
+		"  download_url : " + downloadURL + "\n" +
+		"  sha256       : " + strings.Repeat("ab", 32) + "\n"
+	if out := buf.String(); !strings.HasPrefix(out, want) {
+		t.Fatalf("printExplain() header = %q, want it to start with %q", out, want)
+	}
+}
+
 // TestPrintExplainRequiredByAndDepends checks the normal case: a root
 // requirement with its own dependency prints both the "required by" (root)
 // line and the "depends on" line.

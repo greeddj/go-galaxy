@@ -11,13 +11,15 @@ import (
 const (
 	fieldVersion = "version"
 	fieldSource  = "source"
-	fieldType    = "type"
-	fieldRef     = "ref"
-	fieldCommit  = "commit"
-	fieldSubdir  = "subdir"
-	fieldSHA256  = "sha256"
-	fieldDeps    = "deps"
-	fieldServer  = "server"
+	// fieldDownloadURL belongs to a Galaxy entry alone.
+	fieldDownloadURL = "download_url"
+	fieldType        = "type"
+	fieldRef         = "ref"
+	fieldCommit      = "commit"
+	fieldSubdir      = "subdir"
+	fieldSHA256      = "sha256"
+	fieldDeps        = "deps"
+	fieldServer      = "server"
 	// fieldGalaxy and fieldRepository belong to a role entry alone.
 	fieldGalaxy     = "galaxy"
 	fieldRepository = "repository"
@@ -25,7 +27,7 @@ const (
 
 // comparedFieldCount is the number of per-entry fields Change.Fields can
 // report, which pre-sizes its result; Server is file-level, on Diff.Server.
-const comparedFieldCount = 8
+const comparedFieldCount = 9
 
 // Diff is what Compare(before, after) found: which collections after would
 // add, update, or remove relative to before, plus whether the file-level
@@ -143,6 +145,9 @@ func (c Change) Fields() []FieldChange {
 	if c.From.Source != c.To.Source {
 		fields = append(fields, FieldChange{Field: fieldSource, From: c.From.Source, To: c.To.Source})
 	}
+	if c.From.DownloadURL != c.To.DownloadURL {
+		fields = append(fields, FieldChange{Field: fieldDownloadURL, From: c.From.DownloadURL, To: c.To.DownloadURL})
+	}
 	if c.From.Type != c.To.Type {
 		fields = append(fields, FieldChange{Field: fieldType, From: c.From.Type, To: c.To.Type})
 	}
@@ -180,7 +185,7 @@ func indexByName(f *File) map[string]Entry {
 // sameEntry reports whether a and b pin the same collection: every field but
 // Name, which Compare has already matched.
 func sameEntry(a, b Entry) bool {
-	return a.Version == b.Version && a.Source == b.Source && a.Type == b.Type &&
+	return a.Version == b.Version && a.Source == b.Source && a.DownloadURL == b.DownloadURL && a.Type == b.Type &&
 		a.Ref == b.Ref && a.Commit == b.Commit && a.Subdir == b.Subdir &&
 		a.SHA256 == b.SHA256 && sameDeps(a.Deps, b.Deps)
 }

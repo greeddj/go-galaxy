@@ -227,16 +227,16 @@ func TestGitRootOwnsTheFQDN(t *testing.T) {
 	}
 }
 
-// TestGitLockAndFrozenInstall proves lock writes a schema-2 file with the
-// commit pinned and no sha256, and that a frozen install from that file
-// installs from the cache alone: the fake client sees no call at all.
+// TestGitLockAndFrozenInstall proves lock pins the git entry's commit with no
+// sha256 (schema 5, set by its Galaxy dependency), and that a frozen install
+// from that file installs from the cache alone: the fake client sees no call.
 func TestGitLockAndFrozenInstall(t *testing.T) {
 	t.Parallel()
 	f := newGitFixture(t)
 	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",main\n")
 	lf := f.lockfile(t)
-	if lf.SchemaVersion != lockfile.SchemaVersionGit {
-		t.Fatalf("schema = %d, want %d", lf.SchemaVersion, lockfile.SchemaVersionGit)
+	if lf.SchemaVersion != lockfile.SchemaVersionDownloadURL {
+		t.Fatalf("schema = %d, want %d", lf.SchemaVersion, lockfile.SchemaVersionDownloadURL)
 	}
 	assertGitLockEntries(t, lf)
 
@@ -268,10 +268,7 @@ func assertGitLockEntries(t *testing.T, lf *lockfile.File) {
 		entry.Commit != fakeCommit("app-1") || entry.SHA256 != "" {
 		t.Fatalf("git lock entry = %+v", entry)
 	}
-	lib := findLockEntry(t, lf, "acme.lib")
-	if lib.IsGit() || lib.SHA256 == "" {
-		t.Fatalf("galaxy entry lost its shape: %+v", lib)
-	}
+	assertGalaxyLockEntryShape(t, findLockEntry(t, lf, "acme.lib"))
 }
 
 // assertFrozenMissRefetchesPin evicts the cached git artifact and the

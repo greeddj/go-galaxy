@@ -43,7 +43,7 @@ func setupValidLockfile(t *testing.T, dir string) (string, string) {
 		Server:        "https://galaxy.ansible.com",
 		SchemaVersion: lockfile.SchemaVersion,
 		Collections: []lockfile.Entry{
-			{Name: "ns.name", Version: "1.0.0", Source: "galaxy", SHA256: "deadbeef"},
+			{Name: "ns.name", Version: "1.0.0", Source: "galaxy", DownloadURL: testDownloadURL("ns.name", "1.0.0"), SHA256: "deadbeef"},
 		},
 	}
 	if err := lockfile.Save(lockPath, lf); err != nil {
@@ -65,7 +65,7 @@ func checkValidLockfile(t *testing.T, got string, err error) {
 		Server:        "https://galaxy.ansible.com",
 		SchemaVersion: lockfile.SchemaVersion,
 		Collections: []lockfile.Entry{
-			{Name: "ns.name", Version: "1.0.0", Source: "galaxy", SHA256: "deadbeef"},
+			{Name: "ns.name", Version: "1.0.0", Source: "galaxy", DownloadURL: testDownloadURL("ns.name", "1.0.0"), SHA256: "deadbeef"},
 		},
 	}
 	wantHash, hashErr := lf.Hash()

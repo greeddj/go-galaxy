@@ -196,22 +196,25 @@ func findExplainTarget(lf *lockfile.File, target string) (lockfile.Entry, []lock
 func printEntryHeader(w io.Writer, entry lockfile.Entry) {
 	_, _ = fmt.Fprintf(w, "%s %s\n", entry.Name, entry.Version)
 	if entry.Type != "" {
-		_, _ = fmt.Fprintf(w, "  type   : %s\n", entry.Type)
+		_, _ = fmt.Fprintf(w, "  type         : %s\n", entry.Type)
 	}
 	if entry.Source != "" {
-		_, _ = fmt.Fprintf(w, "  source : %s\n", entry.Source)
+		_, _ = fmt.Fprintf(w, "  source       : %s\n", entry.Source)
+	}
+	if entry.DownloadURL != "" {
+		_, _ = fmt.Fprintf(w, "  download_url : %s\n", entry.DownloadURL)
 	}
 	if entry.Ref != "" {
-		_, _ = fmt.Fprintf(w, "  ref    : %s\n", entry.Ref)
+		_, _ = fmt.Fprintf(w, "  ref          : %s\n", entry.Ref)
 	}
 	if entry.Commit != "" {
-		_, _ = fmt.Fprintf(w, "  commit : %s\n", entry.Commit)
+		_, _ = fmt.Fprintf(w, "  commit       : %s\n", entry.Commit)
 	}
 	if entry.Subdir != "" {
-		_, _ = fmt.Fprintf(w, "  subdir : %s\n", entry.Subdir)
+		_, _ = fmt.Fprintf(w, "  subdir       : %s\n", entry.Subdir)
 	}
 	if entry.SHA256 != "" {
-		_, _ = fmt.Fprintf(w, "  sha256 : %s\n", entry.SHA256)
+		_, _ = fmt.Fprintf(w, "  sha256       : %s\n", entry.SHA256)
 	}
 }
 

@@ -760,7 +760,7 @@ flowchart TD
     C7 -->|"yes"| CS["settle the artifact sha256"]
     C7 -->|"no"| C8{"artifact cached?<br/>never under --no-cache<br/>or on the retry"}
     C8 -->|"yes, and not verifying signatures"| C9["read the cached artifact"]
-    C8 -->|"otherwise"| C10["load version metadata, Galaxy source only"]
+    C8 -->|"otherwise"| C10["load version metadata, Galaxy source only;<br/>under --frozen, unless verifying, the<br/>locked download_url and sha256 stand in"]
     C10 -->|"failed on a cache miss"| CF
     C10 -->|"loaded, or failed on a hit: warn"| C11{"cache hit?"}
     C11 -->|"yes"| C9
@@ -771,7 +771,7 @@ flowchart TD
     C13 -->|"no"| C14{"source?"}
     C14 -->|"git"| C15["rebuild the pinned commit;<br/>another identity fails"]
     C14 -->|"url"| C16["download again; sha256 and<br/>manifest identity must match the pin"]
-    C14 -->|"Galaxy"| C17["download with retries,<br/>check the server sha256;<br/>unless --no-cache, stream<br/>into the extracted store<br/>and commit to the cache"]
+    C14 -->|"Galaxy"| C17["download with retries,<br/>check the server's sha256,<br/>or the lockfile's for a locked URL;<br/>unless --no-cache, stream<br/>into the extracted store<br/>and commit to the cache"]
     C15 -->|"failed"| CF
     C16 -->|"failed"| CF
     C17 -->|"failed"| CF
@@ -793,7 +793,7 @@ flowchart TD
     CE2 -->|"failed"| CR
     CE2 -->|"extracted"| CW["write GALAXY.yml, a failure only warns;<br/>record the install, print an Installed line"]
     CE -->|"yes"| CW
-    CR -->|"yes"| CR2["evict the cached artifact, force a download"]
+    CR -->|"yes"| CR2["force a download, evicting the cached<br/>artifact first unless a locked download_url's<br/>copy failed its pin or extraction"]
     CR2 --> C7
     CR -->|"no"| CF
     C6 --> CL{"level joined: any failure so far?"}
@@ -987,7 +987,8 @@ flowchart TD
   the role walk stops at the `roles:` entries.
 - `--keyring`, `--disable-gpg-verify`: verification runs only with a keyring and
   without the disable flag. Then each collection's signatures are checked before
-  it is extracted, a cache hit still loads its version metadata, and a skipped
+  it is extracted, a cache hit still loads its version metadata, a frozen run
+  loads it rather than taking a locked `download_url` alone, and a skipped
   install is counted as unverified. A `signatures:` block with no keyring exits
   `2`, or only warns under `--disable-gpg-verify`.
 - `--s3-bucket`, else `[tool.go-galaxy.s3]` `bucket`: selects the S3 backend
@@ -1141,18 +1142,25 @@ flowchart TD
     MD -->|"error"| XM(["exit 4 (network),<br/>5 for a credential-bearing server URL,<br/>or another class by cause"])
     MD -->|"ok"| SH{"sha256 empty or 64 lowercase hex?"}
     SH -->|"no"| X7(["exit 7 (integrity)"])
-    SH -->|"yes"| GX["Galaxy entry: version, source, sha256, deps"]
+    SH -->|"yes"| DU{"download_url present and<br/>an absolute http(s) URL?"}
+    DU -->|"no"| XM
+    DU -->|"yes"| DQ{"no userinfo, no query,<br/>on the server's origin, and ending in<br/>namespace-name-version.tar.gz?"}
+    DQ -->|"no"| X5(["exit 5 (install)"])
+    DQ -->|"yes"| GX["Galaxy entry: version, source,<br/>download_url with no fragment, sha256, deps"]
     GE --> NX
     UE --> NX
     GX --> NX{"a resolved collection left?"}
     NX -->|"yes"| BE
-    NX -->|"no"| SU{"any url entry,<br/>collection or role?"}
+    NX -->|"no"| SGX{"any Galaxy collection?"}
+    SGX -->|"yes"| S5["schema_version 5"]
+    SGX -->|"no"| SU{"any url entry,<br/>collection or role?"}
     SU -->|"yes"| S4["schema_version 4"]
     SU -->|"no"| SR{"any role?"}
     SR -->|"yes"| S3["schema_version 3"]
     SR -->|"no"| SG{"any git collection?"}
     SG -->|"yes"| S2["schema_version 2"]
     SG -->|"no"| S1["schema_version 1"]
+    S5 --> OUT
     S4 --> OUT
     S3 --> OUT
     S2 --> OUT
@@ -1433,8 +1441,8 @@ flowchart TD
     OffSig --> Frozen1
     Frozen1 -->|"yes"| Lf["print Frozen: using lockfile<br/>load --lock-file, else a galaxy.toml's lock_file,<br/>else galaxy.lock beside the requirements file"]
     Lf -->|"missing or invalid"| X6(["exit 6 (lockfile)"])
-    Lf --> LfRoots["check every root against its locked entry,<br/>take the pinned versions, sha256 and commits"]
-    LfRoots -->|"root missing or constraint unmet"| X6
+    Lf --> LfRoots["check every root against its locked entry,<br/>take the pinned versions, sha256 and commits,<br/>and the download URLs unless verifying"]
+    LfRoots -->|"root missing or constraint unmet,<br/>or a download_url off its server's origin<br/>or not ending in its artifact file name"| X6
     Frozen1 -->|"no"| Solve["resolve collections,<br/>see Resolving without --frozen"]
     Solve -->|"failed"| XR(["exit 2 (usage), 3 (resolution), 4 (network),<br/>5 (install) or 7 (integrity) by cause"])
     LfRoots --> Map["fold the resolved set into a map"]
@@ -1579,7 +1587,7 @@ flowchart TD
     Hit -->|"yes"| CacheAlone{"verification off<br/>and no metadata in hand?"}
     CacheAlone -->|"yes"| CacheOnly["print Using cached, read the cached artifact"]
     CacheAlone -->|"no"| MetaHit["load Galaxy version metadata unless in hand,<br/>warn if it fails, read the cached artifact"]
-    Hit -->|"no"| MetaMiss["load Galaxy version metadata,<br/>none for git or url"]
+    Hit -->|"no"| MetaMiss["load Galaxy version metadata, none for git or url;<br/>under --frozen, unless verifying,<br/>the locked download_url stands in"]
     MetaMiss -->|"metadata failed"| Failed(["Failed: cause recorded"])
     MetaMiss --> Off{"--offline set?"}
     Off -->|"yes: not in cache"| Failed
@@ -1600,7 +1608,7 @@ flowchart TD
     Ensure -->|"failed"| Retry2
     Ensure --> Stamp["record warmed entry namespace.name@version:<br/>sha256, stamped now, cache hits included"]
     Stamp --> Ok(["Cached"])
-    Retry1 -->|"yes"| Evict["evict the cached artifact, force a refetch"]
+    Retry1 -->|"yes"| Evict["force a refetch, evicting the cached artifact first<br/>unless a locked download_url's copy failed<br/>its pin or extraction"]
     Retry1 -->|"no"| Failed
     Retry2 -->|"yes"| Evict
     Retry2 -->|"no"| Failed
@@ -2256,7 +2264,7 @@ flowchart TD
     R --> J{"read result?"}
     J -->|"file does not exist"| Q["fallback: read req"]
     J -->|"other read error:<br/>permission, is a directory"| X6(["lockfile is invalid<br/>exit 6 (lockfile)"])
-    J -->|"bytes read"| K{"YAML parses, schema_version 1 to 4,<br/>every collection and role entry valid?"}
+    J -->|"bytes read"| K{"YAML parses, schema_version 1 to 5,<br/>every collection and role entry valid,<br/>a Galaxy entry at 5 with its download_url?"}
     K -->|"no"| X6
     K -->|"yes"| M["File.Hash on a canonical copy:<br/>entries, roles and deps sorted,<br/>schema_version recomputed from content"]
     M --> N{"YAML encode with 2-space indent<br/>returns an error?"}
@@ -2359,7 +2367,7 @@ flowchart TD
     LP3["lockPath = galaxy.lock<br/>beside reqPath"]
     LX{"lockfile exists?"}
     LXX(["exit 6 (lockfile)<br/>lockfile not found"])
-    LV{"readable, valid YAML,<br/>schema_version 1 to 4,<br/>every entry validates?"}
+    LV{"readable, valid YAML,<br/>schema_version 1 to 5,<br/>every entry validates?"}
     LVX(["exit 6 (lockfile)<br/>lockfile is invalid"])
     RR{"requirements file<br/>read succeeds?"}
     RNF{"not found?"}
@@ -2642,7 +2650,7 @@ flowchart TD
     LP3["lockPath = galaxy.lock<br/>beside reqPath"]
     LX{"lockfile exists?"}
     LXX(["exit 6 (lockfile)<br/>lockfile not found"])
-    LV{"readable, valid YAML,<br/>schema_version 1 to 4,<br/>every entry validates?"}
+    LV{"readable, valid YAML,<br/>schema_version 1 to 5,<br/>every entry validates?"}
     LVX(["exit 6 (lockfile)<br/>lockfile is invalid"])
     RQ{"requirements file reads, parses<br/>(TOML by the .toml extension, else YAML)<br/>and every entry validates?"}
     RQN["error discarded:<br/>collection roots and role roots empty"]

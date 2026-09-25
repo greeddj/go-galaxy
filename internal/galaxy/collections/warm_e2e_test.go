@@ -465,8 +465,14 @@ func newCycleFixture(t *testing.T, frozen bool) *e2eFixture {
 		SchemaVersion: lockfile.SchemaVersion,
 		Server:        f.cfg.Server,
 		Collections: []lockfile.Entry{
-			{Name: "acme.app", Version: testVersion100, Source: f.cfg.Server, SHA256: f.appV1.SHA256, Deps: []string{"acme.lib"}},
-			{Name: "acme.lib", Version: testVersion100, Source: f.cfg.Server, SHA256: f.libV1.SHA256, Deps: []string{"acme.app"}},
+			{
+				Name: "acme.app", Version: testVersion100, Source: f.cfg.Server, DownloadURL: f.appV1.DownloadURL,
+				SHA256: f.appV1.SHA256, Deps: []string{"acme.lib"},
+			},
+			{
+				Name: "acme.lib", Version: testVersion100, Source: f.cfg.Server, DownloadURL: f.libV1.DownloadURL,
+				SHA256: f.libV1.SHA256, Deps: []string{"acme.app"},
+			},
 		},
 	}
 	if err := lockfile.Save(lockfile.ResolveDefaultPath(f.cfg.RequirementsFile, f.cfg.LockFile), lf); err != nil {

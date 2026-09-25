@@ -44,7 +44,7 @@ func warmWithState(ctx context.Context, cfg *config.Config, runtime *infra.Infra
 	if err != nil {
 		return err
 	}
-	resolved, graph, err := resolveOrLoadLockfile(ctx, cfg, runtime, state, roots)
+	resolved, graph, err := resolveOrLoadLockfile(ctx, cfg, runtime, state, roots, verify)
 	if err != nil {
 		return err
 	}

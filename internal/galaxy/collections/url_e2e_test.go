@@ -202,8 +202,8 @@ func TestURLRootOwnsTheFQDN(t *testing.T) {
 	}
 }
 
-// TestURLLockAndFrozenInstall pins a schema-4 url lock entry and a frozen
-// install that replays it, re-downloads on a cache miss, and fails with
+// TestURLLockAndFrozenInstall pins a url lock entry and a frozen install
+// that replays it, re-downloads on a cache miss, and fails with
 // ErrSHA256Mismatch once the origin serves different bytes.
 func TestURLLockAndFrozenInstall(t *testing.T) {
 	t.Parallel()
@@ -240,18 +240,16 @@ func TestURLLockAndFrozenInstall(t *testing.T) {
 func assertURLLockEntries(t *testing.T, f *urlFixture) {
 	t.Helper()
 	lf := f.lockfile(t)
-	if lf.SchemaVersion != lockfile.SchemaVersionURL {
-		t.Fatalf("schema = %d, want %d", lf.SchemaVersion, lockfile.SchemaVersionURL)
+	// The Galaxy dependency beside the url entry is what sets the schema.
+	if lf.SchemaVersion != lockfile.SchemaVersionDownloadURL {
+		t.Fatalf("schema = %d, want %d", lf.SchemaVersion, lockfile.SchemaVersionDownloadURL)
 	}
 	entry := findLockEntry(t, lf, "acme.kafka")
 	if !entry.IsURL() || entry.Source != f.tarballURL || entry.SHA256 != f.tarballSHA ||
 		entry.Version != urlKafkaVersion || entry.Ref != "" || entry.Commit != "" {
 		t.Fatalf("url lock entry = %+v", entry)
 	}
-	lib := findLockEntry(t, lf, "acme.lib")
-	if lib.IsURL() || lib.SHA256 == "" {
-		t.Fatalf("galaxy entry lost its shape: %+v", lib)
-	}
+	assertGalaxyLockEntryShape(t, findLockEntry(t, lf, "acme.lib"))
 }
 
 // evictURLArtifactAndTree removes the cached url artifact and the installed

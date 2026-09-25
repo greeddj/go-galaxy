@@ -152,8 +152,15 @@ func TestLockOverwritesAnExistingLockfile(t *testing.T) {
 		SchemaVersion: lockfile.SchemaVersion,
 		Server:        f.cfg.Server,
 		Collections: []lockfile.Entry{
-			{Name: "acme.widgets", Version: "0.9.0", Source: f.cfg.Server, SHA256: "0000000000000000000000000000000000000000000000000000000000bad"},
-			{Name: "acme.legacy", Version: testVersion100, Source: f.cfg.Server},
+			{
+				Name: "acme.widgets", Version: "0.9.0", Source: f.cfg.Server,
+				DownloadURL: lockedDownloadURLFor(f.cfg.Server, "acme.widgets", "0.9.0"),
+				SHA256:      "0000000000000000000000000000000000000000000000000000000000bad",
+			},
+			{
+				Name: "acme.legacy", Version: testVersion100, Source: f.cfg.Server,
+				DownloadURL: lockedDownloadURLFor(f.cfg.Server, "acme.legacy", testVersion100),
+			},
 		},
 	}
 	if err := lockfile.Save(defaultPath, stale); err != nil {
@@ -587,8 +594,14 @@ func TestLockDryRunReportsUpdateAndRemoval(t *testing.T) {
 		SchemaVersion: lockfile.SchemaVersion,
 		Server:        f.cfg.Server,
 		Collections: []lockfile.Entry{
-			{Name: "acme.widgets", Version: "0.9.0", Source: f.cfg.Server},
-			{Name: "acme.legacy", Version: "2.0.0", Source: f.cfg.Server},
+			{
+				Name: "acme.widgets", Version: "0.9.0", Source: f.cfg.Server,
+				DownloadURL: lockedDownloadURLFor(f.cfg.Server, "acme.widgets", "0.9.0"),
+			},
+			{
+				Name: "acme.legacy", Version: "2.0.0", Source: f.cfg.Server,
+				DownloadURL: lockedDownloadURLFor(f.cfg.Server, "acme.legacy", "2.0.0"),
+			},
 		},
 	}
 	if err := lockfile.Save(path, stale); err != nil {
@@ -610,7 +623,9 @@ func TestLockDryRunReportsUpdateAndRemoval(t *testing.T) {
 	if string(before) != string(after) {
 		t.Fatalf("dry run rewrote the lockfile:\n%s", after)
 	}
-	wantUpdate := "Would update: acme.widgets (version 0.9.0 -> 1.0.0; sha256 (none) -> " + wantVersion.SHA256 + ")"
+	wantUpdate := "Would update: acme.widgets (version 0.9.0 -> 1.0.0; download_url " +
+		lockedDownloadURLFor(f.cfg.Server, "acme.widgets", "0.9.0") + " -> " + wantVersion.DownloadURL +
+		"; sha256 (none) -> " + wantVersion.SHA256 + ")"
 	if !f.printer.hasOkContaining(wantUpdate) {
 		t.Fatalf("expected %q, got oks = %v", wantUpdate, f.printer.oks)
 	}
@@ -895,4 +910,10 @@ func assertNoPathMatchesHostileName(t *testing.T, root string) {
 	if match != "" {
 		t.Fatalf("found a path matching the hostile name: %s", match)
 	}
+}
+
+// lockedDownloadURLFor is the download_url a hand-written Galaxy lockfile
+// entry for name at version carries: the fake server's own download route.
+func lockedDownloadURLFor(server, name, version string) string {
+	return strings.TrimSuffix(server, "/") + "/download/" + strings.ReplaceAll(name, ".", "-") + "-" + version + ".tar.gz"
 }

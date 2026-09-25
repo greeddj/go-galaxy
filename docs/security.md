@@ -566,6 +566,28 @@ names the entry and never prints the source. A bare `server_list` id such as
 `internal`, which has no scheme or host, is left alone, as it is in
 `requirements.yml`.
 
+A Galaxy entry's `download_url` is repository content too, and a frozen
+install fetches it without asking the server anything, so it is held on two
+lines. Its shape is judged at load: an absolute `http` or `https` URL with no
+userinfo, query or fragment, spelled the way `url.Parse` gives it back, and
+refused without being printed, since a refused one may carry a credential.
+What it names is judged before a frozen run makes any request: its origin must
+be the origin of the entry's server and its path must end in
+`/<namespace>-<name>-<version>.tar.gz`, or the run exits `6`. The second line
+exists for the cache, not the install: the fetched artifact is committed to the
+slot keyed by that server and file name, which every later install of the same
+version reads whether or not it is frozen, and only the entry's own sha256
+vouches for bytes a lockfile could otherwise fetch from any host. With the URL
+held to the server's own artifact, those bytes are what the server serves for
+it, and they still must match the sha256 before they are committed. The residual
+is another path on the same origin ending in the same file name, which a server
+hosting several distributions of one collection might serve. The Galaxy token
+follows the URL's origin exactly as it follows a server-supplied one, and a
+verifying run ignores the locked URL for the version metadata the signatures
+ride on. `lock` applies both lines to the server's answer before writing it, and
+refuses a URL with a query besides: the shape of a presigned capability, which
+would be committed to the repository and would expire.
+
 Inside `internal/galaxy/requirements`, validation order is part of the same
 boundary. The refusal of an entry with no name renders the whole raw entry, so
 the userinfo check on `source:` and the check of the `signatures:` sources run

@@ -166,10 +166,11 @@ type faultRule struct {
 // Version is one registered collection version plus the sha256 of the
 // artifact generated for it, so tests never hardcode a checksum.
 type Version struct {
-	Namespace string
-	Name      string
-	Version   string
-	SHA256    string
+	Namespace   string
+	Name        string
+	Version     string
+	SHA256      string
+	DownloadURL string
 }
 
 // Fault is a scripted failure for Fail: one of Status, Hang, StallAfterBytes
@@ -285,7 +286,7 @@ func (s *Server) AddVersion(namespace, name, version string, deps map[string]str
 
 	s.artifacts[filename] = fakeArtifact{namespace: namespace, name: name, data: data}
 
-	return Version{Namespace: namespace, Name: name, Version: version, SHA256: sum}
+	return Version{Namespace: namespace, Name: name, Version: version, SHA256: sum, DownloadURL: downloadURL}
 }
 
 // ManifestJSON returns a copy of the MANIFEST.json the artifact of

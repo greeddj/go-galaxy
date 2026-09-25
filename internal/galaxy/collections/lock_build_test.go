@@ -1,8 +1,8 @@
 package collections
 
 // This file pins buildLockfile's guards: lock manufactures the pin, so a
-// non-canonical digest from a lying server or a non-exact version from a
-// poisoned snapshot must never reach a committed lockfile.
+// lying server's bad digest or download URL, or a poisoned snapshot's
+// non-exact version, must never reach a committed lockfile.
 
 import (
 	"bytes"
@@ -26,16 +26,16 @@ import (
 // acme.widgets fixture every test in this file shares.
 const testWidgetsFQDN = "acme.widgets"
 
-// sha256RewritingTransport rewrites artifact.sha256 to replacement in every
-// OK response whose path contains pathMarker, so a bad digest reaches
+// metadataRewritingTransport applies rewrite to the decoded body of every OK
+// response whose path contains pathMarker, so a lying server's answer reaches
 // loadCollectionMetadata without giving fakegalaxy a body-tampering hook.
-type sha256RewritingTransport struct {
-	base        http.RoundTripper
-	pathMarker  string
-	replacement string
+type metadataRewritingTransport struct {
+	base       http.RoundTripper
+	rewrite    func(body map[string]any)
+	pathMarker string
 }
 
-func (t *sha256RewritingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (t *metadataRewritingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	if err != nil || resp == nil || resp.StatusCode != http.StatusOK || !strings.Contains(req.URL.Path, t.pathMarker) {
 		return resp, err
@@ -45,9 +45,7 @@ func (t *sha256RewritingTransport) RoundTrip(req *http.Request) (*http.Response,
 		return nil, decErr
 	}
 	_ = resp.Body.Close()
-	if artifact, ok := body["artifact"].(map[string]any); ok {
-		artifact["sha256"] = t.replacement
-	}
+	t.rewrite(body)
 	rewritten, marshalErr := json.Marshal(body)
 	if marshalErr != nil {
 		return nil, marshalErr
@@ -63,15 +61,30 @@ func (t *sha256RewritingTransport) RoundTrip(req *http.Request) (*http.Response,
 // deps, resolved and graph arguments buildLockfile takes.
 func newBuildLockfileFixture(t *testing.T, replacement string) (collectionDeps, map[string]collection, map[string][]string) {
 	t.Helper()
+	deps, resolved, graph, _ := newRewrittenBuildLockfileFixture(t, func(_ string, body map[string]any) {
+		if artifact, ok := body["artifact"].(map[string]any); ok {
+			artifact["sha256"] = replacement
+		}
+	})
+	return deps, resolved, graph
+}
+
+// newRewrittenBuildLockfileFixture is newBuildLockfileFixture with rewrite
+// applied to the version document, handed the fake server's URL, and the
+// registered version returned too.
+func newRewrittenBuildLockfileFixture(
+	t *testing.T, rewrite func(server string, body map[string]any),
+) (collectionDeps, map[string]collection, map[string][]string, fakegalaxy.Version) {
+	t.Helper()
 	srv := fakegalaxy.New(t)
-	srv.AddVersion("acme", "widgets", testVersion100, nil)
+	version := srv.AddVersion("acme", "widgets", testVersion100, nil)
 
 	// fakegalaxy serves plain http, so http.DefaultTransport reaches it.
 	client := &http.Client{
-		Transport: &sha256RewritingTransport{
-			base:        http.DefaultTransport,
-			pathMarker:  "/versions/" + testVersion100 + "/",
-			replacement: replacement,
+		Transport: &metadataRewritingTransport{
+			base:       http.DefaultTransport,
+			rewrite:    func(body map[string]any) { rewrite(srv.URL(), body) },
+			pathMarker: "/versions/" + testVersion100 + "/",
 		},
 	}
 
@@ -81,7 +94,7 @@ func newBuildLockfileFixture(t *testing.T, replacement string) (collectionDeps, 
 	col := collection{Namespace: "acme", Name: "widgets", Version: testVersion100}
 	resolved := map[string]collection{testWidgetsFQDN: col}
 	graph := map[string][]string{col.key(): {}}
-	return newCollectionDeps(cfg, runtime, st), resolved, graph
+	return newCollectionDeps(cfg, runtime, st), resolved, graph, version
 }
 
 // TestBuildLockfileRejectsNonCanonicalDigest pins that an uppercase-hex
@@ -147,5 +160,86 @@ func TestBuildLockfileAcceptsEmptyDigest(t *testing.T) {
 	}
 	if entry.SHA256 != "" {
 		t.Fatalf("lockfile entry SHA256 = %q, want empty", entry.SHA256)
+	}
+}
+
+// TestBuildLockfileWritesTheServerDownloadURL pins that a Galaxy entry locks
+// the download URL its server named, in canonical form: a fragment, which
+// never reaches a server, is dropped rather than committed.
+func TestBuildLockfileWritesTheServerDownloadURL(t *testing.T) {
+	t.Parallel()
+	deps, resolved, graph, version := newRewrittenBuildLockfileFixture(t, func(_ string, body map[string]any) {
+		if raw, ok := body["download_url"].(string); ok {
+			body["download_url"] = raw + "#part"
+		}
+	})
+
+	lf, err := buildLockfile(context.Background(), deps, resolved, graph, roleResolution{})
+	if err != nil {
+		t.Fatalf("buildLockfile error = %v, want nil", err)
+	}
+	if got := lf.Collections[0].DownloadURL; got != version.DownloadURL {
+		t.Fatalf("lockfile entry DownloadURL = %q, want the server's %q without its fragment", got, version.DownloadURL)
+	}
+}
+
+// unlockableDownloadURLCase is one row of
+// TestBuildLockfileRefusesAnUnlockableDownloadURL: the download URL a server
+// names, built from the fake server's URL, and the sentinel refusing it.
+type unlockableDownloadURLCase struct {
+	want error
+	url  func(server string) string
+	name string
+}
+
+// presignedSignature is the capability a presigned query carries, which no
+// refusal may echo.
+const presignedSignature = "X-Amz-Signature=deadbeefcafe"
+
+// unlockableDownloadURLCases gives each refusal lock applies to a server's
+// download URL a row of its own.
+func unlockableDownloadURLCases() []unlockableDownloadURLCase {
+	const artifact = "/download/acme-widgets-1.0.0.tar.gz"
+	return []unlockableDownloadURLCase{
+		{name: "missing", want: helpers.ErrMissingDownloadURL, url: func(string) string { return "" }},
+		{name: "not http", want: helpers.ErrUnsupportedDownloadURLScheme, url: func(string) string { return "file:///etc/passwd" }},
+		{name: "userinfo", want: helpers.ErrDownloadURLUserinfo, url: func(s string) string {
+			return strings.Replace(s, "://", "://u:p@", 1) + artifact
+		}},
+		{name: "presigned query", want: helpers.ErrDownloadURLQuery, url: func(s string) string {
+			return s + artifact + "?" + presignedSignature
+		}},
+		{name: "another origin", want: helpers.ErrDownloadURLNotServerArtifact, url: func(string) string {
+			return "https://cdn.example.invalid" + artifact
+		}},
+		{name: "another artifact", want: helpers.ErrDownloadURLNotServerArtifact, url: func(s string) string {
+			return s + "/download/acme-other-1.0.0.tar.gz"
+		}},
+	}
+}
+
+// TestBuildLockfileRefusesAnUnlockableDownloadURL pins that lock refuses a
+// download URL it could not commit or a frozen install could not trust, with
+// no lockfile written and no presigned query echoed.
+func TestBuildLockfileRefusesAnUnlockableDownloadURL(t *testing.T) {
+	t.Parallel()
+	for _, tc := range unlockableDownloadURLCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			deps, resolved, graph, _ := newRewrittenBuildLockfileFixture(t, func(server string, body map[string]any) {
+				body["download_url"] = tc.url(server)
+			})
+
+			lf, err := buildLockfile(context.Background(), deps, resolved, graph, roleResolution{})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("buildLockfile error = %v, want errors.Is %v", err, tc.want)
+			}
+			if lf != nil {
+				t.Fatalf("buildLockfile lockfile = %+v, want nil: no lockfile must be written on rejection", lf)
+			}
+			if strings.Contains(err.Error(), presignedSignature) {
+				t.Fatalf("refusal echoes the presigned query: %v", err)
+			}
+		})
 	}
 }

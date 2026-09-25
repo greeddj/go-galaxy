@@ -309,7 +309,10 @@ func TestLockFrozenSaveFailureJoinsBehindDrift(t *testing.T) {
 	stale := &lockfile.File{
 		SchemaVersion: lockfile.SchemaVersion,
 		Server:        cfg.Server,
-		Collections:   []lockfile.Entry{{Name: "acme.widgets", Version: "0.9.0", Source: cfg.Server}},
+		Collections: []lockfile.Entry{{
+			Name: "acme.widgets", Version: "0.9.0", Source: cfg.Server,
+			DownloadURL: lockedDownloadURLFor(cfg.Server, "acme.widgets", "0.9.0"),
+		}},
 	}
 	if err := lockfile.Save(path, stale); err != nil {
 		t.Fatalf("save stale lockfile: %v", err)

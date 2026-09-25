@@ -76,13 +76,17 @@ func serveOneRawStatusLine(conn net.Conn, statusLine string) {
 }
 
 // saveOutdatedLockfile writes requirementsFile's default lockfile holding
-// exactly entries, each sourced from server unless it names a source.
+// exactly entries, each sourced from server unless it names a source, and
+// each Galaxy entry given the download_url it needs to load.
 func saveOutdatedLockfile(t *testing.T, requirementsFile, server string, entries ...lockfile.Entry) string {
 	t.Helper()
 	lockPath := lockfile.ResolveDefaultPath(requirementsFile, "")
 	for i := range entries {
 		if entries[i].Source == "" {
 			entries[i].Source = server
+		}
+		if entries[i].IsGalaxy() && entries[i].DownloadURL == "" {
+			entries[i].DownloadURL = lockedDownloadURLFor(server, entries[i].Name, entries[i].Version)
 		}
 	}
 	lf := &lockfile.File{

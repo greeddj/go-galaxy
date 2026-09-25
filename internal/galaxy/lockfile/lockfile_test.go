@@ -22,17 +22,19 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		Server: "https://galaxy.ansible.com",
 		Collections: []Entry{
 			{
-				Name:    "community.general",
-				Version: "11.1.0",
-				Source:  "https://galaxy.ansible.com",
-				SHA256:  "deadbeef",
-				Deps:    []string{"ansible.posix"},
+				Name:        "community.general",
+				Version:     "11.1.0",
+				Source:      "https://galaxy.ansible.com",
+				DownloadURL: downloadURLFor("community.general", "11.1.0"),
+				SHA256:      "deadbeef",
+				Deps:        []string{"ansible.posix"},
 			},
 			{
-				Name:    "ansible.posix",
-				Version: "2.0.0",
-				Source:  "https://galaxy.ansible.com",
-				SHA256:  "feedface",
+				Name:        "ansible.posix",
+				Version:     "2.0.0",
+				Source:      "https://galaxy.ansible.com",
+				DownloadURL: downloadURLFor("ansible.posix", "2.0.0"),
+				SHA256:      "feedface",
 			},
 		},
 	}
@@ -44,8 +46,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got.SchemaVersion != SchemaVersion {
-		t.Fatalf("schema=%d, want %d", got.SchemaVersion, SchemaVersion)
+	if got.SchemaVersion != SchemaVersionDownloadURL {
+		t.Fatalf("schema=%d, want %d", got.SchemaVersion, SchemaVersionDownloadURL)
 	}
 	if len(got.Collections) != 2 {
 		t.Fatalf("expected 2 collections, got %d", len(got.Collections))
@@ -86,7 +88,7 @@ func TestLoadWrapsUnreadableFileAsInvalid(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove directory: %v", err)
 	}
-	valid := &File{SchemaVersion: SchemaVersion, Collections: []Entry{{Name: "a.a", Version: "1.0.0"}}}
+	valid := &File{Collections: []Entry{{Name: "a.a", Version: "1.0.0", DownloadURL: downloadURLFor("a.a", "1.0.0")}}}
 	if err := Save(path, valid); err != nil {
 		t.Fatalf("save valid lockfile at the same path: %v", err)
 	}
@@ -127,8 +129,9 @@ func TestLoadRejectsDuplicateNames(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "dup.yml")
 	yamlContent := fmt.Sprintf(
-		"schema_version: %d\ncollections:\n  - name: a.a\n    version: 1.0.0\n  - name: a.a\n    version: 2.0.0\n",
-		SchemaVersion,
+		"schema_version: %d\ncollections:\n  - name: a.a\n    version: 1.0.0\n    download_url: %s\n"+
+			"  - name: a.a\n    version: 2.0.0\n    download_url: %s\n",
+		SchemaVersionDownloadURL, downloadURLFor("a.a", "1.0.0"), downloadURLFor("a.a", "2.0.0"),
 	)
 	if err := os.WriteFile(path, []byte(yamlContent), 0o600); err != nil {
 		t.Fatal(err)
@@ -147,8 +150,8 @@ func TestLoadRejectsNonExactVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "wildcard.yml")
 	yamlContent := fmt.Sprintf(
-		"schema_version: %d\ncollections:\n  - name: a.a\n    version: \"*\"\n",
-		SchemaVersion,
+		"schema_version: %d\ncollections:\n  - name: a.a\n    version: \"*\"\n    download_url: %s\n",
+		SchemaVersionDownloadURL, downloadURLFor("a.a", "1.0.0"),
 	)
 	if err := os.WriteFile(path, []byte(yamlContent), 0o600); err != nil {
 		t.Fatal(err)
@@ -213,9 +216,9 @@ func TestHashPureNoMutation(t *testing.T) {
 
 func TestSaveDoesNotMutate(t *testing.T) {
 	t.Parallel()
-	f := &File{SchemaVersion: SchemaVersion, Collections: []Entry{
-		{Name: "b.b", Version: "1.0.0", Deps: []string{"z.z", "a.a"}},
-		{Name: "a.a", Version: "1.0.0", Deps: []string{"y.y", "b.b"}},
+	f := &File{Collections: []Entry{
+		{Name: "b.b", Version: "1.0.0", DownloadURL: downloadURLFor("b.b", "1.0.0"), Deps: []string{"z.z", "a.a"}},
+		{Name: "a.a", Version: "1.0.0", DownloadURL: downloadURLFor("a.a", "1.0.0"), Deps: []string{"y.y", "b.b"}},
 	}}
 	origNames := collectionNames(f)
 	origDeps := collectionDeps(f)
@@ -311,7 +314,7 @@ func TestSaveDoesNotClobberOnFailure(t *testing.T) {
 	path := filepath.Join(dir, "galaxy.lock")
 
 	original := &File{Collections: []Entry{
-		{Name: "a.a", Version: "1.0.0", SHA256: "original"},
+		{Name: "a.a", Version: "1.0.0", DownloadURL: downloadURLFor("a.a", "1.0.0"), SHA256: "original"},
 	}}
 	if err := Save(path, original); err != nil {
 		t.Fatalf("Save (seed): %v", err)
@@ -328,7 +331,7 @@ func TestSaveDoesNotClobberOnFailure(t *testing.T) {
 	}()
 
 	updated := &File{Collections: []Entry{
-		{Name: "a.a", Version: "2.0.0", SHA256: "updated"},
+		{Name: "a.a", Version: "2.0.0", DownloadURL: downloadURLFor("a.a", "2.0.0"), SHA256: "updated"},
 	}}
 	if err := Save(path, updated); err == nil {
 		t.Fatalf("expected Save to fail against a read-only directory")
@@ -368,7 +371,8 @@ func TestLoadRejectsAnInvalidCollectionName(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			path := filepath.Join(t.TempDir(), "galaxy.lock")
-			body := "schema_version: 1\ncollections:\n  - name: " + tc.entryName + "\n    version: 1.0.0\n"
+			body := fmt.Sprintf("schema_version: %d\ncollections:\n  - name: %s\n    version: 1.0.0\n    download_url: %s\n",
+				SchemaVersionDownloadURL, tc.entryName, downloadURLFor("acme.widgets", "1.0.0"))
 			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 				t.Fatalf("write lockfile: %v", err)
 			}
@@ -415,8 +419,8 @@ func writeSourceLockfile(t *testing.T, source string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "galaxy.lock")
 	body := fmt.Sprintf(
-		"schema_version: %d\ncollections:\n  - name: acme.widgets\n    version: 1.0.0\n    source: %q\n",
-		SchemaVersion, source,
+		"schema_version: %d\ncollections:\n  - name: acme.widgets\n    version: 1.0.0\n    source: %q\n    download_url: %s\n",
+		SchemaVersionDownloadURL, source, downloadURLFor("acme.widgets", "1.0.0"),
 	)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -493,6 +497,7 @@ collections:
   - name: ansible.netcommon
     version: 7.2.1
     source: https://galaxy.ansible.com
+    download_url: https://galaxy.example.invalid/download/ansible-netcommon-7.2.1.tar.gz
     deps:
       - a.first
       - m.middle
@@ -500,14 +505,16 @@ collections:
   - name: ansible.posix
     version: 2.0.0
     source: ""
+    download_url: https://galaxy.example.invalid/download/ansible-posix-2.0.0.tar.gz
   - name: community.general
     version: 11.1.0
     source: https://galaxy.ansible.com
+    download_url: https://galaxy.example.invalid/download/community-general-11.1.0.tar.gz
     sha256: 3b1f2c4d5e6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e
     deps:
       - ansible.netcommon
       - ansible.posix
-schema_version: 1
+schema_version: 5
 `
 
 // canonicalGoldenFile builds the fixture canonicalLockfileGolden pins: an
@@ -519,18 +526,20 @@ func canonicalGoldenFile() *File {
 		SchemaVersion: SchemaVersion,
 		Collections: []Entry{
 			{
-				Name:    "community.general",
-				Version: "11.1.0",
-				Source:  "https://galaxy.ansible.com",
-				SHA256:  "3b1f2c4d5e6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e",
-				Deps:    []string{"ansible.posix", "ansible.netcommon"},
+				Name:        "community.general",
+				Version:     "11.1.0",
+				Source:      "https://galaxy.ansible.com",
+				DownloadURL: downloadURLFor("community.general", "11.1.0"),
+				SHA256:      "3b1f2c4d5e6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e",
+				Deps:        []string{"ansible.posix", "ansible.netcommon"},
 			},
-			{Name: "ansible.posix", Version: "2.0.0"},
+			{Name: "ansible.posix", Version: "2.0.0", DownloadURL: downloadURLFor("ansible.posix", "2.0.0")},
 			{
-				Name:    "ansible.netcommon",
-				Version: "7.2.1",
-				Source:  "https://galaxy.ansible.com",
-				Deps:    []string{"z.last", "a.first", "m.middle"},
+				Name:        "ansible.netcommon",
+				Version:     "7.2.1",
+				Source:      "https://galaxy.ansible.com",
+				DownloadURL: downloadURLFor("ansible.netcommon", "7.2.1"),
+				Deps:        []string{"z.last", "a.first", "m.middle"},
 			},
 		},
 	}
@@ -544,7 +553,7 @@ func TestSaveEmitsCanonicalBytes(t *testing.T) {
 
 	// The literal names the schema version textually, so a bump would
 	// otherwise leave it describing a file this package no longer writes.
-	if tail := fmt.Sprintf("schema_version: %d\n", SchemaVersion); !strings.HasSuffix(canonicalLockfileGolden, tail) {
+	if tail := fmt.Sprintf("schema_version: %d\n", SchemaVersionDownloadURL); !strings.HasSuffix(canonicalLockfileGolden, tail) {
 		t.Fatalf("golden literal does not end in %q: the schema version moved without it", tail)
 	}
 
@@ -596,4 +605,10 @@ func lineAt(lines []string, i int) string {
 		return lines[i]
 	}
 	return "<no such line>"
+}
+
+// downloadURLFor is the canonical download_url a Galaxy test entry for name at
+// version carries, so every fixture that must load names one.
+func downloadURLFor(name, version string) string {
+	return "https://galaxy.example.invalid/download/" + strings.ReplaceAll(name, ".", "-") + "-" + version + ".tar.gz"
 }

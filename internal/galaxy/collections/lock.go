@@ -3,7 +3,10 @@ package collections
 import (
 	"context"
 	"fmt"
+	"maps"
+	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
@@ -15,8 +18,8 @@ import (
 )
 
 // buildLockfile assembles a lockfile from a resolved set and its graph. A
-// Galaxy entry's sha256 comes from version metadata the resolver already
-// cached, so each costs a metadata fetch (likely a 304), never a tarball.
+// Galaxy entry's sha256 and download URL come from version metadata the
+// resolver already cached, so each costs a metadata fetch, never a tarball.
 func buildLockfile(
 	ctx context.Context,
 	deps collectionDeps,
@@ -44,24 +47,11 @@ func buildLockfile(
 			entries = append(entries, entry)
 			continue
 		}
-		meta, err := loadCollectionMetadata(ctx, deps, col)
+		entry, err := galaxyLockfileEntry(ctx, deps, fqdn, col, graph)
 		if err != nil {
 			return nil, fmt.Errorf("lockfile: %s: %w", fqdn, err)
 		}
-		// The sha is server-controlled and becomes the pin --frozen trusts, so
-		// a non-canonical one is refused before it is written. An empty sha is
-		// kept: verifyPinnedSHA reads it as no pin, for digest-less servers.
-		sha := strings.TrimSpace(meta.Artifact.Sha256)
-		if sha != "" && !helpers.IsSHA256Hex(sha) {
-			return nil, fmt.Errorf("lockfile: %s: %w: %q", fqdn, helpers.ErrMalformedArtifactSHA256, sha)
-		}
-		entries = append(entries, lockfile.Entry{
-			Name:    fqdn,
-			Version: col.Version,
-			Source:  col.Source,
-			SHA256:  sha,
-			Deps:    lockfileDepsFromGraph(graph, col.key()),
-		})
+		entries = append(entries, entry)
 	}
 	return &lockfile.File{
 		SchemaVersion: lockfile.SchemaVersionFor(entries, roleEntries),
@@ -69,6 +59,94 @@ func buildLockfile(
 		Collections:   entries,
 		Roles:         roleEntries,
 	}, nil
+}
+
+// galaxyLockfileEntry renders a Galaxy collection's pin from its version
+// metadata: the sha256 and download URL a frozen install then trusts, each
+// refused here if it could not be, before anything is written.
+func galaxyLockfileEntry(
+	ctx context.Context, deps collectionDeps, fqdn string, col collection, graph map[string][]string,
+) (lockfile.Entry, error) {
+	meta, err := loadCollectionMetadata(ctx, deps, col)
+	if err != nil {
+		return lockfile.Entry{}, err
+	}
+	// An empty sha is kept: verifyPinnedSHA reads it as no pin, for
+	// digest-less servers.
+	sha := strings.TrimSpace(meta.Artifact.Sha256)
+	if sha != "" && !helpers.IsSHA256Hex(sha) {
+		return lockfile.Entry{}, fmt.Errorf("%w: %q", helpers.ErrMalformedArtifactSHA256, sha)
+	}
+	downloadURL, err := lockableDownloadURL(meta.DownloadURL)
+	if err != nil {
+		return lockfile.Entry{}, err
+	}
+	if err := checkServerArtifactURL(col, lockedServerBase(deps.cfg, col.Source), downloadURL); err != nil {
+		return lockfile.Entry{}, err
+	}
+	return lockfile.Entry{
+		Name:        fqdn,
+		Version:     col.Version,
+		Source:      col.Source,
+		DownloadURL: downloadURL,
+		SHA256:      sha,
+		Deps:        lockfileDepsFromGraph(graph, col.key()),
+	}, nil
+}
+
+// lockableDownloadURL returns a server's download URL in the canonical form
+// lockfile.Load re-parses, refusing what install would refuse and a query: a
+// lockfile is committed, and a presigned query is a capability that expires.
+func lockableDownloadURL(raw string) (string, error) {
+	if raw == "" {
+		return "", helpers.ErrMissingDownloadURL
+	}
+	if err := checkDownloadURL(raw); err != nil {
+		return "", err
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Unreached: checkDownloadURL has just parsed the same value.
+		return "", fmt.Errorf("%w: %q", helpers.ErrUnsupportedDownloadURLScheme, helpers.URLForMessage(raw))
+	}
+	if u.RawQuery != "" || u.ForceQuery {
+		return "", fmt.Errorf("%w: %q", helpers.ErrDownloadURLQuery, helpers.URLForMessage(raw))
+	}
+	// A fragment never reaches the server, so dropping it changes no request.
+	u.Fragment, u.RawFragment = "", ""
+	return u.String(), nil
+}
+
+// lockedServerBase is the server a Galaxy entry's source names, resolved the
+// way its metadata requests resolve it; an empty source is the run's server.
+func lockedServerBase(cfg *config.Config, source string) string {
+	if source == "" {
+		source = cfg.Server
+	}
+	candidate, _ := pinnedServerCandidate(cfg, source)
+	return candidate.base
+}
+
+// checkServerArtifactURL holds a locked download URL to its server's own
+// artifact - that server's origin, a path ending in the artifact's file name -
+// since the bytes land in the cache slot every later install of it reads.
+func checkServerArtifactURL(col collection, server, downloadURL string) error {
+	want, ok := parsedOrigin(server)
+	if !ok {
+		return fmt.Errorf("%w: its server %q is not an absolute URL", helpers.ErrDownloadURLNotServerArtifact, helpers.URLForMessage(server))
+	}
+	u, err := url.Parse(downloadURL)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("%w: %q is not an absolute URL", helpers.ErrDownloadURLNotServerArtifact, helpers.URLForMessage(downloadURL))
+	}
+	if got := helpers.Origin(u); got != want {
+		return fmt.Errorf("%w: its origin %s is not its server's %s", helpers.ErrDownloadURLNotServerArtifact, got, want)
+	}
+	filename := helpers.ArtifactFilename(col.Namespace, col.Name, col.Version)
+	if !strings.HasSuffix(u.Path, "/"+filename) {
+		return fmt.Errorf("%w: %q does not end in /%s", helpers.ErrDownloadURLNotServerArtifact, helpers.URLForMessage(downloadURL), filename)
+	}
+	return nil
 }
 
 // sourceLockfileEntry renders the pin of a collection whose Source is a
@@ -150,13 +228,14 @@ func lockfileDepsFromGraph(graph map[string][]string, key string) []string {
 	return out
 }
 
-// resolveFromLockfile builds resolved/graph maps from a lockfile and
-// validates that every requested root is present and constraint-satisfied.
-// No HTTP calls are made - this is the offline / --frozen fast path.
+// resolveFromLockfile builds resolved/graph maps from a lockfile with no HTTP
+// call, validating every requested root against its entry; lockedURLs carries
+// each download_url over, and a verifying run passes false.
 func resolveFromLockfile(
 	cfg *config.Config,
 	lf *lockfile.File,
 	roots []collection,
+	lockedURLs bool,
 ) (map[string]collection, map[string][]string, error) {
 	byFQDN, err := indexLockfile(lf, cfg)
 	if err != nil {
@@ -165,7 +244,28 @@ func resolveFromLockfile(
 	if err := verifyRootsAgainstLockfile(roots, byFQDN); err != nil {
 		return nil, nil, err
 	}
-	return materializeLockfile(byFQDN)
+	if err := checkLockedDownloadURLs(cfg, byFQDN); err != nil {
+		return nil, nil, err
+	}
+	return materializeLockfile(byFQDN, lockedURLs)
+}
+
+// checkLockedDownloadURLs holds every Galaxy entry's download_url to its
+// server's own artifact, which lockfile.Load cannot judge: an entry's server
+// may be a server_list id, and resolving one takes this run's configuration.
+func checkLockedDownloadURLs(cfg *config.Config, byFQDN map[string]lockfile.Entry) error {
+	for _, fqdn := range slices.Sorted(maps.Keys(byFQDN)) {
+		e := byFQDN[fqdn]
+		if !e.IsGalaxy() {
+			continue
+		}
+		ns, name, _ := helpers.SplitFQDN(fqdn)
+		col := collection{Namespace: ns, Name: name, Version: e.Version}
+		if err := checkServerArtifactURL(col, lockedServerBase(cfg, e.Source), e.DownloadURL); err != nil {
+			return fmt.Errorf("%w: %s: %w", helpers.ErrLockfileInvalid, fqdn, err)
+		}
+	}
+	return nil
 }
 
 func indexLockfile(lf *lockfile.File, cfg *config.Config) (map[string]lockfile.Entry, error) {
@@ -221,7 +321,7 @@ func verifyRootsAgainstLockfile(roots []collection, byFQDN map[string]lockfile.E
 	return nil
 }
 
-func materializeLockfile(byFQDN map[string]lockfile.Entry) (map[string]collection, map[string][]string, error) {
+func materializeLockfile(byFQDN map[string]lockfile.Entry, lockedURLs bool) (map[string]collection, map[string][]string, error) {
 	resolved := make(map[string]collection, len(byFQDN))
 	graph := make(map[string][]string, len(byFQDN))
 	for fqdn, e := range byFQDN {
@@ -243,6 +343,8 @@ func materializeLockfile(byFQDN map[string]lockfile.Entry) (map[string]collectio
 			// key) and col.SHA256 (what verifyPinnedSHA compares bytes to).
 			col.Source = urlsource.Locator{URL: e.Source, SHA256: e.SHA256}.String()
 			col.Type = typeURL
+		case lockedURLs:
+			col.DownloadURL = e.DownloadURL
 		}
 		resolved[fqdn] = col
 		graph[col.key()] = lockfileDepsToKeys(e.Deps, byFQDN)

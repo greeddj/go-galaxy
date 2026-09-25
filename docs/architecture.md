@@ -1114,7 +1114,9 @@ Order is load-bearing:
    unreadable keyring, or requirements declaring `signatures:` with none
    configured, fails the run before a single background download is scheduled.
 3. Resolve the collections - from the lockfile under `--frozen`, which touches
-   no network at all, otherwise through the solver.
+   no network at all, otherwise through the solver. A frozen Galaxy collection
+   carries its locked `download_url` into the run unless the run verifies
+   signatures (see [The lockfile](#the-lockfile)).
 4. Resolve the roles (see [Roles](#roles)) - from the lockfile under
    `--frozen`, otherwise through the dependency walk. This too runs ahead of
    the prefetcher, so a role no server knows, or a repository that refuses,
@@ -1435,7 +1437,11 @@ or a cache sidecar's - is refused there as `ErrMalformedArtifactSHA256` (exit
 `7`): let through to a cache-hit extraction, it would delete and refetch a good
 tarball on every run, since the poisoned party is the cached metadata, which
 eviction does not touch. The action arm, verify and extract, evicts on any
-failure but the classes below.
+failure but the classes below, and a collection fetched through its locked
+`download_url` is refetched without being evicted first: that download commits
+only bytes matching the lockfile's sha256, so the refetch replaces the cached
+copy when the copy was wrong and leaves it when the pin was, and a wrong pin
+cannot empty a shared slot.
 
 Three classes are excluded because refetching cannot repair them: a
 destination-side failure, where the fault is the tree rather than the artifact;
@@ -2016,9 +2022,10 @@ collections:
   - name: community.general
     version: "11.1.0"
     source: https://galaxy.ansible.com
+    download_url: https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-11.1.0.tar.gz
     sha256: <hex>
     deps: [ansible.posix]
-schema_version: 1
+schema_version: 5
 ```
 
 Written canonically - two-space indent, collections sorted by name, each
@@ -2036,7 +2043,7 @@ Loading distinguishes exactly two outcomes - the file is not there, or it is
 invalid - and three consumers depend on that dichotomy being exhaustive.
 Absence is the bare `fs.ErrNotExist` (`lockfile.IsNotExist`); every other
 failure - a file that cannot be read, does not parse, has a `schema_version`
-missing or outside 1 through 4, or fails validation - wraps
+missing or outside 1 through 5, or fails validation - wraps
 `ErrLockfileInvalid`, and a new failure arm must wrap it too. Every caller that
 cannot proceed without a lockfile - `install` and `warm` under `--frozen`,
 `lock --frozen`, `tree` and `explain` - loads through `LoadRequired`, which
@@ -2057,18 +2064,57 @@ version for every type, without which a lockfile carrying `"*"` would make a
 source, ref and subdir that come back unchanged from the git grammar, a
 lowercase forty-hex commit and no `sha256`; for a url entry a source that
 round-trips the url grammar, a lowercase 64-hex `sha256` and no ref, commit or
-subdir; and for a Galaxy entry none of those three. An entry type below its
-minimum `schema_version` (git `2`, role `3`, url `4`) is refused as hand-edited,
-while any `schema_version` from 1 through 4 at least as high as the content
-needs loads. `Save` does not validate: that a written file loads again rests on
-the builder, which checks every version with `helpers.IsExactVersion` and keys
-entries by fqdn so no name can repeat.
+subdir; for a Galaxy entry none of those three and a `download_url` of
+canonical shape (below); and no `download_url` on any other type. An entry
+type below its minimum `schema_version` (git `2`, role `3`, url `4`) is refused
+as hand-edited, a Galaxy entry below `5` as written by an older release, with a
+message naming `go-galaxy lock`, and any `schema_version` from 1 through 5 at
+least as high as the content needs loads. `Save` does not validate: that a
+written file loads again rests on the builder, which checks every version with
+`helpers.IsExactVersion` and keys entries by fqdn so no name can repeat.
 
 `lock` is the command that manufactures the pin every later `--frozen` install
 trusts, so it validates a server's declared digest for shape before writing it,
 and validates each version before spending a metadata fetch on it - failing
 closed under the whole-run exclusive lock rather than after buying work. An
 empty digest is left alone, which keeps servers that publish no digests usable.
+
+A Galaxy entry's `download_url` is what a frozen install fetches its artifact
+from. `lock` copies it from the version document the digest comes from, so it
+costs no request of its own, and a frozen install that misses the cache fetches
+it directly: no root metadata and no version document, only the artifact and
+whatever redirects the server answers with, which on galaxy.ansible.com halves
+the requests a cold collection costs. A verifying run is the exception, since
+a server's signatures ride on the version document: under `--keyring` a
+frozen install fetches the metadata as before and downloads from the URL that
+names. A `download_url` that fails fails that collection as any download does;
+nothing falls back to the metadata, and `lock` is what repairs it.
+
+The field is required on every Galaxy entry, so a Galaxy entry needs
+`schema_version: 5`, ranked over every other schema: every lockfile holding a
+Galaxy collection is written as `5`, which a release predating the field
+refuses, and a file an older release wrote is refused until `lock` rewrites
+it. On load the URL is judged as repository content: an absolute http(s) URL
+with no userinfo, query or fragment that `url.Parse` gives back unchanged.
+`lock` refuses to write one it could not: a query is the shape of a presigned
+capability, which would be committed and would expire, so `lock` fails with
+`ErrDownloadURLQuery` (exit `5`), and a fragment, which no request carries, is
+dropped.
+
+What the URL may name is narrower than its shape. The artifact it fetches is
+committed to the cache slot keyed by the entry's server and the artifact's file
+name - the slot every later install of that version reads, `--frozen` or not -
+so a URL the lockfile could aim at another host would let repository content
+fill that slot with bytes only its own sha256 vouches for. The URL must
+therefore sit on its server's origin, and its path must end in
+`/<namespace>-<name>-<version>.tar.gz`. `lock` refuses a server's answer that
+breaks this (`ErrDownloadURLNotServerArtifact`, exit `5`), so a server that
+serves its artifacts from a separate content origin cannot be locked, and
+`--frozen` refuses a lockfile that breaks it, as invalid (exit `6`) and before
+any request. That check runs in `checkLockedDownloadURLs` rather than in
+`Load`, because the server behind a `server_list` id is known only from the
+run's configuration. The residual is another path on the same origin ending in
+the same file name, which a server hosting several distributions might serve.
 
 A git entry pins a commit instead of a digest:
 
@@ -2085,11 +2131,10 @@ A git entry pins a commit instead of a digest:
 
 It carries no `sha256` because the artifact is rebuilt from the commit and the
 gzip bytes of a rebuild depend on the toolchain; a digest over them would fail
-a frozen install for nothing. A file holding at least one git entry is written
-as `schema_version: 2` and a file holding none stays at `1`, decided from the
-entries alone, so a project without git sources keeps producing a lockfile
-every release reads, and an older binary meeting a git entry refuses the file
-loudly instead of reading its repository URL as a Galaxy server. Under
+a frozen install for nothing. A file whose highest feature is a git entry is
+written as `schema_version: 2`, decided from the entries alone, so an older
+binary meeting a git entry refuses the file loudly instead of reading its
+repository URL as a Galaxy server. Under
 `--frozen` a git root is checked against the entries locked from its
 repository under its subdir (the root's own directory or an immediate child):
 zero such entries, or a different ref, is a mismatch. The ref is compared as
@@ -2112,8 +2157,9 @@ A url entry is the opposite case and its `sha256` is required:
 The artifact is the origin's own bytes rather than a rebuild, so the digest
 holds on every refetch, and a frozen cache miss re-downloads the URL and
 compares the fresh bytes to it. A file holding a url entry - a collection's
-or a role's - is written as `schema_version: 4`, ranked over the role and
-git schemas by the same content-decides rule. Under `--frozen` a url root needs
+or a role's - and no Galaxy entry is written as `schema_version: 4`, ranked
+over the role and git schemas by the same content-decides rule. Under
+`--frozen` a url root needs
 an entry locked from the same URL, and a `version:` it asserts must equal that
 entry's version exactly: for either kind of source, `--frozen` means that what
 was asked for has not changed.
@@ -2155,11 +2201,11 @@ never be fetched in its place; for a git role `source` is the repository
 and `ref` is the ref as the requirement spelled it. `deps` are the install names
 of the roles the run installed for its meta. No `sha256`, for the reason a
 git entry has none. Roles are sorted by name and each `deps` list sorted, like
-the collections. A file holding at least one role is `schema_version: 3`, one
-holding a git entry and no role stays `2`, one with neither stays `1`, decided
-from the entries alone, so a project without roles keeps producing a
-lockfile every release reads, and an older binary meeting a role refuses the
-file rather than installing the collections and silently skipping the roles.
+the collections. A file holding at least one role and neither a Galaxy nor a
+url entry is `schema_version: 3`, one holding a git entry and no role `2`, and
+one holding no entry at all `1`, decided from the entries alone, so an older
+binary meeting a role refuses the file rather than installing the collections
+and silently skipping the roles.
 Every role field is re-parsed on load rather than trusted - the repository
 through the git URL grammar, the ref through the ref grammar, the commit as
 forty hex digits, the names through the role alphabets - since a lockfile is
@@ -2167,7 +2213,7 @@ repository content. A url role's entry is `type: url` with the tarball URL as it
 source, the origin bytes' `sha256` as its pin (required, where a git or
 Galaxy role's is refused), no ref, commit, galaxy or repository, and the
 version as the label asked for or the sha's first twelve hex digits; a file
-holding one is `schema_version: 4`.
+holding one and no Galaxy collection is `schema_version: 4`.
 
 `lockfile.Compare` is what `lock --frozen` gates on and what `lock --dry-run`
 reports, and its contract is that `Compare(a, b).Empty()` holds exactly when

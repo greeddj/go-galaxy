@@ -262,9 +262,20 @@ func prepareWithRecovery(
 		if !canRetryCacheHit(deps, fromCache, forceDownload) || unrepairableByRefetch(actionErr) {
 			return installPayload{}, actionErr
 		}
-		evictCorruptCachedArtifact(ctx, deps, col, filename, actionErr)
+		refetchCachedArtifact(ctx, deps, col, filename, actionErr)
 		forceDownload = true
 	}
+}
+
+// refetchCachedArtifact precedes the forced refetch of a cached artifact the
+// action refused. A locked download commits only bytes matching the pin, so
+// its copy is kept: deleting it would let a wrong pin empty a shared slot.
+func refetchCachedArtifact(ctx context.Context, deps installDeps, col collection, filename string, cause error) {
+	if col.DownloadURL == "" {
+		evictCorruptCachedArtifact(ctx, deps, col, filename, cause)
+		return
+	}
+	deps.runtime.Output.Printf("Refetching %s, whose cached copy failed: %v", filename, cause)
 }
 
 // unrepairableByRefetch reports whether no different artifact could fix an
@@ -932,7 +943,7 @@ func resolveMetadata(
 		return nil, nil //nolint:nilnil // nil meta is the established "no server metadata" value downstream
 	}
 	metaStart := time.Now()
-	meta, err := loadCollectionMetadata(ctx, deps, col)
+	meta, err := versionMetadata(ctx, deps, col)
 	runtime.Output.DebugSincef(metaStart, "%s", "Metadata "+col.key())
 	if err != nil {
 		if cacheHit {

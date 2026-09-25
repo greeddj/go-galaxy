@@ -215,7 +215,8 @@ corrupt bytes back forever. The body is stored verbatim, so a presigned
 `download_url` in it keeps its query - cutting it would turn every
 cache-served download into a `403`. Anyone who can read a shared cache can
 therefore use such a URL, but only until its presign expires, however long
-the entry is kept.
+the entry is kept. `lock` refuses to write such a URL into `galaxy.lock`,
+which is committed (see [The lockfile](architecture.md#the-lockfile)).
 
 `--refresh` does not reach an answer that already names an exact version (see
 [install options](cli.md#install-options)), so bytes a server republishes

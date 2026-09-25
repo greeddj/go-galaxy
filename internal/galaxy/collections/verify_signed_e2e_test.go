@@ -119,6 +119,31 @@ func TestInstallVerifiesAServerSignedCollectionEndToEnd(t *testing.T) {
 	})
 }
 
+// TestFrozenVerifyingInstallStillReadsTheVersionMetadata pins that a locked
+// download_url never stands in for the metadata a verifying run needs: the
+// server's signature rides on it, and the strict count fails a vacuous pass.
+func TestFrozenVerifyingInstallStillReadsTheVersionMetadata(t *testing.T) {
+	t.Parallel()
+	srv := fakegalaxy.New(t)
+	srv.AddVersion("acme", "app", "1.0.0", nil)
+	srv.SignVersion(t, "acme", "app", "1.0.0", signTestBytes(t, srv.ManifestJSON("acme", "app", "1.0.0")))
+	cfg, runtime, downloadPath := newSignedFixture(t, srv, nil, 2)
+	if err := Lock(context.Background(), cfg, runtime); err != nil {
+		t.Fatalf("Lock() = %v, want nil", err)
+	}
+
+	cfg.CacheDir = filepath.Join(t.TempDir(), "cold-cache")
+	cfg.Frozen = true
+	srv.ResetCounts()
+	if err := Start(context.Background(), cfg, runtime); err != nil {
+		t.Fatalf("frozen verifying Start() = %v, want nil", err)
+	}
+	if got := srv.Count(fakegalaxy.EndpointVersionDetail); got == 0 {
+		t.Fatal("a verifying frozen install made no version-detail request, so nothing carried the signature")
+	}
+	assertExists(t, filepath.Join(downloadPath, "ansible_collections", "acme", "app", "MANIFEST.json"))
+}
+
 // TestWarmVerifiesAServerSignedCollectionAcrossCachedRuns pins that a second
 // Warm, loading a fresh backend from disk, still verifies the server's
 // signature from the persisted API cache without a version-detail request.

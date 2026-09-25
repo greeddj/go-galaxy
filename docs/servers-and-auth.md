@@ -322,7 +322,9 @@ network origin (so `source: https://hub.example.internal/content/published/`
 still gets that server's own token and TLS policy, even though the path differs
 from the configured `url`). The server URL a collection resolved against is
 what the lockfile, the cache and the installed record name as its source, and
-the server the install asks for the collection's download URL. A `source:`
+the server the install asks for the collection's download URL - except under
+`--frozen`, where the lockfile records that URL too, held to the server's
+origin, so it carries whatever token and TLS policy that origin does. A `source:`
 naming a `server_list` id is recorded as that server's URL, never as the id,
 and one matched by origin is recorded as its own URL, path included, not as
 the configured `url`. A `source:` that matches no configured server is not

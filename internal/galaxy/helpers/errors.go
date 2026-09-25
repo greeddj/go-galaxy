@@ -91,6 +91,14 @@ var (
 	// net/http would turn it into Basic auth that fetch.authTransport then leaves in
 	// place of the operator's token; the refusal never renders the password.
 	ErrDownloadURLUserinfo = errors.New("collection download url must not contain userinfo")
+	// ErrDownloadURLQuery indicates `lock` was handed a download URL carrying a
+	// query string: typically a presigned capability that expires, and a
+	// lockfile is committed, so the URL is refused rather than written.
+	ErrDownloadURLQuery = errors.New("collection download url must not carry a query string")
+	// ErrDownloadURLNotServerArtifact indicates a lockfile download URL off its
+	// server's origin or not ending in the artifact's file name, which could fill
+	// that server's cache slot with another host's bytes.
+	ErrDownloadURLNotServerArtifact = errors.New("collection download url is not its server's own artifact url")
 	// ErrMetadataURLUserinfo indicates a Galaxy metadata URL (versions_url or
 	// highest_version.href, fresh or replayed from a snapshot) embeds userinfo, with
 	// ErrDownloadURLUserinfo's effect. It classifies alike but names another field.

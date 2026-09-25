@@ -224,15 +224,12 @@ func writeRawRoleLockfile(t *testing.T, schema int, e RoleEntry) string {
 }
 
 // TestLoadAcceptsAHandWrittenSchemaThreeFile pins the on-disk shape a
-// reader meets, spelled out rather than produced by Save.
+// reader meets, spelled out rather than produced by Save; a Galaxy collection
+// would need schema 5, so this file holds roles alone.
 func TestLoadAcceptsAHandWrittenSchemaThreeFile(t *testing.T) {
 	t.Parallel()
 	raw := `server: https://galaxy.ansible.com
-collections:
-  - name: community.general
-    version: "11.1.0"
-    source: https://galaxy.ansible.com
-    sha256: ` + strings.Repeat("a", 64) + `
+collections: []
 roles:
   - name: geerlingguy.docker
     type: galaxy

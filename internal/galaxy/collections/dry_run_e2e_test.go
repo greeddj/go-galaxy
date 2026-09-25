@@ -320,7 +320,9 @@ func TestOutdatedDryRunMutatesNothing(t *testing.T) {
 	lf := &lockfile.File{
 		SchemaVersion: lockfile.SchemaVersion,
 		Server:        s.URL(),
-		Collections:   []lockfile.Entry{{Name: "acme.widgets", Version: "1.0.0", Source: s.URL()}},
+		Collections: []lockfile.Entry{{
+			Name: "acme.widgets", Version: "1.0.0", Source: s.URL(), DownloadURL: lockedDownloadURLFor(s.URL(), "acme.widgets", "1.0.0"),
+		}},
 	}
 	if err := lockfile.Save(lockPath, lf); err != nil {
 		t.Fatalf("save lockfile: %v", err)

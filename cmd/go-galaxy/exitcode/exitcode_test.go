@@ -105,6 +105,24 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitInstall,
 	},
 	{
+		// Refused by lock before it is written: the same deterministic
+		// server-supplied answer, so the same class as the userinfo rows.
+		name:     "download url with a query string",
+		err:      fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLQuery),
+		wantCode: ExitInstall,
+	},
+	{
+		name:     "download url off its server's artifact",
+		err:      fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLNotServerArtifact),
+		wantCode: ExitInstall,
+	},
+	{
+		// The same refusal met under --frozen is a lockfile verdict first.
+		name:     "frozen download url off its server's artifact",
+		err:      fmt.Errorf("%w: a.b: %w", helpers.ErrLockfileInvalid, helpers.ErrDownloadURLNotServerArtifact),
+		wantCode: ExitLock,
+	},
+	{
 		name:     "galaxy server auth failed",
 		err:      fmt.Errorf("%w: server a: ctx", helpers.ErrGalaxyAuthFailed),
 		wantCode: ExitNetwork,
@@ -925,7 +943,7 @@ type serverSuppliedURLPolicyCase struct {
 	name string
 }
 
-// serverSuppliedURLPolicyCases is the full cross-product of both sentinels and
+// serverSuppliedURLPolicyCases is the full cross-product of every sentinel and
 // three shapes (bare, install headline, outdated headline), reachable today or
 // not, since the class must not depend on what a sentinel is joined behind.
 func serverSuppliedURLPolicyCases() []serverSuppliedURLPolicyCase {
@@ -933,14 +951,22 @@ func serverSuppliedURLPolicyCases() []serverSuppliedURLPolicyCase {
 	outdatedHeadline := fmt.Errorf("%w for 1 collections", helpers.ErrLatestVersionLookupFailed)
 	download := fmt.Errorf("%w: %q", helpers.ErrDownloadURLUserinfo, "https://h/a.tar.gz")
 	metadata := fmt.Errorf("%w: %q", helpers.ErrMetadataURLUserinfo, "https://h/api/v3/versions/")
+	query := fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLQuery)
+	offServer := fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLNotServerArtifact)
 
 	return []serverSuppliedURLPolicyCase{
 		{name: "download url, bare", err: download},
 		{name: "metadata url, bare", err: metadata},
+		{name: "query download url, bare", err: query},
+		{name: "off-server download url, bare", err: offServer},
 		{name: "download url, behind the install-failure headline", err: errors.Join(installHeadline, download)},
 		{name: "metadata url, behind the install-failure headline", err: errors.Join(installHeadline, metadata)},
+		{name: "query download url, behind the install-failure headline", err: errors.Join(installHeadline, query)},
+		{name: "off-server download url, behind the install-failure headline", err: errors.Join(installHeadline, offServer)},
 		{name: "download url, behind the latest-version-lookup headline", err: errors.Join(outdatedHeadline, download)},
 		{name: "metadata url, behind the latest-version-lookup headline", err: errors.Join(outdatedHeadline, metadata)},
+		{name: "query download url, behind the latest-version-lookup headline", err: errors.Join(outdatedHeadline, query)},
+		{name: "off-server download url, behind the latest-version-lookup headline", err: errors.Join(outdatedHeadline, offServer)},
 	}
 }
 

@@ -13,6 +13,18 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
+// versionMetadata is loadCollectionMetadata, except that a collection carrying
+// its locked download URL gets a document of that URL and its pin alone, with
+// no request: a frozen install then asks the server for nothing but the bytes.
+func versionMetadata(ctx context.Context, deps collectionDeps, col collection) (*types.GalaxyCollectionVersionInfo, error) {
+	if col.DownloadURL == "" {
+		return loadCollectionMetadata(ctx, deps, col)
+	}
+	meta := &types.GalaxyCollectionVersionInfo{Version: col.Version, DownloadURL: col.DownloadURL}
+	meta.Artifact.Sha256 = col.SHA256
+	return meta, nil
+}
+
 // loadCollectionMetadata resolves and fetches metadata for a collection version.
 func loadCollectionMetadata(
 	ctx context.Context,

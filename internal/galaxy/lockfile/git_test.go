@@ -27,8 +27,8 @@ func gitEntry() Entry {
 }
 
 // TestSchemaFollowsTheEntries pins that the schema is a function of content:
-// a git entry makes schema 2, removing the last one returns to schema 1, and
-// a producer-set schema overrides neither.
+// a git entry alone makes schema 2, a Galaxy entry beside it 5, removing both
+// returns to schema 1, and a producer-set schema overrides none of them.
 func TestSchemaFollowsTheEntries(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -36,7 +36,7 @@ func TestSchemaFollowsTheEntries(t *testing.T) {
 	f := &File{
 		Server:        "https://galaxy.ansible.com",
 		SchemaVersion: SchemaVersion, // deliberately stale: canonicalize must override it
-		Collections:   []Entry{gitEntry(), {Name: "acme.lib", Version: "1.0.0", Source: "https://galaxy.ansible.com"}},
+		Collections:   []Entry{gitEntry()},
 	}
 	loaded := saveAndLoad(t, path, f)
 	if loaded.SchemaVersion != SchemaVersionGit {
@@ -47,11 +47,19 @@ func TestSchemaFollowsTheEntries(t *testing.T) {
 	}
 	checkSavedGitFile(t, path)
 
-	f.Collections = f.Collections[1:]
-	f.SchemaVersion = SchemaVersionGit // stale the other way
+	f.Collections = append(f.Collections, Entry{
+		Name: "acme.lib", Version: "1.0.0", Source: "https://galaxy.ansible.com", DownloadURL: downloadURLFor("acme.lib", "1.0.0"),
+	})
+	f.SchemaVersion = SchemaVersionGit // stale again
+	if loaded = saveAndLoad(t, path, f); loaded.SchemaVersion != SchemaVersionDownloadURL {
+		t.Fatalf("schema with a Galaxy entry = %d, want %d", loaded.SchemaVersion, SchemaVersionDownloadURL)
+	}
+
+	f.Collections = nil
+	f.SchemaVersion = SchemaVersionDownloadURL // stale the other way
 	loaded = saveAndLoad(t, path, f)
 	if loaded.SchemaVersion != SchemaVersion {
-		t.Fatalf("schema after removing the git entry = %d, want %d", loaded.SchemaVersion, SchemaVersion)
+		t.Fatalf("schema after removing every entry = %d, want %d", loaded.SchemaVersion, SchemaVersion)
 	}
 	if SchemaVersionFor(nil, nil) != SchemaVersion || SchemaVersionFor([]Entry{gitEntry()}, nil) != SchemaVersionGit {
 		t.Fatalf("SchemaVersionFor disagrees with the round trip")

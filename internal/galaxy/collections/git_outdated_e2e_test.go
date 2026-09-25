@@ -18,8 +18,9 @@ func TestGitOutdatedReportsCommitDrift(t *testing.T) {
 	f := newGitFixture(t)
 	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",main\n")
 	lf := f.lockfile(t)
-	if lf.SchemaVersion != lockfile.SchemaVersionGit {
-		t.Fatalf("schema = %d, want %d", lf.SchemaVersion, lockfile.SchemaVersionGit)
+	// The Galaxy dependency beside the git entry is what sets the schema.
+	if lf.SchemaVersion != lockfile.SchemaVersionDownloadURL {
+		t.Fatalf("schema = %d, want %d", lf.SchemaVersion, lockfile.SchemaVersionDownloadURL)
 	}
 	lib := findLockEntry(t, lf, "acme.lib")
 

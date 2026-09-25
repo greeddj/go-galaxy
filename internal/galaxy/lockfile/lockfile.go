@@ -1,6 +1,6 @@
 // Package lockfile reads, validates and writes galaxy.lock, which pins every
 // collection and role so a frozen install reads only the cache. The schema
-// (1 to 4) is derived from the entries, so an older binary refuses a newer shape.
+// (1 to 5) is derived from the entries, so an older binary refuses a newer shape.
 package lockfile
 
 import (
@@ -46,23 +46,31 @@ const (
 // SchemaVersionFor picks it from the entries.
 const SchemaVersionURL = 4
 
+// SchemaVersionDownloadURL is the schema of a file carrying at least one
+// Galaxy entry, each of which must name its artifact's download_url; a Galaxy
+// entry in an older schema lacks one and is refused until `lock` rewrites it.
+const SchemaVersionDownloadURL = 5
+
 // DefaultName is the conventional lockfile name beside the requirements file,
 // galaxy.toml or requirements.yml, whichever the run read.
 const DefaultName = "galaxy.lock"
 
-// Entry is one pinned collection: a Galaxy entry pins version and SHA256, a
-// git entry (TypeGit) the commit and no SHA256, since a rebuild's gzip bytes
-// depend on the toolchain; a url entry (TypeURL) requires the origin's SHA256.
+// Entry is one pinned collection: a Galaxy entry pins version, SHA256 and the
+// download URL, a git entry (TypeGit) the commit and no SHA256, since a
+// rebuild's gzip bytes vary; a url entry (TypeURL) requires the origin's SHA256.
 type Entry struct {
-	Name    string   `yaml:"name"`
-	Type    string   `yaml:"type,omitempty"`
-	Version string   `yaml:"version"`
-	Source  string   `yaml:"source"`
-	Ref     string   `yaml:"ref,omitempty"`
-	Commit  string   `yaml:"commit,omitempty"`
-	Subdir  string   `yaml:"subdir,omitempty"`
-	SHA256  string   `yaml:"sha256,omitempty"`
-	Deps    []string `yaml:"deps,omitempty"`
+	Name    string `yaml:"name"`
+	Type    string `yaml:"type,omitempty"`
+	Version string `yaml:"version"`
+	Source  string `yaml:"source"`
+	// DownloadURL is where a Galaxy entry's artifact is fetched under --frozen
+	// without asking the server for version metadata; empty on any other type.
+	DownloadURL string   `yaml:"download_url,omitempty"`
+	Ref         string   `yaml:"ref,omitempty"`
+	Commit      string   `yaml:"commit,omitempty"`
+	Subdir      string   `yaml:"subdir,omitempty"`
+	SHA256      string   `yaml:"sha256,omitempty"`
+	Deps        []string `yaml:"deps,omitempty"`
 }
 
 // IsGit reports whether the entry pins a git source.
@@ -71,11 +79,16 @@ func (e Entry) IsGit() bool { return e.Type == TypeGit }
 // IsURL reports whether the entry pins a url source.
 func (e Entry) IsURL() bool { return e.Type == TypeURL }
 
+// IsGalaxy reports whether the entry pins a collection a Galaxy server serves.
+func (e Entry) IsGalaxy() bool { return e.Type == "" }
+
 // SchemaVersionFor returns the schema a file holding entries and roles is
-// written with, the highest feature present winning: SchemaVersionURL, then
-// SchemaVersionRoles, then SchemaVersionGit, else SchemaVersion.
+// written with, the highest feature present winning: SchemaVersionDownloadURL,
+// SchemaVersionURL, SchemaVersionRoles, SchemaVersionGit, else SchemaVersion.
 func SchemaVersionFor(entries []Entry, roles []RoleEntry) int {
 	switch {
+	case slices.ContainsFunc(entries, Entry.IsGalaxy):
+		return SchemaVersionDownloadURL
 	case anyURLEntry(entries, roles):
 		return SchemaVersionURL
 	case len(roles) > 0:
@@ -139,9 +152,9 @@ func Load(path string) (*File, error) {
 	if f.SchemaVersion == 0 {
 		return nil, fmt.Errorf("%w: missing schema_version", helpers.ErrLockfileInvalid)
 	}
-	if f.SchemaVersion < SchemaVersion || f.SchemaVersion > SchemaVersionURL {
+	if f.SchemaVersion < SchemaVersion || f.SchemaVersion > SchemaVersionDownloadURL {
 		return nil, fmt.Errorf("%w: schema_version=%d, supported=%d through %d",
-			helpers.ErrLockfileInvalid, f.SchemaVersion, SchemaVersion, SchemaVersionURL)
+			helpers.ErrLockfileInvalid, f.SchemaVersion, SchemaVersion, SchemaVersionDownloadURL)
 	}
 	if err := f.validate(); err != nil {
 		return nil, err
@@ -264,18 +277,15 @@ func checkEntryName(e Entry) error {
 	return nil
 }
 
-// validateEntryType judges the fields that set a git or url entry apart from
-// a Galaxy one, and the minimum schema each needs. Sources are re-parsed and
-// must round-trip unchanged, since a lockfile is repository content.
+// validateEntryType judges the fields that set a Galaxy, git or url entry
+// apart, and the minimum schema each needs. URLs are re-parsed and must
+// round-trip unchanged, since a lockfile is repository content.
 func validateEntryType(e Entry, schema int) error {
 	var minSchema int
 	var problem func(Entry) string
 	switch e.Type {
 	case "":
-		if e.Ref != "" || e.Commit != "" || e.Subdir != "" {
-			return fmt.Errorf("%w: %s: ref, commit and subdir belong to a git entry (type: git)", helpers.ErrLockfileInvalid, e.Name)
-		}
-		return nil
+		return validateGalaxyEntry(e, schema)
 	case TypeGit:
 		minSchema, problem = SchemaVersionGit, gitEntryProblem
 	case TypeURL:
@@ -286,10 +296,62 @@ func validateEntryType(e Entry, schema int) error {
 	if schema < minSchema {
 		return fmt.Errorf("%w: %s: a %s entry requires schema_version %d", helpers.ErrLockfileInvalid, e.Name, e.Type, minSchema)
 	}
+	if e.DownloadURL != "" {
+		return fmt.Errorf("%w: %s: download_url belongs to a Galaxy entry", helpers.ErrLockfileInvalid, e.Name)
+	}
 	if reason := problem(e); reason != "" {
 		return fmt.Errorf("%w: %s: %s", helpers.ErrLockfileInvalid, e.Name, reason)
 	}
 	return nil
+}
+
+// validateGalaxyEntry judges a Galaxy entry: no git fields, a schema new
+// enough to carry a download_url, and a download_url of canonical shape.
+func validateGalaxyEntry(e Entry, schema int) error {
+	if e.Ref != "" || e.Commit != "" || e.Subdir != "" {
+		return fmt.Errorf("%w: %s: ref, commit and subdir belong to a git entry (type: git)", helpers.ErrLockfileInvalid, e.Name)
+	}
+	// Every file an older release wrote is below this schema, so the refusal
+	// names the one command that repairs it.
+	if schema < SchemaVersionDownloadURL {
+		return fmt.Errorf("%w: %s: a Galaxy entry requires schema_version %d and a download_url; "+
+			"this lockfile predates them, run `go-galaxy lock` to rewrite it",
+			helpers.ErrLockfileInvalid, e.Name, SchemaVersionDownloadURL)
+	}
+	if reason := downloadURLProblem(e.DownloadURL); reason != "" {
+		return fmt.Errorf("%w: %s: %s", helpers.ErrLockfileInvalid, e.Name, reason)
+	}
+	return nil
+}
+
+// downloadURLProblem returns why a Galaxy entry's download_url is refused, or
+// "" when it is a canonical http(s) URL with no userinfo, query or fragment.
+// The URL is never quoted, since a refused one may carry a credential.
+func downloadURLProblem(raw string) string {
+	if raw == "" {
+		return "a Galaxy entry requires a download_url"
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "download_url is not an absolute http(s) URL"
+	}
+	return downloadURLPartProblem(u, raw)
+}
+
+// downloadURLPartProblem returns why a parsed http(s) download_url carries a
+// part a lockfile may not hold, or "" when raw is its canonical spelling.
+func downloadURLPartProblem(u *url.URL, raw string) string {
+	switch {
+	case u.User != nil:
+		return "download_url must not carry userinfo"
+	case u.RawQuery != "" || u.ForceQuery:
+		return "download_url must not carry a query string"
+	case u.Fragment != "" || u.RawFragment != "":
+		return "download_url must not carry a fragment"
+	case u.String() != raw:
+		return "download_url is not a canonical URL"
+	}
+	return ""
 }
 
 // gitEntryProblem returns why a git entry's source, ref, commit, subdir or

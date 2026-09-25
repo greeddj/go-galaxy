@@ -12,7 +12,9 @@ import (
 func roleLockfile() *lockfile.File {
 	return &lockfile.File{
 		SchemaVersion: lockfile.SchemaVersionRoles,
-		Collections:   []lockfile.Entry{{Name: "acme.app", Version: "1.0.0", Source: "https://galaxy.example"}},
+		Collections: []lockfile.Entry{{
+			Name: "acme.app", Version: "1.0.0", Source: "https://galaxy.example", DownloadURL: testDownloadURL("acme.app", "1.0.0"),
+		}},
 		Roles: []lockfile.RoleEntry{
 			{Name: "base", Type: lockfile.RoleTypeGit, Version: "main", Source: gitTestSource, Ref: "main", Commit: gitTestCommit},
 			{

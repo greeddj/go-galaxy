@@ -145,8 +145,9 @@ would wrongly conclude the environment names are dead too - they are not.
     artifact is rebuilt deterministically from the commit, and the gzip
     bytes of a rebuild depend on the toolchain, so a digest over them would
     fail a frozen install for no reason an operator could act on. A lockfile
-    with a git entry is written as `schema_version: 2`; one without stays
-    at `1`.
+    whose only entries are git ones is written as `schema_version: 2`; a
+    Galaxy collection beside them, which carries its `download_url`, makes
+    it `5`.
   - `version:` on a git entry is a ref - a branch, a tag, a qualified
     `refs/heads/...` or `refs/tags/...`, or a full forty-digit commit - and
     defaults to `HEAD`. An abbreviated commit is refused (spell it in full,
@@ -596,7 +597,7 @@ consequence of that, and every other deliberate difference, is listed here.
   marker and the read-only file modes described under [Differences a
   migration runs into](#differences-a-migration-runs-into), which is what
   marks it as this tool's for `cleanup`.
-- **The pin is a commit, and the lockfile is schema 3.** `lock` records each
+- **The pin is a commit, and the lockfile is schema 3 or higher.** `lock` records each
   role as `type: galaxy` or `type: git` with the version as asked (a tag, a
   branch or a commit - not a semver), the ref, the commit, the repository,
   the Galaxy name and server for a Galaxy role, and the install names of its
@@ -604,7 +605,8 @@ consequence of that, and every other deliberate difference, is listed here.
   url role is the exception: its entry is `type: url` with the tarball URL
   as its source and the origin bytes' `sha256` as its pin, and a file
   holding one is `schema_version: 4`. A file holding a role is written as
-  `schema_version: 3`; one without roles carries no `roles` key at all.
+  `schema_version: 3`, and either becomes `5` once it holds a Galaxy
+  collection; one without roles carries no `roles` key at all.
   ansible has no lockfile for roles at all.
 - **`roles_path` is one path, not a search list, and its default is
   project-local.** As with `collections_path`: the first entry of
@@ -637,12 +639,12 @@ knowing before a `requirements.yml` written for ansible is pointed at this tool.
   `type: url`) is downloaded directly, its identity and dependencies read
   from the artifact's own MANIFEST.json, and the collection resolved as the
   single candidate for its `namespace.name`, exactly as a git collection
-  is. The lockfile pins it by the origin bytes' sha256 (schema 4), a pin a
-  git entry cannot carry, and the pin is enforced on every install, not
-  only under `--frozen`. Where ansible ignores a `version:` beside a url
-  source, here it is an assertion: the value must be exact and must equal
-  the version the MANIFEST declares, or the run fails with the resolution
-  code (`3`). A `signatures:` key on a url entry is refused (ansible does
+  is. The lockfile pins it by the origin bytes' sha256 (schema 4, or 5 beside
+  a Galaxy collection), a pin a git entry cannot carry, and the pin is
+  enforced on every install, not only under `--frozen`. Where ansible ignores
+  a `version:` beside a url source, here it is an assertion: the value must
+  be exact and must equal the version the MANIFEST declares, or the run
+  fails with the resolution code (`3`). A `signatures:` key on a url entry is refused (ansible does
   not apply user signatures to url sources either; here the dead key is
   named rather than dropped), and so are a `source:` or `namespace:` key
   beside a url name, a credential in the URL, and a `#fragment`. An

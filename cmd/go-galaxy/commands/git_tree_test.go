@@ -109,6 +109,7 @@ func TestGitSubdirWithin(t *testing.T) {
 // from the entries, and Load, which refuses a git entry that is not canonical.
 func saveAndLoad(t *testing.T, lf *lockfile.File) *lockfile.File {
 	t.Helper()
+	want := lockfile.SchemaVersionFor(lf.Collections, lf.Roles)
 	p := filepath.Join(t.TempDir(), "galaxy.lock")
 	if err := lockfile.Save(p, lf); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -117,10 +118,16 @@ func saveAndLoad(t *testing.T, lf *lockfile.File) *lockfile.File {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if loaded.SchemaVersion != lockfile.SchemaVersionGit {
-		t.Fatalf("schema_version = %d, want %d", loaded.SchemaVersion, lockfile.SchemaVersionGit)
+	if loaded.SchemaVersion != want {
+		t.Fatalf("schema_version = %d, want %d", loaded.SchemaVersion, want)
 	}
 	return loaded
+}
+
+// testDownloadURL is the download_url a hand-written Galaxy lockfile entry
+// for name at version needs to load.
+func testDownloadURL(name, version string) string {
+	return "https://galaxy.example.invalid/download/" + strings.ReplaceAll(name, ".", "-") + "-" + version + ".tar.gz"
 }
 
 // TestPrintTreeGitOrigin proves a git entry prints its repository, subdir and
@@ -131,7 +138,7 @@ func TestPrintTreeGitOrigin(t *testing.T) {
 	source := canonicalGitSource(t, gitTestSource)
 	lf := saveAndLoad(t, &lockfile.File{Collections: []lockfile.Entry{
 		gitEntry("acme.one", source, "collections/one"),
-		{Name: "ansible.utils", Version: "6.0.2"},
+		{Name: "ansible.utils", Version: "6.0.2", DownloadURL: testDownloadURL("ansible.utils", "6.0.2")},
 	}})
 	missing := gitsource.Locator{URL: "https://git.example/org/absent.git", Subdir: ""}.String()
 
@@ -164,18 +171,18 @@ func TestPrintExplainGitEntry(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"acme.one 1.0.0\n",
-		"  type   : git\n",
-		"  source : " + source + "\n",
-		"  ref    : main\n",
-		"  commit : " + gitTestCommit + "\n",
-		"  subdir : collections/one\n",
+		"  type         : git\n",
+		"  source       : " + source + "\n",
+		"  ref          : main\n",
+		"  commit       : " + gitTestCommit + "\n",
+		"  subdir       : collections/one\n",
 		"requirements.yml (root)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("printExplain() output missing %q; got:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "sha256") {
-		t.Fatalf("printExplain() printed a sha256 line for a git entry; got:\n%s", out)
+	if strings.Contains(out, "sha256") || strings.Contains(out, "download_url") {
+		t.Fatalf("printExplain() printed a sha256 or download_url line for a git entry; got:\n%s", out)
 	}
 }

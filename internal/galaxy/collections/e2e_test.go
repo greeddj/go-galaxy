@@ -257,8 +257,11 @@ func newFrozenPinFixture(t *testing.T, f *e2eFixture) (string, *lockfile.File) {
 		SchemaVersion: lockfile.SchemaVersion,
 		Server:        f.cfg.Server,
 		Collections: []lockfile.Entry{
-			{Name: "acme.app", Version: testVersion100, Source: f.cfg.Server, SHA256: f.appV1.SHA256, Deps: []string{"acme.lib"}},
-			{Name: "acme.lib", Version: testVersion100, Source: f.cfg.Server, SHA256: f.libV1.SHA256},
+			{
+				Name: "acme.app", Version: testVersion100, Source: f.cfg.Server, DownloadURL: f.appV1.DownloadURL,
+				SHA256: f.appV1.SHA256, Deps: []string{"acme.lib"},
+			},
+			{Name: "acme.lib", Version: testVersion100, Source: f.cfg.Server, DownloadURL: f.libV1.DownloadURL, SHA256: f.libV1.SHA256},
 		},
 	}
 	if err := lockfile.Save(lockPath, lf); err != nil {
@@ -358,7 +361,7 @@ func TestFrozenInstallRejectsWildcardLockfilePin(t *testing.T) {
 		lf := &lockfile.File{
 			SchemaVersion: lockfile.SchemaVersion,
 			Server:        f.cfg.Server,
-			Collections:   []lockfile.Entry{{Name: "acme.app", Version: "*", Source: f.cfg.Server}},
+			Collections:   []lockfile.Entry{{Name: "acme.app", Version: "*", Source: f.cfg.Server, DownloadURL: f.appV1.DownloadURL}},
 		}
 		if err := lockfile.Save(lockPath, lf); err != nil {
 			t.Fatalf("save wildcard-pinned lockfile: %v", err)
@@ -385,7 +388,7 @@ func TestFrozenInstallRejectsWildcardLockfilePin(t *testing.T) {
 			SchemaVersion: lockfile.SchemaVersion,
 			Server:        f.cfg.Server,
 			Collections: []lockfile.Entry{
-				{Name: "acme.app", Version: testVersion100, Source: f.cfg.Server, SHA256: f.appV1.SHA256},
+				{Name: "acme.app", Version: testVersion100, Source: f.cfg.Server, DownloadURL: f.appV1.DownloadURL, SHA256: f.appV1.SHA256},
 			},
 		}
 		if err := lockfile.Save(lockPath, lf); err != nil {
@@ -728,6 +731,21 @@ func findLockEntry(t *testing.T, lf *lockfile.File, name string) lockfile.Entry 
 	}
 	t.Fatalf("lockfile has no entry named %q", name)
 	return lockfile.Entry{}
+}
+
+// assertGalaxyLockEntryShape fails unless e is a Galaxy entry pinning both
+// the sha256 and the download_url a frozen install trusts.
+func assertGalaxyLockEntryShape(t *testing.T, e lockfile.Entry) {
+	t.Helper()
+	if !e.IsGalaxy() || e.SHA256 == "" || e.DownloadURL == "" {
+		t.Fatalf("galaxy entry lost its shape: %+v", e)
+	}
+}
+
+// lockedDownloadURLFor is the download_url a hand-written Galaxy lockfile
+// entry for name at version carries: the fake server's own download route.
+func lockedDownloadURLFor(server, name, version string) string {
+	return strings.TrimSuffix(server, "/") + "/download/" + strings.ReplaceAll(name, ".", "-") + "-" + version + ".tar.gz"
 }
 
 // writeRequirementsMulti writes a requirements.yml listing every name at

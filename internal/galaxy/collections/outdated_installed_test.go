@@ -260,7 +260,10 @@ func TestOutdatedInputPrefersTheLockfile(t *testing.T) {
 	if err := lockfile.Save(lockPath, &lockfile.File{
 		SchemaVersion: lockfile.SchemaVersion,
 		Server:        "https://hub.example",
-		Collections:   []lockfile.Entry{{Name: "acme.widgets", Version: "1.0.0", Source: "https://hub.example"}},
+		Collections: []lockfile.Entry{{
+			Name: "acme.widgets", Version: "1.0.0", Source: "https://hub.example",
+			DownloadURL: lockedDownloadURLFor("https://hub.example", "acme.widgets", "1.0.0"),
+		}},
 	}); err != nil {
 		t.Fatalf("save lockfile: %v", err)
 	}
@@ -273,9 +276,10 @@ func TestOutdatedInputPrefersTheLockfile(t *testing.T) {
 	if src.label != lockPath {
 		t.Errorf("label = %q, want the lockfile path %q", src.label, lockPath)
 	}
-	assertEntriesEqual(t, src.collections, []lockfile.Entry{
-		{Name: "acme.widgets", Version: "1.0.0", Source: "https://hub.example"},
-	})
+	assertEntriesEqual(t, src.collections, []lockfile.Entry{{
+		Name: "acme.widgets", Version: "1.0.0", Source: "https://hub.example",
+		DownloadURL: lockedDownloadURLFor("https://hub.example", "acme.widgets", "1.0.0"),
+	}})
 }
 
 // TestOutdatedInputPropagatesAMalformedLockfile pins that a lockfile that
