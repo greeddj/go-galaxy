@@ -451,7 +451,7 @@ func lockfileDepsToKeys(deps []string, byFQDN map[string]lockfile.Entry) []strin
 
 // lockDryRunBaseline loads the lockfile at path as a dry run's "before" side,
 // or nil when it is absent or unloadable (warned, never fatal, since a real
-// lock only overwrites it). lockFrozen, whose verdict is that file, fails closed.
+// lock only overwrites it). lockCheck, whose verdict is that file, fails closed.
 func lockDryRunBaseline(runtime *infra.Infra, path string) *lockfile.File {
 	lf, err := lockfile.Load(path)
 	if err == nil {
@@ -463,11 +463,11 @@ func lockDryRunBaseline(runtime *infra.Infra, path string) *lockfile.File {
 	return nil
 }
 
-// dryRunDiffPrefix and frozenDiffPrefix lead reportLockfileDiff's summary line
-// for lockDryRun's preview and lockFrozen's drift gate.
+// dryRunDiffPrefix and checkDiffPrefix lead reportLockfileDiff's summary line
+// for lockDryRun's preview and lockCheck's drift gate.
 const (
 	dryRunDiffPrefix = "Dry run"
-	frozenDiffPrefix = "Frozen"
+	checkDiffPrefix  = "Check"
 )
 
 // reportLockfileDiff prints the server change, one Okf line per changed

@@ -98,7 +98,7 @@ func initInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) 
 		dryRunBanner(runtime)
 	}
 	// A warning, not a usage error: both flags often arrive from an ambient CI
-	// environment. cfg.Frozen is deliberately not read, since lock --frozen
+	// environment. cfg.Check is deliberately not read, since lock --check
 	// --refresh still honors --refresh.
 	if cfg.Refresh && cfg.Offline {
 		runtime.Output.Warnf("--offline: skipping --refresh; cached state is the only source of truth offline")

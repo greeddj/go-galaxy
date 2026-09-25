@@ -64,16 +64,19 @@ type Config struct {
 	Workers   int
 	// DownloadWorkers bounds the network-only download and cache-probe pool,
 	// sized apart from Workers (see helpers.DefaultDownloadWorkers).
-	DownloadWorkers            int
-	Refresh                    bool
-	NoCache                    bool
-	NoDeps                     bool
-	DryRun                     bool
-	Verbose                    bool
-	Quiet                      bool
-	ClearCache                 bool
-	Offline                    bool
-	Frozen                     bool
+	DownloadWorkers int
+	Refresh         bool
+	NoCache         bool
+	NoDeps          bool
+	DryRun          bool
+	Verbose         bool
+	Quiet           bool
+	ClearCache      bool
+	Offline         bool
+	Frozen          bool
+	// Check makes lock compare its fresh resolution with the lockfile on disk
+	// instead of writing it; only the lock command registers the flag.
+	Check                      bool
 	AnsibleCollectionsPathUsed bool
 	AnsibleRolesPathUsed       bool
 	AnsibleCacheDirUsed        bool
@@ -199,6 +202,7 @@ func newConfigFromCLI(c *cli.Command) *Config {
 		DryRun:          c.Bool("dry-run"),
 		Offline:         c.Bool("offline"),
 		Frozen:          c.Bool("frozen"),
+		Check:           c.Bool("check"),
 		DownloadPath:    c.String("download-path"),
 		RolesPath:       c.String("roles-path"),
 	}

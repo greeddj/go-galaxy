@@ -44,7 +44,17 @@ func CommonFlags() []cli.Flag {
 func CollectionFlags() []cli.Flag {
 	flags := collectionPathFlags()
 	flags = append(flags, collectionBehaviorFlags()...)
-	flags = append(flags, lockfileAndMetricsFlags()...)
+	flags = append(flags, lockFileFlag(), frozenFlag(), metricsFileFlag())
+	return flags
+}
+
+// LockFlags is CollectionFlags for the lock command, with --check in place of
+// --frozen: lock resolves fresh on every run, so its only lockfile-reading
+// mode is the comparison --check asks for.
+func LockFlags() []cli.Flag {
+	flags := collectionPathFlags()
+	flags = append(flags, collectionBehaviorFlags()...)
+	flags = append(flags, lockFileFlag(), checkFlag(), metricsFileFlag())
 	return flags
 }
 
@@ -153,23 +163,35 @@ func collectionBehaviorFlags() []cli.Flag {
 	}
 }
 
-func lockfileAndMetricsFlags() []cli.Flag {
-	return []cli.Flag{
-		&cli.StringFlag{
-			Name:    "lock-file",
-			Usage:   "Path to lockfile (default: galaxy.lock next to requirements file)",
-			Sources: cli.EnvVars("GO_GALAXY_LOCK_FILE"),
-		},
-		&cli.BoolFlag{
-			Name:    "frozen",
-			Usage:   "Fail if lockfile is missing or does not match resolved requirements",
-			Sources: cli.EnvVars("GO_GALAXY_FROZEN"),
-		},
-		&cli.StringFlag{
-			Name:    "metrics-file",
-			Usage:   "Write a JSON metrics report to this path on completion",
-			Sources: cli.EnvVars("GO_GALAXY_METRICS_FILE"),
-		},
+func lockFileFlag() cli.Flag {
+	return &cli.StringFlag{
+		Name:    "lock-file",
+		Usage:   "Path to lockfile (default: galaxy.lock next to requirements file)",
+		Sources: cli.EnvVars("GO_GALAXY_LOCK_FILE"),
+	}
+}
+
+func frozenFlag() cli.Flag {
+	return &cli.BoolFlag{
+		Name:    "frozen",
+		Usage:   "Fail if lockfile is missing or does not match resolved requirements",
+		Sources: cli.EnvVars("GO_GALAXY_FROZEN"),
+	}
+}
+
+func checkFlag() cli.Flag {
+	return &cli.BoolFlag{
+		Name:    "check",
+		Usage:   "Fail if the lockfile is missing or differs from what lock would write, instead of writing it",
+		Sources: cli.EnvVars("GO_GALAXY_CHECK"),
+	}
+}
+
+func metricsFileFlag() cli.Flag {
+	return &cli.StringFlag{
+		Name:    "metrics-file",
+		Usage:   "Write a JSON metrics report to this path on completion",
+		Sources: cli.EnvVars("GO_GALAXY_METRICS_FILE"),
 	}
 }
 

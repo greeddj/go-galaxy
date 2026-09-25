@@ -541,7 +541,7 @@ The collections suite drives its pipeline through an in-memory
 leaves the transport to `internal/galaxy/gitfetch`'s own tests against fakegit,
 `role_test.go` among them for the role half. The role pipeline's end-to-end
 coverage is `roles_e2e_test.go` in that suite: Galaxy and git roles through
-install, warm, lock, `--frozen`, `--offline`, `--refresh`, `--no-cache`,
+install, warm, lock, `--frozen`, `--check`, `--offline`, `--refresh`, `--no-cache`,
 `--dry-run`, the dependency walk, the directory policy and cleanup, against
 fakegalaxy's v1 routes and the client double.
 

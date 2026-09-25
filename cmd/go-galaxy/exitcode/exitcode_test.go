@@ -51,7 +51,7 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitLock,
 	},
 	{
-		// lock --frozen's own drift-gate verdict: a fresh resolve disagrees
+		// lock --check's own drift-gate verdict: a fresh resolve disagrees
 		// with the lockfile already on disk. Exit 6 is the same class as
 		// every other lockfile sentinel, per ExitLock's own doc comment.
 		name:     "lockfile drift",
@@ -578,7 +578,7 @@ func TestSaveFailureDoesNotMaskIntegrity(t *testing.T) {
 	}
 }
 
-// TestLockDriftOutranksSaveFailure pins that lock --frozen's drift verdict
+// TestLockDriftOutranksSaveFailure pins that lock --check's drift verdict
 // wrapped by annotateSaveFailure still exits ExitLock: the drift, not the
 // save failure's network-class cause, is what the operator must act on.
 func TestLockDriftOutranksSaveFailure(t *testing.T) {

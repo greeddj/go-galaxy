@@ -1016,7 +1016,7 @@ not load ends the run at startup with exit `2`.
 `lock` (alias `l`) resolves the requirements file (`galaxy.toml` or
 `requirements.yml`) fresh, collections and the roles list, under the exclusive
 cache lock and writes `galaxy.lock`. With
-`--frozen` it compares the fresh result with the file already on disk and fails
+`--check` it compares the fresh result with the file already on disk and fails
 on drift instead of writing. With `--dry-run` it prints the same diff and writes
 nothing. It never installs anything, but it saves the resolve work into the
 cache snapshot so later runs can reuse it.
@@ -1221,17 +1221,17 @@ flowchart TD
 
 ### 5. Write, preview or gate
 
-`--frozen` is checked before `--dry-run`, so with both set the frozen verdict
+`--check` is checked before `--dry-run`, so with both set the check verdict
 applies and `--dry-run` controls only the snapshot save and the metrics report.
 
 ```mermaid
 flowchart TD
     IN(["lockfile built in memory"]) --> PA["path: --lock-file, else a galaxy.toml's lock_file,<br/>else galaxy.lock beside --requirements-file"]
-    PA --> FR{"--frozen?"}
+    PA --> FR{"--check?"}
     FR -->|"yes"| LR["LoadRequired: read and validate the file at path"]
     LR -->|"absent"| XM(["lockfile missing<br/>exit 6 (lockfile)"])
     LR -->|"unreadable or invalid"| XI(["lockfile invalid<br/>exit 6 (lockfile)"])
-    LR -->|"ok"| CF["Compare the file on disk with the fresh build,<br/>print Would lines and a Frozen summary"]
+    LR -->|"ok"| CF["Compare the file on disk with the fresh build,<br/>print Would lines and a Check summary"]
     CF --> SD{"--dry-run?"}
     SD -->|"no"| SS
     SD -->|"yes"| WP
@@ -1256,7 +1256,7 @@ flowchart TD
     MD -->|"yes"| MW["warn: skipping metrics report"]
     MD -->|"no"| MR["write the metrics report, warn on failure"]
     MW --> DF
-    MR --> DF{"--frozen and the diff not empty?"}
+    MR --> DF{"--check and the diff not empty?"}
     DF -->|"yes"| XD(["lockfile drift, with any save failure appended<br/>exit 6 (lockfile)"])
     DF -->|"no"| SF{"snapshot save failed?"}
     SF -->|"yes"| XS(["exit 4 (network) or 2 (usage) by cause,<br/>8 (cache busy) when the lock was lost"])
@@ -1288,11 +1288,12 @@ check still applies once the lock was taken.
 
 ### Flags that change the flow
 
-- `--frozen` (`GO_GALAXY_FROZEN`): the fresh resolve still runs in full.
+- `--check` (`GO_GALAXY_CHECK`): the fresh resolve still runs in full.
   Afterwards the file at the lockfile path must exist and load (exit 6
   otherwise), and it is compared with the fresh build instead of being
   overwritten; any difference, a server-only change included, exits 6. It is
-  checked before `--dry-run`.
+  checked before `--dry-run`. `lock` takes no `--frozen`: the flag is refused
+  as undefined (exit 2), and `GO_GALAXY_FROZEN` does not reach it.
 - `--dry-run` (`GO_GALAXY_DRY_RUN`, global): prints the banner, skips
   `--clear-cache` and project registration, discards every git and url build
   made during discovery, writes no lockfile but diffs the fresh build against

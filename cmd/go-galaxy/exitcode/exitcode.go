@@ -155,7 +155,7 @@ func isSignatureError(err error) bool {
 }
 
 // isLockError reports whether err is a lockfile sentinel: missing, invalid,
-// not covering the requirements roots, or lock --frozen's drift verdict.
+// not covering the requirements roots, or lock --check's drift verdict.
 func isLockError(err error) bool {
 	return errors.Is(err, helpers.ErrLockfileMismatch) ||
 		errors.Is(err, helpers.ErrLockfileMissing) ||

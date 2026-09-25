@@ -10,7 +10,7 @@ import (
 
 // Lock returns the CLI command that writes a lockfile from resolved deps.
 func Lock() *cli.Command {
-	flags := cliflags.CollectionFlags()
+	flags := cliflags.LockFlags()
 	flags = append(flags, cliflags.S3Flags()...)
 
 	return &cli.Command{

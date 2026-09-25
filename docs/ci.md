@@ -347,15 +347,15 @@ Trust model](security.md#security--trust-model) for why a prefix alone is not a 
 Fail a pull request when `galaxy.lock` no longer matches the requirements
 file (`galaxy.toml` or `requirements.yml`) - a root added, removed, or
 repinned without regenerating
-the lockfile. `lock --frozen` reads the lockfile as the thing to check rather
+the lockfile. `lock --check` reads the lockfile as the thing to check rather
 than as the answer, which is the opposite of what install/warm `--frozen` do -
 it still resolves fresh, and only a warm resolve cache lets that stay off the
 network - so this is a separate job from the install above, not a replacement
 for it. Add
-`--refresh` for a second, distinct gate on the same file: `lock --frozen`
+`--refresh` for a second, distinct gate on the same file: `lock --check`
 alone only catches a change to the requirements file (`galaxy.toml` or
 `requirements.yml`), since it reuses the cached
-resolve; `lock --frozen --refresh` also catches a newer version simply
+resolve; `lock --check --refresh` also catches a newer version simply
 having been published upstream, since `--refresh` makes the comparison's
 fresh resolve reach the live servers instead:
 
@@ -376,10 +376,10 @@ jobs:
           chmod +x /usr/local/bin/go-galaxy
 
       - name: Check galaxy.lock matches the requirements file
-        run: go-galaxy lock --frozen
+        run: go-galaxy lock --check
 
       - name: Check galaxy.lock is not stale against upstream
-        run: go-galaxy lock --frozen --refresh
+        run: go-galaxy lock --check --refresh
 ```
 
 A nonzero exit from either step (code `6`, the lockfile class - see

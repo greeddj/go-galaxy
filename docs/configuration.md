@@ -613,7 +613,7 @@ by whichever file it installed from (an older binary sharing the cache fails
 closed on that record instead; see the
 [upgrade note](cli.md#cleanup-options)). The lockfile does not care which file
 the roots came from: `galaxy.lock` is byte-identical for identical roots, and
-`lock --frozen` passes across a migration that keeps every requirement the
+`lock --check` passes across a migration that keeps every requirement the
 same. The cached resolution is narrower. A constraint's spelling, its inner
 whitespace included, is part of the requirements signature that decides
 whether the last resolution is replayed, so a migration that respells a

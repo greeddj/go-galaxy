@@ -277,10 +277,10 @@ func TestLockWithStateSaveFailureWritesMetricsAndKeepsLockfile(t *testing.T) {
 	}
 }
 
-// TestLockFrozenSaveFailureJoinsBehindDrift pins that lockFrozen with drift and
+// TestLockCheckSaveFailureJoinsBehindDrift pins that lockCheck with drift and
 // a failed save returns ErrLockfileDrift with the save error joined behind it,
 // writes metrics, and leaves the stale lockfile byte for byte untouched.
-func TestLockFrozenSaveFailureJoinsBehindDrift(t *testing.T) {
+func TestLockCheckSaveFailureJoinsBehindDrift(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	cacheDir := filepath.Join(root, "cache")
@@ -300,11 +300,11 @@ func TestLockFrozenSaveFailureJoinsBehindDrift(t *testing.T) {
 		RequirementsFile: reqPath,
 		MetricsFile:      metricsPath,
 		Workers:          1,
-		Frozen:           true,
+		Check:            true,
 	}
 
 	// A stale pin the fresh resolve (1.0.0, the only version) disagrees with,
-	// which is the drift lockFrozen must report.
+	// which is the drift lockCheck must report.
 	path := lockfile.ResolveDefaultPath(cfg.RequirementsFile, cfg.LockFile)
 	stale := &lockfile.File{
 		SchemaVersion: lockfile.SchemaVersion,
@@ -334,11 +334,11 @@ func TestLockFrozenSaveFailureJoinsBehindDrift(t *testing.T) {
 		t.Fatalf("expected errors.Is errSaveFailSentinel, got %v", err)
 	}
 
-	// (b) the lockfile on disk is untouched: lockFrozen never writes it,
+	// (b) the lockfile on disk is untouched: lockCheck never writes it,
 	// drift or not, save failure or not.
 	after := mustReadFile(t, path)
 	if string(before) != string(after) {
-		t.Fatalf("lockFrozen rewrote the lockfile despite drift:\n%s", after)
+		t.Fatalf("lockCheck rewrote the lockfile despite drift:\n%s", after)
 	}
 
 	// (c) writeRunMetrics still ran despite both failures.

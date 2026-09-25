@@ -446,7 +446,7 @@ live run's in-flight temps would match.
 
 `internal/galaxy/lockfile` owns reading, validating and writing `galaxy.lock`.
 `Load` is its trust boundary, since a committed lockfile is repository
-content, and `Compare` is the drift contract `lock --frozen` gates on; both are
+content, and `Compare` is the drift contract `lock --check` gates on; both are
 described under [The lockfile](#the-lockfile).
 
 ## Configuration
@@ -1074,13 +1074,13 @@ digest for every install sharing them. The record's `InstallPath` is absolute,
 whatever spelling `--roles-path` had, because cleanup finds a record by the
 path it scans.
 
-**Lock and frozen.** `lock` resolves roles in the same run and renders each as
+**Lock, check and frozen.** `lock` resolves roles in the same run and renders each as
 a `RoleEntry` pinned by commit, or a url role by its origin bytes' sha256;
 under `--frozen` an `install` or `warm` takes
 its roles from the lockfile with no network, checking each `roles:` entry as
 written against its locked line (same source - the Galaxy name or the
 repository - and same ref, and for a Galaxy role with a version asked for, that
-version), and `lock --frozen` diffs the fresh role list against the file.
+version), and `lock --check` diffs the fresh role list against the file.
 `outdated` asks the remote what a git role's ref points at now, and asks the
 v1 API which tag is highest for a Galaxy role, comparing by name.
 
@@ -2046,7 +2046,7 @@ failure - a file that cannot be read, does not parse, has a `schema_version`
 missing or outside 1 through 5, or fails validation - wraps
 `ErrLockfileInvalid`, and a new failure arm must wrap it too. Every caller that
 cannot proceed without a lockfile - `install` and `warm` under `--frozen`,
-`lock --frozen`, `tree` and `explain` - loads through `LoadRequired`, which
+`lock --check`, `tree` and `explain` - loads through `LoadRequired`, which
 turns absence into `ErrLockfileMissing` naming the path, exit `6`; a bare
 `fs.ErrNotExist` reaching the exit-code classifier would be claimed by the
 usage class and exit `2`. `hash` and `outdated` call `Load` directly and fall
@@ -2215,19 +2215,19 @@ Galaxy role's is refused), no ref, commit, galaxy or repository, and the
 version as the label asked for or the sha's first twelve hex digits; a file
 holding one and no Galaxy collection is `schema_version: 4`.
 
-`lockfile.Compare` is what `lock --frozen` gates on and what `lock --dry-run`
+`lockfile.Compare` is what `lock --check` gates on and what `lock --dry-run`
 reports, and its contract is that `Compare(a, b).Empty()` holds exactly when
 `a.Hash() == b.Hash()`. That holds because it compares every field of an entry
 and of a role entry except the name it keys them by, plus the file-level
 `server`; `schema_version` needs no comparison, since the hash re-derives it
 from the entries. A field added to `Entry`, `RoleEntry` or `File` must
 therefore join those comparisons (and `comparedFieldCount` or
-`comparedRoleFieldCount`), or `lock --frozen` passes a lockfile `lock` would
+`comparedRoleFieldCount`), or `lock --check` passes a lockfile `lock` would
 rewrite. Deps compare as a multiset, ignoring order but not duplicates, to
 match the hash, which sorts them and never deduplicates; a deps-only change is
 drift, because a frozen install rebuilds its install graph from them. `Compare`
 reads a nil file as one with no entries, so a caller tells a missing lockfile
-apart itself - `lock --frozen` fails closed through `LoadRequired`, the dry
+apart itself - `lock --check` fails closed through `LoadRequired`, the dry
 run's baseline reports everything as added - and it passes entry values through
 verbatim, leaving hostile text to the printer to neutralize.
 

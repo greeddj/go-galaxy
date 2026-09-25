@@ -152,3 +152,39 @@ func TestDryRunEnv(t *testing.T) {
 		t.Error("c.Bool(\"dry-run\") = false, want true (from GO_GALAXY_DRY_RUN)")
 	}
 }
+
+// TestLockFlagsTakeCheckInPlaceOfFrozen pins that lock's set reads --check
+// from GO_GALAXY_CHECK and registers no --frozen, so GO_GALAXY_FROZEN reaches
+// no lock run, while the install set keeps --frozen and has no --check.
+func TestLockFlagsTakeCheckInPlaceOfFrozen(t *testing.T) {
+	// Not parallel: t.Setenv panics in a test that has called t.Parallel.
+	t.Setenv("GO_GALAXY_CHECK", "true")
+	t.Setenv("GO_GALAXY_FROZEN", "true")
+
+	var check, frozen bool
+	cmd := &cli.Command{
+		Name:  "lock",
+		Flags: LockFlags(),
+		Action: func(_ context.Context, c *cli.Command) error {
+			check, frozen = c.Bool("check"), c.Bool("frozen")
+			return nil
+		},
+	}
+	if err := cmd.Run(context.Background(), []string{"lock"}); err != nil {
+		t.Fatalf("cmd.Run() error = %v, want nil", err)
+	}
+	if !check {
+		t.Error("c.Bool(\"check\") = false, want true (from GO_GALAXY_CHECK)")
+	}
+	if frozen {
+		t.Error("c.Bool(\"frozen\") = true, want false: lock registers no --frozen")
+	}
+	if hasFlag(CollectionFlags(), "check") || !hasFlag(CollectionFlags(), "frozen") {
+		t.Error("CollectionFlags() must keep --frozen and carry no --check")
+	}
+}
+
+// hasFlag reports whether flags declares name.
+func hasFlag(flags []cli.Flag, name string) bool {
+	return slices.ContainsFunc(flags, func(f cli.Flag) bool { return slices.Contains(f.Names(), name) })
+}

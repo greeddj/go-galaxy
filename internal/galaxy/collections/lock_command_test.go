@@ -2,7 +2,7 @@ package collections
 
 // This file pins the lock command end to end through the exported Lock, so
 // runLock's lifecycle is covered: the --lock-file path, overwriting, the
-// --dry-run preview and the --frozen drift gate.
+// --dry-run preview and the --check drift gate.
 
 import (
 	"context"
@@ -204,7 +204,7 @@ func assertReplacedNotMerged(t *testing.T, fresh, stale string) {
 }
 
 // mustReadFile reads path, failing the test on any error. Used by the
-// --frozen gate tests below to prove the lockfile on disk is byte-identical
+// --check gate tests below to prove the lockfile on disk is byte-identical
 // before and after a run that must not have written it.
 func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()
@@ -216,10 +216,10 @@ func mustReadFile(t *testing.T, path string) []byte {
 	return data
 }
 
-// TestLockFrozenPassesOnAnUpToDateLockfile is the --frozen gate's positive
+// TestLockCheckPassesOnAnUpToDateLockfile is the --check gate's positive
 // control: an unchanged resolve passes, leaves the file byte-identical, reports
-// it up to date and writes a metrics report with "frozen": true.
-func TestLockFrozenPassesOnAnUpToDateLockfile(t *testing.T) {
+// it up to date and writes a metrics report with no "frozen" in it.
+func TestLockCheckPassesOnAnUpToDateLockfile(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
@@ -228,28 +228,28 @@ func TestLockFrozenPassesOnAnUpToDateLockfile(t *testing.T) {
 	path := lockfile.ResolveDefaultPath(f.cfg.RequirementsFile, f.cfg.LockFile)
 	before := mustReadFile(t, path)
 
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
-		t.Fatalf("frozen Lock: %v", err)
+		t.Fatalf("check Lock: %v", err)
 	}
 
 	after := mustReadFile(t, path)
 	if string(before) != string(after) {
-		t.Fatalf("frozen Lock rewrote an up-to-date lockfile:\n%s", after)
+		t.Fatalf("check Lock rewrote an up-to-date lockfile:\n%s", after)
 	}
 	if !f.printer.hasPersistentPrintContaining("lockfile is up to date") {
 		t.Fatalf("persists = %v", f.printer.persists)
 	}
 	written := readMetricsReport(t, f.cfg.MetricsFile)
-	if got, _ := written["frozen"].(bool); !got {
-		t.Errorf("metrics frozen = %v, want true (a lock --frozen run honors the flag)", written["frozen"])
+	if frozen, present := written["frozen"]; present {
+		t.Errorf("metrics frozen = %v, want absent: lock registers no --frozen", frozen)
 	}
 }
 
-// TestLockFrozenFailsOnDrift pins that a root added after locking fails
-// --frozen with helpers.ErrLockfileDrift and the lock exit code, leaves the
-// file byte-identical and still writes the frozen run's metrics report.
-func TestLockFrozenFailsOnDrift(t *testing.T) {
+// TestLockCheckFailsOnDrift pins that a root added after locking fails
+// --check with helpers.ErrLockfileDrift and the lock exit code, leaves the
+// file byte-identical and still writes the check run's metrics report.
+func TestLockCheckFailsOnDrift(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
@@ -261,11 +261,11 @@ func TestLockFrozenFailsOnDrift(t *testing.T) {
 	f.server.AddVersion("acme", "extra", testVersion100, nil)
 	mustWriteFile(t, f.cfg.RequirementsFile,
 		[]byte("collections:\n  - name: acme.widgets\n    version: \"*\"\n  - name: acme.extra\n    version: \"*\"\n"))
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 
 	err := Lock(context.Background(), f.cfg, f.runtime)
 	if err == nil {
-		t.Fatal("expected an error from a drifted lockfile under --frozen, got nil")
+		t.Fatal("expected an error from a drifted lockfile under --check, got nil")
 	}
 	if !errors.Is(err, helpers.ErrLockfileDrift) {
 		t.Fatalf("Lock error = %v, want errors.Is helpers.ErrLockfileDrift", err)
@@ -275,34 +275,34 @@ func TestLockFrozenFailsOnDrift(t *testing.T) {
 	}
 	after := mustReadFile(t, path)
 	if string(before) != string(after) {
-		t.Fatalf("frozen Lock rewrote the lockfile on drift:\n%s", after)
+		t.Fatalf("check Lock rewrote the lockfile on drift:\n%s", after)
 	}
 	if !f.printer.hasOkContaining("Would add: acme.extra@" + testVersion100) {
 		t.Fatalf("oks = %v", f.printer.oks)
 	}
 
-	// lock --frozen writes its metrics report on drift too, unlike a resolve
+	// lock --check writes its metrics report on drift too, unlike a resolve
 	// failure: a CI dashboard needs it even for a run that exits nonzero.
 	written := readMetricsReport(t, f.cfg.MetricsFile)
 	if got, _ := written["command"].(string); got != metricsCommandLock {
 		t.Errorf("metrics command = %q, want %q", got, metricsCommandLock)
 	}
-	if got, _ := written["frozen"].(bool); !got {
-		t.Errorf("metrics frozen = %v, want true", written["frozen"])
+	if frozen, present := written["frozen"]; present {
+		t.Errorf("metrics frozen = %v, want absent", frozen)
 	}
 }
 
-// TestLockFrozenFailsOnAMissingLockfile pins that a never-written lockfile is
+// TestLockCheckFailsOnAMissingLockfile pins that a never-written lockfile is
 // helpers.ErrLockfileMissing, not an all-Added drift, and that the gate does
-// not create it: --frozen consumes a lockfile, it never bootstraps one.
-func TestLockFrozenFailsOnAMissingLockfile(t *testing.T) {
+// not create it: --check consumes a lockfile, it never bootstraps one.
+func TestLockCheckFailsOnAMissingLockfile(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 
 	err := Lock(context.Background(), f.cfg, f.runtime)
 	if err == nil {
-		t.Fatal("expected an error from a missing lockfile under --frozen, got nil")
+		t.Fatal("expected an error from a missing lockfile under --check, got nil")
 	}
 	if !errors.Is(err, helpers.ErrLockfileMissing) {
 		t.Fatalf("Lock error = %v, want errors.Is helpers.ErrLockfileMissing", err)
@@ -316,28 +316,28 @@ func TestLockFrozenFailsOnAMissingLockfile(t *testing.T) {
 	}
 }
 
-// TestLockFrozenFailsClosedOnAnUnloadableLockfile pins that lockFrozen fails
+// TestLockCheckFailsClosedOnAnUnloadableLockfile pins that lockCheck fails
 // closed with helpers.ErrLockfileInvalid, not drift, on both lockfile.Load
 // failure arms (schema version, IO) and leaves the path untouched.
-func TestLockFrozenFailsClosedOnAnUnloadableLockfile(t *testing.T) {
+func TestLockCheckFailsClosedOnAnUnloadableLockfile(t *testing.T) {
 	t.Parallel()
-	t.Run("unsupported schema version", assertLockFrozenRejectsBadSchemaVersion)
-	t.Run("directory at the lockfile path", assertLockFrozenRejectsADirectoryAtTheLockfilePath)
+	t.Run("unsupported schema version", assertLockCheckRejectsBadSchemaVersion)
+	t.Run("directory at the lockfile path", assertLockCheckRejectsADirectoryAtTheLockfilePath)
 }
 
-// assertLockFrozenRejectsBadSchemaVersion is the "unsupported schema version"
-// subtest of TestLockFrozenFailsClosedOnAnUnloadableLockfile.
-func assertLockFrozenRejectsBadSchemaVersion(t *testing.T) {
+// assertLockCheckRejectsBadSchemaVersion is the "unsupported schema version"
+// subtest of TestLockCheckFailsClosedOnAnUnloadableLockfile.
+func assertLockCheckRejectsBadSchemaVersion(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 	path := lockfile.ResolveDefaultPath(f.cfg.RequirementsFile, f.cfg.LockFile)
 	mustWriteFile(t, path, []byte("schema_version: 9999\ncollections: []\n"))
 	before := mustReadFile(t, path)
 
 	err := Lock(context.Background(), f.cfg, f.runtime)
 	if err == nil {
-		t.Fatal("expected an error from an unloadable lockfile under --frozen, got nil")
+		t.Fatal("expected an error from an unloadable lockfile under --check, got nil")
 	}
 	if !errors.Is(err, helpers.ErrLockfileInvalid) {
 		t.Fatalf("Lock error = %v, want errors.Is helpers.ErrLockfileInvalid", err)
@@ -347,16 +347,16 @@ func assertLockFrozenRejectsBadSchemaVersion(t *testing.T) {
 	}
 	after := mustReadFile(t, path)
 	if string(before) != string(after) {
-		t.Fatalf("frozen Lock rewrote an unloadable lockfile:\n%s", after)
+		t.Fatalf("check Lock rewrote an unloadable lockfile:\n%s", after)
 	}
 }
 
-// assertLockFrozenRejectsADirectoryAtTheLockfilePath is the "directory at the
-// lockfile path" subtest of TestLockFrozenFailsClosedOnAnUnloadableLockfile.
-func assertLockFrozenRejectsADirectoryAtTheLockfilePath(t *testing.T) {
+// assertLockCheckRejectsADirectoryAtTheLockfilePath is the "directory at the
+// lockfile path" subtest of TestLockCheckFailsClosedOnAnUnloadableLockfile.
+func assertLockCheckRejectsADirectoryAtTheLockfilePath(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 	path := lockfile.ResolveDefaultPath(f.cfg.RequirementsFile, f.cfg.LockFile)
 	if err := os.Mkdir(path, helpers.DirMod); err != nil {
 		t.Fatalf("mkdir %s: %v", path, err)
@@ -364,7 +364,7 @@ func assertLockFrozenRejectsADirectoryAtTheLockfilePath(t *testing.T) {
 
 	err := Lock(context.Background(), f.cfg, f.runtime)
 	if err == nil {
-		t.Fatal("expected an error from a directory at the lockfile path under --frozen, got nil")
+		t.Fatal("expected an error from a directory at the lockfile path under --check, got nil")
 	}
 	if !errors.Is(err, helpers.ErrLockfileInvalid) {
 		t.Fatalf("Lock error = %v, want errors.Is helpers.ErrLockfileInvalid", err)
@@ -374,17 +374,17 @@ func assertLockFrozenRejectsADirectoryAtTheLockfilePath(t *testing.T) {
 	}
 	info, statErr := os.Stat(path)
 	if statErr != nil {
-		t.Fatalf("stat %s after frozen Lock: %v", path, statErr)
+		t.Fatalf("stat %s after check Lock: %v", path, statErr)
 	}
 	if !info.IsDir() {
-		t.Errorf("expected %s to still be a directory after frozen Lock, found a regular file instead", path)
+		t.Errorf("expected %s to still be a directory after check Lock, found a regular file instead", path)
 	}
 }
 
-// TestLockFrozenDryRunReportsDriftAndSkipsMetrics pins that --frozen --dry-run
+// TestLockCheckDryRunReportsDriftAndSkipsMetrics pins that --check --dry-run
 // still fails on drift and writes no metrics report either way. The subtests
 // share one fixture and run in order, since the second edits requirements.yml.
-func TestLockFrozenDryRunReportsDriftAndSkipsMetrics(t *testing.T) {
+func TestLockCheckDryRunReportsDriftAndSkipsMetrics(t *testing.T) {
 	f := newLockRun(t)
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
 		t.Fatalf("seed Lock: %v", err)
@@ -397,14 +397,14 @@ func TestLockFrozenDryRunReportsDriftAndSkipsMetrics(t *testing.T) {
 	if err := os.Remove(f.cfg.MetricsFile); err != nil {
 		t.Fatalf("remove seed metrics file: %v", err)
 	}
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 	f.cfg.DryRun = true
 
 	t.Run("up to date lockfile passes and writes no metrics", func(t *testing.T) {
-		assertFrozenDryRunPassesAndSkipsMetrics(t, f)
+		assertCheckDryRunPassesAndSkipsMetrics(t, f)
 	})
 	t.Run("drifted lockfile fails and still writes no metrics", func(t *testing.T) {
-		assertFrozenDryRunDriftFailsAndSkipsMetrics(t, f, path, before)
+		assertCheckDryRunDriftFailsAndSkipsMetrics(t, f, path, before)
 	})
 
 	if !f.printer.hasWarnContaining("--dry-run: skipping metrics report to " + f.cfg.MetricsFile) {
@@ -412,10 +412,10 @@ func TestLockFrozenDryRunReportsDriftAndSkipsMetrics(t *testing.T) {
 	}
 }
 
-// assertFrozenDryRunPassesAndSkipsMetrics is the first subtest of
-// TestLockFrozenDryRunReportsDriftAndSkipsMetrics: an up-to-date lockfile
-// passes under --frozen --dry-run and no metrics report is written.
-func assertFrozenDryRunPassesAndSkipsMetrics(t *testing.T, f lockRun) {
+// assertCheckDryRunPassesAndSkipsMetrics is the first subtest of
+// TestLockCheckDryRunReportsDriftAndSkipsMetrics: an up-to-date lockfile
+// passes under --check --dry-run and no metrics report is written.
+func assertCheckDryRunPassesAndSkipsMetrics(t *testing.T, f lockRun) {
 	t.Helper()
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
 		t.Fatalf("Lock: %v", err)
@@ -425,10 +425,10 @@ func assertFrozenDryRunPassesAndSkipsMetrics(t *testing.T, f lockRun) {
 	}
 }
 
-// assertFrozenDryRunDriftFailsAndSkipsMetrics is the second subtest: an added
-// root fails --frozen --dry-run with helpers.ErrLockfileDrift, leaves the
+// assertCheckDryRunDriftFailsAndSkipsMetrics is the second subtest: an added
+// root fails --check --dry-run with helpers.ErrLockfileDrift, leaves the
 // lockfile untouched and writes no metrics report.
-func assertFrozenDryRunDriftFailsAndSkipsMetrics(t *testing.T, f lockRun, path string, before []byte) {
+func assertCheckDryRunDriftFailsAndSkipsMetrics(t *testing.T, f lockRun, path string, before []byte) {
 	t.Helper()
 	f.server.AddVersion("acme", "extra", testVersion100, nil)
 	mustWriteFile(t, f.cfg.RequirementsFile,
@@ -436,7 +436,7 @@ func assertFrozenDryRunDriftFailsAndSkipsMetrics(t *testing.T, f lockRun, path s
 
 	err := Lock(context.Background(), f.cfg, f.runtime)
 	if err == nil {
-		t.Fatal("expected an error from a drifted lockfile under --frozen --dry-run, got nil")
+		t.Fatal("expected an error from a drifted lockfile under --check --dry-run, got nil")
 	}
 	if !errors.Is(err, helpers.ErrLockfileDrift) {
 		t.Fatalf("Lock error = %v, want errors.Is helpers.ErrLockfileDrift", err)
@@ -446,17 +446,17 @@ func assertFrozenDryRunDriftFailsAndSkipsMetrics(t *testing.T, f lockRun, path s
 	}
 	after := mustReadFile(t, path)
 	if string(before) != string(after) {
-		t.Fatalf("--frozen --dry-run rewrote the lockfile:\n%s", after)
+		t.Fatalf("--check --dry-run rewrote the lockfile:\n%s", after)
 	}
 	if _, statErr := os.Stat(f.cfg.MetricsFile); !os.IsNotExist(statErr) {
 		t.Fatalf("expected no metrics report, stat err = %v", statErr)
 	}
 }
 
-// TestLockFrozenReportsAServerOnlyChangeAsDrift pins that a change to only the
+// TestLockCheckReportsAServerOnlyChangeAsDrift pins that a change to only the
 // file-level Server field is drift (lockfile.Compare's Diff.Server) and is
 // reported through its "Would change: server" line.
-func TestLockFrozenReportsAServerOnlyChangeAsDrift(t *testing.T) {
+func TestLockCheckReportsAServerOnlyChangeAsDrift(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
@@ -472,11 +472,11 @@ func TestLockFrozenReportsAServerOnlyChangeAsDrift(t *testing.T) {
 	if err := lockfile.Save(path, lf); err != nil {
 		t.Fatalf("save server-only-stale lockfile: %v", err)
 	}
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 
 	err = Lock(context.Background(), f.cfg, f.runtime)
 	if err == nil {
-		t.Fatal("expected an error from a server-only-changed lockfile under --frozen, got nil")
+		t.Fatal("expected an error from a server-only-changed lockfile under --check, got nil")
 	}
 	if !errors.Is(err, helpers.ErrLockfileDrift) {
 		t.Fatalf("Lock error = %v, want errors.Is helpers.ErrLockfileDrift", err)
@@ -487,10 +487,10 @@ func TestLockFrozenReportsAServerOnlyChangeAsDrift(t *testing.T) {
 	}
 }
 
-// TestLockFrozenWithoutRefreshIgnoresUpstreamPublication pins that the gate
+// TestLockCheckWithoutRefreshIgnoresUpstreamPublication pins that the gate
 // mirrors plain lock: with requirements.yml unchanged it reuses the resolve
 // snapshot, so a newer upstream version is not drift and no request is made.
-func TestLockFrozenWithoutRefreshIgnoresUpstreamPublication(t *testing.T) {
+func TestLockCheckWithoutRefreshIgnoresUpstreamPublication(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
@@ -500,24 +500,24 @@ func TestLockFrozenWithoutRefreshIgnoresUpstreamPublication(t *testing.T) {
 	// A newer version upstream with requirements.yml untouched: the seeding
 	// Lock's resolve snapshot still applies, so the gate must not see it.
 	f.server.AddVersion("acme", "widgets", "2.0.0", nil)
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 	f.server.ResetCounts()
 
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
-		t.Fatalf("frozen Lock: %v", err)
+		t.Fatalf("check Lock: %v", err)
 	}
 	if got := f.server.Total(); got != 0 {
 		t.Errorf("server.Total() = %d, want 0 (the gate must never reach the network here)", got)
 	}
-	if !f.printer.hasPersistentPrintContaining("Frozen: lockfile is up to date") {
+	if !f.printer.hasPersistentPrintContaining("Check: lockfile is up to date") {
 		t.Fatalf("persists = %v", f.printer.persists)
 	}
 }
 
-// TestLockFrozenWithRefreshDetectsUpstreamPublication is the positive control
+// TestLockCheckWithRefreshDetectsUpstreamPublication is the positive control
 // of the no-refresh case: with --refresh the fresh resolve reaches the live
 // server, so the newly published version is reported as drift.
-func TestLockFrozenWithRefreshDetectsUpstreamPublication(t *testing.T) {
+func TestLockCheckWithRefreshDetectsUpstreamPublication(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
 	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
@@ -525,12 +525,12 @@ func TestLockFrozenWithRefreshDetectsUpstreamPublication(t *testing.T) {
 	}
 
 	f.server.AddVersion("acme", "widgets", "2.0.0", nil)
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 	f.cfg.Refresh = true
 
 	err := Lock(context.Background(), f.cfg, f.runtime)
 	if err == nil {
-		t.Fatal("expected an error from upstream drift under --frozen --refresh, got nil")
+		t.Fatal("expected an error from upstream drift under --check --refresh, got nil")
 	}
 	if !errors.Is(err, helpers.ErrLockfileDrift) {
 		t.Fatalf("Lock error = %v, want errors.Is helpers.ErrLockfileDrift", err)

@@ -686,20 +686,20 @@ func TestRoleFrozenMismatch(t *testing.T) {
 	}
 }
 
-// TestRoleLockFrozenDrift proves lock --frozen reports a role that moved as
+// TestRoleLockCheckDrift proves lock --check reports a role that moved as
 // drift, and that a lockfile whose roles match reads as up to date.
-func TestRoleLockFrozenDrift(t *testing.T) {
+func TestRoleLockCheckDrift(t *testing.T) {
 	t.Parallel()
 	f := newGalaxyRoleFixture(t)
 	f.writeRequirements(t, "roles:\n  - geerlingguy.docker\n")
 	f.lockfile(t)
-	f.cfg.Frozen = true
+	f.cfg.Check = true
 	if err := collections.Lock(context.Background(), f.cfg, f.runtime); err != nil {
-		t.Fatalf("lock --frozen on an up-to-date file: %v", err)
+		t.Fatalf("lock --check on an up-to-date file: %v", err)
 	}
 	f.writeRequirements(t, "roles:\n  - src: geerlingguy.docker\n    version: 1.9.0\n")
 	if err := collections.Lock(context.Background(), f.cfg, f.runtime); !errors.Is(err, helpers.ErrLockfileDrift) {
-		t.Fatalf("lock --frozen with a changed role: %v, want ErrLockfileDrift", err)
+		t.Fatalf("lock --check with a changed role: %v, want ErrLockfileDrift", err)
 	}
 }
 

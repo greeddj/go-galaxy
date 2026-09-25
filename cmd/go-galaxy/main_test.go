@@ -178,6 +178,26 @@ func TestRootCommandRecordsUrfaveUsageReports(t *testing.T) {
 	})
 }
 
+// TestLockRefusesTheFrozenFlag pins that lock --frozen, the spelling lock
+// --check replaced, is an undefined flag: a usage error (exit 2) urfave
+// reports itself, before lock resolves or reads anything.
+func TestLockRefusesTheFrozenFlag(t *testing.T) {
+	var errOut bytes.Buffer
+	cmd, rec := newRootCommand(nil, &errOut)
+	cmd.Writer = io.Discard
+
+	runErr := cmd.Run(context.Background(), []string{"go-galaxy", "lock", "--frozen"})
+	if runErr == nil {
+		t.Fatalf("Run() = nil, want a flag-parse error; errOut = %q", errOut.String())
+	}
+	if code, _ := handleResult(runErr, nil, nil, rec.written); code != exitcode.ExitUsage {
+		t.Errorf("exit code = %d, want %d", code, exitcode.ExitUsage)
+	}
+	if !strings.Contains(errOut.String()+runErr.Error(), "frozen") {
+		t.Errorf("the refusal does not name the flag: errOut = %q, err = %v", errOut.String(), runErr)
+	}
+}
+
 // TestRootCommandRefusesPositionalArguments pins that an argument no command
 // takes is refused as ErrUnexpectedArguments before any action, while accepted
 // rows reach their actions and fail on missing files under t.TempDir only.
