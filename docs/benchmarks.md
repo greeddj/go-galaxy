@@ -1,123 +1,161 @@
 # Benchmarks
 
-`go-galaxy` vs `ansible-galaxy` on three requirements files (1 / 10 / 100 root
-collections, all without transitive deps for an apples-to-apples fetch+extract
-comparison), measured on Linux with an xfs filesystem, which is what CI
-overwhelmingly runs on.
+go-galaxy against `ansible-galaxy` on the same Galaxy collections, from a cold
+and a warm cache.
 
-Mean of 5 measured runs. The warm and frozen scenarios are preceded by one
-priming run that is not measured. Both tools are invoked with `--no-deps`.
+<div class="grid cards" markdown>
 
-![go-galaxy against ansible-galaxy, install speedup by cache state and collection count](benchmark.svg)
+-   **Cold cache, 100 collections**
 
-The chart and the table below are the same measurement, rendered by
-[go-galaxy-benchmark](#go-galaxy-benchmark) from one JSON report: the chart
-carries the ratios, the table the seconds they came from.
+    ---
 
-## Local cache
+    **23.0x** faster: 419 s -> 18 s
 
-| Scenario         | 1 collection | 10 collections | 100 collections |
-|:-----------------|-------------:|---------------:|----------------:|
-| **cold cache**   |              |                |                 |
-| ・ansible-galaxy |      7.195 s |       64.716 s |       419.146 s |
-| ・go-galaxy      |      2.723 s |        8.224 s |        18.221 s |
-| ・**speedup**    |    **2.64x** |      **7.87x** |         **23x** |
-| **warm cache**   |              |                |                 |
-| ・ansible-galaxy |      5.357 s |       25.927 s |       290.971 s |
-| ・go-galaxy      |      0.205 s |        0.278 s |         0.989 s |
-| ・**speedup**    |   **26.18x** |      **93.4x** |     **294.33x** |
+-   **Warm cache, 100 collections**
 
-**Read the warm row knowing what each tool caches.** `ansible-galaxy` keeps
-only an API response cache - a single `api.json` - and downloads every tarball
-into a temporary directory it deletes afterwards. Its warm run therefore still
-re-downloads all 100 collections, and saves only the metadata round trips.
-`go-galaxy` caches the tarballs and the extracted trees, and hardlinks the
-installed files out of that cache. The three-hundred-fold figure is the honest
-measurement of two different designs, not of the same design done faster.
+    ---
 
-The cold rows are network-bound and correspondingly noisy, and they carry
-whatever the Galaxy servers were publishing on the day. The 10-collection cold
-column shows how much: five `ansible-galaxy` runs spanned 36.671 s to
-143.697 s, so its mean sits one slow run away from a different figure. The
-`go-galaxy` warm row is the tight one, within a few percent of its mean,
-because it touches no origin at all.
+    **294.3x** faster: 291 s -> 0.99 s
 
-## Filesystem sensitivity
+</div>
 
-The 100-collection set installs about 66,000 filesystem objects - 50,792 files
-and symlinks hardlinked out of the extracted store, plus 15,762 directories.
-Creating them is essentially the whole of a warm `go-galaxy` figure: nothing is
-fetched, nothing is unpacked a second time, and what is left is the storage
-making inodes.
+![Install speedup by cache state and collection count](benchmark.svg)
 
-So a warm number measures how fast the storage creates inodes, not how fast
-anything is parsed or unpacked. Two consequences worth carrying to your own
-hardware. These figures move with the filesystem and the device under it, so
-they transfer between machines far less readily than a CPU-bound benchmark
-would. And `--workers` is worth tuning only where inode creation contends; on
-the volume measured here the derived default already performs well.
+> [!NOTE]
+> Mean of 5 runs, both tools with `--no-deps`, on Linux with xfs against
+> `ansible-core` 2.21.3.
 
-## Roles
+## Results
 
-`testing/bench.sh` also measures a roles install, in two scenarios over
-`testing/requirements-roles.yml` - ten widely used Galaxy roles with no
-dependencies between them, so a `--no-deps` run measures fetch plus extract
-over one flat set, as the collection files do:
+| Cache | Collections | ansible-galaxy (s) | go-galaxy (s) | Speedup |
+| :-- | --: | --: | --: | --: |
+| cold | 1 | 7.195 | 2.723 | 2.6x |
+| cold | 10 | 64.716 | 8.224 | 7.9x |
+| cold | 100 | 419.146 | 18.221 | 23.0x |
+| warm | 1 | 5.357 | 0.205 | 26.2x |
+| warm | 10 | 25.927 | 0.278 | 93.4x |
+| warm | 100 | 290.971 | 0.989 | 294.3x |
 
-- `roles-cold` - both tools' caches and the roles directory wiped before each
-  run: `ansible-galaxy role install --no-deps -r requirements-roles.yml -p
-  <dir>` against `go-galaxy install --no-deps -r requirements-roles.yml
-  --roles-path <dir>`.
-- `roles-warm` - go-galaxy's caches primed once, only the roles directory
-  wiped between runs.
+The chart and this table come from one
+[go-galaxy-benchmark](#go-galaxy-benchmark) report; the chart rounds ratios to
+two decimals, the table to one.
 
-No figures are published here yet; the numbers come from running the script,
-which writes `roles-cold.md` and `roles-warm.md` into `dist/bench/` and
-appends them to `summary.md`:
+### What each tool caches
+
+| Cached | ansible-galaxy | go-galaxy |
+| :-- | :-- | :-- |
+| Collection tarballs | No, deleted after the run | Yes |
+| Extracted trees | No | Yes |
+| API metadata | Yes, one `api.json` response cache | Yes, plus the last resolution |
+| Installed files | Unpacked from each tarball | Hardlinked from the extracted tree |
+
+A warm `ansible-galaxy` run still downloads every tarball; a warm go-galaxy run
+sends no request. The warm rows compare two [cache
+designs](caching.md#what-the-directory-holds), not one design done faster.
+
+## Why your numbers will differ
+
+| Rows | Bound by | On the test host |
+| :-- | :-- | :-- |
+| warm | Storage metadata work | 100 collections add over 66,000 files, symlinks and directories |
+| cold | The network and Galaxy that day | 10 collections: `ansible-galaxy` runs spanned 36.7 s to 143.7 s |
+
+> [!TIP]
+> Keep the cache and install directory on one filesystem, or files are copied,
+> not hardlinked. Tune [`--workers`](cli.md#concurrency) only where metadata
+> work contends.
+
+## What was measured
+
+| Scenario | Wiped before each run | Primed | Network per run |
+| :-- | :-- | :-- | :-- |
+| `cold` | Cache, temporary tree, install directory | No | Everything, both tools |
+| `warm` | Install directory | Once, unmeasured | `ansible-galaxy`: every tarball; go-galaxy: none |
+
+Each run times `ansible-galaxy collection install --no-deps` or
+`go-galaxy install --no-deps` over `testing/requirements-<N>.yml`: fetch plus
+extract, not two resolvers. Each tool has its own cache, on one filesystem.
+
+<details markdown>
+<summary>Test host</summary>
+
+| Item | Value |
+| :-- | :-- |
+| Guest | libvirt, Oracle Linux Server 10.1, kernel `6.12.0-203.76.7.5.el10uek.x86_64` |
+| CPU and memory | 4 vCPU, 8 GB |
+| Storage | SSD RAID6 passed through as a block device, formatted xfs |
+| Tools | `ansible-galaxy [core 2.21.3]`, go-galaxy `v1.1.0-pre` (commit `2d12b2c`, go1.27.0) |
+| The 66,000 objects | An earlier `testing/bench.sh` run, commit `826c765`, go1.26.7 |
+
+</details>
+
+## Reproduce
+
+| Harness | Needs | Measures |
+| :-- | :-- | :-- |
+| [go-galaxy-benchmark](#go-galaxy-benchmark) | The two binaries | Collections, `cold` and `warm` |
+| [`testing/bench.sh`](#testingbenchsh) | `hyperfine`, `python3`, MinIO for S3 | Also `frozen` (go-galaxy only, `--frozen --offline`), S3, roles, peak RSS, bytes downloaded |
+
+Both run from a checkout:
 
 ```bash
-SCENARIOS="roles-cold roles-warm" testing/bench.sh
+python3 -m venv .venv && .venv/bin/pip install ansible-core
+go build -o dist/ ./cmd/go-galaxy ./cmd/go-galaxy-benchmark
 ```
 
-Read a warm result knowing what each tool caches, as with the collection rows
-above: `ansible-galaxy` keeps no cache for a role at all and downloads the
-GitHub archive of the tag on every run, while `go-galaxy` caches the artifact
-it built from the tag and the extracted tree, and hardlinks the installed
-files out of that cache. The two tools also fetch differently on a cold run -
-`ansible-galaxy` the tarball GitHub serves, `go-galaxy` a pack of the tagged
-commit through the git protocol - so a cold figure compares two transports,
-not one transport done faster.
+> [!TIP]
+> Keep `--work-dir` and `$TMPDIR` on real disk: a `tmpfs` measures RAM.
 
-## go-galaxy-benchmark
+### go-galaxy-benchmark
 
-`cmd/go-galaxy-benchmark` is the same comparison as a Go binary, narrowed to
-what it can measure without a second tool: collections only, `cold` and `warm`
-only, no S3, no peak RSS and no disk figures. It needs neither `hyperfine` nor
-a shell, resolves dependencies by default where `bench.sh` passes `--no-deps`,
-and writes a JSON report holding every run's wall clock rather than a mean, so
-a table or a chart can be redrawn from it without measuring again.
+```bash
+dist/go-galaxy-benchmark run --ansible-galaxy .venv/bin/ansible-galaxy \
+  --go-galaxy dist/go-galaxy --work-dir /var/tmp/gg-bench --no-deps # (1)!
+dist/go-galaxy-benchmark show --report /var/tmp/gg-bench/report.json \
+  --format svg --out /var/tmp/gg-bench/benchmark.svg
+```
 
-Two entry points. `run` measures and prints the table; `show` renders an
-existing report as a table or as the SVG at the top of this page, and touches
-neither the network nor the measured binaries. Every flag has a `GGB_`-prefixed
-environment variable; the prefix is not `GO_GALAXY_` because this process sets
-`GO_GALAXY_*` for the binary it is timing.
+1.  About 80 minutes on the test host.
+
+`run` times both tools over collections in `cold` and `warm`, prints a table,
+and saves each successful run's wall clock to `report.json`; a failed run only
+adds to `FAILED`. `show` redraws a report as that table or the chart above,
+offline.
+
+> [!WARNING]
+> `run` empties `--work-dir` first, an earlier `report.json` included, so give
+> it a directory of its own.
+
+<details markdown>
+<summary>Flags</summary>
+
+| Flag (`run` unless marked) | Variable | Default |
+| :-- | :-- | :-- |
+| `--ansible-galaxy` | `GGB_ANSIBLE_GALAXY` | `ansible-galaxy` from `PATH` |
+| `--go-galaxy` | `GGB_GO_GALAXY` | `go-galaxy` from `PATH` |
+| `--work-dir` | `GGB_WORK_DIR` | none, required; emptied by `run` |
+| `--requirements-dir` | `GGB_REQUIREMENTS_DIR` | `testing` |
+| `--runs` | `GGB_RUNS` | `5` |
+| `--sizes` | `GGB_SIZES` | `1,10,100` |
+| `--scenarios` | `GGB_SCENARIOS` | `cold,warm` |
+| `--no-deps` | `GGB_NO_DEPS` | off, so both tools resolve dependencies |
+| `--verbose`, `--quiet` (`-q`) | `GGB_VERBOSE`, `GGB_QUIET` | off |
+| `--report` (both) | `GGB_REPORT` | `report.json` in `--work-dir` (`run`) or the current directory |
+| `--format` (`show`) | `GGB_FORMAT` | `table`; `svg` for the chart |
+| `--scenario` (`show`) | `GGB_SCENARIO` | every scenario; chart only |
+| `--out` (`show`) | `GGB_OUT` | `benchmark.svg` |
+
+</details>
+
+<details markdown>
+<summary>Sample output</summary>
 
 ```console
-# go-galaxy-benchmark run --ansible-galaxy /usr/bin/ansible-galaxy --go-galaxy /usr/bin/go-galaxy --work-dir /data/go-galaxy-vs-ansible-galaxy --requirements-dir ./requirements/ --no-deps
 ✔ ansible-galaxy cold size 1: mean 7.195s over 5 runs
 ✔ go-galaxy cold size 1: mean 2.723s over 5 runs
-✔ ansible-galaxy warm size 1: mean 5.357s over 5 runs
-✔ go-galaxy warm size 1: mean 0.205s over 5 runs
-✔ ansible-galaxy cold size 10: mean 64.716s over 5 runs
-✔ go-galaxy cold size 10: mean 8.224s over 5 runs
-✔ ansible-galaxy warm size 10: mean 25.927s over 5 runs
-✔ go-galaxy warm size 10: mean 0.278s over 5 runs
-✔ ansible-galaxy cold size 100: mean 419.146s over 5 runs
-✔ go-galaxy cold size 100: mean 18.221s over 5 runs
-✔ ansible-galaxy warm size 100: mean 290.971s over 5 runs
+...
 ✔ go-galaxy warm size 100: mean 0.989s over 5 runs
-✔ report written to /data/go-galaxy-vs-ansible-galaxy/report.json
+✔ report written to /var/tmp/gg-bench/report.json
 ansible-galaxy  ansible-galaxy [core 2.21.3]
 go-galaxy       v1.1.0-pre (commit 2d12b2c, built by just @ 2026-08-22T16:32:56Z) // go1.27.0
 host            linux/amd64, 4 cpus, xfs
@@ -144,88 +182,21 @@ warm      100   go-galaxy       0.989s    0.914s    1.131s    0
 warm      100   speedup         294.3x
 ```
 
-The live line above each result carries the current run's elapsed time and the
-total, so a cold 100-collection series is visibly working rather than hung. It
-appears only where a spinner does, on a terminal: without one, every update
-would be a new line in the log.
+</details>
 
-That `--no-deps` is what makes this run comparable with the tables above. Drop
-it and the numbers change meaning rather than scale, because the two resolvers
-then do different work.
-
-The chart comes from the same report:
+### testing/bench.sh
 
 ```bash
-go-galaxy-benchmark show --report /data/go-galaxy-vs-ansible-galaxy/report.json \
-  --format svg --out docs/benchmark.svg
+docker compose -f testing/docker-compose.yaml up -d minio-svc # (1)!
+testing/bench.sh # (2)!
+SIZES=10 SCENARIOS="cold warm" testing/bench.sh # (3)!
 ```
 
-Bars carry the ratio rather than the elapsed time, and the absolute pair sits
-in the row's text. Seconds cannot share one axis here: 0.989 s beside 291 s
-would be a bar narrower than a pixel. The ratios span the same three orders of
-magnitude, so their axis is logarithmic as well, with a rule at every power of
-ten the longest bar reaches. One scale serves both cache states, which is what
-lets a warm bar be read against a cold one; a ratio at or below `1x` gets no
-bar at all, only its figure.
+1.  Only for the S3 scenarios; without MinIO they are skipped with a warning.
+2.  Every size and scenario: about three hours.
+3.  Or one size, two scenarios. See
+    [every knob and output file](development.md#the-benchmark-harness).
 
-Every glyph in the chart is one mid grey, and the decade rules are that same
-grey at half opacity. The drawing paints no background of its own, so it is
-read on a white page and on a near-black one, and against those two the best
-contrast ratio any single color can reach is 4.35:1 - spending part of that on
-a brighter tier for headings would take it from the smallest text, which needs
-it most. Size and weight carry the hierarchy instead, and they cost no
-contrast at all.
-
-## Reproduce
-
-Two harnesses, and the one to reach for depends on what is missing from the
-other. [go-galaxy-benchmark](#go-galaxy-benchmark) above needs nothing but the
-two binaries and covers the collection rows. `testing/bench.sh` is what still
-owns the S3 scenarios, the role scenarios, peak RSS and the disk figures.
-
-`testing/bench.sh` is the full harness, including the S3 cache backend and a
-peak-RSS pass; it needs `hyperfine`, a virtualenv with `ansible-core`, and
-`docker compose -f testing/docker-compose.yaml up -d minio-svc` for the S3
-scenarios. See [Development](development.md#the-benchmark-harness) for its
-knobs and outputs.
-
-```bash
-python3 -m venv .venv && .venv/bin/pip install ansible-core
-go build -o ./dist/go-galaxy ./cmd/go-galaxy
-testing/bench.sh                   # all sizes, all scenarios
-SIZES=10 testing/bench.sh          # one file
-SCENARIOS="warm" testing/bench.sh  # one scenario
-SCENARIOS="roles-cold roles-warm" testing/bench.sh  # the role scenarios only
-```
-
-Budget about three hours for a full default run against the public Galaxy; the
-100-collection `ansible-galaxy` scenarios are most of it. Every cache the
-script wipes lives under `$TMPDIR`, never in `$HOME` and never inside the
-repository. Point `$TMPDIR` at real storage: a `tmpfs` measures RAM rather than
-disk, which for a workload that is mostly inode creation describes nothing.
-
-## Conditions
-
-- **Tools:** `ansible-galaxy [core 2.21.3]` throughout, against the
-  `go-galaxy` build the [run above](#go-galaxy-benchmark) names. The object
-  counts under [Filesystem sensitivity](#filesystem-sensitivity) are from an
-  earlier `testing/bench.sh` run on the same guest, at commit `826c765` built
-  with go1.26.7.
-- **Host:** a libvirt guest running Oracle Linux Server 10.1 on
-  `6.12.0-203.76.7.5.el10uek.x86_64`, 4 vCPU and 8 GB of RAM. Storage is an
-  SSD RAID6 array passed through from the hypervisor as a block device and
-  formatted xfs. Both runs used the same guest.
-- **Both tools** run with `--no-deps`, so what is measured is fetch plus
-  extract rather than two different resolution algorithms. This is a choice
-  about what the number means, not a workaround: `requirements-100.yml` does
-  resolve, and `go-galaxy lock` builds a 102-collection lockfile from it in
-  about four minutes against cold metadata.
-- **Cold cache:** both tools' caches and the install directory wiped before
-  every run. Each tool gets a cache of its own, and `ansible-galaxy` is given
-  `ANSIBLE_COLLECTIONS_PATH` and `ANSIBLE_LOCAL_TEMP` inside the same working
-  tree, so neither tool sees the other's state and both do their temporary work
-  on the same filesystem.
-- **Warm cache:** caches primed once, only the install directory wiped between
-  runs.
-- **Frozen + offline:** `go-galaxy lock` once, then `go-galaxy install --frozen
-  --offline` - zero network calls.
+Role figures are not published; `SCENARIOS="roles-cold roles-warm"
+testing/bench.sh` measures them. `ansible-galaxy` keeps no role cache, so its
+warm role runs download every role again.

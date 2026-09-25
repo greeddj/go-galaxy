@@ -4,7 +4,7 @@ Everything here is reproducible from a checkout with a Go toolchain, `git` and
 [just](https://github.com/casey/just); `just lint` additionally needs
 golangci-lint installed at the pinned release. The test suite needs nothing
 else - no network, no container runtime, no Python. Only the benchmark harness
-does.
+and the documentation site do.
 
 ## Running the tests
 
@@ -105,7 +105,7 @@ change to the action or to itself rather than on every push.
 GoReleaser groups the release notes out of commit subjects, so the subject line
 is the only thing deciding whether a change is published and where. Those rules
 belong to whoever is writing the commit rather than to whoever is reading this,
-and they live in [Contributing](../CONTRIBUTING.md#commit-subjects) - one copy,
+and they live in [Contributing](https://github.com/greeddj/go-galaxy/blob/main/CONTRIBUTING.md#commit-subjects) - one copy,
 beside the tag conventions they go with, rather than a second one here to drift
 against `.goreleaser.yml`.
 
@@ -612,6 +612,30 @@ Adding a packet-bearing fixture also means listing it in `framing_test.go`'s
 The fuzz target caps allocation at a floor plus a per-byte ratio of the input;
 if a legitimate input ever exceeds it, raise the constant and record the
 measurement, never add a special case for the input.
+
+## The documentation site
+
+`docs/` also builds into a static site with [Zensical](https://zensical.org),
+configured by `zensical.toml` at the repository root. `docs/index.md` is the
+site's landing page and repeats the opening paragraph of `README.md`, so a
+change to one belongs in the other. The build needs Python, which
+[uv](https://docs.astral.sh/uv/) supplies through `uvx` without installing
+anything into the system:
+
+```bash
+just docs          # serve http://localhost:8000/go-galaxy/, rebuilt on every save
+just docs_build    # strict build into site/: a dead page link or anchor fails it
+```
+
+The Zensical release is pinned in the Justfile (`ZENSICAL_VERSION`): it is
+still pre-1.0 and ships several releases a week. Anchors are slugged the way
+GitHub slugs them (`toc.slugify` in `zensical.toml`), so a link such as
+`servers-and-auth.md#--token` resolves the same on github.com and on the site.
+A link out of `docs/` has to be absolute, since the site holds nothing else and
+the strict build refuses a relative link that leaves it. A new page needs an
+entry in the `nav` of `zensical.toml`: the build renders a page missing from it
+without a warning, and nothing on the site links to it. The build writes
+`site/` and its cache `.cache/`, both git-ignored.
 
 ## The benchmark harness
 

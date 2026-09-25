@@ -8,19 +8,32 @@ go-galaxy is a fast Ansible Galaxy collections and roles installer for CI, writt
 
 ## Documentation
 
-`README.md` is a landing page and an index; the reference material lives in
-`docs/`. Keep them true after a behavior change - `docs/cli.md` (commands and
-options), `docs/configuration.md` (ansible.cfg and the environment surface),
-`docs/servers-and-auth.md`, `docs/signatures.md`,
+`README.md` is a short landing page (GitHub-renderable syntax only, since it
+also ships in release tarballs); the reference material lives in `docs/`, which
+builds into a Zensical site (`zensical.toml` at the root, `docs/index.md` its
+landing page, `docs/assets/` the logo, favicon and site CSS). The site is the
+primary reading surface, so user pages may use its admonitions, tabs, cards and
+code annotations. Keep the pages true after a behavior change. The user pages,
+basics first: `docs/getting-started.md` (install, first run, lockfile, CI),
 `docs/ansible-galaxy-compat.md` (every deliberate divergence),
-`docs/caching.md`, `docs/ci.md`, `docs/exit-codes.md`, `docs/metrics.md`,
-`docs/security.md`, `docs/benchmarks.md`, `docs/architecture.md` (how it
-works), `docs/commands.md` (each command's control flow as Mermaid diagrams,
-branch by branch over its flags), `docs/development.md` (tests, gates, lint). One document sits at the
-root instead, because GitHub reads it from there: `CONTRIBUTING.md` (the
-commit subjects the release notes are grouped from, and cutting a release) -
-which is why it is named in `archives.files` beside `README.md`, or the
-README's index would ship a dead link inside every tarball.
+`docs/requirements.md` (requirements.yml and galaxy.toml entries, constraints,
+which file is read), `docs/lockfile.md` (lock, `--frozen`, `lock --check`,
+hash, tree, explain, outdated), `docs/ci.md`, `docs/servers-and-auth.md`,
+`docs/caching.md`, `docs/signatures.md`, `docs/cli.md` (commands and options),
+`docs/configuration.md` (setting precedence, `[tool.go-galaxy]`, ansible.cfg
+and the environment), `docs/exit-codes.md`, `docs/metrics.md`,
+`docs/upgrading.md` (the only page that carries release-to-release history)
+and `docs/benchmarks.md`. Each rule has one home page and every other mention
+is a clause plus a link, which is what keeps them short. The internals:
+`docs/architecture.md` (how it works), `docs/commands.md` (each command's
+control flow as Mermaid diagrams, branch by branch over its flags),
+`docs/security.md`, `docs/development.md` (tests, gates, lint, the docs site).
+A new page needs a `nav` entry in `zensical.toml`, and a link out of `docs/`
+must be absolute. One document sits at the root instead, because GitHub reads
+it from there: `CONTRIBUTING.md` (the commit subjects the release notes are
+grouped from, and cutting a release) - which is why it is named in
+`archives.files` beside `README.md`, `docs/*.md`, `docs/*.svg` and the logos,
+or the README would ship a dead link or a broken image inside every tarball.
 `cmd/go-galaxy/main.go`'s `--help` exit-code index is hand-kept string literals
 in `newRootCommand`'s Description, each phrase leading its row in
 `docs/exit-codes.md`; `TestRootCommandDisclosesDefaultCommandAndExitCodes` pins
@@ -38,13 +51,15 @@ just lint          # golangci-lint run ./... (requires the exact pinned version,
 just fix           # go fix + fieldalignment -fix (autofixes struct field ordering)
 just deps          # go mod tidy && go mod vendor - run after any dependency change
 just build         # runs check+lint+test, then builds ./dist/go-galaxy and ./dist/go-galaxy-benchmark
+just docs          # serves the docs site on localhost:8000 (Zensical via uvx, pinned in the Justfile)
+just docs_build    # strict docs site build: a dead link or anchor fails it
 ```
 
 Single test: `go test ./internal/galaxy/archive/ -run 'TestName'` (standard Go; tests live beside the code, in-package by default - the exception is the `internal/galaxy/collections` e2e suite, which is `package collections_test` so it drives the public API from outside; the `testpackage` linter is disabled so both styles are legal).
 
 CI (`.github/workflows/ci.yml`) runs the same checks plus `go test -v -race -coverprofile=...`, so run tests with `-race` before considering concurrency work done.
 
-Benchmarks: `testing/bench.sh` (needs `hyperfine`, a `.venv` with ansible-core, and `docker compose -f testing/docker-compose.yaml up -d minio-svc` for the s3-* scenarios). See README "Benchmarks".
+Benchmarks: `testing/bench.sh` (needs `hyperfine`, a `.venv` with ansible-core, and `docker compose -f testing/docker-compose.yaml up -d minio-svc` for the s3-* scenarios). See `docs/benchmarks.md`.
 
 ## Things that fail the build in non-obvious ways
 

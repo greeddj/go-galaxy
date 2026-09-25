@@ -10,6 +10,7 @@ LDFLAGS := "-s -w" \
   + " -X main.BuiltBy=just"
 
 GOLANGCI_LINT_VERSION := "v2.13.2"
+ZENSICAL_VERSION := "0.0.65"
 BENCH_LDFLAGS := "-s -w"
 
 deps:
@@ -39,6 +40,14 @@ check:
 	go tool govulncheck ./...
 	go tool fieldalignment ./...
 	go tool actionlint -shellcheck= -pyflakes=
+
+docs:
+	@echo "===== Serve {{PROJECT}} docs ====="
+	uvx --from zensical=={{ZENSICAL_VERSION}} zensical serve
+
+docs_build:
+	@echo "===== Build {{PROJECT}} docs ====="
+	uvx --from zensical=={{ZENSICAL_VERSION}} zensical build --strict
 
 fix:
 	@echo "===== Fix {{PROJECT}} ====="

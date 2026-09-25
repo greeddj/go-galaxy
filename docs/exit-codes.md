@@ -1,273 +1,174 @@
 # Exit codes
 
-`go-galaxy` exits with a class-specific code instead of a flat `1`, so CI
-pipelines can branch on failure type without parsing log output. The failure
-classes and their one-phrase meanings are printed by `go-galaxy --help` as an
-index, `130` among them; the other two signal codes and every qualification
-below are the part only this table carries. A caught signal follows the shell convention of
-`128 + signal number`, so the tool's own classes and its signal codes can never
-collide:
+go-galaxy exits with one code per failure class, so a CI job can branch on the
+code instead of parsing the log.
 
-| Code | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-|-----:|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------                                                                                                                         |
-|    0 | Success                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-|    1 | Generic failure (does not match any class below)                                                                                                                                                                                                                                                                                                                                                                                                                  |
-|    2 | Usage or configuration error (invalid flags, a positional argument missing where a command requires one (`explain` with no name) or given where it takes none - a word that names no command included, since it reaches `install` as one - requirements, `ansible.cfg` - the files themselves included: a requirements file that is missing, cannot be read, is not YAML or TOML, or is a `galaxy.toml` whose schema this tool refuses (an unknown table or key, a non-string `[project]` field, a `[tool.go-galaxy]` value of the wrong TOML type, a server entry without both `id` and `url`, a collection version constraint the solver could not parse) or whose `[tool.go-galaxy]` names an unset environment variable, an `--ansible-config` path that does not exist, or an `ansible.cfg`, named or discovered, that cannot be read to the end - an unsupported collection source (`file`, `dir`), a git source this tool refuses as written - a malformed or credential-bearing URL, an abbreviated or invalid ref, an unsafe subdir, a credential binding that does not parse, an ssh repository with neither a bound key nor an agent, a repository or subdir holding no collection or naming one the requirement did not ask for, a `galaxy.yml` that cannot be built from or whose version is not exact - a url source this tool refuses as written - a malformed, credential-bearing or fragment-bearing URL, a non-exact `version:` assertion, a `source:`, `namespace:` or `signatures:` key on a url entry, a url credential binding that does not parse, a role tarball that does not hold exactly one role - an explicit namespace conflicting with a dotted collection name, a `roles:` entry this tool refuses as written - not a list, a shape ansible would not take either, a collection key (`source:`, `signatures:`, `type:`) on a role entry, a name, install name or version outside the role alphabets, a local-path, non-http or non-`.tar.gz` `src:`, an `scm` other than `git`, an `include:`, or two entries installing into one directory - no configured Galaxy server serving the v1 role API, a v1 role record this tool cannot compose a repository URL from, a repository that is not a role (no `meta/main.yml` at its root) or whose meta this tool cannot read, an unsupported cache-snapshot schema version, an unreadable or unparseable project requirements file, a cache backend that cannot be used as configured, or an S3 bucket - from `--s3-bucket`, its variable or `[tool.go-galaxy.s3]` - configured without both keys from any of those sources or together with `--offline`, both refused before any backend opens, the latter since the S3 cache is reached over the network). The Go runtime also exits a fatal error - a stack overflow, an out-of-memory kill - with this same status, without running any cleanup; a run that ended that way prints a line beginning `fatal error:` to stderr, so it is the output rather than the status that tells the two apart |
-|    3 | Dependency resolution failure (conflicts, missing candidates, cycle, a git ref or commit the remote does not have, a Galaxy role no v1-serving server knows, a role version the server does not list, or a role whose version names cannot be ordered so no highest one can be chosen)                                                                                                                                                                                                                                                                                                                                                                                              |
-|    4 | Network or Galaxy API failure (timeouts, stalled transfers, metadata and cache-state deadlines, a git transport failure or a git credential or host key the remote refused, a git pack that exceeded its on-disk ceiling, a Galaxy metadata URL no HTTP request can be built from, a versions listing that exceeded its page ceiling (a collection's, or a role's v1 version list past 20 pages), a response body that exceeded its size ceiling (an artifact, a metadata document, or a bucket listing), a v1 role API request that failed in transport or with a 5xx, offline-mode violations that end the run by themselves (a role with no recorded pin, or no cached artifact behind its pin, under `--offline` without `--frozen` included), an unreachable cache backend, or an `outdated` run in which at least one latest-version lookup failed for a reason not classified below - a lookup that failed on a userinfo refusal reports `5`)                                                                        |
-|    5 | Install-time failure (unsafe archive/symlink content, empty file, missing artifact cache, a git tree this tool will not materialize - an unsafe entry name, case-folded duplicates, a symlink that resolves nowhere - or a git artifact that failed its own build self-check, a role directory that already exists and was installed neither by this tool nor by `ansible-galaxy` so it is not replaced, a role artifact that failed to extract, an artifact a resolved collection or role needs that is not in the cache under `--offline` (a `--frozen --offline` miss included), or a URL a Galaxy server supplied that this tool refuses to fetch from because it embeds a credential in its userinfo - an artifact download URL or a metadata URL alike, so a `lock` or `outdated` run can report `5` without ever installing anything - or a download URL `lock` refuses to write into the lockfile because it carries a query string or is not its server's own artifact URL)                                                                                                                |
-|    6 | Lockfile error (missing, invalid, mismatched with requirements, or out of date under `lock --check`; a lockfile an older release wrote, whose Galaxy entries carry no `download_url`, is invalid, and so under `--frozen` is one whose `download_url` is not its server's own artifact URL; for a role, a `roles:` entry the lockfile lacks or locks from a different Galaxy version, repository or ref, a role entry whose fields are not canonical, or a role entry in a file whose `schema_version` is below 3)                                                                                                                                                                                                                                                                                                                                                             |
-|    7 | Artifact-integrity failure (content does not authenticate against its naming sha256, or the digest is malformed; for a git source, a remote that advertised one commit and shipped another, or a pinned commit that no longer builds the collection it was pinned as; for a role, a repository that serves a different commit than the lockfile pins when the artifact has to be rebuilt)                                                                                                                                                                                                                                                                                                                                                  |
-|    8 | Cache contention (the cache lock is held elsewhere, the S3 lock's wait ceiling elapsed after this run observed another holder, or a lock this run did hold was taken away by another holder mid-run)                                                                                                                                                                                                                                                              |
-|    9 | Persisted cache state is corrupt or oversized and must be discarded (a project registry that fails to decode, a state object that exceeds its size ceiling or cannot be read back as what go-galaxy writes there, or - local backend only - a Bolt snapshot file that fails one of its own corruption checks)                                                                                                                                                                                                           |
-|   10 | Signature verification failure - this run failed to attribute a collection's artifact to a publisher it was configured to accept: either its signatures did not satisfy the policy in force (fewer valid than required, or a failure under an `all` policy), or they did and vouched for a different collection, or its manifest's declared identity could not be read unambiguously. The artifact's own bytes are a separate question and stay exit `7`          |
-|  129 | Interrupted (a caught SIGHUP)                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-|  130 | Interrupted (a caught SIGINT, or the caller's own context canceled)                                                                                                                                                                                                                                                                                                                                                                                               |
-|  143 | Interrupted (a caught SIGTERM)                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Code | Meaning | Retry? | First step |
+| ---: | --- | --- | --- |
+| `0` | Success | - | - |
+| `1` | Generic failure: nothing below matched | After a fix | Read the error line |
+| `2` | Usage or configuration error: a bad flag, argument, input file, source or setting | After a fix | Fix what the error names |
+| `3` | Dependency resolution failure: conflicting constraints, or a version, git ref or role the source lacks | After a fix | [Relax a constraint](requirements.md#when-no-version-fits) |
+| `4` | Network or Galaxy API failure: a timeout, stall or refusal, an unreachable cache backend, a failed `outdated` lookup | Yes, except `--offline` or refused credentials | Retry; check network and credentials |
+| `5` | Install-time failure: unsafe archive content, a foreign role directory, a failed item behind `installation failed` | By hand, for a network cause | Read the `Failed:` lines |
+| `6` | Lockfile error: missing, invalid, not matching the requirements, or out of date under `lock --check` | After a fix | Run [`go-galaxy lock`](lockfile.md#create-the-lockfile), commit it |
+| `7` | Artifact-integrity failure: bytes or a commit not matching their sha256 or pin | Never | Compare the source with the pin |
+| `8` | Cache contention: another run holds the cache lock, or took it mid-run | After the other run | Rerun without the overlap |
+| `9` | Persisted cache state is corrupt or oversized: a snapshot, registry or state object | After deleting it | Delete what the [message](#messages-to-grep) points to |
+| `10` | Signature verification failure: signatures miss the policy or vouch for another collection | Never | Check the keyring and required count |
+| `129` | Interrupted: a caught SIGHUP | If unintended | Rerun |
+| `130` | Interrupted: a caught SIGINT, such as Ctrl-C | If unintended | Rerun |
+| `143` | Interrupted: a caught SIGTERM | If unintended | Rerun |
 
-Exit `6`'s "missing" half is uniform across every command that requires a
-lockfile: `install --frozen`, `warm --frozen`, `lock --check`, `tree` and
-`explain` all exit `6` when the lockfile they were told to read is not there,
-rather than treating its absence as a usage error. A role adds no exit code of
-its own: every role failure classifies into the classes above by what failed,
-so a pipeline branching on these numbers needs no new branch.
+<details markdown>
+<summary>What exits 2</summary>
 
-A requirements file that is missing, cannot be read (`requirements file is
-unreadable`: permission denied, a directory), is not YAML (`requirements
-file is not valid YAML`) or, for a `.toml` path, is not TOML (`requirements
-file is not valid TOML`, naming the line and the last key read but never the
-text, since the lexer would echo it) exits `2` on every command that parses it -
-`install`, `warm`, `lock` and `tree`, while `explain` discards the load error -
-except that, without `--lock-file`, a `galaxy.toml` is loaded first for its
-`lock_file`, and one that exists but cannot be read, is not TOML, breaks the
-schema or names an unset variable exits `2` on `explain` and `hash` too.
-A `galaxy.toml` that is TOML but not this tool's schema (`unknown table`,
-`unknown key`, `[project] has neither collections nor roles`, and in its
-settings table `[tool.go-galaxy] workers is not an integer`,
-`[tool.go-galaxy.s3] path_style_disabled is not a boolean`,
-`[[tool.go-galaxy.servers]] entry N: ... needs both id and url`) exits `2` the
-same way, as does one whose `[tool.go-galaxy]` names a variable the
-environment lacks (`project file references unset environment variables: A,
-B`, every unset name once, sorted, never a value), and so does a collection
-version constraint semver cannot parse
-(`invalid collection version constraint`), which only a `galaxy.toml` raises:
-the same constraint in `requirements.yml` is handed to the solver as written
-and fails there, once resolution reaches it, with the generic code (`1`).
-The unset variable is the one of these `tree` refuses only without
-`--lock-file`: its roots are read without expanding anything, so it meets the
-variable only in the `lock_file` load above, as `explain` and `hash` do.
-An `ansible.cfg` exits `2` when the path `--ansible-config` names does not
-exist, and, named or discovered, when it exists and cannot be read to the end
-(`ansible config file is unreadable`: permission denied, a directory, a line
-longer than 64 KiB).
+| Input | Refused when |
+| --- | --- |
+| Flags and arguments | an unknown flag, a bad value (`GO_GALAXY_WORKERS=abc`), `warm --no-cache`, a stray argument |
+| Requirements file | missing, `requirements file is ...` (unreadable, not YAML or TOML), or an entry [refused as written](requirements.md#what-is-refused) |
+| `galaxy.toml` settings | off the schema, or `project file references unset environment variables` |
+| `ansible.cfg` | a missing `--ansible-config` file, or `ansible config file is unreadable` |
+| Servers | a malformed entry, a URL with a credential, two settings for one origin |
+| Tokens | over plain http, `--token` with several servers, or a [refused pairing](servers-and-auth.md#--token) |
+| git and url sources | a credential in the URL, a bad ref or subdir, nothing usable fetched |
+| Roles | no v1 role API, an unusable v1 record, or no readable role meta |
+| Cache | an unusable backend, S3 without both keys or with `--offline`, a newer snapshot schema |
 
-Two commands read somewhere else instead of requiring the file, and neither
-adds an exit class for doing so. `hash` falls back to hashing the requirements
-file - the one `--requirements-file` or its variables named, else the one
-discovery picked, `galaxy.toml` or `requirements.yml` - and exits `0`; if that
-file is missing too, or cannot be read, it exits `2`, while a
-`requirements.yml` that is not YAML still yields a key, since the key covers
-its bytes as they are. A `galaxy.toml` is decoded before the key is computed,
-to read `lock_file` from its `[tool.go-galaxy]` table unless `--lock-file` or
-its variable is set at all, an exported-empty value included (an empty value
-then falls to `galaxy.lock` beside the requirements file), so one that is not
-TOML, breaks the schema or names an unset variable exits `2` on `hash` as on
-every other command; one that loads is hashed byte for byte. The fallback applies only to an absent
-lockfile: one that is present but unreadable or invalid still exits `6`, since
-a key hashed from the requirements file would hide the broken lockfile.
-`outdated` falls back to the installed collections tree and reports from it;
-it still exits `6` when that tree is missing too, naming both paths, so a
-repository that neither locks nor installs is told the same thing it always
-was.
+</details>
 
-`explain` given a name its lockfile holds as neither a collection nor a role
-exits `1`, the generic code, with `collection or role not found in lockfile`.
-The lockfile was read and is valid, so this is not a lockfile error (`6`), and
-`explain` looks the name up without judging its shape, so it is not a usage
-error (`2`) either. A pipeline can therefore tell a lookup that found nothing
-(`1`) from a missing or invalid lockfile (`6`) and from no name or more than
-one (`2`).
+> [!NOTE]
+> A Go runtime crash also exits `2`: look for a `fatal error:` or `panic:` line
+> on stderr.
 
-Exit `7` covers content that failed to authenticate against the sha256 that
-named it - a lockfile pin, a Galaxy server's declared digest, a cache sidecar,
-or the extracted store's content-address key - or a digest that was
-structurally malformed. It is a stop-and-alert class: do not retry it
-automatically. A retry cannot repair it, because the bytes or the digest are
-wrong at the source, not transiently unavailable. It also outranks the network
-class: a run that hits both an integrity failure and a network failure exits
-`7`, not `4`.
+## Using exit codes in CI
 
-Exit `8`'s lock-loss half outranks exit `7` in turn: a run that both lost the
-cache lock mid-run and failed an integrity check exits `8`. Once another holder
-is writing the same cache, this run's own checksum verdict is no longer
-evidence about the artifact - it may simply be that other holder rewriting the
-artifact underneath it - so the exclusivity failure is the actionable fact and
-the mismatch is a symptom of it. Fix the contention first, then rerun; if the
-integrity failure is real, the rerun reports it as exit `7` with nothing else
-touching the cache.
+Retry only `4` and `8`, a few times:
 
-The same holds against every other class: once another holder took the lock,
-whatever the run returned is reported as exit `8`, a run that otherwise
-succeeded included, since the heartbeat notices the loss only after some work
-was already done without exclusivity. The backend stops the rest of the run by
-canceling it, and that cancellation exits `8` too, never `130`; only a caught
-signal or the caller's own cancellation outranks a lost lock.
+=== "Shell"
 
-A run in which individual collections or roles fail prints each failure live
-as a `Failed:` line and ends with one headline error -
-`installation failed for N collections`, or `installation failed: warm failed
-for N collections` for `warm` - with every recorded cause kept behind it. The
-headline counts collections and roles apart and names only a kind that failed,
-in the singular for one: `installation failed for 2 roles`, `installation
-failed for 1 collection and 2 roles`. The exit code is the first class, in the
-order [Exit code classes](commands.md#exit-code-classes) draws, that matches
-the headline or any cause. The headline is an install failure, so only a cause
-ranked above that class changes the code: an interrupt exits `130`, an
-integrity failure `7`, a signature verdict `10` and a lockfile error `6`,
-which is why a `--frozen`
-install whose sha256 pin does not match the artifact exits `7`, not `5`. Every
-other cause leaves the run at `5`, even one that alone would exit elsewhere: a
-network failure, or a collection not cached under `--offline`, exits `4` only
-where it ends the run by itself, outside the per-collection path. `outdated`
-follows the same rule behind its own headline, `latest version lookup failed
-for N collections`, which counts and names roles the same way, and whose class
-is `4`.
+    ```sh
+    for attempt in 1 2 3; do
+      code=0
+      go-galaxy install --frozen || code=$?
+      case $code in
+        4|8) [ "$attempt" -eq 3 ] || sleep 30 ;;
+        *) break ;;
+      esac
+    done
+    [ "$code" -eq 0 ] || exit "$code"
+    ```
 
-The snapshot save at the end of `install`, `warm` and `lock` never replaces the
-run's own failure. When collections or roles also failed, or `lock --check`
-found drift, the save error is appended to that failure's message after
-`snapshot save failed:` and the run keeps the class the failure decides, `6`
-for the drift; the save error decides the exit code only when nothing else
-failed, as `cache backend unavailable` exiting `4` does. A plain `lock` writes
-the lockfile, and prints `Lockfile written`, before it saves the snapshot, so a
-`lock` that exits nonzero on a failed save still leaves a valid new lockfile on
-disk; `lock --check` never writes one.
+=== "GitLab CI"
 
-A stalled or byte-dripped transfer is never reported as an interrupt, even
-though the underlying mechanism that unblocks it is a context cancellation:
-the tool distinguishes its own no-progress cancellation from a genuine caught
-signal or caller cancellation, and only the latter exits `130` (SIGINT or a
-canceled caller context), `143` (SIGTERM) or `129` (SIGHUP). SIGTERM is the
-one worth planning for: a canceled GitLab job, an evicted Kubernetes pod and a
-canceled GitHub Actions job all send it rather than SIGINT, so `143` is the
-code a cancellation usually shows up as. SIGQUIT is deliberately left
-unhandled, which keeps Go's default goroutine dump available for diagnosing a
-hung run. The same holds for the metadata, cache-state and signature-fetch
-ceilings above: grep the run's output for `galaxy metadata fetch deadline
-exceeded`, `cache state object deadline exceeded`, or `collection signature
-fetch deadline exceeded` to tell one of these deadlines apart from a genuine
-interrupt or from any other network failure. Each exits `4` where it ends the
-run by itself and `5` once joined behind the install headline, which is the
-only place the signature-fetch deadline surfaces, since signatures are
-gathered per collection.
+    ```yaml
+    install:
+      script:
+        - go-galaxy install --frozen
+      retry:
+        max: 2
+        # retry:exit_codes needs GitLab 16.11 or later
+        exit_codes: [4, 8]
+    ```
 
-One signature-related failure is a deliberate exception to that rule rather
-than a fourth deadline: a signature source that could not be fetched or read
-(reported as `collection signature source unavailable`, distinct from the
-deadline message above) keeps a genuine Ctrl-C reachable, so an operator
-interrupting a run mid-fetch of a signature source still exits
-`130`/`143`/`129` as an interrupt, not `5` as the per-collection failure it
-would otherwise join. That is the one place in this whole family where the
-underlying transport error is allowed to carry the caller's own cancellation
-through unchanged, because unlike the four deadlines above, this failure
-already reports every other network cause faithfully - a stall here is the
-deadline sentinel's own job, not this one's - so there is nothing for a real
-Ctrl-C to be confused with.
+> [!CAUTION]
+> Never auto-retry `7` or `10`: a retry cannot change the bytes, your keyring
+> or your signature policy.
 
-`artifact download deadline exceeded` is the stall verdict for every
-acquisition that spends the artifact budget described under
-[install options](cli.md#install-options) - a Galaxy or url artifact, a git
-fetch, a role - and two verdicts keep their own class even when that budget ran
-out at the same moment. A sha256 mismatch keeps exit `7`: a digest is compared
-only after a complete copy, so a transfer the deadline cut short never yields a
-false mismatch. A cache backend that cannot be used as configured keeps exit
-`2`, so a remote cannot turn a configuration error into a retryable exit `4` by
-stalling until the budget runs out.
+A network failure of one item exits `5` ([why](#when-several-things-fail)):
+read its `Failed:` line.
 
-Exit codes `2`, `4`, and `8` each fold in more than one cache-backend
-condition too, distinguishable the same way - grep the run's output for the
-message: `cache backend cannot be used as configured` (exit `2` - an
-`--s3-endpoint` that parses to no host, a bucket that does not enforce
-create-if-absent or compare-and-swap so the distributed lock cannot work, or -
-on the local backend, with no S3 involved at all - any permission failure
-against the cache directory, which is the wrong-uid case the [container image
-bake](ci.md#container-image-bake) describes),
-`cache backend unavailable` (exit `4` - the backend could not be reached, or
-answered with a failure that is not this program's own doing, an S3 listing or
-batch-delete response that breaks off or does not decode and a `412` refusing a
-plain overwrite included), `another
-process holds the cache` (exit `8` - a local Bolt file open timed out against
-another process's held lock, or the S3 lock's wait ceiling elapsed after this
-run observed another acquirer holding it), `another instance is running`
-(exit `8` - a second local run found the lock already held and refused to
-start immediately), and `cache lock ownership was lost to another holder`
-(exit `8` - this run acquired the lock and a later heartbeat found another
-acquirer's token on it, so the work it had already done was not exclusive).
+## Signals
 
-On the S3 backend, exit `8` reached through the wait means this run saw another
-acquirer holding the cache lock at some point during the wait - not that the
-backend was still healthy when the wait gave up, since one observation early in
-the wait is enough even if the backend answers nothing at all for the rest of
-it. A run that never got such an answer from the bucket in the first place -
-one that accepts connections and never replies, replies only with failures, or
-contradicts itself about whether the lock object exists - exits `4` with
-`cache backend unavailable` instead. The `cache lock ownership was lost to
-another holder` half has the opposite shape and is not covered by that
-sentence: there was no wait at all, the lock was granted, and the positive
-observation of another holder came afterward, from a heartbeat during the run.
+- `docker stop` and Kubernetes send SIGTERM, so the run exits `143`.
+- SIGQUIT dumps every goroutine's stack, showing where a hung run waits, and
+  exits `2`.
+- Any other code above 128 is 128 plus the killing signal: `137` is SIGKILL,
+  as from an OOM kill.
+- A stall or deadline is never an interrupt: it exits `4` or `5`, but a
+  sha256 mismatch or unusable backend keeps `7` or `2`.
 
-Exit `9` means the persisted cache state itself - not this reader's ability
-to interpret it - cannot be trusted by anyone and must be discarded before the
-run can proceed: grep the run's output for `corrupt project registry`,
-`cache state object exceeds the maximum allowed size`, `corrupt cache state
-object`, or `corrupt snapshot store` to tell which one fired. The last of the
-four is local-backend only: it means the local cache directory's Bolt snapshot
-file itself failed one of its own corruption checks, not merely that this run's
-own reader could not make sense of it. Only bbolt's own corruption checks count,
-as [What the directory holds](caching.md#what-the-directory-holds) lists them;
-a permission failure opening the file exits `2` and an mmap failure `4`, with
-the cache-backend messages above, since discarding a healthy cache would fix
-neither. The remedy is mechanical and safe to automate: delete the offending object (or the whole cache directory / bucket
-prefix), or rerun with `--clear-cache`, then rerun the command. This is
-deliberately distinct from exit `2`: a snapshot a newer binary wrote in a
-schema this one cannot safely interpret (`unsupported snapshot schema
-version`) exits `2` instead, since the snapshot itself is not damaged, only
-unreadable by this particular binary, and discarding it would destroy a shared
-cache other, newer runners still depend on.
+## When several things fail
 
-Exit `10` means this run failed to attribute a collection's artifact to a
-publisher it was configured to accept, not that its content is wrong: an
-artifact can hash exactly as its digest says and still exit `10`. That
-failure to attribute can happen in either direction - the signatures in hand
-did not satisfy the policy in force, or they satisfied it and vouched for a
-different collection than the one being installed (MANIFEST.json's own
-namespace, name and version disagreeing with what was resolved, or a
-manifest whose identity cannot be read unambiguously at all, such as two
-conflicting spellings of the same JSON key) - and both share the same class
-rather than part of exit `7`, because both leave an operator holding bytes
-nobody they trust vouched for. The remedy is usually this run's own keyring
-or its required-signature-count policy, not the artifact or the server that
-served it. Every other signature-related failure classifies by what actually
-failed rather than by the phase it was found in: a keyring that cannot be
-read, a keyring in a container format this tool cannot open, `signatures:`
-declared with no keyring configured, an unaccepted required-count,
-ignored-status-code, or disable-verification value, an explicitly supplied
-but empty `--keyring` or `--required-valid-signature-count`, a requirements
-entry declaring more signature sources than this tool gathers for one
-collection (64), and a signature source this tool would never fetch all exit
-`2`. That last class is about the source's own spelling rather than about
-reaching it: a value naming nothing fetchable (no scheme, a scheme outside
-`file`, `http` and `https`, an `http`/`https` URL naming no host such as
-`https:///sig.asc`, or a `file` URL naming another host or a relative path),
-or one embedding a credential in its userinfo
-(`https://user:pass@hub/sig.asc`), is refused before any request is
-composed, and the remedy is editing the entry in the requirements file. A source
-this tool would have fetched and could not obtain - a network failure, an
-unreadable `file://` path, an offline-mode refusal - or a signature phase that
-overran its deadline, is a network-class cause (`4`) rather than a verdict;
-because signatures are only gathered per collection, during `install` and
-`warm`, it is always joined behind the `installation failed` headline and the
-run exits `5`, as the aggregation rule above describes; an artifact carrying no
-`MANIFEST.json` exits `5` with the other artifact-shape failures; and a
-manifest chain that does not match its own digests exits `7`, since what failed
-there is bytes against a digest.
+```mermaid
+flowchart TD
+  S["Caught signal: 129, 130, 143"] --> L["8: cache lock lost"]
+  L --> I["7: integrity"]
+  I --> G["10: signature verdict"]
+  G --> K["6: lockfile"]
+  K --> N["5: install, installation failed"]
+  N --> W["4: network, lookup failed"]
+  W --> C["8: cache contention"]
+  C --> X["9: corrupt cache state"]
+  X --> R["3: resolution"]
+  R --> U["2: usage or configuration"]
+  U --> O["1: anything else"]
+```
+
+The code is the first box, top down, that matches the error or any cause
+behind it ([classifier chart](commands.md#exit-code-classes)). A caught
+signal wins even over a finished run and prints no error line; a lost cache
+lock turns every other outcome, success included, into `8`.
+
+Each failed item prints its own line, then one [headline](#messages-to-grep).
+Only a cause ranked above the headline changes the code: a `--frozen` sha256
+mismatch exits `7`, a network failure stays `5`.
+
+## Messages to grep
+
+| Message | Exit | Meaning and first step |
+| --- | --- | --- |
+| `network read stalled`, `artifact download deadline exceeded`, `galaxy metadata fetch deadline exceeded`, `cache state object deadline exceeded` | `4` (`5` behind a headline) | A transfer stalled or a [fixed budget](cli.md#timeouts-and-fixed-limits) ran out; retry |
+| `offline mode is enabled, network access is forbidden` | `4` (`5` behind a headline) | Not cached: [warm the cache](caching.md#cache-flags) or drop `--offline` |
+| `cache backend cannot be used as configured` | `2` | A host-less S3 endpoint, a bucket without conditional writes, or [cache directory permissions](ci.md#container-image-bake) |
+| `cache backend unavailable` | `4` | The cache failed or did not answer; retry |
+| `another process holds the cache`, `another instance is running` | `8` | Another run holds the lock; wait for it |
+| `cache lock ownership was lost to another holder` | `8` | Another run took the lock mid-run |
+| `corrupt project registry`, `corrupt cache state object`, `corrupt snapshot store`, `cache state object exceeds the maximum allowed size` | `9` | Delete the printed path or S3 key, or `go-galaxy.db` for the [snapshot](caching.md#what-the-directory-holds); `--clear-cache` keeps them |
+| `unsupported snapshot schema version` | `2` | A newer release wrote the cache: [run one release](ci.md#pin-one-release), never discard it |
+| `installation failed` | `5` | The `install` and `warm` headline; see `Failed:` lines |
+| `latest version lookup failed` | `4` | The `outdated` headline; see `Lookup failed:` lines |
+| `snapshot save failed:` | The other failure's code | Appended to that failure; alone, the save error sets the code |
+
+## Signature failures
+
+| Failure | Exit |
+| --- | --- |
+| `collection signature verification failed` ([policy](signatures.md#required-count-and-the-vacuous-pass) not met) | `10` |
+| `collection signature vouches for a different collection` | `10` |
+| An unreadable keyring, `signatures:` without one, or a refused count, status code or source | `2` |
+| `collection signature source unavailable`, `collection signature fetch deadline exceeded` | `5` (behind the install headline) |
+| `collection artifact contains no MANIFEST.json` | `5` |
+| `collection manifest chain does not match` | `7` |
+
+## Special cases by command
+
+| Command | Case | Exit |
+| --- | --- | --- |
+| `explain` | `collection or role not found in lockfile` | `1` |
+| `explain` | no name, or more than one | `2` |
+| `lock`, `outdated` | a server-supplied download or metadata URL with a credential, or a `download_url` with a query or not its server's artifact | `5` |
+| `lock` | the snapshot save fails after `Lockfile written` | the save error's code; `galaxy.lock` is already written |
+| `install`, `warm`, `lock` (`tree` too, from `galaxy.toml`) | a [constraint](requirements.md#stricter-than-requirementsyml) semver cannot parse | `2` from `galaxy.toml`, `1` from `requirements.yml` |
+
+<details markdown>
+<summary>Missing or broken lockfile</summary>
+
+| Command | No lockfile | Unreadable or invalid |
+| --- | --- | --- |
+| `install --frozen`, `warm --frozen`, `lock --check` (after resolving), `tree`, `explain` | `6` | `6` |
+| `hash` | hashes the requirements file (`2` if unreadable) | `6` |
+| `outdated` | reads the collections path (`6` if missing) | `6` |
+
+</details>
+
+<details markdown>
+<summary>Which command reads which file</summary>
+
+| Input | Read by | Exceptions |
+| --- | --- | --- |
+| Requirements entries | `install`, `warm`, `lock`, `tree`, `cleanup` (recorded projects) | `explain` ignores load errors; `hash` hashes bytes; `cleanup` warns on a missing file |
+| `galaxy.toml` settings | every command | Under `--lock-file`, `hash` and `explain` skip it and `tree` expands no `${VAR}` |
+| `ansible.cfg` | `install`, `warm`, `lock`, `outdated`, `cleanup` | - |
+
+</details>

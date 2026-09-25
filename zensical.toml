@@ -1,0 +1,115 @@
+[project]
+site_name = "go-galaxy"
+site_description = "Fast Ansible Galaxy collections and roles installer for CI"
+site_url = "https://greeddj.github.io/go-galaxy/"
+repo_url = "https://github.com/greeddj/go-galaxy"
+repo_name = "greeddj/go-galaxy"
+edit_uri = "edit/main/docs/"
+nav = [
+  { "Home" = "index.md" },
+  { "Get started" = [
+    { "Quick start" = "getting-started.md" },
+    { "Coming from ansible-galaxy" = "ansible-galaxy-compat.md" },
+  ]},
+  { "Guides" = [
+    "requirements.md",
+    "lockfile.md",
+    { "CI pipelines" = "ci.md" },
+    { "Servers and credentials" = "servers-and-auth.md" },
+    { "Caching and S3" = "caching.md" },
+    { "Signatures" = "signatures.md" },
+  ]},
+  { "Reference" = [
+    { "CLI" = "cli.md" },
+    "configuration.md",
+    "exit-codes.md",
+    "metrics.md",
+    "upgrading.md",
+    "benchmarks.md",
+  ]},
+  { "Internals" = [
+    "architecture.md",
+    "commands.md",
+    "security.md",
+    "development.md",
+  ]},
+]
+extra_css = ["assets/extra.css"]
+
+[project.theme]
+language = "en"
+logo = "assets/logo.svg"
+favicon = "assets/favicon.png"
+features = [
+  "content.action.edit",
+  "content.action.view",
+  "content.code.annotate",
+  "content.code.copy",
+  "content.tabs.link",
+  "content.tooltips",
+  "navigation.footer",
+  "navigation.instant",
+  "navigation.instant.prefetch",
+  "navigation.path",
+  "navigation.tabs",
+  "navigation.tabs.sticky",
+  "navigation.top",
+  "navigation.tracking",
+  "search.highlight",
+]
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "indigo"
+accent = "blue"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "indigo"
+accent = "blue"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.theme.icon]
+repo = "fontawesome/brands/github"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/greeddj/go-galaxy"
+
+[project.markdown_extensions]
+abbr = {}
+admonition = {}
+attr_list = {}
+def_list = {}
+footnotes = {}
+md_in_html = {}
+toc.permalink = true
+toc.slugify.object = "pymdownx.slugs.slugify"
+toc.slugify.kwds.case = "lower"
+"pymdownx.arithmatex".generic = true
+"pymdownx.betterem" = {}
+"pymdownx.caret" = {}
+"pymdownx.details" = {}
+"pymdownx.emoji".emoji_index = "zensical.extensions.emoji.twemoji"
+"pymdownx.emoji".emoji_generator = "zensical.extensions.emoji.to_svg"
+"pymdownx.highlight".anchor_linenums = true
+"pymdownx.highlight".line_spans = "__span"
+"pymdownx.highlight".pygments_lang_class = true
+"pymdownx.inlinehilite" = {}
+"pymdownx.keys" = {}
+"pymdownx.magiclink" = {}
+"pymdownx.mark" = {}
+"pymdownx.quotes".callouts = true
+"pymdownx.smartsymbols" = {}
+"pymdownx.superfences".custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+"pymdownx.tabbed".alternate_style = true
+"pymdownx.tabbed".combine_header_slug = true
+"pymdownx.tasklist".custom_checkbox = true
+"pymdownx.tilde" = {}

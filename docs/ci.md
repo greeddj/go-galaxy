@@ -1,448 +1,340 @@
 # Reproducible CI
 
-Pin transitive collections with a lockfile, then drive CI from it:
+Commit a [lockfile](lockfile.md), then have every CI job install exactly what
+it pins, from a warm cache. A GitHub Actions job keys its cache on
+[`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) in four steps, and the
+action runs all four for you.
 
-```bash
-# once, when you change the requirements file (galaxy.toml or requirements.yml):
-go-galaxy lock             # writes galaxy.lock
-
-# in CI:
-go-galaxy install --frozen # install exactly the locked versions
+```mermaid
+flowchart LR
+  A["go-galaxy hash"] --> B["restore cache: os, arch, release, hash"]
+  B --> C["go-galaxy install --frozen"]
+  C --> D["save cache"]
 ```
-
-A frozen install never installs an artifact that does not match the lockfile's recorded
-SHA256, so a poisoned cache or a mutated upstream artifact cannot be installed: a cached
-artifact that does not match is evicted and downloaded again once (never under
-`--offline`), and a mismatch that is still there fails the run (exit `7`). A Galaxy entry
-with no recorded SHA (its server publishes none) is not pin-checked. On a cold cache a
-frozen install downloads each Galaxy artifact from the `download_url` the lockfile
-records, asking the server for no metadata at all unless it verifies signatures, so a
-fresh runner spends its requests on the artifacts alone. A git or Galaxy role is pinned by
-commit rather than by digest: a frozen install serves it from the cache, and on a miss
-fetches exactly the pinned commit and refuses a repository that serves another one (exit
-`7`); a url role is pinned by its origin bytes' SHA256 and refused the same way when the
-URL serves other bytes.
-
-`--frozen` decides *what* gets installed and needs no cache to do it. `--offline`
-is a separate, stronger promise: no network call at all, so an artifact that is
-not already cached is not a download but a failure. Against a cold cache the run
-exits `5` naming the collection it could not get. Add `--offline` only where the
-cache is known to be populated - a base image you baked it into ([container image
-bake](#container-image-bake) below), or a restored CI cache your job treats as
-mandatory. A restored CI cache is not that by default: the first run after any
-lockfile change misses by construction, because the key just changed.
-
-`go-galaxy hash` prints a deterministic `sha256:…` of the lockfile (or of the
-requirements file, `galaxy.toml` or `requirements.yml`, when no lockfile is
-present) - perfect as a CI cache key. The lockfile it looks for is
-`--lock-file` (or `GO_GALAXY_LOCK_FILE`) when set, else, with `galaxy.toml`,
-the one `[tool.go-galaxy] lock_file` names, else `galaxy.lock` beside the
-requirements file. Reading that one key means decoding the file and expanding
-every `${VAR}` under `[tool.go-galaxy]`: a `galaxy.toml` that is not TOML,
-breaks the schema or names a variable the job did not export exits `2` rather
-than yielding a key, where a `requirements.yml` that is not YAML still hashes
-as the bytes it is.
-
-**Upgrade note (after v1.2.3):** the lockfile is now written with a two-space
-indent instead of yaml's default four. The hash is computed over the file as
-`lock` writes it, so upgrading past v1.2.3 changes `go-galaxy hash` (and the
-metrics report's `lockfile_hash`) for every lockfile once, and the first CI run
-after it misses the cache. An existing four-space file still loads and still
-passes `--frozen` unchanged; the next plain `lock` rewrites it with the new
-indent, which shows as a whitespace-only diff. Both binaries read either
-layout, but they print different hashes for the same file, so jobs sharing a
-cache key must run the same release. Adopting `galaxy.toml` is the same kind
-of change: a release that predates it still reads `requirements.yml`, so a
-checkout holding only `galaxy.toml` fails it, and one holding both hashes a
-different file whenever no lockfile is present, so the jobs sharing a cache
-key have to move together.
-
-## Roles
-
-A `roles:` list in the same requirements file (`galaxy.toml` or `requirements.yml`)
-is installed by the same `install`, locked by the same `lock` and warmed by the
-same `warm`; nothing in the jobs below
-changes for it except where the roles land and how the playbook step finds them.
-Roles install under `--roles-path` (`GO_GALAXY_ROLES_PATH`, `ANSIBLE_ROLES_PATH`,
-`[defaults] roles_path`), `.roles` beside the working directory by default, so a
-later `ansible-playbook` step needs the same directory on its search path - set
-`ANSIBLE_ROLES_PATH` once for the job and both tools read it, exactly as
-`ANSIBLE_COLLECTIONS_PATH` serves the collections:
-
-```yaml
-env:
-  ANSIBLE_COLLECTIONS_PATH: ./collections
-  ANSIBLE_ROLES_PATH: ./roles
-
-steps:
-  - run: go-galaxy install --frozen
-  - run: ansible-playbook site.yml
-```
-
-A lockfile that holds a Galaxy collection is written as `schema_version: 5`,
-since each Galaxy entry carries its `download_url`; one without that holds a
-url source (a collection's or a role's) as `schema_version: 4`, and one
-holding a role as `schema_version: 3`. A go-galaxy binary predating those
-features refuses such a file (exit `6`) rather than installing what it
-understands and silently skipping the rest; pin the binary version across the
-jobs that share the lockfile. The reverse holds for schema 5: a lockfile an
-older release wrote carries no `download_url`, so this one refuses it (exit
-`6`) until `go-galaxy lock` rewrites it.
 
 ## GitHub Actions
 
-This repository publishes a composite action that does the whole of it -
-download, checksum check, cache key, restore, install, save:
+=== "With the action"
 
-```yaml
-name: ansible-collections
-on: [push, pull_request]
+    ```yaml
+    name: ansible-deps
+    on: [push, pull_request]
 
-jobs:
-  install:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
+    jobs:
+      install:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v7
+          - uses: greeddj/go-galaxy@v1
+            with:
+              frozen: true
+    ```
 
-      - uses: greeddj/go-galaxy@v1
-        with:
-          collections-path: ./collections
-          frozen: true
-```
+=== "By hand"
 
-It downloads the release binary, checks it against the release's own
-`checksums.txt`, and refuses to go on if that file names no such asset. Then it
-computes `go-galaxy hash` over your requirements, restores `~/.cache/go-galaxy`
-under that key, installs, and saves the cache on the way out.
+    ```yaml
+    jobs:
+      install:
+        runs-on: ubuntu-latest
+        env:
+          RELEASE: "1.2.3" # (1)!
+        steps:
+          - uses: actions/checkout@v7
+          - name: Install go-galaxy # (2)!
+            run: |
+              base=https://github.com/greeddj/go-galaxy/releases/download/v$RELEASE
+              cd "$RUNNER_TEMP"
+              curl -sSLf -O "$base/go-galaxy-linux-amd64" -O "$base/checksums.txt"
+              sha256sum --ignore-missing -c checksums.txt
+              install -D -m 755 go-galaxy-linux-amd64 bin/go-galaxy
+              echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          - id: key
+            run: echo "hash=$(go-galaxy hash)" >> "$GITHUB_OUTPUT"
+          - uses: actions/cache@v6
+            with:
+              path: ~/.cache/go-galaxy
+              key: go-galaxy-${{ runner.os }}-${{ runner.arch }}-${{ env.RELEASE }}-${{ steps.key.outputs.hash }}
+              restore-keys: go-galaxy-${{ runner.os }}-${{ runner.arch }}-${{ env.RELEASE }}-
+          - run: go-galaxy install --frozen # (3)!
+    ```
 
-Reference it by exact release, `greeddj/go-galaxy@v1.2.0`, or by the major tag
-`@v1`, which moves with each release. The reference also decides which
-go-galaxy is installed: an exact one installs that release, while `@v1` and a
-branch install the latest, and the `version` input overrides either.
+    1. The release that wrote `galaxy.lock` ([Pin one release](#pin-one-release)),
+       in the cache key too: a release refuses a newer snapshot schema.
+    2. Fetch the asset for the runner, `go-galaxy-<linux|darwin>-<amd64|arm64>`,
+       checked against `checksums.txt`; [Verifying a
+       release](security.md#verifying-a-release) adds the signature.
+    3. Not `--offline`: `restore-keys` can hand back an older cache, or none.
 
-Linux and macOS runners only - those are the platforms the release builds for,
-and any other is refused by name rather than left to fail on a download.
+The action installs a checksum-verified release binary on Linux and macOS
+runners, amd64 or arm64.
 
-| Input | Default | What it does |
+### Inputs and outputs
+
+| Input | Default | Effect |
 | :-- | :-- | :-- |
-| `requirements` | go-galaxy's default | `-r`; the cache-key step hashes the same file the install reads |
-| `collections-path` | go-galaxy's default | `-p` |
-| `roles-path` | go-galaxy's default | `--roles-path` |
-| `frozen` | `false` | Install exactly what the lockfile pins |
-| `offline` | `false` | Make no network call; an uncached artifact is a failure |
-| `args` | empty | Extra arguments, split on whitespace |
-| `install` | `true` | `false` puts go-galaxy on PATH and stops |
-| `cache` | `true` | Restore and save `~/.cache/go-galaxy` |
-| `version` | from the reference | The release to install, 1.1.0 or later |
+| `requirements` | [discovered](requirements.md#which-file-is-read) | `-r`; the cache key hashes this file |
+| `collections-path` | go-galaxy's (`.collections`) | `-p` |
+| `roles-path` | go-galaxy's (`.roles`) | `--roles-path` |
+| `frozen` | `false` | `--frozen`: [install what `galaxy.lock` pins](lockfile.md#install-from-the-lockfile) |
+| `offline` | `false` | `--offline`, only for a cache that is always there, like a [baked image](#container-image-bake) |
+| `args` | empty | More install arguments, split on whitespace |
+| `install` | `true` | `false` only puts go-galaxy on PATH: no install, no cache |
+| `cache` | `true` | Restore and save `~/.cache/go-galaxy`; `false` when a flag, variable or `cache_dir` key moves the cache |
+| `version` | The `@` reference's release, else the latest | Release to install, `1.1.0` or later |
 
-Every input adds its flag only when set, so an input you leave alone leaves the
-matching `GO_GALAXY_*` variable in charge rather than silently outranking it.
+An unset input adds no flag, leaving the matching variable
+[in charge](configuration.md#where-a-setting-comes-from). Export
+`ANSIBLE_COLLECTIONS_PATH` and `ANSIBLE_ROLES_PATH` on the job, and a later
+`ansible-playbook` step [finds the installs](getting-started.md#your-first-install).
 
-### Everything else, through the environment
+| Output | Value |
+| :-- | :-- |
+| `version` | The release installed, without the leading `v` |
+| `cache-hit` | Whether an exact key match was restored |
 
-The action covers the common flags and nothing more. The rest of the surface -
-`GO_GALAXY_TOKEN`, the per-host git and url credentials, the `ANSIBLE_*`
-settings in [Configuration](configuration.md) - reaches go-galaxy through the
-environment, and a composite action inherits it: workflow-level `env`,
-job-level `env`, and `env` on the step that calls the action all reach it.
+<details markdown>
+<summary>How the action keys its cache</summary>
+
+The key is `go-galaxy-<os>-<arch>-<release>-<hash>`, and `restore-keys` falls
+back only within the same release. A release refuses a snapshot whose schema
+is newer than its own, so the key keeps workflows on different releases apart;
+the first job after an upgrade runs cold.
+
+With `@v1` or a branch and no `version` input, the action takes the first word
+of `go-galaxy --version`, minus a leading `v` (for example `1.2.3`), as both
+the `version` output and the key's release. Output that does not start with a
+version leaves `version` empty, and every release then shares one key.
+
+</details>
+
+### Secrets
 
 ```yaml
       - uses: greeddj/go-galaxy@v1
         env:
-          GO_GALAXY_TOKEN: ${{ secrets.GALAXY_TOKEN }}
-          GO_GALAXY_GIT_HUB_URL: https://github.com/acme/
-          GO_GALAXY_GIT_HUB_USERNAME: x-access-token
-          GO_GALAXY_GIT_HUB_PASSWORD: ${{ secrets.GH_PAT }}
+          GO_GALAXY_TOKEN: ${{ secrets.GALAXY_TOKEN }} # (1)!
+          GO_GALAXY_GIT_CREDENTIALS: forge # (2)!
+          GO_GALAXY_GIT_FORGE_URL: https://github.com/acme
+          GO_GALAXY_GIT_FORGE_USERNAME: x-access-token
+          GO_GALAXY_GIT_FORGE_PASSWORD: ${{ secrets.GH_PAT }}
         with:
           frozen: true
-          args: --required-valid-signature-count 1
 ```
 
-**Put no secret in `args`.** That input becomes argv, and argv is readable by
-any other process on the runner for the life of the run; the environment route
-is the one this tool documents for every secret it takes, and the reason
-`--token` exists only for interactive use. See
-[Security](security.md#security--trust-model).
+1. For the one server in effect; several servers each take their own
+   ([`--token`](servers-and-auth.md#--token)).
+2. Without this list the `GO_GALAXY_GIT_FORGE_*` variables are ignored. See
+   [Git sources and credentials](servers-and-auth.md#git-sources-and-credentials);
+   [url sources](servers-and-auth.md#url-sources-and-credentials) work alike.
+
+Anything the inputs miss goes through `env`, at workflow, job or step level.
+
+> [!CAUTION]
+> Never put a secret in `args`: it becomes argv, which other processes on the
+> runner can read ([why](security.md#security--trust-model)).
 
 ### Settings in galaxy.toml
 
-A project on `galaxy.toml` can keep some of that surface in the file instead
-of the workflow, under `[tool.go-galaxy]`: the S3 bucket and endpoint in an
-`s3` table, with the two keys written as `${VAR}` references rather than
-literals, and the Galaxy servers as a `[[tool.go-galaxy.servers]]` list in
-place of the `[galaxy_server.*]` sections of an `ansible.cfg`. Every `${VAR}`
-under `[tool.go-galaxy]` is expanded from the environment go-galaxy runs in,
-a flag or `GO_GALAXY_*` variable that is set still outranks the file key by
-key, and a reference to a variable that is not exported fails the run with
-exit `2`, naming the variable and never a value:
+=== "Environment"
 
-```toml
-[tool.go-galaxy.s3]
-bucket = "ci-galaxy-cache"
-endpoint = "https://s3.example.com"
-access_key = "${S3_CACHE_ACCESS_KEY}"
-secret_key = "${S3_CACHE_SECRET_KEY}"
+    ```yaml
+    jobs:
+      install:
+        env:
+          GO_GALAXY_S3_BUCKET: ci-galaxy-cache
+          GO_GALAXY_S3_ENDPOINT: https://s3.example.com
+          GO_GALAXY_S3_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          GO_GALAXY_S3_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+    ```
 
-[[tool.go-galaxy.servers]]
-id = "hub"
-url = "https://hub.example.com/api/galaxy/"
-token = "${HUB_TOKEN}"
-```
+=== "galaxy.toml"
 
-```yaml
-      - uses: greeddj/go-galaxy@v1
+    ```toml
+    [tool.go-galaxy.s3]
+    bucket = "ci-galaxy-cache"
+    endpoint = "https://s3.example.com"
+    access_key = "${S3_CACHE_ACCESS_KEY}"
+    secret_key = "${S3_CACHE_SECRET_KEY}"
+    ```
+
+    ```yaml
+    jobs:
+      install:
         env:
           S3_CACHE_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
           S3_CACHE_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
-          HUB_TOKEN: ${{ secrets.HUB_TOKEN }}
-          ANSIBLE_GALAXY_SERVER_HUB_URL: https://hub.example.com/api/galaxy/
-        with:
-          frozen: true
-```
+    ```
 
-The action's cache-key step runs `go-galaxy hash` over that same file and
-inherits the same environment as its install step, so a variable the file
-names has to be exported where both steps see it - the workflow, the job or
-the step that calls the action, as above - and one that is not set fails the
-key step with exit `2` before any cache is restored. The same holds for the
-by-hand workflow [below](#without-the-action), whose `Compute cache key` step
-is a step of its own: a variable set on the install step alone is unset when
-`hash` reads the file, so export it on the job.
+Moving settings such as an [S3 cache](caching.md#s3-cache-optional) into
+[`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table) leaves only
+secrets in the workflow. A set `GO_GALAXY_*` variable still outranks the file,
+key by key.
 
-`ANSIBLE_GALAXY_SERVER_HUB_URL` is there for the same reason it would be
-beside an `ansible.cfg` section. A `token` spelled as `${VAR}` is your token,
-not the file's, and a checked-out file must not pick where your token goes,
-so a `${VAR}` token paired with the `url` the file wrote is refused (exit `2`)
-until the address is on your channel too: export
-`ANSIBLE_GALAXY_SERVER_<ID>_URL` with the same address (and
-`_VALIDATE_CERTS`, when the entry disables certificate checks). A token
-written into the file as a literal is the file's own and is not refused - not
-recommended, since the file is committed. See [Galaxy servers and
-authentication](servers-and-auth.md#--token).
+A `[[tool.go-galaxy.servers]]` entry whose token is `${VAR}` also needs its url
+exported as `ANSIBLE_GALAXY_SERVER_<ID>_URL`
+([`--token`](servers-and-auth.md#--token)).
 
-Outputs are `version`, the release actually installed, and `cache-hit`.
-
-Three of those are worth a sentence. `install: false` is for a job that drives
-go-galaxy itself - several commands, or `lock` and `outdated` rather than
-`install` - and wants only the binary on PATH. Set `cache: false` if the job
-sets `GO_GALAXY_CACHE_DIR` itself, or its `galaxy.toml` names a `cache_dir`,
-because the action caches the default path and would otherwise save an empty
-one. And `version` will not go below 1.1.0,
-which is the first release to publish the raw per-platform binaries the action
-fetches; earlier releases shipped archives only.
-
-The cache key carries the go-galaxy release alongside the runner platform and
-`go-galaxy hash`, so one repository can pin one workflow to `@v1.2.0` and let
-another track `@v1` without the two sharing a cache. They must not: the cache
-snapshot is versioned, and a binary handed a snapshot from a newer one refuses
-it rather than rebuilding. The price is a cold run on the first job after an
-upgrade.
-
-When the action installs the latest release (`@v1` or a branch, with no
-`version` input), it learns which release it got from the first word of
-`go-galaxy --version`: the version, starting with a digit and with any leading
-`v` dropped. That word becomes both the `version` output and the release in the
-cache key, so `--version` has to keep printing the version first. Output that
-does not start that way leaves `version` empty and gives every release one
-shared cache key - the very case the release in the key exists to prevent.
-
-### Without the action
-
-The same thing by hand, for a runner the action does not cover or a pipeline
-that wants every step visible:
-
-```yaml
-      - name: Install go-galaxy
-        run: |
-          curl -sSL https://github.com/greeddj/go-galaxy/releases/latest/download/go-galaxy-linux-amd64 \
-            -o /usr/local/bin/go-galaxy
-          chmod +x /usr/local/bin/go-galaxy
-
-      - name: Compute cache key
-        id: gg
-        run: echo "key=$(go-galaxy hash)" >> "$GITHUB_OUTPUT"
-
-      - name: Restore go-galaxy cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/go-galaxy
-          key: go-galaxy-${{ runner.os }}-${{ steps.gg.outputs.key }}
-          restore-keys: |
-            go-galaxy-${{ runner.os }}-
-
-      # --frozen, not --frozen --offline: restore-keys can hand this job a
-      # cache from an older lockfile, and the run after a lockfile change gets
-      # no hit at all. Offline would make either a failure instead of a
-      # download; frozen alone still installs exactly what the lockfile pins.
-      - name: Install collections (frozen)
-        run: go-galaxy install --frozen -p ./collections
-```
+> [!WARNING]
+> Export each `${VAR}` where the cache-key step sees it too: on the job, or on
+> the step that calls the action. `go-galaxy hash` reads `galaxy.toml` and
+> exits [`2`](exit-codes.md) on an unset variable.
 
 ## GitLab CI
 
 ```yaml
-stages: [install]
-
 variables:
-  GO_GALAXY_CACHE_DIR: "$CI_PROJECT_DIR/.cache/go-galaxy"
+  GO_GALAXY_CACHE_DIR: "$CI_PROJECT_DIR/.cache/go-galaxy" # (1)!
 
-install_collections:
-  stage: install
-  # Not ghcr.io/greeddj/go-galaxy: that image is distroless and carries no
-  # shell, and GitLab runs every job's script through one, so a job in it
-  # cannot start at all. Drop the static binary into an ordinary image.
-  image: alpine:3
+install:
+  image: alpine:3 # (2)!
   cache:
-    # cache:key is expanded when the job is created, and the cache is restored
-    # before before_script runs, so a key computed by a script step is always
-    # too late: whatever it expands to is the same for every pipeline, which
-    # means one shared cache entry rather than one per lockfile. cache:key:files
-    # makes GitLab hash the lockfile itself - the same input `go-galaxy hash`
-    # reads.
     key:
-      files:
-        - galaxy.lock
-      prefix: go-galaxy
-    paths:
-      - .cache/go-galaxy
+      files: [galaxy.lock] # (3)!
+      prefix: go-galaxy-1.2.3
+    paths: [.cache/go-galaxy]
   before_script:
-    - apk add --no-cache ca-certificates curl
-    - curl -sSLf -o /usr/local/bin/go-galaxy https://github.com/greeddj/go-galaxy/releases/latest/download/go-galaxy-linux-amd64
-    - chmod +x /usr/local/bin/go-galaxy
+    - apk add --no-cache ca-certificates coreutils curl
+    - base=https://github.com/greeddj/go-galaxy/releases/download/v1.2.3
+    - curl -sSLf -O "$base/go-galaxy-linux-amd64" -O "$base/checksums.txt"
+    - sha256sum --ignore-missing -c checksums.txt
+    - install -m 755 go-galaxy-linux-amd64 /usr/local/bin/go-galaxy
   script:
-    # --frozen without --offline: a cache miss is normal here - the first
-    # pipeline after a lockfile change gets one - and --offline would turn it
-    # into a failed job instead of a download.
-    - go-galaxy install --frozen -p ./collections
+    - go-galaxy install --frozen # (4)!
 ```
 
-**Distributed runners.** GitLab's own `cache:` is per-runner unless the runner
-is configured with a distributed cache, so with several runners each one
-rebuilds its own copy. Pointing go-galaxy at its own S3 cache instead gives
-every runner one shared artifact cache: set `GO_GALAXY_S3_BUCKET`,
-`GO_GALAXY_S3_REGION` and `GO_GALAXY_S3_PREFIX` in `variables:`, and
-`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` as masked project variables,
-which go-galaxy reads directly. A project on `galaxy.toml` can keep the
-bucket, region, prefix and endpoint in the file instead, under
-`[tool.go-galaxy.s3]`, with the two keys written as `${VAR}` references to the
-masked variables: a `GO_GALAXY_S3_*` variable that is set still outranks the
-file key by key, no key enters the repository as a literal, and a reference to
-a variable the job does not export fails the run with exit `2` naming it. Keep
-the `cache:` block alongside either: the extracted-tree store stays local to
-`GO_GALAXY_CACHE_DIR` even with the S3 backend, so the job cache is what saves
-re-extracting every collection. Such a job cannot also run `--offline`: the
-bucket, from a variable or from `galaxy.toml`, is reached over the network, so
-the pair exits `2` before the cache is opened.
+1. GitLab caches only paths inside the project directory.
+2. Not `ghcr.io/greeddj/go-galaxy`: it is distroless, with no shell for the
+   script.
+3. GitLab fixes the cache key before any script runs, so `go-galaxy hash`
+   cannot set it; `key:files` keys it on `galaxy.lock` instead. The prefix
+   carries the release: bump it with the URL.
+4. Not `--offline`: the first pipeline after a lockfile change misses the
+   cache.
 
-Two runtime consequences of a shared S3 cache are worth knowing before you
-enable it. Jobs sharing one bucket serialize: a run holds the backend's
-exclusive lock for its whole duration, so a `parallel:` matrix against one
-bucket runs one job at a time, and a job that gives up waiting on another's
-lock exits `8`. And a bucket is a trust boundary, not just storage: give jobs
-that build untrusted branches or forks their own bucket, and see [Security /
-Trust model](security.md#security--trust-model) for why a prefix alone is not a boundary.
+> [!NOTE]
+> With several runners, share one [S3 cache](caching.md#s3-cache-optional) and
+> keep the `cache:` block, since extraction stays local. Jobs sharing a bucket
+> run one at a time, a job waiting over 5 minutes exits `8`, and untrusted
+> branches need a bucket of their own.
 
 ## Lockfile drift gate
 
-Fail a pull request when `galaxy.lock` no longer matches the requirements
-file (`galaxy.toml` or `requirements.yml`) - a root added, removed, or
-repinned without regenerating
-the lockfile. `lock --check` reads the lockfile as the thing to check rather
-than as the answer, which is the opposite of what install/warm `--frozen` do -
-it still resolves fresh, and only a warm resolve cache lets that stay off the
-network - so this is a separate job from the install above, not a replacement
-for it. Add
-`--refresh` for a second, distinct gate on the same file: `lock --check`
-alone only catches a change to the requirements file (`galaxy.toml` or
-`requirements.yml`), since it reuses the cached
-resolve; `lock --check --refresh` also catches a newer version simply
-having been published upstream, since `--refresh` makes the comparison's
-fresh resolve reach the live servers instead:
-
 ```yaml
 name: lockfile-drift
-on: [pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 jobs:
   lockfile-drift:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install go-galaxy
-        run: |
-          curl -sSL https://github.com/greeddj/go-galaxy/releases/latest/download/go-galaxy-linux-amd64 \
-            -o /usr/local/bin/go-galaxy
-          chmod +x /usr/local/bin/go-galaxy
-
-      - name: Check galaxy.lock matches the requirements file
-        run: go-galaxy lock --check
-
-      - name: Check galaxy.lock is not stale against upstream
-        run: go-galaxy lock --check --refresh
+      - uses: actions/checkout@v7
+      - uses: greeddj/go-galaxy@v1
+        id: gg
+        with:
+          install: false # (1)!
+      - id: key
+        run: echo "hash=$(go-galaxy hash)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6 # (2)!
+        with:
+          path: ~/.cache/go-galaxy
+          key: go-galaxy-drift-${{ runner.os }}-${{ runner.arch }}-${{ steps.gg.outputs.version }}-${{ steps.key.outputs.hash }}
+      - run: go-galaxy lock --check # (3)!
+      - run: go-galaxy lock --check --refresh
 ```
 
-A nonzero exit from either step (code `6`, the lockfile class - see
-[Exit codes](exit-codes.md)) means the PR needs `go-galaxy lock` (optionally
-`--refresh`, to pick up the newer upstream version too) run and its updated
-`galaxy.lock` committed.
+1. Only puts go-galaxy on PATH.
+2. Its own key, saved by the run on `main` for every pull request: plain
+   `lock --check` replays the resolve saved there, which an install cache lacks.
+3. Fails on requirements edited without relocking; on a cold cache, also on
+   a newer upstream release, which `--refresh` always catches.
+
+On drift either step exits `6`: run `go-galaxy lock` (with `--refresh` for
+the second) and commit. [Catch drift](lockfile.md#catch-drift) explains both
+checks.
 
 ## Container image bake
-
-Pre-warm caches in your CI base image so jobs only hardlink into place:
 
 ```dockerfile
 FROM debian:stable-slim
 
-# The published image is distroless: one static binary at /go-galaxy, no shell
-# and no package manager. A COPY --from takes that binary and nothing else, so
-# the CA certificates it needs have to come from this base image - install them
-# here, or the first Galaxy request fails to verify its TLS certificate.
-COPY --from=ghcr.io/greeddj/go-galaxy:latest /go-galaxy /usr/local/bin/go-galaxy
+# (1)!
+COPY --from=ghcr.io/greeddj/go-galaxy:1.2.3 /go-galaxy /usr/local/bin/go-galaxy
+# (2)!
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-
-# Pin the cache somewhere that does not depend on who runs the job: the
-# default is $HOME/.cache/go-galaxy, and the warm below runs as root while
-# your jobs may not.
+# (3)!
 ENV GO_GALAXY_CACHE_DIR=/var/cache/go-galaxy
 
 WORKDIR /src
-# For a project on galaxy.toml: COPY galaxy.toml galaxy.lock ./
+# (4)!
 COPY requirements.yml galaxy.lock ./
-# The uid your jobs run as. A run needs the cache lock and writes the
-# snapshot back, so a job user that can only read the baked cache fails to
-# start with `cache backend cannot be used as configured` (exit 2) - and so
-# does a job whose uid is not the one named here.
 ARG JOB_UID=1001
+# (5)!
 RUN go-galaxy warm --frozen && chown -R "$JOB_UID" "$GO_GALAXY_CACHE_DIR"
 ```
 
-`chown`, not `chmod -R a+rwX`: an install hardlinks its files out of the cache,
-so a cache file and the installed file that came from it are one inode - see
-[Differences a migration runs into](ansible-galaxy-compat.md#differences-a-migration-runs-into) for what
-that costs an installed file's mode. Widening the cache's modes far enough for a
-job to link out of it is therefore the same act as making every installed file
-writable, and an edit to one of those installed files lands back in the shared
-cache for every later job built on that image. Ownership sidesteps that: with
-`fs.protected_hardlinks` set, the default on current distributions, Linux
-permits a hardlink to a file you do not own only when you may also write it,
-while a file you own you may always link - so handing the cache to the job's uid
-buys the link while leaving an installed file read-only and the cache writable
-by nothing but the job. That uid can still `chmod u+w` a cache file it owns and
-edit it, which is the ordinary standing of any single-user cache. Keep the
-`chown` chained onto the same `RUN`: a separate one rewrites every file's
-metadata into a new layer and copies the whole cache again. Where the job's uid
-cannot be known at build time, no setting keeps both properties - read-only
-cache files cost the hardlink, so jobs copy the bytes instead and a collection
-whose extracted tree is not already in the image fails outright (exit `5`),
-while `chmod -R a+rwX` keeps the hardlink and gives up both the read-only
-installed file and the private cache. Bake for a known uid where you can.
+1. The image is distroless: one binary at `/go-galaxy`, no shell.
+   [Pin](#pin-one-release) its tag.
+2. Without CA certificates, Galaxy requests fail TLS verification.
+3. A fixed path: the default under `$HOME` differs between root here and your
+   job user.
+4. On `galaxy.toml`, copy it in place of `requirements.yml`.
+5. `JOB_UID` is your jobs' uid. A separate `RUN chown` would copy the whole
+   cache into a new layer.
 
-Jobs built on that image are the case `--offline` is for, since the cache is
-part of the image rather than something a key might miss:
+Jobs on this image need no download, the case `--offline` is for:
 
 ```bash
-go-galaxy install --frozen --offline -p ./collections
+go-galaxy install --frozen --offline
 ```
+
+| Approach | Hardlinks | Installed files | Cache |
+| :-- | :-- | :-- | :-- |
+| `chown -R` to the job's uid | Work | Read-only | Writable by the job alone |
+| `chmod -R a+rwX` | Work | Writable by anyone | Writable by anyone |
+| No `chown`, or the wrong uid | - | - | `cache backend cannot be used as configured`, exit `2` |
+
+With the uid unknown at build time, nothing keeps both hardlinks and
+[read-only installed files](ansible-galaxy-compat.md#installed-files-are-read-only),
+so bake for a known uid.
+
+<details markdown>
+<summary>Why chown and not chmod</summary>
+
+An install hardlinks its files out of the cache, so a cache file and its
+installed copy are one inode with one mode: widening the cache's modes for the
+job widens the installed files too. With `fs.protected_hardlinks`, the default
+on current distributions, Linux lets you hardlink a file you do not own only
+when you may read and write it.
+
+A file you own you may always link, so handing the cache to the job's uid buys
+the link while every file stays read-only. That uid can still `chmod u+w` a
+file it owns, as with any single-user cache.
+
+</details>
+
+## Pin one release
+
+Run one release everywhere a cache or `galaxy.lock` is shared.
+
+| Mismatch | What happens | Fix |
+| :-- | :-- | :-- |
+| Older release, cache with a newer snapshot schema | `unsupported snapshot schema version`, exit `2` | Key the cache on the release; a shared bucket or directory needs one release, or an S3 prefix per release |
+| Newer release, cache with an older snapshot schema | Rebuilds the snapshot: one slower run | None; a shared cache then fails older releases, as above |
+| Older release, newer `galaxy.lock` | Refused, exit `6` | One release everywhere |
+| Newer release, Galaxy entries without `download_url` | Refused, exit `6` | `go-galaxy lock`, then commit |
+
+Pin it in each place:
+
+| Where | Pin with |
+| :-- | :-- |
+| The action | `@v1.2.3`, or `@v1` with `version: 1.2.3` |
+| A downloaded binary | A fixed release URL, `releases/download/v1.2.3/` |
+| A baked image | `ghcr.io/greeddj/go-galaxy:1.2.3` |
+
+Run `go-galaxy lock` with that release too, on developer machines included.
+[Upgrading](upgrading.md) lists what each release changes.
