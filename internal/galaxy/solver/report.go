@@ -397,7 +397,7 @@ func (s *solveState) describe(inc *incompatibility) string {
 	case causeDependency:
 		return s.describeDependency(cause)
 	case causeNoVersions:
-		return fmt.Sprintf("no version of %s matches %s", cause.term.Package, cause.term.Set.display)
+		return fmt.Sprintf("no version of %s matches %s", cause.term.Package, cause.term.Set.displayLabel())
 	case causeUnknownPackage:
 		return cause.Package + " has no published versions"
 	default:
@@ -419,67 +419,110 @@ func (s *solveState) describeDependency(c causeDependency) string {
 	return fmt.Sprintf("%s depends on %s %s", parentLabel, c.Dep, constraint)
 }
 
-// dependencyPairTermCount is the term count that renders as "{depender}
-// requires {dependency}" (one positive term for the depender's own version,
-// one negative term for the forbidden dependency range).
-const dependencyPairTermCount = 2
+// pairTermCount is the term count describeTwoTerm phrases, one wording per
+// pair of polarities.
+const pairTermCount = 2
 
-// describeGeneric renders a root or derived incompatibility: a negative term
-// reads "X is forbidden", a positive/negative pair "A requires B", and any
-// other shape joins each term's single-term phrasing.
+// describeGeneric renders a root or derived incompatibility, whose terms
+// cannot all hold, by term count: no term is the failure itself, and
+// describeSingleTerm, describeTwoTerm and describeManyTerms word one count each.
 func (s *solveState) describeGeneric(inc *incompatibility) string {
 	switch len(inc.Terms) {
 	case 0:
 		return "version solving failed"
 	case 1:
 		return s.describeSingleTerm(inc.Terms[0])
-	case dependencyPairTermCount:
+	case pairTermCount:
 		return s.describeTwoTerm(inc.Terms[0], inc.Terms[1])
 	default:
-		parts := make([]string, len(inc.Terms))
-		for i, t := range inc.Terms {
-			parts[i] = s.describeSingleTerm(t)
-		}
-		return strings.Join(parts, " and ")
+		return s.describeManyTerms(inc.Terms)
 	}
 }
 
+// describeSingleTerm reads a positive term "X S is forbidden" and a negative
+// one "X S is required", since the lone term cannot hold; a positive root
+// term is the terminal failure itself.
 func (s *solveState) describeSingleTerm(t term) string {
 	if t.Positive && t.Package == rootPkg {
 		return "version solving failed"
 	}
-	label := s.termLabel(t.Package, t.Set)
 	if t.Positive {
-		return label + " is required"
+		return s.termLabel(t) + " is forbidden"
 	}
-	return label + " is forbidden"
+	return s.termLabel(t) + " is required"
 }
 
+// describeTwoTerm reads a positive and a negative term "P requires N", two
+// positive terms "P is incompatible with Q" and two negative terms "either A
+// or B is required", whichever order normalization left them in.
 func (s *solveState) describeTwoTerm(a, b term) string {
-	pos, neg := a, b
-	if !pos.Positive {
-		pos, neg = b, a
+	switch {
+	case a.Positive && b.Positive:
+		return fmt.Sprintf("%s is incompatible with %s", s.termLabel(a), s.termLabel(b))
+	case !a.Positive && !b.Positive:
+		return fmt.Sprintf("either %s or %s is required", s.termLabel(a), s.termLabel(b))
+	case a.Positive:
+		return fmt.Sprintf("%s requires %s", s.termLabel(a), s.termLabel(b))
+	default:
+		return fmt.Sprintf("%s requires %s", s.termLabel(b), s.termLabel(a))
 	}
-	return fmt.Sprintf("%s requires %s", s.termLabel(pos.Package, pos.Set), s.termLabel(neg.Package, neg.Set))
 }
 
-// termLabel renders (pkg, set) as "root", "X <version>" for a singleton,
-// "every version of X" when set covers the fetched universe, or the set's
-// display label. The universe is consulted for display only, never logic.
-func (s *solveState) termLabel(pkg string, set verSet) string {
-	if pkg == rootPkg {
+// describeManyTerms reads three or more terms by polarity: positives alone
+// "A, B and C are incompatible", negatives alone "one of A, B or C is
+// required", both "A and B require C or D", "requires" after one positive.
+func (s *solveState) describeManyTerms(terms []term) string {
+	positive := make([]string, 0, len(terms))
+	negative := make([]string, 0, len(terms))
+	for _, t := range terms {
+		if t.Positive {
+			positive = append(positive, s.termLabel(t))
+		} else {
+			negative = append(negative, s.termLabel(t))
+		}
+	}
+	switch {
+	case len(negative) == 0:
+		return joinLabels(positive, "and") + " are incompatible"
+	case len(positive) == 0:
+		return "one of " + joinLabels(negative, "or") + " is required"
+	case len(positive) == 1:
+		return positive[0] + " requires " + joinLabels(negative, "or")
+	default:
+		return joinLabels(positive, "and") + " require " + joinLabels(negative, "or")
+	}
+}
+
+// joinLabels joins labels as an English list closed by conj: "A", "A and
+// B", "A, B and C".
+func joinLabels(labels []string, conj string) string {
+	last := len(labels) - 1
+	if last < 1 {
+		return strings.Join(labels, "")
+	}
+	return strings.Join(labels[:last], ", ") + " " + conj + " " + labels[last]
+}
+
+// termLabel renders t as "root", "X <version>" for a singleton, "every version
+// of X" for a positive set covering the fetched universe (read for display
+// only), the bare package for a negative full set, else the set's label.
+func (s *solveState) termLabel(t term) string {
+	if t.Package == rootPkg {
 		return "root"
 	}
-	if v, ok := set.decidedVersion(); ok {
-		return fmt.Sprintf("%s %s", pkg, v.Original())
+	if v, ok := t.Set.decidedVersion(); ok {
+		return fmt.Sprintf("%s %s", t.Package, v.Original())
 	}
-	if set.isFull() || s.coversFetchedUniverse(pkg, set) {
-		return "every version of " + pkg
+	if t.Positive && (t.Set.isFull() || s.coversFetchedUniverse(t.Package, t.Set)) {
+		return "every version of " + t.Package
 	}
-	if label := set.displayLabel(); label != "" {
-		return fmt.Sprintf("%s %s", pkg, label)
+	if t.Set.isFull() {
+		return t.Package
 	}
-	return pkg
+	if label := t.Set.displayLabel(); label != "" {
+		return fmt.Sprintf("%s %s", t.Package, label)
+	}
+	return t.Package
 }
 
 // coversFetchedUniverse reports whether set admits every version of pkg's
