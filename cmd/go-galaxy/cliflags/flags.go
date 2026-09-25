@@ -65,14 +65,15 @@ func collectionPathFlags() []cli.Flag {
 			// treats it as the [galaxy] server fallback, but as a source here
 			// urfave's IsSet would report it like --server and outrank server_list.
 			Name:    "server",
-			Usage:   "Galaxy server URL",
+			Usage:   "Galaxy server URL, or the id of an entry in the configured server list",
 			Value:   defaultServerURL,
 			Sources: cli.EnvVars("GO_GALAXY_SERVER"),
 		},
 		&cli.StringFlag{
 			Name: "token",
 			Usage: "Galaxy API token for the configured server; only valid when a single server is in effect " +
-				"(configure per-server tokens in [galaxy_server.<id>] when using server_list)",
+				"(with a server list, give each server its token in [galaxy_server.<id>], " +
+				"[[tool.go-galaxy.servers]] or ANSIBLE_GALAXY_SERVER_<ID>_TOKEN)",
 			Sources: cli.EnvVars("GO_GALAXY_TOKEN"),
 		},
 		&cli.StringFlag{
@@ -147,7 +148,7 @@ func collectionBehaviorFlags() []cli.Flag {
 		},
 		&cli.BoolFlag{
 			Name:    "clear-cache",
-			Usage:   "Clear local cache before installing",
+			Usage:   "Delete cached metadata, pins and artifacts before the run (with S3, the bucket's artifacts too)",
 			Sources: cli.EnvVars("GO_GALAXY_CLEAR_CACHE"),
 		},
 		&cli.BoolFlag{
@@ -174,7 +175,7 @@ func lockFileFlag() cli.Flag {
 func frozenFlag() cli.Flag {
 	return &cli.BoolFlag{
 		Name:    "frozen",
-		Usage:   "Fail if lockfile is missing or does not match resolved requirements",
+		Usage:   "Take every version from the lockfile instead of resolving; fail if it is missing or does not match the requirements",
 		Sources: cli.EnvVars("GO_GALAXY_FROZEN"),
 	}
 }

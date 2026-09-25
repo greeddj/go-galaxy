@@ -1,5 +1,5 @@
 // Package metrics serializes a small JSON report describing the most
-// recent install/warm run, intended for ingestion by CI dashboards.
+// recent install, warm, lock or outdated run, for ingestion by CI dashboards.
 package metrics
 
 import (
