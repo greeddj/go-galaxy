@@ -14,6 +14,8 @@ refuses what a newer one writes ([Pin one release](ci.md#pin-one-release)).
 | A `lock` [metrics report](metrics.md#fields) never carries `frozen` | Tell a `--check` run from a write by its job, not its report | A dashboard counting `lock` reports with `frozen` counts none |
 | `lock` writes a two-space indent, so `go-galaxy hash` and `lockfile_hash` change once | Expect one CI cache miss, and a whitespace-only diff from the next `lock` where nothing else changed | Nothing: the indent alone refuses no file |
 | `galaxy.toml` is read ahead of `requirements.yml` | Upgrade every binary sharing the cache before a project moves, then follow [Moving to galaxy.toml](requirements.md#moving-to-galaxytoml) | An older release reads only `requirements.yml`, exiting `2` without it; its `cleanup` exits `2` on that cache, deleting nothing |
+| An unreachable Galaxy server (connection, DNS, TLS), or an API root answering a status other than `404`, `401` or `403`, exits [`4`](exit-codes.md), not `1` | Retry exit `4` as you retry other network failures | A step that branched on `1` for an outage no longer matches |
+| A collection no server has exits `3`, not `1`, where a server also serves its web UI at an API root, as galaxy.ansible.com does under `/v3`; a server answering web pages at every API root exits `4` | Nothing, unless a step matched exit `1` for a misspelled name | That step no longer matches |
 
 Every change above is new since v1.2.3. On v1.1.0 to v1.2.2, also read the
 breaking changes in the

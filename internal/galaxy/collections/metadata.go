@@ -78,7 +78,7 @@ func loadCollectionMetadata(
 
 // loadRootMetadataCached walks serverCandidates for col's root metadata and
 // returns it with the answering server's normalized base, which owns col for
-// the rest of the run. Only an all-candidates 404 advances to the next server.
+// the rest of the run. Only a 404, with web pages at most beside it, advances.
 func loadRootMetadataCached(
 	ctx context.Context,
 	deps collectionDeps,
@@ -117,8 +117,8 @@ func loadRootMetadataCached(
 }
 
 // tryServerRootMetadata tries one server's apiRoot candidates and is the only
-// place a root-metadata failure is classified by status: all-404 lets the walk
-// move on, while 401/403 and an exhausted retryable status abort it.
+// place a root-metadata failure is classified by status: a 404 lets the walk
+// move on, while 401/403, any other status or only web pages abort it.
 func tryServerRootMetadata(
 	ctx context.Context,
 	deps collectionDeps,
@@ -129,7 +129,7 @@ func tryServerRootMetadata(
 	runtime := deps.runtime
 	st := deps.st
 
-	var lastErr error
+	var lastErr, webPage error
 	candidates := rootMetadataURLCandidates(srv.base, col, deps.apiRoots)
 	runtime.Output.Debugf("Root metadata candidates for %s on server %s: %s", col.key(), srv.label(), joinCandidateURLs(candidates))
 
@@ -137,15 +137,24 @@ func tryServerRootMetadata(
 		runtime.Output.Debugf("Root metadata GET %s", cand.url)
 		var root types.GalaxyCollection
 		if err := fetchJSONWithCachePolicy(ctx, runtime, cand.url, st, &root, policy); err != nil {
+			// A web page at an API root (galaxy.ansible.com's /v3) is skipped,
+			// never kept as lastErr: only a real 404 says the server lacks col.
+			if cacheManager.IsWebPage(err) {
+				runtime.Output.Debugf("Root metadata is a web page %s", cand.url)
+				if webPage == nil {
+					webPage = err
+				}
+				continue
+			}
 			if statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok {
-				switch {
-				case statusErr.Code == http.StatusNotFound:
+				switch statusErr.Code {
+				case http.StatusNotFound:
 					runtime.Output.Debugf("Root metadata 404 %s", cand.url)
 					lastErr = err
 					continue
-				case statusErr.Code == http.StatusUnauthorized, statusErr.Code == http.StatusForbidden:
+				case http.StatusUnauthorized, http.StatusForbidden:
 					return nil, false, fmt.Errorf("%w: server %s: %w", helpers.ErrGalaxyAuthFailed, srv.label(), err)
-				case helpers.IsRetryableHTTPStatus(statusErr.Code):
+				default:
 					return nil, false, fmt.Errorf("%w: server %s: %w", helpers.ErrGalaxyServerUnavailable, srv.label(), err)
 				}
 			}
@@ -157,7 +166,17 @@ func tryServerRootMetadata(
 		deps.apiRoots.recordWinner(cand.base, cand.apiRoot)
 		return &root, true, nil
 	}
-	return nil, false, lastErr
+	return nil, false, serverWalkError(srv, lastErr, webPage)
+}
+
+// serverWalkError ends a server whose candidates none answered: its last 404,
+// else an abort when only web pages answered, which are no evidence of absence
+// (an SSO front serves every path its login page), else nil for no candidates.
+func serverWalkError(srv serverCandidate, last404, webPage error) error {
+	if last404 != nil || webPage == nil {
+		return last404
+	}
+	return fmt.Errorf("server %s answers a web page at every API root: %w", srv.label(), webPage)
 }
 
 // fetchVersionMetadataCached fetches metadata for a specific version.

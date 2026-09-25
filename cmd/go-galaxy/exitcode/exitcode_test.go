@@ -3,9 +3,12 @@ package exitcode
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/url"
 	"os"
 	"syscall"
 	"testing"
@@ -26,6 +29,21 @@ var errTestSaveFailure = errors.New("simulated save failure")
 // errTestUnreadableCause stands in for a requirements file that exists but
 // fails to parse, a cause other than fs.ErrNotExist, in fromErrorCases.
 var errTestUnreadableCause = errors.New("yaml: unexpected end of file")
+
+// errTestDialRefused is the cause net/http gives a refused dial.
+var errTestDialRefused error = &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+
+// transportFailure builds the *url.Error net/http returns when client.Do fails
+// before any response, around cause.
+func transportFailure(cause error) error {
+	return &url.Error{Op: "Get", URL: "https://h/api/v3/", Err: cause}
+}
+
+// notJSONCause returns the *json.SyntaxError a web UI page gives a decoder.
+func notJSONCause() error {
+	var out map[string]any
+	return json.Unmarshal([]byte("<!doctype html>"), &out)
+}
 
 // exitCase is one FromError classification expectation.
 type exitCase struct {
@@ -130,6 +148,34 @@ var fromErrorCases = []exitCase{
 	{
 		name:     "galaxy server unavailable",
 		err:      fmt.Errorf("%w: server a: ctx", helpers.ErrGalaxyServerUnavailable),
+		wantCode: ExitNetwork,
+	},
+	{
+		// The shape cache.FetchJSONWithCachePolicy gives a refused dial or a
+		// failed DNS lookup: bare, this *url.Error matches no class at all.
+		name:     "galaxy server unreachable",
+		err:      fmt.Errorf("%w: %w", helpers.ErrGalaxyServerUnavailable, transportFailure(errTestDialRefused)),
+		wantCode: ExitNetwork,
+	},
+	{
+		// The same wrap around a Ctrl-C still exits as the interrupt it is.
+		name:     "galaxy server unreachable, canceled cause",
+		err:      fmt.Errorf("%w: %w", helpers.ErrGalaxyServerUnavailable, transportFailure(context.Canceled)),
+		wantCode: ExitInterrupt,
+	},
+	{
+		// A version document answered with a web UI page; an API-root probe
+		// answered so beside a real 404 is passed over and never gets here.
+		name:     "galaxy metadata not JSON",
+		err:      fmt.Errorf("%w: %s: %w", helpers.ErrMetadataNotJSON, "https://h/api/v3/versions/1.0.0/", notJSONCause()),
+		wantCode: ExitNetwork,
+	},
+	{
+		// The server walk's abort when every API root answered a web page,
+		// as an SSO front does: not the unknown-package path, so never 3.
+		name: "galaxy server answers only web pages",
+		err: fmt.Errorf("failed to load root metadata: server a answers a web page at every API root: %w",
+			fmt.Errorf("%w: %s: %w", helpers.ErrMetadataNotJSON, "https://h/api/v3/collections/ns/x/", notJSONCause())),
 		wantCode: ExitNetwork,
 	},
 	{

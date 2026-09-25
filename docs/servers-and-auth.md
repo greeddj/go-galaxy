@@ -114,10 +114,12 @@ flowchart TD
     B -->|"anything else"| F["Stop the run, no fallback"]
 ```
 
-A 401 or 403, or a 429, 500, 502, 503 or 504 that outlasts the retries,
-exits [`4`](exit-codes.md): retry or investigate. A refused connection, a DNS
-failure or a 501 exits `1`. A configuration mistake exits `2` before any
-request: fix it.
+Any other answer exits [`4`](exit-codes.md): a 401 or 403, any other status
+(a 429, 500, 502, 503 or 504 only after the retries), or a refused connection,
+DNS or TLS failure. A web page at an API root, as galaxy.ansible.com serves
+under `/v3`, is passed over, but a server with web pages at every API root,
+like a single sign-on front, stops the run too. A configuration mistake exits
+`2` before any request: fix it.
 
 A [`source:`](requirements.md#collections) pins one collection to one server:
 an id, or a URL on a server's origin (scheme, host and port), with that

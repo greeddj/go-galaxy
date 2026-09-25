@@ -162,6 +162,8 @@ func TestLookupRoleClassifiesAnswers(t *testing.T) {
 		{name: "no v1 anywhere", status: http.StatusNotFound, wantErr: helpers.ErrGalaxyRoleAPIUnavailable},
 		{name: "auth", status: http.StatusUnauthorized, wantErr: helpers.ErrGalaxyAuthFailed},
 		{name: "unavailable", status: http.StatusBadGateway, wantErr: helpers.ErrGalaxyServerUnavailable},
+		{name: "bad request", status: http.StatusBadRequest, wantErr: helpers.ErrGalaxyServerUnavailable},
+		{name: "not implemented", status: http.StatusNotImplemented, wantErr: helpers.ErrGalaxyServerUnavailable},
 		{name: "invalid record", body: `{"results":[{"id":1,"github_user":"../x","github_repo":"r"}]}`, wantErr: helpers.ErrGalaxyRoleInvalid},
 		{name: "invalid branch", body: `{"results":[{"id":1,"github_user":"u","github_repo":"r","github_branch":"a b"}]}`,
 			wantErr: helpers.ErrGalaxyRoleInvalid},

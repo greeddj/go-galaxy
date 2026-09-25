@@ -64,7 +64,7 @@ Codes `3` and `6` to `10` are in [Exit codes](exit-codes.md).
 | Area | ansible-galaxy | go-galaxy | What you do |
 | --- | --- | --- | --- |
 | Several servers | Merges versions from all of them | The first server in [`server_list`](servers-and-auth.md#how-a-collection-picks-its-server) that has the collection owns it | Order `server_list`, or pin with `source:` |
-| A server fails | Skips it | Any error but `404` stops the run: exit `4`, or `1` if the host is unreachable | Fix the token or the server |
+| A server fails | Skips it | Any error but `404` stops the run: exit `4` | Fix the token or the server |
 | Your token with a file-chosen URL or relaxed TLS | Sends it | Refused, exit `2` | Follow [`--token`](servers-and-auth.md#--token) |
 | `[galaxy_server.<id>] timeout` | Read | Ignored with a warning | Use `--timeout` or `server_timeout` |
 | `username`, `password`, `auth_url`, `client_id` | Basic or Keycloak login | Refused, exit `2` | Use an API token |

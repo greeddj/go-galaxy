@@ -2420,7 +2420,7 @@ unchanged, so normalizing inside a retry and again around the loop never
 doubles it. `deadlineError` adds a causal check, that the error itself carries
 a context error, so an HTTP status arriving in the instant the budget expires
 still routes by status in the server walk (a `404` moves to the next server, a
-`401` or `403` is an auth failure, a retryable status an unavailable server),
+`401` or `403` is an auth failure, any other status an unavailable server),
 and a state-object verdict such as a corrupt registry, a size cap or a schema
 refusal never collapses into a deadline. `artifactDeadlineError` keeps an
 ambient shape instead - context state plus explicit exclusions for a digest

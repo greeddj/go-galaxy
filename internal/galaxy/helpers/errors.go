@@ -107,6 +107,10 @@ var (
 	// from a Galaxy metadata URL. Its text omits the value (*url.Error echoes any
 	// password); it is not ErrMetadataUnavailable, which prepareInstall tolerates.
 	ErrMetadataRequestBuildFailed = errors.New("galaxy metadata url could not be built into a request")
+	// ErrMetadataNotJSON indicates a Galaxy metadata response was not JSON at all.
+	// A server walk skips a web page at an API root but leaves the server only on
+	// a real 404, so web pages alone, like any other such answer, fail the run.
+	ErrMetadataNotJSON = errors.New("galaxy metadata response is not JSON")
 	// ErrConfigIsNil indicates a nil config was provided.
 	ErrConfigIsNil = errors.New("config is nil")
 	// ErrSHA256Mismatch indicates a checksum mismatch.
@@ -382,9 +386,9 @@ var (
 	// Fail-closed: unlike a 404 it aborts the run rather than falling through to a
 	// server that might answer anonymously.
 	ErrGalaxyAuthFailed = errors.New("galaxy server authentication failed")
-	// ErrGalaxyServerUnavailable indicates a server kept answering root metadata
-	// with a retryable status until the retry budget was spent. It aborts the run:
-	// an outage is no evidence the collection is absent there.
+	// ErrGalaxyServerUnavailable indicates a Galaxy metadata request failed in
+	// transport (connection, DNS, TLS, redirects), or an API root answered a status
+	// no rule routes around. It aborts the run: an outage is no evidence of absence.
 	ErrGalaxyServerUnavailable = errors.New("galaxy server unavailable")
 
 	// ErrCollectionsPathEscape names the component under cfg.DownloadPath that made

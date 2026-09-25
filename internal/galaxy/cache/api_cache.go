@@ -1,12 +1,15 @@
 package cache
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -37,7 +40,7 @@ func FetchJSONWithCachePolicy(
 		if err != nil {
 			return err
 		}
-		return json.Unmarshal(body, out)
+		return decodeMetadata(url, body, out)
 	}
 
 	key := apiCacheKey(url)
@@ -110,13 +113,17 @@ func revalidateCache(
 		}
 		return true, nil
 	}
+	if err := decodeMetadata(url, body, out); err != nil {
+		return false, err
+	}
 	if policy.Write {
 		st.SetAPICache(key, newAPICacheEntry(url, body, etag, lastModified, policy.TTL))
 	}
-	return true, json.Unmarshal(body, out)
+	return true, nil
 }
 
-// fetchAndStore downloads JSON and optionally stores it in the cache.
+// fetchAndStore downloads JSON and stores it in the cache when policy.Write is
+// set and it decoded, so a body no later run could decode is never kept.
 func fetchAndStore(
 	ctx context.Context,
 	client *http.Client,
@@ -131,10 +138,31 @@ func fetchAndStore(
 	if err != nil {
 		return err
 	}
+	if err := decodeMetadata(url, body, out); err != nil {
+		return err
+	}
 	if policy.Write {
 		st.SetAPICache(key, newAPICacheEntry(url, body, etag, lastModified, policy.TTL))
 	}
-	return json.Unmarshal(body, out)
+	return nil
+}
+
+// decodeMetadata unmarshals body into out. A body that is no JSON at all is a
+// *notJSONError naming url's display form, marked as a web page when it is
+// markup, the one shape IsWebPage lets a server walk skip.
+func decodeMetadata(url string, body []byte, out any) error {
+	err := json.Unmarshal(body, out)
+	if _, ok := errors.AsType[*json.SyntaxError](err); ok {
+		return &notJSONError{err: err, url: helpers.URLForMessage(url), webPage: isMarkup(body)}
+	}
+	return err
+}
+
+// isMarkup reports whether body's first byte past JSON whitespace is '<',
+// which opens HTML or XML and never a JSON document.
+func isMarkup(body []byte) bool {
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	return len(trimmed) > 0 && trimmed[0] == '<'
 }
 
 // newAPICacheEntry builds a cache entry storing body verbatim. A presigned
@@ -188,9 +216,39 @@ func fetchJSONBody(
 		return deadlineError(ctx, dlCtx, budget, helpers.ErrMetadataFetchDeadline, attemptErr)
 	}, fetchRetryable)
 	if err != nil {
-		return nil, "", "", false, deadlineError(ctx, dlCtx, budget, helpers.ErrMetadataFetchDeadline, err)
+		err = deadlineError(ctx, dlCtx, budget, helpers.ErrMetadataFetchDeadline, err)
+		return nil, "", "", false, unreachableError(ctx, err)
 	}
 	return body, etag, lastModified, notModified, nil
+}
+
+// unreachableError wraps a transport failure, any net.Error (every failed
+// client.Do's *url.Error is one: a refused dial, DNS, TLS), as the server being
+// unavailable, unless err already has a class of its own.
+func unreachableError(ctx context.Context, err error) error {
+	// A caller's ended ctx, such as the versions pager's shared budget, is the
+	// caller's to classify: its deadline sentinel renders the cause with %v.
+	if ctx.Err() != nil || isClassifiedFetchError(err) {
+		return err
+	}
+	if _, ok := errors.AsType[net.Error](err); !ok {
+		return err
+	}
+	return fmt.Errorf("%w: %w", helpers.ErrGalaxyServerUnavailable, err)
+}
+
+// isClassifiedFetchError reports whether err already names why the fetch
+// failed, which a server-unavailable wrap would only blur: a cancellation, the
+// request's deadline, a stall, offline mode, an overrun cap or an HTTP status.
+func isClassifiedFetchError(err error) bool {
+	if _, ok := errors.AsType[*HTTPStatusError](err); ok {
+		return true
+	}
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, helpers.ErrMetadataFetchDeadline) ||
+		errors.Is(err, helpers.ErrReadStalled) ||
+		errors.Is(err, helpers.ErrOfflineMode) ||
+		errors.Is(err, helpers.ErrResponseTooLarge)
 }
 
 // metadataBudget returns budget when positive, else
@@ -274,4 +332,31 @@ func (e *HTTPStatusError) Error() string {
 		return fmt.Sprintf("failed to fetch metadata: %s (%s)", e.Status, e.URL)
 	}
 	return "failed to fetch metadata: " + e.Status
+}
+
+// notJSONError is a metadata body that is no JSON at all. It unwraps to
+// helpers.ErrMetadataNotJSON and the decoder's *json.SyntaxError; webPage
+// marks markup, which a truncated or empty body never is.
+type notJSONError struct {
+	err     error
+	url     string
+	webPage bool
+}
+
+// Error renders the sentinel, the URL's display form and the decoder's error.
+func (e *notJSONError) Error() string {
+	return fmt.Sprintf("%s: %s: %s", helpers.ErrMetadataNotJSON, e.url, e.err)
+}
+
+// Unwrap exposes helpers.ErrMetadataNotJSON and the decoder's error.
+func (e *notJSONError) Unwrap() []error {
+	return []error{helpers.ErrMetadataNotJSON, e.err}
+}
+
+// IsWebPage reports whether err is a metadata body that was markup, as a web
+// UI serves with 200 at a path its API does not own: the one non-JSON answer
+// a server walk may skip at an API root.
+func IsWebPage(err error) bool {
+	notJSON, ok := errors.AsType[*notJSONError](err)
+	return ok && notJSON.webPage
 }

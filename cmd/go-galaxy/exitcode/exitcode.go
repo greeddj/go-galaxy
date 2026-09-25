@@ -295,8 +295,8 @@ func isTransportError(err error) bool {
 		isRemoteRefusalError(err)
 }
 
-// isRemoteRefusalError reports whether a Galaxy server-list walk or a git
-// remote refused credentials or could not answer: runtime conditions to
+// isRemoteRefusalError reports whether a Galaxy server or a git remote refused
+// credentials, could not be reached or could not answer: runtime conditions to
 // investigate, not configuration to fix.
 func isRemoteRefusalError(err error) bool {
 	return errors.Is(err, helpers.ErrGalaxyAuthFailed) ||
@@ -309,16 +309,26 @@ func isRemoteRefusalError(err error) bool {
 // parsed or turned into a fetchable URL. ErrLatestVersionLookupFailed is also
 // an aggregation headline, so causes joined behind it may classify higher.
 func isMetadataFetchError(err error) bool {
-	return errors.Is(err, helpers.ErrMetadataUnavailable) ||
-		errors.Is(err, helpers.ErrMetadataIsNil) ||
+	return isMetadataDocumentError(err) ||
+		errors.Is(err, helpers.ErrMetadataUnavailable) ||
 		errors.Is(err, helpers.ErrMissingDownloadURL) ||
 		errors.Is(err, helpers.ErrUnsupportedDownloadURLScheme) ||
 		errors.Is(err, helpers.ErrMetadataRequestBuildFailed) ||
-		errors.Is(err, helpers.ErrVersionsPayloadEmpty) ||
-		errors.Is(err, helpers.ErrVersionsPayloadUnsupported) ||
-		errors.Is(err, helpers.ErrVersionsPagingExceeded) ||
 		errors.Is(err, helpers.ErrMetadataFetchDeadline) ||
 		errors.Is(err, helpers.ErrLatestVersionLookupFailed)
+}
+
+// isMetadataDocumentError is the half of isMetadataFetchError about a document
+// that arrived but cannot be used: nil, not JSON, or a versions payload that is
+// empty, unsupported or pages past its cap.
+func isMetadataDocumentError(err error) bool {
+	return errors.Is(err, helpers.ErrMetadataIsNil) ||
+		// A skipped API-root web page never reaches here; a version document, a
+		// versions page, a truncated body or a server of web pages alone does.
+		errors.Is(err, helpers.ErrMetadataNotJSON) ||
+		errors.Is(err, helpers.ErrVersionsPayloadEmpty) ||
+		errors.Is(err, helpers.ErrVersionsPayloadUnsupported) ||
+		errors.Is(err, helpers.ErrVersionsPagingExceeded)
 }
 
 // isResolutionError reports whether err is a dependency-resolution failure:

@@ -109,13 +109,13 @@ func apiRoots(base string) []string {
 	return []string{trimmed + "/api/v1", trimmed + "/v1"}
 }
 
-// LookupRole asks the server for owner.name; found is false when its v1 API
-// lists no such role. A 404 on every root is helpers.ErrGalaxyRoleAPIUnavailable,
-// for the caller to route around; 401/403 and retryable statuses abort the walk.
+// LookupRole asks base's v1 API for owner.name; found is false when it lists
+// no such role. A 404 on every root, web pages aside, is the routed-around
+// helpers.ErrGalaxyRoleAPIUnavailable; 401/403 and any other status abort.
 func LookupRole(ctx context.Context, fetch FetchJSON, base, owner, name string, policy cacheManager.Policy) (Role, bool, error) {
 	query := "roles/?owner__username=" + url.QueryEscape(owner) + "&name=" + url.QueryEscape(name) +
 		"&page_size=" + strconv.Itoa(pageSize)
-	var lastErr error
+	var lastErr, webPage error
 	for _, root := range apiRoots(base) {
 		var page roleListPage
 		err := fetch(ctx, root+"/"+query, &page, policy)
@@ -126,21 +126,43 @@ func LookupRole(ctx context.Context, fetch FetchJSON, base, owner, name string, 
 			role, err := validateRole(page.Results[0])
 			return role, err == nil, err
 		}
+		// A web page at a v1 root is skipped, never kept as lastErr: only a
+		// real 404 says the server has no v1 API to ask.
+		if cacheManager.IsWebPage(err) {
+			if webPage == nil {
+				webPage = err
+			}
+			continue
+		}
 		if statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok {
-			switch {
-			case statusErr.Code == http.StatusNotFound:
+			switch statusErr.Code {
+			case http.StatusNotFound:
 				lastErr = err
 				continue
-			case statusErr.Code == http.StatusUnauthorized, statusErr.Code == http.StatusForbidden:
+			case http.StatusUnauthorized, http.StatusForbidden:
 				return Role{}, false, fmt.Errorf("%w: %w", helpers.ErrGalaxyAuthFailed, err)
-			case helpers.IsRetryableHTTPStatus(statusErr.Code):
+			default:
 				return Role{}, false, fmt.Errorf("%w: %w", helpers.ErrGalaxyServerUnavailable, err)
 			}
 		}
 		return Role{}, false, err
 	}
-	return Role{}, false, fmt.Errorf("%w: %s answers 404 for the v1 role API: %w",
-		helpers.ErrGalaxyRoleAPIUnavailable, helpers.URLForMessage(base), lastErr)
+	return Role{}, false, noRoleAPIError(base, lastErr, webPage)
+}
+
+// noRoleAPIError ends a v1 walk no root answered. A 404 is the routed-around
+// helpers.ErrGalaxyRoleAPIUnavailable; web pages alone abort, since an SSO
+// login page is no evidence the API is absent; neither means no root at all.
+func noRoleAPIError(base string, last404, webPage error) error {
+	switch {
+	case last404 != nil:
+		return fmt.Errorf("%w: %s answers 404 for the v1 role API: %w",
+			helpers.ErrGalaxyRoleAPIUnavailable, helpers.URLForMessage(base), last404)
+	case webPage != nil:
+		return fmt.Errorf("%s answers a web page at every v1 root: %w", helpers.URLForMessage(base), webPage)
+	default:
+		return fmt.Errorf("%w: an empty server base names no v1 root", helpers.ErrGalaxyRoleAPIUnavailable)
+	}
 }
 
 // validateRole judges a role record the way every server-supplied identity
@@ -189,16 +211,20 @@ func isLowerLetter(r rune) bool { return r >= 'a' && r <= 'z' }
 // link within its origin for at most helpers.RoleVersionsMaxPages pages; a
 // name the ref grammar refuses is dropped, as is a malformed commit sha.
 func ListVersions(ctx context.Context, fetch FetchJSON, base string, id int64, policy cacheManager.Policy) ([]Version, []string, error) {
-	var (
-		out      []Version
-		warnings []string
-		lastErr  error
-	)
+	var lastErr, webPage error
 	for _, root := range apiRoots(base) {
 		first := fmt.Sprintf("%s/roles/%d/versions/?page_size=%d", root, id, pageSize)
-		versions, pageWarnings, err := walkVersions(ctx, fetch, first, policy)
+		versions, pageWarnings, onFirstPage, err := walkVersions(ctx, fetch, first, policy)
 		if err == nil {
 			return versions, pageWarnings, nil
+		}
+		// Skipped as LookupRole skips it, or a root it passed over would abort
+		// here; a web page past the first page is a broken listing instead.
+		if onFirstPage && cacheManager.IsWebPage(err) {
+			if webPage == nil {
+				webPage = err
+			}
+			continue
 		}
 		if statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok && statusErr.Code == http.StatusNotFound {
 			lastErr = err
@@ -206,25 +232,26 @@ func ListVersions(ctx context.Context, fetch FetchJSON, base string, id int64, p
 		}
 		return nil, nil, err
 	}
-	return out, warnings, fmt.Errorf("%w: %w", helpers.ErrGalaxyRoleAPIUnavailable, lastErr)
+	return nil, nil, noRoleAPIError(base, lastErr, webPage)
 }
 
-// walkVersions follows one root's version pages.
-func walkVersions(ctx context.Context, fetch FetchJSON, first string, policy cacheManager.Policy) ([]Version, []string, error) {
+// walkVersions follows one root's version pages; onFirstPage reports that the
+// error, if any, is the first page's answer, the one that speaks for the root.
+func walkVersions(ctx context.Context, fetch FetchJSON, first string, policy cacheManager.Policy) ([]Version, []string, bool, error) {
 	origin, err := url.Parse(first)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", helpers.ErrGalaxyRoleInvalid, err)
+		return nil, nil, false, fmt.Errorf("%w: %w", helpers.ErrGalaxyRoleInvalid, err)
 	}
 	var out []Version
 	var warnings []string
 	next := first
 	for page := 0; next != ""; page++ {
 		if page >= helpers.RoleVersionsMaxPages {
-			return nil, nil, fmt.Errorf("%w: more than %d pages of versions", helpers.ErrVersionsPagingExceeded, helpers.RoleVersionsMaxPages)
+			return nil, nil, false, fmt.Errorf("%w: more than %d pages of versions", helpers.ErrVersionsPagingExceeded, helpers.RoleVersionsMaxPages)
 		}
 		var body versionsPage
 		if err := fetch(ctx, next, &body, policy); err != nil {
-			return nil, nil, err
+			return nil, nil, page == 0, err
 		}
 		for _, rec := range body.Results {
 			v, ok, warning := validateVersion(rec)
@@ -237,10 +264,10 @@ func walkVersions(ctx context.Context, fetch FetchJSON, first string, policy cac
 		}
 		next, err = nextPage(origin, body)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 	}
-	return out, warnings, nil
+	return out, warnings, false, nil
 }
 
 // validateVersion drops, with a warning, a name that is not a tag name judged
