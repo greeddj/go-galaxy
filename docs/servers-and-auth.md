@@ -256,7 +256,9 @@ replace the sections outright, never merged.
 | Anything else                        | `/api/v3`, `/v3`, `/api/v2`, `/v2`, `/api` |
 
 Each root is tried with and without a trailing slash, the next only after a
-404, and a root that answered is reused for that server. A server URL is
+404, and a root that answered is reused for that server. A server whose walk
+ended in `404` for a collection is not asked for it again in the same resolve
+or `lock`, even where an earlier run cached an answer from it. A server URL is
 trimmed, loses one pair of double quotes and its trailing slashes, and must
 then be absolute.
 

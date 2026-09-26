@@ -93,7 +93,13 @@ func loadRootMetadataCached(
 			helpers.ErrLoadMetadataFailed, col.key(), col.Type)
 	}
 	var lastErr error
+	fqdn := col.Namespace + "." + col.Name
 	for _, srv := range serverCandidates(deps, col) {
+		if notFound := deps.absent.lookup(srv.base, fqdn); notFound != nil {
+			deps.runtime.Output.Debugf("Root metadata for %s: server %s answered 404 earlier this phase", fqdn, srv.label())
+			lastErr = notFound
+			continue
+		}
 		meta, ok, err := tryServerRootMetadata(ctx, deps, col, policy, srv)
 		if ok {
 			return meta, srv.base, nil
@@ -105,6 +111,7 @@ func loadRootMetadataCached(
 		// so try the next server; anything else, auth or availability included,
 		// must not be routed around and aborts the walk.
 		if isNotFoundStatus(err) {
+			deps.absent.record(srv.base, fqdn, err)
 			lastErr = err
 			continue
 		}

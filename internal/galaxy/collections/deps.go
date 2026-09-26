@@ -19,6 +19,9 @@ type collectionDeps struct {
 	// so a non-v3-first server is not re-probed per collection. Scoped to one
 	// phase: resolve, install and prefetch each get their own memo.
 	apiRoots *apiRootMemo
+	// absent memoizes the collections a server's root walk answered 404 for,
+	// so prewarm and the solve do not ask it twice. Scoped like apiRoots.
+	absent *absentMemo
 
 	// unmatchedSources memoizes the source: values already warned about this
 	// phase, so one misconfigured host produces one line rather than one per
@@ -91,6 +94,7 @@ func newCollectionDeps(cfg *config.Config, runtime *infra.Infra, st *store.Store
 		runtime:          runtime,
 		st:               st,
 		apiRoots:         newAPIRootMemo(),
+		absent:           newAbsentMemo(),
 		unmatchedSources: newUnmatchedSourceMemo(),
 	}
 }

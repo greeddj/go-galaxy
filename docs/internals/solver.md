@@ -135,7 +135,7 @@ misclassified.
 | Calls `Highest` or `Dependencies`, never `Universe` | The same call on both sides makes a warmed document a cache hit |
 | Needs a store, two roots, a read-write policy | Else it saves nothing or pays twice; `--offline` and `--no-cache` disable it |
 | `--refresh` warms exact pins only | Only their policy still reads back |
-| Skips git and url roots; under `--no-deps` warms only an exact pin's server binding | As with dependencies: a first server's pin then costs the solve nothing, a later server's repeats the 404s |
+| Skips git and url roots; under `--no-deps` warms only an exact pin's server binding | As with dependencies: the solve then reuses the documents and the 404s the warm met |
 | An error stops dispatch, logged under `--verbose` | The solve reports it once, on the caller's own context |
 | Runs below the snapshot-replay return | A replay makes no metadata request |
 

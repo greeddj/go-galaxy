@@ -14,9 +14,9 @@ import (
 // its dependencies).
 func solveCollections(ctx context.Context, deps collectionDeps, roots []collection) (map[string]collection, map[string][]string, error) {
 	sources := rootSourceMap(roots)
-	// Built over deps, not a fresh collectionDeps, so it shares the API root and
-	// unmatched-source memos and the Store with prewarmRootMetadata: nothing
-	// either already fetched or probed is requested again.
+	// Built over deps, not a fresh collectionDeps, so it shares the API root,
+	// absent and unmatched-source memos and the Store with prewarmRootMetadata:
+	// nothing either already fetched or found missing is requested again.
 	mp := newMetadataProviderWithDeps(deps, sources)
 	var provider solver.Provider = mp
 	if deps.cfg.NoDeps {
