@@ -26,8 +26,8 @@ func TestGalaxyLockfileEntryReadsA404AsNoCandidate(t *testing.T) {
 				switch {
 				case versionGone && r.URL.Path == rootPath:
 					w.Header().Set("Content-Type", "application/json")
-					_, _ = fmt.Fprintf(w, `{"versions_url":"%[1]s%[2]sversions/","highest_version":{"href":"%[1]s%[2]sversions/1.0.0/","version":"1.0.0"}}`,
-						srv.URL, rootPath)
+					_, _ = fmt.Fprintf(w, `{"versions_url":"%[1]s%[2]sversions/",`+
+						`"highest_version":{"href":"%[1]s%[2]sversions/1.0.0/","version":"1.0.0"}}`, srv.URL, rootPath)
 				case r.URL.Path == rootPath+"versions/1.0.0/":
 					versionAsked.Store(true)
 					w.WriteHeader(http.StatusNotFound)

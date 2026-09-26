@@ -127,7 +127,14 @@ func checkUnreadRolesCase(t *testing.T, tc unreadRolesCase) {
 			t.Fatalf("expected role %s to be kept: %v", rel, err)
 		}
 	}
-	for _, rel := range tc.removed {
+	assertRolesRemoved(t, base, printer, tc.removed)
+}
+
+// assertRolesRemoved checks each role under base is gone and reported as a
+// result line, the tier --quiet keeps.
+func assertRolesRemoved(t *testing.T, base string, printer *recordingPrinter, removed []string) {
+	t.Helper()
+	for _, rel := range removed {
 		if _, err := os.Stat(filepath.Join(base, rel)); !os.IsNotExist(err) {
 			t.Fatalf("expected unreachable role %s to be removed, stat error: %v", rel, err)
 		}

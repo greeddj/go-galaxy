@@ -314,7 +314,7 @@ func TestSaveDoesNotClobberOnFailure(t *testing.T) {
 	path := filepath.Join(dir, "galaxy.lock")
 
 	original := &File{Collections: []Entry{
-		{Name: "a.a", Version: "1.0.0", DownloadURL: downloadURLFor("a.a", "1.0.0"), SHA256: "0000000000000000000000000000000000000000000000000000000000000000"},
+		{Name: "a.a", Version: "1.0.0", DownloadURL: downloadURLFor("a.a", "1.0.0"), SHA256: strings.Repeat("0", 64)},
 	}}
 	if err := Save(path, original); err != nil {
 		t.Fatalf("Save (seed): %v", err)
@@ -331,7 +331,7 @@ func TestSaveDoesNotClobberOnFailure(t *testing.T) {
 	}()
 
 	updated := &File{Collections: []Entry{
-		{Name: "a.a", Version: "2.0.0", DownloadURL: downloadURLFor("a.a", "2.0.0"), SHA256: "1111111111111111111111111111111111111111111111111111111111111111"},
+		{Name: "a.a", Version: "2.0.0", DownloadURL: downloadURLFor("a.a", "2.0.0"), SHA256: strings.Repeat("1", 64)},
 	}}
 	if err := Save(path, updated); err == nil {
 		t.Fatalf("expected Save to fail against a read-only directory")
@@ -341,7 +341,7 @@ func TestSaveDoesNotClobberOnFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load after failed Save: %v", err)
 	}
-	if len(got.Collections) != 1 || got.Collections[0].SHA256 != "0000000000000000000000000000000000000000000000000000000000000000" {
+	if len(got.Collections) != 1 || got.Collections[0].SHA256 != strings.Repeat("0", 64) {
 		t.Fatalf("expected original content to survive the failed Save, got %+v", got.Collections)
 	}
 }

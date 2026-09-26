@@ -408,7 +408,7 @@ func (s *solveState) describe(inc *incompatibility) string {
 // describeDependency renders "Parent[@Version] depends on Dep Constraint",
 // omitting root's version per the reference algorithm's root special case.
 func (s *solveState) describeDependency(c causeDependency) string {
-	parentLabel := "root"
+	parentLabel := rootLabel
 	if c.Parent != rootPkg {
 		parentLabel = fmt.Sprintf("%s %s", c.Parent, c.ParentVersion.Original())
 	}
@@ -508,7 +508,7 @@ func joinLabels(labels []string, conj string) string {
 // only), the bare package for a negative full set, else the set's label.
 func (s *solveState) termLabel(t term) string {
 	if t.Package == rootPkg {
-		return "root"
+		return rootLabel
 	}
 	if v, ok := t.Set.decidedVersion(); ok {
 		return fmt.Sprintf("%s %s", t.Package, v.Original())

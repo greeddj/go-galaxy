@@ -32,6 +32,9 @@ type hashTestCase struct {
 	name  string
 }
 
+// testLockSHA is a well-formed Galaxy pin, as lockfile.Load requires.
+const testLockSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
 // setupValidLockfile writes both a requirements file and a well-formed
 // lockfile; computeHash must prefer the lockfile hash.
 func setupValidLockfile(t *testing.T, dir string) (string, string) {
@@ -43,7 +46,7 @@ func setupValidLockfile(t *testing.T, dir string) (string, string) {
 		Server:        "https://galaxy.ansible.com",
 		SchemaVersion: lockfile.SchemaVersion,
 		Collections: []lockfile.Entry{
-			{Name: "ns.name", Version: "1.0.0", Source: "galaxy", DownloadURL: testDownloadURL("ns.name", "1.0.0"), SHA256: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
+			{Name: "ns.name", Version: "1.0.0", Source: "galaxy", DownloadURL: testDownloadURL("ns.name", "1.0.0"), SHA256: testLockSHA},
 		},
 	}
 	if err := lockfile.Save(lockPath, lf); err != nil {
@@ -65,7 +68,7 @@ func checkValidLockfile(t *testing.T, got string, err error) {
 		Server:        "https://galaxy.ansible.com",
 		SchemaVersion: lockfile.SchemaVersion,
 		Collections: []lockfile.Entry{
-			{Name: "ns.name", Version: "1.0.0", Source: "galaxy", DownloadURL: testDownloadURL("ns.name", "1.0.0"), SHA256: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"},
+			{Name: "ns.name", Version: "1.0.0", Source: "galaxy", DownloadURL: testDownloadURL("ns.name", "1.0.0"), SHA256: testLockSHA},
 		},
 	}
 	wantHash, hashErr := lf.Hash()
