@@ -102,8 +102,8 @@ files are never merged; the id order is on
 The list path also runs `validateServerIDs` and `checkOriginConflicts`.
 
 `buildServer` records provenance on unexported `Server` fields (`urlFromFile`,
-`tokenFromFile`, `insecureFromFile`); `buildSectionServer` adds `sourceFile`
-and treats a `${VAR}` token (`TokenExpanded`) as the operator's.
+`tokenFromFile`, `insecureFromFile`); `buildSectionServer` adds `sourceFile`.
+A `${VAR}` token arrives already expanded, so it counts as the file's own.
 `checkTokenPairing` must run after `applyTokenFlag`, which installs `--token`,
 and `tokenPairingOffense` is the only code that decides on provenance. The rule
 is on [`--token`](../servers-and-auth.md#--token), the threat on

@@ -101,8 +101,8 @@ type Server struct {
 	// rather than an operator channel. Provenance never leaves this package: it
 	// feeds tokenPairingOffense and the implicit server's sourceFile.
 	urlFromFile bool
-	// tokenFromFile reports whether Token came from a section's token key as
-	// a literal; it also reads true when no token was set at all, which is
+	// tokenFromFile reports whether Token came from a section's token key, a
+	// galaxy.toml ${VAR} included; it also reads true with no token at all,
 	// harmless only because tokenPairingOffense checks Token.IsSet() first.
 	tokenFromFile bool
 	// insecureFromFile is true only when InsecureSkipTLSVerify is true
@@ -146,10 +146,9 @@ var serverIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // [galaxy_server.<id>] sections of an ansible.cfg, or the
 // [[tool.go-galaxy.servers]] entries of a galaxy.toml, never a mix of both.
 type serverSections struct {
-	byID          map[string]map[string]string
-	operatorToken map[string]bool
-	file          string
-	ids           []string
+	byID map[string]map[string]string
+	file string
+	ids  []string
 }
 
 // ansibleSections wraps ansible.cfg's sections; path is "" only when no file
@@ -163,10 +162,9 @@ func ansibleSections(ansCfg ansibleConfig, path string) serverSections {
 // alike; validate_certs is spelled as the boolean it was.
 func projectSections(project projectSettings) serverSections {
 	sections := serverSections{
-		byID:          make(map[string]map[string]string, len(project.Servers)),
-		operatorToken: make(map[string]bool, len(project.Servers)),
-		ids:           make([]string, 0, len(project.Servers)),
-		file:          project.Path,
+		byID: make(map[string]map[string]string, len(project.Servers)),
+		ids:  make([]string, 0, len(project.Servers)),
+		file: project.Path,
 	}
 	for _, s := range project.Servers {
 		kv := map[string]string{"url": s.URL}
@@ -177,7 +175,6 @@ func projectSections(project projectSettings) serverSections {
 			kv["validate_certs"] = strconv.FormatBool(*s.ValidateCerts)
 		}
 		sections.byID[s.ID] = kv
-		sections.operatorToken[s.ID] = s.TokenExpanded
 		sections.ids = append(sections.ids, s.ID)
 	}
 	return sections
@@ -364,18 +361,14 @@ func buildServerList(ids []string, sections serverSections) ([]Server, []string,
 	return servers, warnings, nil
 }
 
-// buildSectionServer builds id from its section and stamps what a section
-// alone cannot tell: the file it came from, and a token that was a ${VAR}
-// reference in galaxy.toml, which the pairing rule treats as the operator's.
+// buildSectionServer builds id from its section and stamps the file it came
+// from, which a section alone cannot tell, for the pairing rule's message.
 func buildSectionServer(id string, sections serverSections) (Server, []string, error) {
 	server, warnings, err := buildServer(id, sections.byID[id])
 	if err != nil {
 		return Server{}, warnings, err
 	}
 	server.sourceFile = sections.file
-	if sections.operatorToken[id] {
-		server.tokenFromFile = false
-	}
 	return server, warnings, nil
 }
 
@@ -589,7 +582,7 @@ func checkOriginConflicts(servers []Server) error {
 
 // tokenPairingOffense reports which pairing violation s commits, if any: an
 // operator token sent to a file-sourced URL, checked first as the graver
-// fault, or over a file-disabled TLS check. A section's literal token is exempt.
+// fault, or over a file-disabled TLS check. A section's own token is exempt.
 func tokenPairingOffense(s Server) error {
 	if !s.Token.IsSet() || s.tokenFromFile {
 		return nil

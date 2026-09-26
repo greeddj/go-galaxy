@@ -71,14 +71,9 @@ url = "https://galaxy.ansible.com"
 5.  The server list, in order; its keys are under
     [Server settings](servers-and-auth.md#server-settings).
 
-A `${VAR}` token is yours, so the hub's address must be too
-([`--token`](servers-and-auth.md#--token)). With `HUB_TOKEN` and both S3 keys
-exported:
-
-```bash
-export ANSIBLE_GALAXY_SERVER_HUB_URL=https://hub.example.com/api/galaxy
-go-galaxy install
-```
+With `HUB_TOKEN` and both S3 keys exported, `go-galaxy install` needs
+nothing more: a `${VAR}` token is the file's own, as a literal is, so it goes
+to the entry's `url` ([`--token`](servers-and-auth.md#--token)).
 
 The table is read from the requirements file the run uses
 ([Which file is read](requirements.md#which-file-is-read)), so a run on

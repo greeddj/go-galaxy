@@ -657,8 +657,8 @@ func projCheckUnsetVariable(t *testing.T, _, stdout string, err error) {
 	}
 }
 
-// projServerRow is one row of TestProjectServers: the token of the one
-// [[tool.go-galaxy.servers]] entry, the variables beside it, and either the
+// projServerRow is one row of TestProjectServers: the one servers entry's
+// token ("" writes no token key), the variables beside it, and either the
 // refusal expected or the token the Config must reveal.
 type projServerRow struct {
 	env       map[string]string
@@ -669,36 +669,38 @@ type projServerRow struct {
 	wantToken string
 }
 
-// projServerRows returns the rows; hubEnvRef is the ${VAR} spelling, whose
-// expansion makes the token the operator's rather than the file's.
+// projServerRows returns the rows; hubEnvRef is the ${VAR} spelling, which
+// the file named, so its value is the file's own token as a literal is.
 func projServerRows() []projServerRow {
-	const operatorToken = "s3cr3t-operator-token"
+	const envToken = "s3cr3t-env-token"
 	const hubEnvRef = "${HUB_TOKEN}"
 	return []projServerRow{
 		{name: "a literal token is the file's own and is accepted", token: "s3cr3t-toml-token", wantToken: "s3cr3t-toml-token"},
-		{name: "a ${VAR} token with the file's url is refused", token: hubEnvRef,
-			env: map[string]string{"HUB_TOKEN": operatorToken}, wantErr: helpers.ErrTokenDestinationFromFile,
+		{name: "a ${VAR} token is the file's own and is accepted with the file's url", token: hubEnvRef,
+			env: map[string]string{"HUB_TOKEN": envToken}, wantToken: envToken},
+		{name: "an exported server token is the operator's, refused beside the file's url",
+			env: map[string]string{"ANSIBLE_GALAXY_SERVER_HUB_TOKEN": envToken}, wantErr: helpers.ErrTokenDestinationFromFile,
 			wantMsg: "galaxy server token destination came from a configuration file: " +
 				"server \"hub\" (https://hub.example:443) in galaxy.toml"},
-		{name: "the documented remedy puts the address on the operator's channel", token: hubEnvRef,
-			env:       map[string]string{"HUB_TOKEN": operatorToken, "ANSIBLE_GALAXY_SERVER_HUB_URL": "https://hub.example"},
-			wantToken: operatorToken},
 	}
 }
 
 // TestProjectServers pins [[tool.go-galaxy.servers]] through install's flag
-// set: the entry is the server list, a literal token is the file's own, and a
-// ${VAR} token is the operator's, refused beside the file's url.
+// set: the entry is the server list, its token is the file's own whether
+// literal or ${VAR}, and an exported server token is refused beside its url.
 func TestProjectServers(t *testing.T) {
 	for _, row := range projServerRows() {
 		t.Run(row.name, func(t *testing.T) {
 			projSetup(t, "")
-			projUnsetEnv(t, "HUB_TOKEN", "ANSIBLE_GALAXY_SERVER_HUB_URL")
+			projUnsetEnv(t, "HUB_TOKEN", "ANSIBLE_GALAXY_SERVER_HUB_URL", "ANSIBLE_GALAXY_SERVER_HUB_TOKEN")
 			for key, value := range row.env {
 				t.Setenv(key, value)
 			}
-			projWriteTOML(t, helpers.RequirementsTOMLName,
-				fmt.Sprintf("\n[[tool.go-galaxy.servers]]\nid = \"hub\"\nurl = \"https://hub.example\"\ntoken = %q\n", row.token))
+			entry := "\n[[tool.go-galaxy.servers]]\nid = \"hub\"\nurl = \"https://hub.example\"\n"
+			if row.token != "" {
+				entry += fmt.Sprintf("token = %q\n", row.token)
+			}
+			projWriteTOML(t, helpers.RequirementsTOMLName, entry)
 
 			cfg, err := buildConfigFor(t, "install", projInstallFlags(), nil)
 			if row.wantErr != nil {

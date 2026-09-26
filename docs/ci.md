@@ -170,10 +170,6 @@ Moving settings such as an [S3 cache](caching.md#s3-cache-optional) into
 secrets in the workflow. A set `GO_GALAXY_*` variable still outranks the file,
 key by key.
 
-A `[[tool.go-galaxy.servers]]` entry whose token is `${VAR}` also needs its url
-exported as `ANSIBLE_GALAXY_SERVER_<ID>_URL`
-([`--token`](servers-and-auth.md#--token)).
-
 > [!WARNING]
 > Export each `${VAR}` where the cache-key step sees it too: on the job, or on
 > the step that calls the action. `go-galaxy hash` reads `galaxy.toml` and

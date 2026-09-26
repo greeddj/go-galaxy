@@ -19,8 +19,8 @@ const projectTable = "\n[project]\ncollections = []\n"
 // holds; no message may echo it, whatever fault sits beside it.
 const tomlPlaintext = "s3cr3t-toml-token"
 
-// fileOwnPlaintext is a token written literally into a file, the shape that
-// leaves TokenExpanded false.
+// fileOwnPlaintext is a token written literally into a file, which expansion
+// must leave as it is beside a reference.
 const fileOwnPlaintext = "file-own-plaintext"
 
 // fullSettingsFixture spells every [tool.go-galaxy] key once: the s3 table
@@ -62,8 +62,8 @@ servers = [
 ]
 `
 
-// fullSettings is what fullSettingsFixture decodes to: Path "" and
-// TokenExpanded false, since Decode sees bytes alone and expands nothing.
+// fullSettings is what fullSettingsFixture decodes to: Path "", since Decode
+// sees bytes alone and expands nothing.
 func fullSettings() Settings {
 	return Settings{
 		LockFile:    "locks/galaxy.lock",
@@ -402,10 +402,10 @@ token = "${A_VAR}"
 	}
 }
 
-// TestLoadSettingsMarksExpandedTokens pins TokenExpanded on the one server
-// whose token held a reference: a literal token beside it, and a reference in
-// that entry's url, leave it false.
-func TestLoadSettingsMarksExpandedTokens(t *testing.T) {
+// TestLoadSettingsExpandsServerEntries pins expansion over [[servers]]: a
+// token and a url reference each take the variable's value, and a literal
+// token beside them is kept as written. Not parallel: it sets variables.
+func TestLoadSettingsExpandsServerEntries(t *testing.T) {
 	t.Setenv("GALAXY_TEST_TOKEN", tomlPlaintext)
 	t.Setenv("GALAXY_TEST_HOST", "mirror.example")
 	const src = `[[tool.go-galaxy.servers]]
@@ -420,7 +420,7 @@ token = "file-own-plaintext"
 `
 	settings := mustLoadSettings(t, src)
 	want := []ServerSetting{
-		{ID: "hub", URL: "https://hub.example/api/", Token: tomlPlaintext, TokenExpanded: true},
+		{ID: "hub", URL: "https://hub.example/api/", Token: tomlPlaintext},
 		{ID: "mirror", URL: "https://mirror.example/api/", Token: fileOwnPlaintext},
 	}
 	if !reflect.DeepEqual(settings.Servers, want) {

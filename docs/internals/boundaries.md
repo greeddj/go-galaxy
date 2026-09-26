@@ -55,9 +55,10 @@ a byte-equal origin (`helpers.Origin`, `urlsource.Prefix.Origin` for a url
 binding), so changing one renderer alone silently drops it.
 
 Whoever chose a destination may not spend a secret that is not theirs: a
-`${VAR}` token is the operator's (`TokenExpanded`), a `${VAR}` url stays the
-file's, and a literal token is exempt. Provenance:
-[Configuration loading](config-loading.md).
+file's own token is exempt, a `galaxy.toml` `${VAR}` one included, since the
+file named the variable and a `${VAR}` url could carry it anyway
+([below](#loading-requirementsyml-and-the-lockfile)); a `${VAR}` url stays the
+file's. Provenance: [Configuration loading](config-loading.md).
 
 <details markdown>
 <summary>Accepted cost and an ansible.cfg parsing rule</summary>

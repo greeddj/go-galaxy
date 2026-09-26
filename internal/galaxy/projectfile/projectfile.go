@@ -71,14 +71,13 @@ type S3Settings struct {
 }
 
 // ServerSetting is one [[tool.go-galaxy.servers]] entry. ValidateCerts is nil
-// when the key is absent; TokenExpanded reports that Token held a ${VAR}
-// reference, which makes the secret the operator's rather than the file's.
+// when the key is absent; a Token spelled as ${VAR} is still the file's own,
+// as a literal one is, since the file named the variable.
 type ServerSetting struct {
 	ValidateCerts *bool
 	ID            string
 	URL           string
 	Token         string
-	TokenExpanded bool
 }
 
 // envRefPattern is the one expansion form, as mimir's config reader spells
@@ -403,7 +402,6 @@ func expandSettings(settings Settings) (Settings, error) {
 	settings.S3 = expandS3(settings.S3, expand)
 	for i := range settings.Servers {
 		server := &settings.Servers[i]
-		server.TokenExpanded = envRefPattern.MatchString(server.Token)
 		server.ID, server.URL, server.Token = expand(server.ID), expand(server.URL), expand(server.Token)
 	}
 	if len(missing) > 0 {

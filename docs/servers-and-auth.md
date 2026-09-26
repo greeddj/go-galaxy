@@ -54,15 +54,9 @@ see where each credential may go.
 
     1.  Expanded when the file loads; an unset `HUB_TOKEN` exits
         [`2`](exit-codes.md)
-        ([`${VAR}` expansion](configuration.md#var-expansion)).
-
-    ```bash
-    export ANSIBLE_GALAXY_SERVER_HUB_URL=https://hub.example.internal/api/galaxy # (1)!
-    go-galaxy install
-    ```
-
-    1.  A `${VAR}` token is yours, not the file's, so the address has to be
-        yours too. See [`--token`](#--token).
+        ([`${VAR}` expansion](configuration.md#var-expansion)). The token is
+        the file's own, as a literal one is, so the address needs no export
+        ([`--token`](#--token)).
 
 === "Environment"
 
@@ -147,16 +141,18 @@ warning and no token. The lockfile records the server's URL for an id, the
 
 ## `--token`
 
-| Token supplied by                                                                                             | URL, or `validate_certs = false`, from a file | Neither from a file |
-|:--------------------------------------------------------------------------------------------------------------|:----------------------------------------------|:--------------------|
-| You: `--token`, `GO_GALAXY_TOKEN`, `ANSIBLE_GALAXY_SERVER_<ID>_TOKEN`, or `token = "${VAR}"` in `galaxy.toml` | Refused, exit `2`                             | Sent                |
-| The file: a literal `token` in the same section or entry, readable by anyone with the repository              | Sent                                          | Sent                |
+| Token supplied by                                                                   | URL, or `validate_certs = false`, from a file | Neither from a file |
+|:------------------------------------------------------------------------------------|:----------------------------------------------|:--------------------|
+| You: `--token`, `GO_GALAXY_TOKEN` or `ANSIBLE_GALAXY_SERVER_<ID>_TOKEN`             | Refused, exit `2`                             | Sent                |
+| The file: a `token` in the same section or entry, a `galaxy.toml` `${VAR}` included | Sent                                          | Sent                |
 
 An address is yours when it comes from `--server=<url>`, `GO_GALAXY_SERVER`,
 `ANSIBLE_GALAXY_SERVER`, `ANSIBLE_GALAXY_SERVER_<ID>_URL` or the default;
 `--server=<id>` and `url = "${VAR}"` leave it the file's. The rule stops a
 checked-out repository from choosing where your secret goes
-([why](internals/boundaries.md#credentials-and-the-token-pairing-rule)).
+([why](internals/boundaries.md#credentials-and-the-token-pairing-rule)). A
+`galaxy.toml` that names a variable is trusted with its value, as with every
+[`${VAR}`](configuration.md#var-expansion).
 
 ```text
 ✗ galaxy server token destination came from a configuration file: server "hub" (https://hub.example.internal:443) in ansible.cfg

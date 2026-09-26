@@ -14,7 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// The galaxy.toml fixtures every case here resolves against. The four tokens
+// The galaxy.toml fixtures every case here resolves against. The three tokens
 // are plaintext that no refusal, warning or dump of the Config may ever show.
 const (
 	psrvTOMLPath      = "galaxy.toml"
@@ -23,10 +23,9 @@ const (
 	psrvHubOrigin     = "https://hub.example:443"
 	psrvPubID         = "pub"
 	psrvPubURL        = "https://galaxy.ansible.com"
-	psrvLiteralToken  = "s3cr3t-toml-token"
-	psrvExpandedToken = "expanded-secret-token"
-	psrvFlagToken     = "flag-secret-token"
-	psrvEnvToken      = "env-secret-token"
+	psrvLiteralToken = "s3cr3t-toml-token"
+	psrvFlagToken    = "flag-secret-token"
+	psrvEnvToken     = "env-secret-token"
 )
 
 // psrvCase is one galaxy.toml server scenario: the command line, environment
@@ -77,10 +76,10 @@ func psrvProject(entries ...projectfile.ServerSetting) projectSettings {
 	return projectSettings{Path: psrvTOMLPath, Servers: entries}
 }
 
-// psrvHubEntry is a hub entry carrying token as the file spelled it, expanded
-// reporting that the spelling was a ${VAR} reference; no validate_certs key.
-func psrvHubEntry(token string, expanded bool) projectfile.ServerSetting {
-	return projectfile.ServerSetting{ID: psrvHubID, URL: psrvHubURL, Token: token, TokenExpanded: expanded}
+// psrvHubEntry is a hub entry carrying token as LoadSettings hands it over,
+// any ${VAR} already expanded; no validate_certs key.
+func psrvHubEntry(token string) projectfile.ServerSetting {
+	return projectfile.ServerSetting{ID: psrvHubID, URL: psrvHubURL, Token: token}
 }
 
 // psrvHubAndPub is the two-entry fixture: hub then pub, no tokens, each url
@@ -121,7 +120,7 @@ func psrvDestinationMsg(id, origin, file string) string {
 // warns about or dumps a Config must never show the credential it judged.
 func psrvNoPlaintext(t *testing.T, what, text string) {
 	t.Helper()
-	for _, token := range []string{psrvLiteralToken, psrvExpandedToken, psrvFlagToken, psrvEnvToken} {
+	for _, token := range []string{psrvLiteralToken, psrvFlagToken, psrvEnvToken} {
 		if strings.Contains(text, token) {
 			t.Errorf("%s = %q, must not contain the token plaintext %q", what, text, token)
 		}
@@ -286,7 +285,7 @@ func psrvListCases() []psrvCase {
 // psrvListSelectionCases covers --server and --token against the toml list:
 // the id branch, the url branch and the ambiguity refusal.
 func psrvListSelectionCases() []psrvCase {
-	hubWithToken := psrvHubEntry(psrvLiteralToken, false)
+	hubWithToken := psrvHubEntry(psrvLiteralToken)
 	pub := projectfile.ServerSetting{ID: psrvPubID, URL: psrvPubURL}
 	return []psrvCase{
 		{
@@ -450,47 +449,31 @@ func psrvEnvTokenOverrideCases() []psrvCase {
 }
 
 // TestProjectServersTokenPairing pins the pairing rule over a galaxy.toml
-// server: a literal token is the file's own, a ${VAR} token and --token are
-// the operator's. It is not parallel: rows call t.Setenv.
+// server: its token, literal or ${VAR}, is the file's own, while
+// GO_GALAXY_TOKEN is the operator's. It is not parallel: rows call t.Setenv.
 func TestProjectServersTokenPairing(t *testing.T) {
 	psrvRunCases(t, append(psrvPairingDestinationCases(), psrvPairingTLSCases()...))
 }
 
-// psrvPairingDestinationCases is the destination arm: the file's literal
-// token accepted, a ${VAR} token and GO_GALAXY_TOKEN refused against the
-// file's url and accepted once ANSIBLE_GALAXY_SERVER_HUB_URL repeats it.
+// psrvPairingDestinationCases is the destination arm: the file's token
+// accepted with the file's url, GO_GALAXY_TOKEN refused against it and
+// accepted once ANSIBLE_GALAXY_SERVER_HUB_URL repeats it.
 func psrvPairingDestinationCases() []psrvCase {
 	return []psrvCase{
 		{
-			// One author wrote both halves: allowed, not recommended.
-			name:     "accepted: a literal token pairs with the file's own url",
-			project:  psrvProject(psrvHubEntry(psrvLiteralToken, false)),
+			// One author wrote both halves. A ${VAR} token arrives expanded,
+			// so this row judges it exactly as a literal one.
+			name:     "accepted: the file's token pairs with the file's own url",
+			project:  psrvProject(psrvHubEntry(psrvLiteralToken)),
 			check:    psrvAccepted(Server{ID: psrvHubID, URL: psrvHubURL, Token: NewSecret(psrvLiteralToken)}),
 			wantUsed: []string{"servers"},
 		},
 		{
-			// The secret belongs to whoever exported the variable, the url to
-			// the file's author: the graver fault, so never the TLS sentinel.
-			name:    "refused: a ${VAR} token against the file's url",
-			project: psrvProject(psrvHubEntry(psrvExpandedToken, true)),
-			check: psrvRefusedExactly(helpers.ErrTokenDestinationFromFile,
-				psrvDestinationMsg(psrvHubID, psrvHubOrigin, psrvTOMLPath)),
-			wantUsed: []string{"servers"},
-		},
-		{
-			// The remedy: the same address on the operator's channel.
-			name:     "accepted: the url exported beside the ${VAR} token",
-			env:      map[string]string{"ANSIBLE_GALAXY_SERVER_HUB_URL": psrvHubURL},
-			project:  psrvProject(psrvHubEntry(psrvExpandedToken, true)),
-			check:    psrvAccepted(Server{ID: psrvHubID, URL: psrvHubURL, Token: NewSecret(psrvExpandedToken)}),
-			wantUsed: []string{"servers"},
-		},
-		{
-			// GO_GALAXY_TOKEN is the operator's too, judged after applyTokenFlag
+			// GO_GALAXY_TOKEN is the operator's, judged after applyTokenFlag
 			// hands it to the single server.
 			name:    "refused: GO_GALAXY_TOKEN against a single toml server",
 			env:     map[string]string{"GO_GALAXY_TOKEN": psrvFlagToken},
-			project: psrvProject(psrvHubEntry("", false)),
+			project: psrvProject(psrvHubEntry("")),
 			check: psrvRefusedExactly(helpers.ErrTokenDestinationFromFile,
 				psrvDestinationMsg(psrvHubID, psrvHubOrigin, psrvTOMLPath)),
 			wantUsed: []string{"servers"},
@@ -498,25 +481,38 @@ func psrvPairingDestinationCases() []psrvCase {
 		{
 			name:     "accepted: GO_GALAXY_TOKEN once the url is exported",
 			env:      map[string]string{"GO_GALAXY_TOKEN": psrvFlagToken, "ANSIBLE_GALAXY_SERVER_HUB_URL": psrvHubURL},
-			project:  psrvProject(psrvHubEntry("", false)),
+			project:  psrvProject(psrvHubEntry("")),
 			check:    psrvAccepted(Server{ID: psrvHubID, URL: psrvHubURL, Token: NewSecret(psrvFlagToken)}),
 			wantUsed: []string{"servers"},
 		},
 	}
 }
 
-// psrvPairingTLSCases is the TLS arm: validate_certs = false in the file
-// with a ${VAR} token is refused even once the url is exported, and accepted
-// once ANSIBLE_GALAXY_SERVER_HUB_VALIDATE_CERTS repeats the relaxation.
+// psrvPairingTLSCases is the TLS arm: validate_certs = false in the file is
+// accepted with the file's token, refused with GO_GALAXY_TOKEN even once the
+// url is exported, and accepted once the relaxation is exported as well.
 func psrvPairingTLSCases() []psrvCase {
-	insecureHub := psrvHubEntry(psrvExpandedToken, true)
+	insecureHub := psrvHubEntry("")
 	insecureHub.ValidateCerts = new(false)
+	insecureOwnToken := psrvHubEntry(psrvLiteralToken)
+	insecureOwnToken.ValidateCerts = new(false)
 	return []psrvCase{
+		{
+			// The file chose the relaxation for its own token: accepted, and
+			// both warnings are queued, the token one included.
+			name:    "accepted: validate_certs = false from the file with the file's token",
+			project: psrvProject(insecureOwnToken),
+			check: psrvAccepted(
+				Server{ID: psrvHubID, URL: psrvHubURL, Token: NewSecret(psrvLiteralToken), InsecureSkipTLSVerify: true},
+				psrvTLSWarnings(psrvHubID, psrvHubOrigin)...,
+			),
+			wantUsed: []string{"servers"},
+		},
 		{
 			// The url is the operator's, so the destination arm is silent
 			// and the file-sourced relaxation is what is refused.
-			name:    "refused: validate_certs = false from the file with a ${VAR} token",
-			env:     map[string]string{"ANSIBLE_GALAXY_SERVER_HUB_URL": psrvHubURL},
+			name:    "refused: validate_certs = false from the file with GO_GALAXY_TOKEN",
+			env:     map[string]string{"GO_GALAXY_TOKEN": psrvFlagToken, "ANSIBLE_GALAXY_SERVER_HUB_URL": psrvHubURL},
 			project: psrvProject(insecureHub),
 			check: psrvRefusedExactly(helpers.ErrTokenTLSPolicyFromFile,
 				"galaxy server certificate verification was disabled by a configuration file for a token it did not supply: "+
@@ -524,16 +520,16 @@ func psrvPairingTLSCases() []psrvCase {
 			wantUsed: []string{"servers"},
 		},
 		{
-			// The remedy: the relaxation on the operator's channel too. TLS
-			// stays off, so both warnings are queued, the token one included.
+			// The remedy: the relaxation on the operator's channel too.
 			name: "accepted: validate_certs exported beside the url",
 			env: map[string]string{
+				"GO_GALAXY_TOKEN":                          psrvFlagToken,
 				"ANSIBLE_GALAXY_SERVER_HUB_URL":            psrvHubURL,
 				"ANSIBLE_GALAXY_SERVER_HUB_VALIDATE_CERTS": "false",
 			},
 			project: psrvProject(insecureHub),
 			check: psrvAccepted(
-				Server{ID: psrvHubID, URL: psrvHubURL, Token: NewSecret(psrvExpandedToken), InsecureSkipTLSVerify: true},
+				Server{ID: psrvHubID, URL: psrvHubURL, Token: NewSecret(psrvFlagToken), InsecureSkipTLSVerify: true},
 				psrvTLSWarnings(psrvHubID, psrvHubOrigin)...,
 			),
 			wantUsed: []string{"servers"},
@@ -563,7 +559,7 @@ func TestProjectServersAnsibleConfigPathNamed(t *testing.T) {
 // any fmt verb, nor through json or yaml.
 func TestProjectServersConfigDumpRedacts(t *testing.T) {
 	psrvCase{
-		project:  psrvProject(psrvHubEntry(psrvLiteralToken, false)),
+		project:  psrvProject(psrvHubEntry(psrvLiteralToken)),
 		check:    psrvCheckDumpRedacts,
 		wantUsed: []string{"servers"},
 	}.run(t)
