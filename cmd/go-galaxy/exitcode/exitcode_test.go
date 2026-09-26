@@ -362,6 +362,14 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitCacheCorrupt,
 	},
 	{
+		// The shape internal/cache/s3's LoadStore builds for a snapshot that
+		// inflates but does not decode; the JSON cause must not change it.
+		name: "state object that will not decode",
+		err: fmt.Errorf("%w: state object %s: %w",
+			helpers.ErrCorruptStateObject, "state/store.json.gz", &json.SyntaxError{Offset: 1}),
+		wantCode: ExitCacheCorrupt,
+	},
+	{
 		// A newer-than-supported schema version describes this reader, not
 		// damaged bytes: see ExitCacheCorrupt's own doc comment for why this
 		// is ExitUsage rather than ExitCacheCorrupt.

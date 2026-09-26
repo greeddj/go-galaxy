@@ -127,7 +127,7 @@ func (b *Backend) LoadStore(ctx context.Context) (*store.Store, error) {
 		Meta store.SnapshotMeta `json:"meta"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
-		return nil, err
+		return nil, corruptSnapshotError(key, err)
 	}
 	switch verr := store.ValidateSchema(probe.Meta.SchemaVersion); {
 	case errors.Is(verr, helpers.ErrOutdatedSchemaVersion):
@@ -138,9 +138,16 @@ func (b *Backend) LoadStore(ctx context.Context) (*store.Store, error) {
 
 	st := store.New()
 	if err := json.Unmarshal(data, st); err != nil {
-		return nil, err
+		return nil, corruptSnapshotError(key, err)
 	}
 	return st, nil
+}
+
+// corruptSnapshotError classifies a snapshot object that inflates but does not
+// decode as corrupt state, as the registry's and the local snapshot's are.
+func corruptSnapshotError(key string, err error) error {
+	return fmt.Errorf("%w: state object %s: %w (remove the object or clear the cache to rebuild the snapshot)",
+		helpers.ErrCorruptStateObject, key, err)
 }
 
 // SaveStore persists the snapshot to S3 as gzipped JSON. It must marshal via

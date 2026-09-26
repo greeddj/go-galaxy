@@ -383,6 +383,26 @@ func TestLoadProjectRegistryRejectsCorruptObject(t *testing.T) {
 	}
 }
 
+// TestLoadStoreRejectsUndecodableObject pins that a snapshot object which
+// inflates but does not decode, before or after the schema probe, is
+// ErrCorruptStateObject (exit 9), not an unclassified error.
+func TestLoadStoreRejectsUndecodableObject(t *testing.T) {
+	t.Parallel()
+	for name, raw := range map[string]string{
+		"not JSON":                 `{"meta":`,
+		"current schema, bad body": fmt.Sprintf(`{"meta":{"schema_version":%d},"installed":"not an object"}`, helpers.StoreSnapshotSchemaVersion),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			b := newTestBackend(t)
+			putRawStoreObject(t.Context(), t, b, []byte(raw))
+			if _, err := b.LoadStore(t.Context()); !errors.Is(err, helpers.ErrCorruptStateObject) {
+				t.Fatalf("LoadStore error = %v, want helpers.ErrCorruptStateObject", err)
+			}
+		})
+	}
+}
+
 // TestLoadProjectRegistryMissingObjectReturnsEmpty is a regression guard: a
 // bucket that has never recorded a project must still return an empty,
 // initialized registry with a nil error.
