@@ -97,8 +97,8 @@ func (v Version) sv() *semver.Version {
 // errors.Is(err, ctx.Err()) true for a cancellation it observes.
 type Provider interface {
 	// Highest returns the registry-reported highest version of pkg, unchecked
-	// against any constraint (the core checks membership). When ok is false or
-	// err is non-nil, the core falls back to Universe.
+	// against any constraint (the core checks membership). When ok is false,
+	// the core falls back to Universe; a non-nil err ends the solve.
 	Highest(ctx context.Context, pkg string) (Version, bool, error)
 
 	// Universe returns every published version of pkg, deduplicated by

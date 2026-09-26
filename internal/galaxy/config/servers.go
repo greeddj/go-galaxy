@@ -98,8 +98,8 @@ type Server struct {
 	Token                 Secret
 	InsecureSkipTLSVerify bool
 	// urlFromFile reports whether URL came from an ansible.cfg or galaxy.toml
-	// rather than an operator channel. Provenance never leaves this package;
-	// tokenPairingOffense is the sole reader.
+	// rather than an operator channel. Provenance never leaves this package: it
+	// feeds tokenPairingOffense and the implicit server's sourceFile.
 	urlFromFile bool
 	// tokenFromFile reports whether Token came from a section's token key as
 	// a literal; it also reads true when no token was set at all, which is

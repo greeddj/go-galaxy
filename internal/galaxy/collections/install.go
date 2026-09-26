@@ -87,8 +87,8 @@ func installCollection(
 }
 
 // verifyPinnedSHA enforces a lockfile SHA256 pin against the artifact hash,
-// so a frozen run never installs drifted bytes. An empty pin (an older lockfile
-// with no checksum) is a no-op.
+// so a frozen run never installs drifted bytes. An empty pin, from a server
+// that publishes no digest, is a no-op.
 func verifyPinnedSHA(col collection, actual string) error {
 	expected := strings.TrimSpace(col.SHA256)
 	if expected == "" {

@@ -1,6 +1,6 @@
 // Package config resolves one *Config per run from flags, the environment,
 // galaxy.toml and ansible.cfg; BuildCollectionConfig alone decides precedence.
-// It makes no network request, and every credential it yields is a Secret.
+// It makes no network request, and every secret it yields is a Secret.
 package config
 
 import (
