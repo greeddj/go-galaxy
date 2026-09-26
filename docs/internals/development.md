@@ -54,6 +54,9 @@ go test ./internal/galaxy/solver -fuzz FuzzSolve -fuzztime 60s
   `go mod tidy` would rewrite the reviewed dependency set.
 - A tag with `-` is a prerelease: no Homebrew cask, no `latest` image, no
   major tag move.
+- One binary, two images: `Dockerfile` builds the distroless one
+  (`<version>`, `<version>-distroless`, `latest`) and `Dockerfile.alpine` the
+  Alpine one (`<version>-alpine`); both run go-galaxy as uid 65532.
 - The major tag (`v1`) is the one tag that does not fix a state, hence
   `--match` in the Justfile's `git describe`.
 
@@ -71,7 +74,7 @@ comment-length gates skip when `git` cannot list the tree.
 | --- | --- | --- |
 | `proseaudit`: dashes | no U+2014 or U+2013 in a tracked file | type `-`; a test spells one as bytes or `\uXXXX` |
 | `proseaudit`: line citations | `foo_test.go:NNN` only on a failure-reportable line; no production line | renumber after inserting lines, or cite an identifier |
-| `proseaudit`: comment length | no comment block over three lines in Go, `.sh`, YAML, `Justfile`, `Dockerfile`, `.gitignore` | move reasoning to `docs/`; never split one comment into blocks |
+| `proseaudit`: comment length | no comment block over three lines in Go, `.sh`, YAML, `Justfile`, `Dockerfile`, `Dockerfile.*`, `.gitignore` | move reasoning to `docs/`; never split one comment into blocks |
 | `lockaudit` | a lock-taking command works under the holder context, judged by `LockLostError` | add a new or renamed command to `holderCases` or `delegateCases` |
 | `ciaudit` | CI's golangci-lint `version` is exact and equals `GOLANGCI_LINT_VERSION` | bump both in one commit |
 | `store`: dirty flag | every write-locked `*Store` method in `snapshot.go` sets `dirty`, bar `UnmarshalJSON` | a mutator elsewhere needs a `TestEveryMutatorMarksDirty` row |

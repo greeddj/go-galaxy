@@ -56,7 +56,7 @@ before you switch.
 | Homebrew | `brew install --cask greeddj/tap/go-galaxy` |
 | Go | `go install github.com/greeddj/go-galaxy/cmd/go-galaxy@latest` |
 | Release binary | the `curl` lines below |
-| Container | `ghcr.io/greeddj/go-galaxy`, run in your project as below |
+| Container | `ghcr.io/greeddj/go-galaxy`, run in your project as below; `:<version>-alpine` adds a shell for a CI job image |
 | From source | `go build -o dist/go-galaxy ./cmd/go-galaxy` in a clone |
 
 ```bash

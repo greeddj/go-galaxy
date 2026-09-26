@@ -178,10 +178,10 @@ func longHashComments(name string, data []byte) ([]string, error) {
 }
 
 // isHashCommented reports whether rel is a file type whose comments start
-// with `#` and fall under the gate.
+// with `#` and fall under the gate; Dockerfile.<variant> counts as Dockerfile.
 func isHashCommented(rel string) bool {
-	switch filepath.Base(rel) {
-	case "Justfile", "Dockerfile", ".gitignore":
+	switch base := filepath.Base(rel); {
+	case base == "Justfile", base == "Dockerfile", base == ".gitignore", strings.HasPrefix(base, "Dockerfile."):
 		return true
 	}
 	switch filepath.Ext(rel) {

@@ -93,7 +93,24 @@ dockers_v2:
       - "ghcr.io/greeddj/{{ .ProjectName }}"
     tags:
       - "{{ .Version }}"
+      - "{{ .Version }}-distroless"
       - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+  - id: go-galaxy-alpine
+    ids:
+      - go-galaxy
+    dockerfile: Dockerfile.alpine
+    images:
+      - "ghcr.io/greeddj/{{ .ProjectName }}"
+    tags:
+      - "{{ .Version }}-alpine"
     platforms:
       - linux/amd64
       - linux/arm64

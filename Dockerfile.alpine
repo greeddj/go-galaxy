@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1
+FROM alpine:3
+ARG TARGETPLATFORM
+# The distroless nonroot user, and go-galaxy on PATH for a CI job's script.
+RUN addgroup -g 65532 nonroot \
+ && adduser -D -u 65532 -G nonroot -h /home/nonroot nonroot
+COPY ${TARGETPLATFORM}/go-galaxy /usr/local/bin/go-galaxy
+USER 65532:65532
+WORKDIR /
+ENTRYPOINT [ "/usr/local/bin/go-galaxy" ]

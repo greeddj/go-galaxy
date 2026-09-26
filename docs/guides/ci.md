@@ -182,28 +182,26 @@ variables:
   GO_GALAXY_CACHE_DIR: "$CI_PROJECT_DIR/.cache/go-galaxy" # (1)!
 
 install:
-  image: alpine:3 # (2)!
+  image:
+    name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine # (2)!
+    entrypoint: [""]
   cache:
     key:
       files: [galaxy.lock] # (3)!
-      prefix: go-galaxy-1.2.3
+      prefix: go-galaxy-1.3.0
     paths: [.cache/go-galaxy]
-  before_script:
-    - apk add --no-cache ca-certificates coreutils curl
-    - base=https://github.com/greeddj/go-galaxy/releases/download/v1.2.3
-    - curl -sSLf -O "$base/go-galaxy-linux-amd64" -O "$base/checksums.txt"
-    - sha256sum --ignore-missing -c checksums.txt
-    - install -m 755 go-galaxy-linux-amd64 /usr/local/bin/go-galaxy
   script:
     - go-galaxy install --frozen # (4)!
 ```
 
 1. GitLab caches only paths inside the project directory.
-2. Not `ghcr.io/greeddj/go-galaxy`: it is distroless, with no shell for the
-   script.
+2. The Alpine variant, since the default image is distroless, with no shell
+   for the script. `entrypoint: [""]` clears the image's go-galaxy
+   entrypoint, which would otherwise receive the script. It runs as the
+   unprivileged user `65532`, so `apk add` fails here.
 3. GitLab fixes the cache key before any script runs, so `go-galaxy hash`
    cannot set it; `key:files` keys it on `galaxy.lock` instead. The prefix
-   carries the release: bump it with the URL.
+   carries the release: bump it with the image tag.
 4. Not `--offline`: the first pipeline after a lockfile change misses the
    cache.
 

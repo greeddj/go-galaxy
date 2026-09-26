@@ -40,8 +40,13 @@ versions, and run the same install in CI.
     docker run --rm ghcr.io/greeddj/go-galaxy --version
     ```
 
-    Meant for [baking into a CI image](../guides/ci.md#container-image-bake); the steps
-    below need a local binary.
+    | Tag | Base | Use |
+    | :-- | :-- | :-- |
+    | `latest`, `<version>`, `<version>-distroless` | distroless, no shell | `docker run`, or [baking into a CI image](../guides/ci.md#container-image-bake) |
+    | `<version>-alpine` | Alpine, with a shell | a CI job that runs go-galaxy from its script, as in [GitLab CI](../guides/ci.md#gitlab-ci) |
+
+    Both run go-galaxy as their entrypoint, as the unprivileged user `65532`;
+    a prerelease gets no `latest`. The steps below need a local binary.
 
 === "GitHub Actions"
 
