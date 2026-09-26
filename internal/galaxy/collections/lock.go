@@ -69,6 +69,12 @@ func galaxyLockfileEntry(
 ) (lockfile.Entry, error) {
 	meta, err := loadCollectionMetadata(ctx, deps, col)
 	if err != nil {
+		// A 404 means the server no longer has what the resolve, perhaps a
+		// replayed one, named: the source lacks it, as the solver reports.
+		if isUnknownPackageError(err) {
+			return lockfile.Entry{}, fmt.Errorf("%w: %s %s is not published at its server: %w",
+				helpers.ErrNoSemverCandidates, fqdn, col.Version, err)
+		}
 		return lockfile.Entry{}, err
 	}
 	// An empty sha is kept: verifyPinnedSHA reads it as no pin, for
