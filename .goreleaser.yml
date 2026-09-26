@@ -36,6 +36,7 @@ archives:
       - README.md
       - CONTRIBUTING.md
       - docs/*.md
+      - docs/internals/*.md
       - docs/*.svg
       - docs/assets/logo*.svg
   - id: binary
