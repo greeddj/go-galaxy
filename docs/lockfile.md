@@ -50,7 +50,7 @@ go-galaxy lock --dry-run
 
 `lock` exits [`5`](exit-codes.md) when a server names a `download_url` that
 carries a query string or is not its own artifact URL
-([why the lockfile refuses these](security.md#loading-requirementsyml-and-the-lockfile)).
+([why the lockfile refuses these](internals/boundaries.md#loading-requirementsyml-and-the-lockfile)).
 Such a server works only without a lockfile.
 
 ### What each entry is pinned by
@@ -107,7 +107,7 @@ schema_version: 5
 ```
 
 Every field and how `lock` chooses the schema:
-[The lockfile](architecture.md#the-lockfile).
+[The lockfile](internals/lockfile-format.md).
 
 </details>
 

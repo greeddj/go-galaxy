@@ -18,6 +18,7 @@ nav = [
     { "Servers and credentials" = "servers-and-auth.md" },
     { "Caching and S3" = "caching.md" },
     { "Signatures" = "signatures.md" },
+    "security.md",
   ]},
   { "Reference" = [
     { "CLI" = "cli.md" },
@@ -28,10 +29,24 @@ nav = [
     "benchmarks.md",
   ]},
   { "Internals" = [
-    "architecture.md",
-    "commands.md",
-    "security.md",
-    "development.md",
+    { "How it works" = "internals/index.md" },
+    { "Configuration loading" = "internals/config-loading.md" },
+    { "Version solver" = "internals/solver.md" },
+    { "Install pipeline" = "internals/install-pipeline.md" },
+    { "Cache and storage" = "internals/cache.md" },
+    { "Lockfile format" = "internals/lockfile-format.md" },
+    { "HTTP, output and exit codes" = "internals/http-output-exit-codes.md" },
+    { "Security boundaries" = "internals/boundaries.md" },
+    { "Command flows" = [
+      { "Entry and shared setup" = "internals/commands.md" },
+      { "install" = "internals/flow-install.md" },
+      { "lock" = "internals/flow-lock.md" },
+      { "warm" = "internals/flow-warm.md" },
+      { "cleanup" = "internals/flow-cleanup.md" },
+      { "outdated" = "internals/flow-outdated.md" },
+      { "hash, tree, explain" = "internals/flow-hash-tree-explain.md" },
+    ]},
+    { "Development" = "internals/development.md" },
   ]},
 ]
 extra_css = ["assets/extra.css"]

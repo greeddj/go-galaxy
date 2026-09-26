@@ -128,7 +128,7 @@ So, because root depends on ansible.netcommon >=8.7.0 and root depends on ansibl
 hint: pre-release versions of ansible.netcommon exist and are excluded by plain constraints; if you intended to allow them, use a >=X.Y.Z-0 floor or an exact pin
 ```
 
-go-galaxy's [PubGrub solver](architecture.md#the-version-solver) tries older
+go-galaxy's [PubGrub solver](internals/solver.md) tries older
 releases when a newer one conflicts. When no combination fits, it exits
 [`3`](exit-codes.md) rather than pick leniently; the proof's `So, because`
 line names the constraints to relax.
@@ -296,7 +296,7 @@ When discovery finds both files, go-galaxy warns:
 
 With neither file, `install`, `warm`, `lock` and `hash` exit `2`. A
 world-writable directory does not stop discovery, as
-[Security](security.md#loading-requirementsyml-and-the-lockfile) explains.
+[Security](internals/boundaries.md#loading-requirementsyml-and-the-lockfile) explains.
 
 ## What is refused
 

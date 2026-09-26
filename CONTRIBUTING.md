@@ -6,13 +6,13 @@ published, and how a tag decides what the release page says.
 
 Everything about running the tests, the gates this repository points at its own
 source, and the lint configuration is in
-[Development](docs/development.md). This document is the part that is about
+[Development](docs/internals/development.md). This document is the part that is about
 what you write rather than what you run.
 
 ## Before you push
 
 ```bash
-just check     # go vet, staticcheck, govulncheck, fieldalignment
+just check     # go vet, staticcheck, govulncheck, fieldalignment, actionlint
 just lint      # golangci-lint, at exactly the pinned release
 just test      # go test ./...
 ```

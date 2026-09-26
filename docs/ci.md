@@ -131,7 +131,7 @@ Anything the inputs miss goes through `env`, at workflow, job or step level.
 
 > [!CAUTION]
 > Never put a secret in `args`: it becomes argv, which other processes on the
-> runner can read ([why](security.md#security--trust-model)).
+> runner can read ([why](security.md#trust-model)).
 
 ### Settings in galaxy.toml
 

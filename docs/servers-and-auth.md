@@ -150,7 +150,7 @@ An address is yours when it comes from `--server=<url>`, `GO_GALAXY_SERVER`,
 `ANSIBLE_GALAXY_SERVER`, `ANSIBLE_GALAXY_SERVER_<ID>_URL` or the default;
 `--server=<id>` and `url = "${VAR}"` leave it the file's. The rule stops a
 checked-out repository from choosing where your secret goes
-([why](security.md#credentials-and-the-token-pairing-rule)).
+([why](internals/boundaries.md#credentials-and-the-token-pairing-rule)).
 
 ```text
 ✗ galaxy server token destination came from a configuration file: server "hub" (https://hub.example.internal:443) in ansible.cfg
@@ -379,7 +379,7 @@ Entries are spelled under [Collections](requirements.md#collections) and
 [Roles](requirements.md#roles). Certificates are always verified
 ([TLS](#tls-validate_certs)) and cross-origin redirects refused. No secret is
 printed or stored, and no flag takes one
-([the full boundary](security.md#git-and-url-sources)).
+([the full boundary](internals/boundaries.md#git-and-url-sources)).
 
 > [!NOTE]
 > An unknown or changed ssh host key exits `4`: there is no trust on first

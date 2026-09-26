@@ -154,7 +154,7 @@ cat teamA.asc teamB.asc > keyring.asc   # trusts both teams' keys
 
 No `gpg` process runs; the format is judged from the bytes. Any trusted key
 vouches for any collection, and revocation is only as fresh as the keyring file
-([trust model](security.md#security--trust-model)).
+([trust model](security.md#trust-model)).
 
 <details markdown>
 <summary>Packet rules</summary>
@@ -166,7 +166,7 @@ vouches for any collection, and revocation is only as fresh as the keyring file
 
 Each armor block costs one packet, so 1024 minimal three-packet exports load
 and 1025 do not. See
-[Signatures and OpenPGP framing](security.md#signatures-and-openpgp-framing).
+[Signatures and OpenPGP framing](internals/boundaries.md#signatures-and-openpgp-framing).
 
 </details>
 
@@ -229,6 +229,6 @@ hardlink in the archive. Mixed failures follow
 
 `MANIFEST.json` and `FILES.json` may go unlisted. Each identity key must appear
 once, spelled exactly, and match byte for byte. See
-[Reading a manifest](security.md#reading-a-manifest).
+[Reading a manifest](internals/boundaries.md#reading-a-manifest).
 
 </details>

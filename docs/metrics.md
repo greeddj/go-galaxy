@@ -31,7 +31,7 @@ go-galaxy can write a JSON report of each `install`, `warm`, `lock` and
     1.  Relative to the directory of `galaxy.toml`.
 
 Missing directories are created, and the file is
-[replaced atomically](security.md#the-collections-tree-and-the-cache-directory).
+[replaced atomically](internals/boundaries.md#the-collections-tree-and-the-cache-directory).
 A flag or variable [outranks](configuration.md#where-a-setting-comes-from)
 `metrics_file`, and an exported empty `GO_GALAXY_METRICS_FILE` turns the report
 off.
@@ -130,11 +130,11 @@ counts nothing.
 - A miss counts once per acquisition, after retries.
 - `bytes_downloaded` adds every Galaxy or url download attempt, a failed
   partial body included; a git fetch adds its pack only once it succeeds.
-- A corrupt cached collection is [refetched](architecture.md#bounded-recovery):
+- A corrupt cached collection is [refetched](internals/install-pipeline.md#bounded-recovery):
   a hit and a miss locally, only the miss when S3 catches it on read.
 - A corrupt cached role is not refetched: its install fails.
 - On a failed `install` the counters are a lower bound:
-  [prefetch workers still in flight](architecture.md#prefetch-and-handoff)
+  [prefetch workers still in flight](internals/install-pipeline.md#prefetch-and-handoff)
   count after the report is built.
 
 </details>

@@ -117,7 +117,7 @@ policy, git and url credentials, `--ansible-config` and switches such as
 - Every command that loads the file needs every variable: `hash`, `tree`,
   `explain` and `cleanup` too, unless `--lock-file` is set for the first three.
 - A `${VAR}` can read any variable the run exports
-  ([what that trusts the file with](security.md#loading-requirementsyml-and-the-lockfile)).
+  ([what that trusts the file with](internals/boundaries.md#loading-requirementsyml-and-the-lockfile)).
 
 <details markdown>
 <summary>Exact messages</summary>
@@ -254,7 +254,7 @@ comment marker, so watch for these lines:
 | `GO_GALAXY_GIT_CREDENTIALS`, `GO_GALAXY_GIT_<ID>_*` | a credential bound to a git host | [Git sources and credentials](servers-and-auth.md#git-sources-and-credentials) |
 | `GO_GALAXY_URL_CREDENTIALS`, `GO_GALAXY_URL_<ID>_*` | a Bearer token bound to a url-source origin | [URL sources and credentials](servers-and-auth.md#url-sources-and-credentials) |
 | `SSH_AUTH_SOCK`, `SSH_KNOWN_HOSTS`, `ALL_PROXY`, `NO_PROXY` | the ssh agent, the known_hosts file and a `socks5://` proxy for ssh git fetches | [Git sources and credentials](servers-and-auth.md#git-sources-and-credentials) |
-| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | the proxy for every HTTP request | [what a proxy is sent](security.md#redirects) |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | the proxy for every HTTP request | [what a proxy is sent](internals/boundaries.md#redirects) |
 | `SSL_CERT_FILE`, `SSL_CERT_DIR` | a private CA, replacing the default trust store | [TLS: validate_certs](servers-and-auth.md#tls-validate_certs) |
 | `NO_COLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`, `TERM` | whether output is colored (`TERM=dumb`: the spinner only) | [Output and color](cli.md#output-and-color) |
 

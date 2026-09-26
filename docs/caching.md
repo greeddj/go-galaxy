@@ -45,7 +45,7 @@ entries.
 Run one release on every machine sharing a cache, or an older one may refuse
 the snapshot with exit `2` ([Pin one release](ci.md#pin-one-release)). Give
 each Galaxy credential its own cache, since entries are keyed by server, not by
-token ([why](security.md#security--trust-model)).
+token ([why](security.md#trust-model)).
 
 <details markdown>
 <summary>Snapshot internals</summary>
@@ -74,7 +74,7 @@ Only bbolt's `ErrInvalid` (truncation included), `ErrVersionMismatch` and
 | url role | `url+<url>#sha256:<hex>` | The sha256 its URL served, under the same `version:` label | `--refresh`, `--clear-cache` |
 
 Reuse contacts no source. Editing an entry re-resolves it, and nothing here
-expires by age ([why this keying](architecture.md#the-caching-model)).
+expires by age ([why this keying](internals/cache.md#artifact-cache-scoped-by-server-not-by-content)).
 
 ## Freshness and retention
 
@@ -104,7 +104,7 @@ reading never renews an entry.
 A future timestamp counts as stale, with no clock-skew allowance, and a body
 that no longer decodes is refetched without validators. A presigned
 `download_url` is cached verbatim and usable until it expires; `lock` refuses
-to commit one ([why](architecture.md#the-lockfile)).
+to commit one ([why](internals/lockfile-format.md#download_url-and-frozen-installs)).
 
 </details>
 
@@ -210,7 +210,7 @@ needs:
 > [!CAUTION]
 > Anyone who can write the bucket can change what a run installs. Scope keys to
 > one project's bucket, give untrusted branches their own, and pass secrets
-> through the environment ([why](security.md#security--trust-model)).
+> through the environment ([why](security.md#trust-model)).
 
 ### Locking and failures
 

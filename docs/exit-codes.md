@@ -106,7 +106,7 @@ flowchart TD
 ```
 
 The code is the first box, top down, that matches the error or any cause
-behind it ([classifier chart](commands.md#exit-code-classes)). A caught
+behind it ([classifier chart](internals/http-output-exit-codes.md#exit-code-classes)). A caught
 signal wins even over a finished run and prints no error line; a lost cache
 lock turns every other outcome, success included, into `8`.
 

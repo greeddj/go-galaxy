@@ -136,8 +136,8 @@ credentials and `known_hosts` per
 - Submodules are skipped with a warning.
 
 How a repository becomes an artifact is in
-[Git discovery](architecture.md#git-discovery); what is validated is in
-[Git and url sources](security.md#git-and-url-sources).
+[Git discovery](internals/install-pipeline.md#git-discovery); what is validated is in
+[Git and url sources](internals/boundaries.md#git-and-url-sources).
 
 </details>
 
@@ -166,7 +166,7 @@ How a repository becomes an artifact is in
 ```
 
 Extracted files have no write bit, since an install may
-[share their bytes](architecture.md#extracted-store-content-addressed-materialized-by-hardlink)
+[share their bytes](internals/cache.md#extracted-store-content-addressed-materialized-by-hardlink)
 with the cache and other installs; directories and sidecar files stay
 writable. An in-place edit that worked after `ansible-galaxy` fails; edit
 a copy outside the tree.

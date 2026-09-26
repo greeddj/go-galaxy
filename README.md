@@ -148,9 +148,9 @@ are in [Servers and credentials](docs/servers-and-auth.md).
 | Section | Pages |
 | :-- | :-- |
 | Get started | [Get started](docs/getting-started.md), [Coming from ansible-galaxy](docs/ansible-galaxy-compat.md) |
-| Guides | [Requirements files](docs/requirements.md), [Lockfile](docs/lockfile.md), [CI pipelines](docs/ci.md), [Servers and credentials](docs/servers-and-auth.md), [Caching and S3](docs/caching.md), [Signatures](docs/signatures.md) |
+| Guides | [Requirements files](docs/requirements.md), [Lockfile](docs/lockfile.md), [CI pipelines](docs/ci.md), [Servers and credentials](docs/servers-and-auth.md), [Caching and S3](docs/caching.md), [Signatures](docs/signatures.md), [Security](docs/security.md) |
 | Reference | [CLI](docs/cli.md), [Configuration](docs/configuration.md), [Exit codes](docs/exit-codes.md), [Metrics](docs/metrics.md), [Upgrading](docs/upgrading.md), [Benchmarks](docs/benchmarks.md) |
-| Internals | [How it works](docs/architecture.md), [Command flows](docs/commands.md), [Security](docs/security.md), [Development](docs/development.md) |
+| Internals | [How it works](docs/internals/index.md), [Command flows](docs/internals/commands.md), [Security boundaries](docs/internals/boundaries.md), [Development](docs/internals/development.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md): commit subjects and cutting a release |
 
 ## License

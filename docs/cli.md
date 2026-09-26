@@ -172,7 +172,7 @@ flowchart TD
 | Any other read error, or a failed removal | Stops the run; nothing unremoved is reported as removed |
 
 The scan in detail: [Scan: every recorded project's
-installs](commands.md#scan-every-recorded-projects-installs).
+installs](internals/flow-cleanup.md#scan-every-recorded-projects-installs).
 
 </details>
 
@@ -349,7 +349,7 @@ a cached copy that fails its check, spends a second.
 
 The state budget is tighter because it runs while the S3 lock blocks every
 other runner. Mechanism: [Acquiring an
-artifact](architecture.md#acquiring-an-artifact).
+artifact](internals/install-pipeline.md#acquiring-an-artifact).
 
 </details>
 
@@ -402,7 +402,7 @@ the real run could still fail on such bytes.
 `warm` reports `Already warm` only when the extracted tree is ready under the
 pinned or last-warmed sha256, so a fresh runner over a warm bucket reports
 `Would warm: <name> (artifact cached)`. Details: [Dry
-run](architecture.md#dry-run).
+run](internals/install-pipeline.md#dry-run).
 
 </details>
 

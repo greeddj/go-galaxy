@@ -195,7 +195,7 @@ SIZES=10 SCENARIOS="cold warm" testing/bench.sh # (3)!
 1.  Only for the S3 scenarios; without MinIO they are skipped with a warning.
 2.  Every size and scenario: about three hours.
 3.  Or one size, two scenarios. See
-    [every knob and output file](development.md#the-benchmark-harness).
+    [every knob and output file](internals/development.md#the-benchmark-harness).
 
 Role figures are not published; `SCENARIOS="roles-cold roles-warm"
 testing/bench.sh` measures them. `ansible-galaxy` keeps no role cache, so its
