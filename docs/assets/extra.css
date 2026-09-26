@@ -1,3 +1,19 @@
 [data-md-color-scheme="slate"] .md-logo img {
-  filter: invert(1);
+  content: url("logo-white.svg");
+}
+
+.md-typeset .gg-hero {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5em;
+}
+
+.md-typeset .gg-hero p,
+.md-typeset .gg-hero h1 {
+  margin: 0;
+}
+
+.md-typeset .gg-hero img {
+  width: 4.5rem;
 }

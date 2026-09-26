@@ -1,4 +1,11 @@
+<div class="gg-hero" markdown>
+
+![](assets/logo.svg#only-light)
+![](assets/logo-white.svg#only-dark)
+
 # go-galaxy
+
+</div>
 
 Fast Ansible Galaxy collections and roles installer for CI.
 

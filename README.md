@@ -1,11 +1,9 @@
-<p align="center">
+<h1>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-white.svg">
-    <img src="docs/assets/logo.svg" alt="go-galaxy logo" width="120">
-  </picture>
-</p>
-
-# go-galaxy
+    <img src="docs/assets/logo.svg" alt="" width="72" align="absmiddle">
+  </picture>&nbsp;go-galaxy
+</h1>
 
 [![CI](https://github.com/greeddj/go-galaxy/actions/workflows/ci.yml/badge.svg)](https://github.com/greeddj/go-galaxy/actions/workflows/ci.yml)
 [![Release](https://github.com/greeddj/go-galaxy/actions/workflows/release.yml/badge.svg)](https://github.com/greeddj/go-galaxy/actions/workflows/release.yml)
