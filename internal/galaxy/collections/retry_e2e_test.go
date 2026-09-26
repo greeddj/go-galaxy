@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/greeddj/go-galaxy/cmd/go-galaxy/exitcode"
 	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
 	"github.com/greeddj/go-galaxy/internal/galaxy/collections"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
@@ -100,8 +101,8 @@ func TestArtifactDownloadRetrySuccessCountsOneMissNotOnePerAttempt(t *testing.T)
 }
 
 // TestMetadataFetchExhaustsRetriesAndFails pins that an always-failing
-// metadata GET makes FetchRetryMaxAttempts requests and fails during
-// resolution with the HTTPStatusError reachable, not ErrInstallationFailed.
+// metadata GET makes FetchRetryMaxAttempts requests and fails during resolution
+// with the HTTPStatusError reachable, exit 4, not ErrInstallationFailed.
 func TestMetadataFetchExhaustsRetriesAndFails(t *testing.T) {
 	t.Parallel()
 	cfg, runtime, s := newRetryFixture(t, "metafail", false)
@@ -114,6 +115,9 @@ func TestMetadataFetchExhaustsRetriesAndFails(t *testing.T) {
 	}
 	if statusErr.Code != http.StatusServiceUnavailable {
 		t.Errorf("HTTPStatusError.Code = %d, want %d", statusErr.Code, http.StatusServiceUnavailable)
+	}
+	if got := exitcode.FromError(err); got != exitcode.ExitNetwork {
+		t.Errorf("exitcode.FromError(err) = %d, want ExitNetwork (%d): %v", got, exitcode.ExitNetwork, err)
 	}
 	if got := s.Count(fakegalaxy.EndpointVersionDetail); got != helpers.FetchRetryMaxAttempts {
 		t.Errorf("EndpointVersionDetail count = %d, want helpers.FetchRetryMaxAttempts=%d", got, helpers.FetchRetryMaxAttempts)

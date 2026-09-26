@@ -325,13 +325,13 @@ func TestIsUnknownPackageErrorClassification(t *testing.T) {
 		{name: "bare 404", err: notFound, want: true},
 		{name: "ErrLoadMetadataFailed", err: helpers.ErrLoadMetadataFailed, want: true},
 		{
-			name: "401 wrapped in ErrGalaxyAuthFailed",
-			err:  fmt.Errorf("%w: server a: %w", helpers.ErrGalaxyAuthFailed, unauthorized),
+			name: "401, the root walk's shape",
+			err:  fmt.Errorf("server a: %w", unauthorized),
 			want: false,
 		},
 		{
-			name: "503 wrapped in ErrGalaxyServerUnavailable",
-			err:  fmt.Errorf("%w: server a: %w", helpers.ErrGalaxyServerUnavailable, unavailable),
+			name: "503, the root walk's shape",
+			err:  fmt.Errorf("server a: %w", unavailable),
 			want: false,
 		},
 	}

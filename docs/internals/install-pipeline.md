@@ -88,7 +88,10 @@ first-wins follows declaration order (`dedupeRoleLevel`). Past
 - A git or url role pin replays only while its artifact is stored
   (`roleArtifactCached`).
 - `lookupGalaxyRole` tries servers in order, skipping one without v1 or the
-  role; the repository's commit wins over the one Galaxy recorded.
+  role. The first that lists the role owns it: `galaxyv1.Resolve` lists its
+  versions from the v1 root that listed it and reads a `404` there as
+  `ErrRoleVersionNotFound`, never as a server without v1.
+- The repository's commit wins over the one Galaxy recorded.
 - A url role's version label defaults to its sha256's first 12 hex digits
   and is not in the pin key, so another `version:` re-downloads.
 

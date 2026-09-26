@@ -104,7 +104,7 @@ func loadRootMetadataCached(
 		// A 404 across this server's candidates means only that it lacks col,
 		// so try the next server; anything else, auth or availability included,
 		// must not be routed around and aborts the walk.
-		if statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok && statusErr.Code == http.StatusNotFound {
+		if isNotFoundStatus(err) {
 			lastErr = err
 			continue
 		}
@@ -116,9 +116,9 @@ func loadRootMetadataCached(
 	return nil, "", helpers.ErrLoadMetadataFailed
 }
 
-// tryServerRootMetadata tries one server's apiRoot candidates and is the only
-// place a root-metadata failure is classified by status: a 404 lets the walk
-// move on, while 401/403, any other status or only web pages abort it.
+// tryServerRootMetadata tries one server's apiRoot candidates, deciding each by
+// its answer: a 404 moves on to the next, a web page is skipped, and any other
+// failure aborts the walk, as do web pages alone.
 func tryServerRootMetadata(
 	ctx context.Context,
 	deps collectionDeps,
@@ -146,19 +146,12 @@ func tryServerRootMetadata(
 				}
 				continue
 			}
-			if statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok {
-				switch statusErr.Code {
-				case http.StatusNotFound:
-					runtime.Output.Debugf("Root metadata 404 %s", cand.url)
-					lastErr = err
-					continue
-				case http.StatusUnauthorized, http.StatusForbidden:
-					return nil, false, fmt.Errorf("%w: server %s: %w", helpers.ErrGalaxyAuthFailed, srv.label(), err)
-				default:
-					return nil, false, fmt.Errorf("%w: server %s: %w", helpers.ErrGalaxyServerUnavailable, srv.label(), err)
-				}
+			if isNotFoundStatus(err) {
+				runtime.Output.Debugf("Root metadata 404 %s", cand.url)
+				lastErr = err
+				continue
 			}
-			return nil, false, err
+			return nil, false, rootAbortError(srv, err)
 		}
 		runtime.Output.Debugf("Root metadata OK %s", cand.url)
 		// Recorded only on success: a 404 means this collection is absent under
@@ -167,6 +160,22 @@ func tryServerRootMetadata(
 		return &root, true, nil
 	}
 	return nil, false, serverWalkError(srv, lastErr, webPage)
+}
+
+// isNotFoundStatus reports whether err is a 404 answer, the one status that
+// says a server lacks something rather than that the server failed.
+func isNotFoundStatus(err error) bool {
+	statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err)
+	return ok && statusErr.Code == http.StatusNotFound
+}
+
+// rootAbortError names the server whose status answer aborts the walk; any
+// other failure already names what failed and is returned as is.
+func rootAbortError(srv serverCandidate, err error) error {
+	if _, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok {
+		return fmt.Errorf("server %s: %w", srv.label(), err)
+	}
+	return err
 }
 
 // serverWalkError ends a server whose candidates none answered: its last 404,

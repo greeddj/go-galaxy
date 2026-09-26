@@ -165,7 +165,7 @@ still fetched during resolution and its build discarded
 | 2 | `loadRoots`, `newVerifyContext`, `buildCollectionsMap` | requirements unreadable or invalid, keyring or signature config, unsafe resolved name, inexact version or duplicate key |
 | 3 | solver, `planCollections` | conflict, no candidate, dropped root, cycle |
 | 6 | `resolveFromLockfile`, `resolveRolesFromLockfile` | `--frozen`: lockfile missing, invalid, not covering the roots |
-| 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md) |
+| 1, 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md) |
 | 7 | `warmError` | a cause is a sha256, commit or identity mismatch |
 | 10 | `warmError` | a cause is a signature verdict |
 | 5 | `warmError` | any other item failure, a network cause included |

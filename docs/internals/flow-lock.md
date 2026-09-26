@@ -17,7 +17,7 @@ flowchart TD
   L3 --> L4["resolveRoles,<br/>as install resolves"]
   L4 -->|"failed"| XR
   L4 --> L5["buildLockfile, see<br/>Building the lockfile"]
-  L5 -->|"refused"| XB(["exit 1, 2, 4,<br/>5 or 7 by cause"])
+  L5 -->|"refused"| XB(["exit 2, 3, 4,<br/>5 or 7 by cause"])
   L5 --> L6["write, preview or gate,<br/>see its diagram"]
   L6 --> XO(["exit 0, 1, 2,<br/>4 or 6 by cause"])
 ```
@@ -41,7 +41,7 @@ flowchart TD
   B3 -->|"Galaxy"| B6["Galaxy entry,<br/>see below"]
   B3 -->|"git"| B4["git entry: repository,<br/>ref, commit, subdir"]
   B3 -->|"url"| B5["url entry: URL,<br/>origin sha256"]
-  B6 -->|"refused"| XG(["exit 1, 3, 4,<br/>5 or 7 by cause"])
+  B6 -->|"refused"| XG(["exit 3, 4,<br/>5 or 7 by cause"])
   B6 --> B11{"collections left?"}
   B4 --> B11
   B5 --> B11
@@ -53,9 +53,8 @@ A Galaxy entry, in `galaxyLockfileEntry`:
 
 ```mermaid
 flowchart TD
-  B7["loadCollectionMetadata"] -->|"unavailable"| X4(["exit 4"])
+  B7["loadCollectionMetadata"] -->|"a status but 404,<br/>unreachable, bad document"| X4(["exit 4"])
   B7 -->|"404: gone<br/>from its server"| X3(["exit 3"])
-  B7 -->|"another status<br/>on a version"| X1(["exit 1"])
   B7 --> B8{"sha256 empty or<br/>64 lowercase hex?"}
   B7 -->|"metadata URL<br/>with userinfo"| X5(["exit 5"])
   B8 -->|"no"| X7(["exit 7"])
@@ -108,11 +107,10 @@ save: the file stays valid if the save fails.
 | Exit | Decided in | Cause |
 | --- | --- | --- |
 | 1 | `lockfile.Save`; solver | a filesystem error, no snapshot or metrics written; an unparseable `requirements.yml` constraint |
-| 1 | `galaxyLockfileEntry` | a version document answering a status other than `404`, which no class claims |
 | 2 | `loadRoots`, `buildLockfile` | requirements refused; inexact version; unpinned git, url or role locator |
 | 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md) |
 | 3 | `galaxyLockfileEntry` | a `404` for a collection or version the resolve named, often a replayed one: `ErrNoSemverCandidates` |
-| 4 | `galaxyLockfileEntry` | metadata unavailable; `download_url` missing or not absolute http(s) |
+| 4 | `galaxyLockfileEntry` | a status but `404` (`ErrGalaxyAuthFailed`, `ErrGalaxyServerUnavailable`), an unreachable server, a document not JSON or of the wrong shape, a bad timestamp included; `download_url` missing or not absolute http(s) |
 | 5 | `lockableDownloadURL`, `checkServerArtifactURL`, `normalizeVersionsURL` | userinfo, a query, or not its server's artifact; a metadata URL with userinfo |
 | 6 | `lockCheck` | file missing or invalid; drift |
 | 7 | `galaxyLockfileEntry` | a malformed sha256, `ErrMalformedArtifactSHA256` |

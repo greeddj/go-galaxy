@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -41,7 +42,9 @@ type Role struct {
 	GitHubUser   string
 	GitHubRepo   string
 	GitHubBranch string
-	ID           int64
+	// root is the v1 root that listed the role, where Resolve lists its versions.
+	root string
+	ID   int64
 }
 
 // Version is one entry of a role's v1 version list: the tag name, which is
@@ -111,7 +114,7 @@ func apiRoots(base string) []string {
 
 // LookupRole asks base's v1 API for owner.name; found is false when it lists
 // no such role. A 404 on every root, web pages aside, is the routed-around
-// helpers.ErrGalaxyRoleAPIUnavailable; 401/403 and any other status abort.
+// helpers.ErrGalaxyRoleAPIUnavailable; any other status aborts, classified by itself.
 func LookupRole(ctx context.Context, fetch FetchJSON, base, owner, name string, policy cacheManager.Policy) (Role, bool, error) {
 	query := "roles/?owner__username=" + url.QueryEscape(owner) + "&name=" + url.QueryEscape(name) +
 		"&page_size=" + strconv.Itoa(pageSize)
@@ -124,7 +127,11 @@ func LookupRole(ctx context.Context, fetch FetchJSON, base, owner, name string, 
 				return Role{}, false, nil
 			}
 			role, err := validateRole(page.Results[0])
-			return role, err == nil, err
+			if err != nil {
+				return Role{}, false, err
+			}
+			role.root = root
+			return role, true, nil
 		}
 		// A web page at a v1 root is skipped, never kept as lastErr: only a
 		// real 404 says the server has no v1 API to ask.
@@ -134,16 +141,9 @@ func LookupRole(ctx context.Context, fetch FetchJSON, base, owner, name string, 
 			}
 			continue
 		}
-		if statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok {
-			switch statusErr.Code {
-			case http.StatusNotFound:
-				lastErr = err
-				continue
-			case http.StatusUnauthorized, http.StatusForbidden:
-				return Role{}, false, fmt.Errorf("%w: %w", helpers.ErrGalaxyAuthFailed, err)
-			default:
-				return Role{}, false, fmt.Errorf("%w: %w", helpers.ErrGalaxyServerUnavailable, err)
-			}
+		if statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok && statusErr.Code == http.StatusNotFound {
+			lastErr = err
+			continue
 		}
 		return Role{}, false, err
 	}
@@ -211,12 +211,25 @@ func isLowerLetter(r rune) bool { return r >= 'a' && r <= 'z' }
 // link within its origin for at most helpers.RoleVersionsMaxPages pages; a
 // name the ref grammar refuses is dropped, as is a malformed commit sha.
 func ListVersions(ctx context.Context, fetch FetchJSON, base string, id int64, policy cacheManager.Policy) ([]Version, []string, error) {
-	var lastErr, webPage error
-	for _, root := range apiRoots(base) {
+	versions, warnings, ended404, err := listVersions(ctx, fetch, base, apiRoots(base), id, policy)
+	if ended404 {
+		return nil, nil, noRoleAPIError(base, err, nil)
+	}
+	return versions, warnings, err
+}
+
+// listVersions is ListVersions over roots in order. ended404 reports that no
+// root answered and one said 404; err is then the first such 404, so a caller
+// putting a root first, as Resolve puts the one that listed the role, names it.
+func listVersions(
+	ctx context.Context, fetch FetchJSON, base string, roots []string, id int64, policy cacheManager.Policy,
+) ([]Version, []string, bool, error) {
+	var first404, webPage error
+	for _, root := range roots {
 		first := fmt.Sprintf("%s/roles/%d/versions/?page_size=%d", root, id, pageSize)
 		versions, pageWarnings, onFirstPage, err := walkVersions(ctx, fetch, first, policy)
 		if err == nil {
-			return versions, pageWarnings, nil
+			return versions, pageWarnings, false, nil
 		}
 		// Skipped as LookupRole skips it, or a root it passed over would abort
 		// here; a web page past the first page is a broken listing instead.
@@ -227,12 +240,17 @@ func ListVersions(ctx context.Context, fetch FetchJSON, base string, id int64, p
 			continue
 		}
 		if statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err); ok && statusErr.Code == http.StatusNotFound {
-			lastErr = err
+			if first404 == nil {
+				first404 = err
+			}
 			continue
 		}
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	return nil, nil, noRoleAPIError(base, lastErr, webPage)
+	if first404 != nil {
+		return nil, nil, true, first404
+	}
+	return nil, nil, false, noRoleAPIError(base, nil, webPage)
 }
 
 // walkVersions follows one root's version pages; onFirstPage reports that the
@@ -251,7 +269,11 @@ func walkVersions(ctx context.Context, fetch FetchJSON, first string, policy cac
 		}
 		var body versionsPage
 		if err := fetch(ctx, next, &body, policy); err != nil {
-			return nil, nil, page == 0, err
+			if page > 0 {
+				// A status error's URL is cut of its query, the page number with it.
+				return nil, nil, false, fmt.Errorf("versions page %d: %w", page+1, err)
+			}
+			return nil, nil, true, err
 		}
 		for _, rec := range body.Results {
 			v, ok, warning := validateVersion(rec)
@@ -320,7 +342,10 @@ func Resolve(
 	if err != nil || !found {
 		return Resolution{}, found, nil, err
 	}
-	versions, warnings, err := ListVersions(ctx, fetch, base, role.ID, policy)
+	versions, warnings, ended404, err := listVersions(ctx, fetch, base, rootsFrom(apiRoots(base), role.root), role.ID, policy)
+	if ended404 {
+		return Resolution{}, true, nil, versionsGoneError(base, owner, name, err)
+	}
 	if err != nil {
 		return Resolution{}, true, warnings, err
 	}
@@ -337,6 +362,23 @@ func Resolve(
 		return Resolution{}, true, warnings, err
 	}
 	return Resolution{RepoURL: repo, Ref: ref, Version: version, GalaxySHA: sha, Versions: versionNames(versions)}, true, warnings, nil
+}
+
+// rootsFrom is roots from the one that listed the role on: a root before it
+// answered the lookup 404 or a web page, and would answer its versions alike.
+func rootsFrom(roots []string, listed string) []string {
+	if i := slices.Index(roots, listed); i > 0 {
+		return roots[i:]
+	}
+	return roots
+}
+
+// versionsGoneError reads the 404 that ended the versions walk of a role the
+// lookup just found as its versions missing, helpers.ErrRoleVersionNotFound:
+// that server serves v1, so it is never passed over as without it.
+func versionsGoneError(base, owner, name string, notFound error) error {
+	return fmt.Errorf("%w: %s.%s: its versions are not published at %s: %w",
+		helpers.ErrRoleVersionNotFound, owner, name, helpers.URLForMessage(base), notFound)
 }
 
 // qualifiedRef spells the chosen version as the one ref it means: a listed

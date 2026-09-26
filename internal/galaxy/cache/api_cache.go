@@ -147,15 +147,23 @@ func fetchAndStore(
 	return nil
 }
 
-// decodeMetadata unmarshals body into out. A body that is no JSON at all is a
-// *notJSONError naming url's display form, marked as a web page when it is
-// markup, the one shape IsWebPage lets a server walk skip.
+// decodeMetadata unmarshals body into out. No JSON at all is a *notJSONError, a
+// web page when it is markup (the one shape IsWebPage lets a walk skip); JSON that
+// does not fit out is helpers.ErrMetadataMalformed. Both name url's display form.
 func decodeMetadata(url string, body []byte, out any) error {
 	err := json.Unmarshal(body, out)
+	if err == nil {
+		return nil
+	}
 	if _, ok := errors.AsType[*json.SyntaxError](err); ok {
 		return &notJSONError{err: err, url: helpers.URLForMessage(url), webPage: isMarkup(body)}
 	}
-	return err
+	// A value of the wrong type, or a timestamp time.Time refuses; only a
+	// non-pointer out, the caller's defect and not the document's, stays bare.
+	if _, ok := errors.AsType[*json.InvalidUnmarshalError](err); ok {
+		return err
+	}
+	return fmt.Errorf("%w: %s: %w", helpers.ErrMetadataMalformed, helpers.URLForMessage(url), err)
 }
 
 // isMarkup reports whether body's first byte past JSON whitespace is '<',
@@ -193,7 +201,7 @@ func refreshAPICacheEntry(entry store.APICacheEntry, etag, lastModified string) 
 
 // fetchJSONBody fetches JSON bytes and validators for url, retrying transient
 // failures with fresh conditional headers. One budget, set here by the owner of
-// the request, covers every attempt and backoff; a 304 is success, not retried.
+// the request, covers every attempt and backoff; a revalidation's 304 is success.
 func fetchJSONBody(
 	ctx context.Context,
 	client *http.Client,
@@ -294,7 +302,9 @@ func fetchJSONBodyOnce(
 		_ = resp.Body.Close()
 	}()
 
-	if resp.StatusCode == http.StatusNotModified {
+	// A 304 answers only a revalidation; to a request with no cached copy behind
+	// it, it is a status like any other, not an empty document.
+	if resp.StatusCode == http.StatusNotModified && entry != nil {
 		return nil, resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"), true, nil
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -317,7 +327,9 @@ func fetchJSONBodyOnce(
 	return body, resp.Header.Get("ETag"), resp.Header.Get("Last-Modified"), false, nil
 }
 
-// HTTPStatusError describes a non-200 HTTP response.
+// HTTPStatusError is a Galaxy metadata answer other than 200 or a revalidation's
+// 304. Its exit class rides on Unwrap (see StatusClass), so a caller routes a
+// 404 by Code and wraps no class sentinel around any status itself.
 type HTTPStatusError struct {
 	// URL is the fetched URL with its userinfo and query already cut by
 	// fetchJSONBodyOnce, the only production constructor.
@@ -326,12 +338,37 @@ type HTTPStatusError struct {
 	Code   int
 }
 
-// Error implements the error interface.
+// Error renders the status and URL, led by the status's class when it has one,
+// so a message carries that sentinel's text exactly once.
 func (e *HTTPStatusError) Error() string {
+	msg := "failed to fetch metadata: " + e.Status
 	if e.URL != "" {
-		return fmt.Sprintf("failed to fetch metadata: %s (%s)", e.Status, e.URL)
+		msg += " (" + e.URL + ")"
 	}
-	return "failed to fetch metadata: " + e.Status
+	if class := StatusClass(e.Code); class != nil {
+		return class.Error() + ": " + msg
+	}
+	return msg
+}
+
+// Unwrap exposes StatusClass(e.Code), so a status classifies wherever it
+// surfaces; a 404 unwraps to nothing, leaving its meaning to the caller.
+func (e *HTTPStatusError) Unwrap() error {
+	return StatusClass(e.Code)
+}
+
+// StatusClass is the class of a Galaxy metadata status: none for a 404, which
+// each caller reads as the source lacking something, helpers.ErrGalaxyAuthFailed
+// for 401 and 403, and helpers.ErrGalaxyServerUnavailable for any other.
+func StatusClass(code int) error {
+	switch code {
+	case http.StatusNotFound:
+		return nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return helpers.ErrGalaxyAuthFailed
+	default:
+		return helpers.ErrGalaxyServerUnavailable
+	}
 }
 
 // notJSONError is a metadata body that is no JSON at all. It unwraps to

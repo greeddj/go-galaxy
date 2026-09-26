@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"syscall"
 	"testing"
 	"time"
 
+	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/solver"
 )
@@ -43,6 +45,21 @@ func transportFailure(cause error) error {
 func notJSONCause() error {
 	var out map[string]any
 	return json.Unmarshal([]byte("<!doctype html>"), &out)
+}
+
+// wrongShapeCause returns the *json.UnmarshalTypeError a document of the wrong
+// shape gives a decoder.
+func wrongShapeCause() error {
+	var out map[string]any
+	return json.Unmarshal([]byte("[]"), &out)
+}
+
+// metadataStatus builds the status error a Galaxy metadata GET answered with
+// code gives, as the solver wraps it mid-resolve.
+func metadataStatus(code int) error {
+	return fmt.Errorf("fetching dependencies of a.b@1.0.0: %w", &cacheManager.HTTPStatusError{
+		URL: "https://h/api/v3/collections/a/b/versions/1.0.0/", Status: fmt.Sprintf("%d %s", code, http.StatusText(code)), Code: code,
+	})
 }
 
 // exitCase is one FromError classification expectation.
@@ -176,6 +193,30 @@ var fromErrorCases = []exitCase{
 		name: "galaxy server answers only web pages",
 		err: fmt.Errorf("failed to load root metadata: server a answers a web page at every API root: %w",
 			fmt.Errorf("%w: %s: %w", helpers.ErrMetadataNotJSON, "https://h/api/v3/collections/ns/x/", notJSONCause())),
+		wantCode: ExitNetwork,
+	},
+	{
+		// Any metadata document, not only an API root: the status error
+		// carries its class itself, so no producer has to wrap it.
+		name:     "galaxy metadata status 401",
+		err:      metadataStatus(http.StatusUnauthorized),
+		wantCode: ExitNetwork,
+	},
+	{
+		name:     "galaxy metadata status 500",
+		err:      metadataStatus(http.StatusInternalServerError),
+		wantCode: ExitNetwork,
+	},
+	{
+		// A 404 carries no class: each producer says what it means there,
+		// so one that reaches here bare is a producer's gap, exit 1.
+		name:     "galaxy metadata status 404, bare",
+		err:      metadataStatus(http.StatusNotFound),
+		wantCode: ExitError,
+	},
+	{
+		name:     "galaxy metadata of the wrong shape",
+		err:      fmt.Errorf("%w: %s: %w", helpers.ErrMetadataMalformed, "https://h/api/v3/collections/a/b/", wrongShapeCause()),
 		wantCode: ExitNetwork,
 	},
 	{

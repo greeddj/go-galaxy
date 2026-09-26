@@ -221,6 +221,9 @@ func TestUnexpectedRootStatusExitsNetwork(t *testing.T) {
 			if got := exitcode.FromError(err); got != exitcode.ExitNetwork {
 				t.Fatalf("exitcode.FromError(err) = %d, want ExitNetwork (%d): %v", got, exitcode.ExitNetwork, err)
 			}
+			if msg := err.Error(); strings.Count(msg, helpers.ErrGalaxyServerUnavailable.Error()) != 1 || !strings.Contains(msg, "server a:") {
+				t.Errorf("err = %q, want server a named and the class named once", msg)
+			}
 			if got := srvB.Total(); got != 0 {
 				t.Fatalf("srvB.Total() = %d, want 0 (only a 404 routes around a server)", got)
 			}

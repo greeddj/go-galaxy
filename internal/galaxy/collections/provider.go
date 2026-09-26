@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 
 	"github.com/Masterminds/semver/v3"
@@ -135,7 +134,7 @@ func (p *MetadataProvider) Universe(ctx context.Context, fqdn string) ([]solver.
 	}
 	raw, err := loadVersionsListCached(ctx, p.deps, versionsURL, policy)
 	if err != nil {
-		return nil, err
+		return nil, notPublishedError(err, fqdn, "")
 	}
 	return buildSolverUniverse(raw), nil
 }
@@ -160,7 +159,7 @@ func (p *MetadataProvider) Dependencies(ctx context.Context, fqdn string, v solv
 
 	base, err := p.boundBaseFor(ctx, col, fqdn, policy)
 	if err != nil {
-		return nil, err
+		return nil, notPublishedError(err, fqdn, v.Original())
 	}
 	cacheKey := helpers.ScopedDepsCacheKey(base, fmt.Sprintf("%s.%s@%s", ns, name, v.Original()))
 
@@ -170,12 +169,12 @@ func (p *MetadataProvider) Dependencies(ctx context.Context, fqdn string, v solv
 
 	root, err := resolveRootMetadata(ctx, p.deps, col, policy, fqdn)
 	if err != nil {
-		return nil, err
+		return nil, notPublishedError(err, fqdn, v.Original())
 	}
 	p.recordBinding(fqdn, root.base)
 	info, err := fetchVersionMetadataCached(ctx, p.deps, root.base, root.versionsURL, v.Original(), policy)
 	if err != nil {
-		return nil, err
+		return nil, notPublishedError(err, fqdn, v.Original())
 	}
 	raw, err := parseDependencies(extractDependencies(info))
 	if err != nil {
@@ -245,11 +244,21 @@ func (p *MetadataProvider) resolveRoot(
 // exist: the last 404 of an all-404 candidate walk, or ErrLoadMetadataFailed
 // from an empty candidate list. Anything else must abort the solve.
 func isUnknownPackageError(err error) bool {
-	if errors.Is(err, helpers.ErrLoadMetadataFailed) {
-		return true
+	return errors.Is(err, helpers.ErrLoadMetadataFailed) || isNotFoundStatus(err)
+}
+
+// notPublishedError reads an unknown-package answer where fqdn must exist (a pin,
+// or a document its server named) as the source lacking it, at version if set:
+// helpers.ErrNoSemverCandidates, exit 3, where a bare 404 claims no class.
+func notPublishedError(err error, fqdn, version string) error {
+	if !isUnknownPackageError(err) {
+		return err
 	}
-	statusErr, ok := errors.AsType[*cacheManager.HTTPStatusError](err)
-	return ok && statusErr.Code == http.StatusNotFound
+	what := fqdn
+	if version != "" {
+		what += " " + version
+	}
+	return fmt.Errorf("%w: %s is not published at its server: %w", helpers.ErrNoSemverCandidates, what, err)
 }
 
 // splitFQDN validates fqdn as "namespace.name", wrapping

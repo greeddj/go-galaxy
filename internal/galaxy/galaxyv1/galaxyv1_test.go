@@ -161,6 +161,7 @@ func TestLookupRoleClassifiesAnswers(t *testing.T) {
 	}{
 		{name: "no v1 anywhere", status: http.StatusNotFound, wantErr: helpers.ErrGalaxyRoleAPIUnavailable},
 		{name: "auth", status: http.StatusUnauthorized, wantErr: helpers.ErrGalaxyAuthFailed},
+		{name: "forbidden", status: http.StatusForbidden, wantErr: helpers.ErrGalaxyAuthFailed},
 		{name: "unavailable", status: http.StatusBadGateway, wantErr: helpers.ErrGalaxyServerUnavailable},
 		{name: "bad request", status: http.StatusBadRequest, wantErr: helpers.ErrGalaxyServerUnavailable},
 		{name: "not implemented", status: http.StatusNotImplemented, wantErr: helpers.ErrGalaxyServerUnavailable},
@@ -179,6 +180,9 @@ func TestLookupRoleClassifiesAnswers(t *testing.T) {
 			_, found, err := LookupRole(context.Background(), f.fetch, testBase, "geerlingguy", "docker", cacheManager.Policy{})
 			if !errors.Is(err, tt.wantErr) || found {
 				t.Fatalf("found=%t err=%v, want %v", found, err, tt.wantErr)
+			}
+			if tt.status != 0 && strings.Count(err.Error(), tt.wantErr.Error()) != 1 {
+				t.Errorf("%q does not name %q exactly once", err.Error(), tt.wantErr.Error())
 			}
 		})
 	}

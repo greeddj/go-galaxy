@@ -319,13 +319,14 @@ func isMetadataFetchError(err error) bool {
 }
 
 // isMetadataDocumentError is the half of isMetadataFetchError about a document
-// that arrived but cannot be used: nil, not JSON, or a versions payload that is
-// empty, unsupported or pages past its cap.
+// that arrived but cannot be used: nil, not JSON, JSON of the wrong shape, or a
+// versions payload that is empty, unsupported or pages past its cap.
 func isMetadataDocumentError(err error) bool {
 	return errors.Is(err, helpers.ErrMetadataIsNil) ||
 		// A skipped API-root web page never reaches here; a version document, a
 		// versions page, a truncated body or a server of web pages alone does.
 		errors.Is(err, helpers.ErrMetadataNotJSON) ||
+		errors.Is(err, helpers.ErrMetadataMalformed) ||
 		errors.Is(err, helpers.ErrVersionsPayloadEmpty) ||
 		errors.Is(err, helpers.ErrVersionsPayloadUnsupported) ||
 		errors.Is(err, helpers.ErrVersionsPagingExceeded)

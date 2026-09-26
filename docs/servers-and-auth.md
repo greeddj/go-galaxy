@@ -115,11 +115,17 @@ flowchart TD
 ```
 
 Any other answer exits [`4`](exit-codes.md): a 401 or 403, any other status
-(a 429, 500, 502, 503 or 504 only after the retries), or a refused connection,
-DNS or TLS failure. A web page at an API root, as galaxy.ansible.com serves
-under `/v3`, is passed over, but a server with web pages at every API root,
-like a single sign-on front, stops the run too. A configuration mistake exits
-`2` before any request: fix it.
+(a 429, 500, 502, 503 or 504 only after the retries), a document of the wrong
+shape, or a refused connection, DNS or TLS failure. A web page at an API root,
+as galaxy.ansible.com serves under `/v3`, is passed over, but a server with web
+pages at every API root, like a single sign-on front, stops the run too. A
+configuration mistake exits `2` before any request: fix it.
+
+While resolving or locking, every later request to the server that owns a
+collection (a versions page, a version document) fails the same way, except
+that a `404` there exits `3`: the server lacks the version or list asked for.
+At install, such a failure is [one item's](exit-codes.md#when-several-things-fail)
+and exits `5`.
 
 A [`source:`](requirements.md#collections) pins one collection to one server:
 an id, or a URL on a server's origin (scheme, host and port), with that
@@ -312,7 +318,9 @@ sequenceDiagram
 
 A Galaxy role walks the server list like a collection, skipping a server that
 has no v1 or does not list the role. No v1 on any server exits `2` (add
-galaxy.ansible.com); a role no v1 server knows exits `3`.
+galaxy.ansible.com); a role no v1 server knows exits `3`. The first server that
+lists the role owns it: a `404` for its versions exits `3`, an unusable record
+or page link `2`, any other failed answer `4`.
 
 A role takes no `source:` ([spelling](requirements.md#roles)), and a git role
 never asks a Galaxy server. A `GO_GALAXY_GIT_<ID>_URL` binding for

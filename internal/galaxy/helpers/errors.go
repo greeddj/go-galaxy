@@ -111,6 +111,10 @@ var (
 	// A server walk skips a web page at an API root but leaves the server only on
 	// a real 404, so web pages alone, like any other such answer, fail the run.
 	ErrMetadataNotJSON = errors.New("galaxy metadata response is not JSON")
+	// ErrMetadataMalformed indicates a Galaxy metadata response was JSON that does
+	// not fit its document: a string where an object belongs, a timestamp that does
+	// not parse. A walk aborts on it; only a 404 or an API root's web page is passed over.
+	ErrMetadataMalformed = errors.New("galaxy metadata response has the wrong shape")
 	// ErrConfigIsNil indicates a nil config was provided.
 	ErrConfigIsNil = errors.New("config is nil")
 	// ErrSHA256Mismatch indicates a checksum mismatch.
@@ -382,13 +386,13 @@ var (
 	ErrTokenTLSPolicyFromFile = errors.New(
 		"galaxy server certificate verification was disabled by a configuration file for a token it did not supply")
 
-	// ErrGalaxyAuthFailed indicates a server answered root metadata with 401 or 403.
-	// Fail-closed: unlike a 404 it aborts the run rather than falling through to a
-	// server that might answer anonymously.
+	// ErrGalaxyAuthFailed indicates a server answered a Galaxy metadata request with
+	// 401 or 403. Fail-closed: unlike a 404 it aborts the run rather than falling
+	// through to a server that might answer anonymously.
 	ErrGalaxyAuthFailed = errors.New("galaxy server authentication failed")
-	// ErrGalaxyServerUnavailable indicates a Galaxy metadata request failed in
-	// transport (connection, DNS, TLS, redirects), or an API root answered a status
-	// no rule routes around. It aborts the run: an outage is no evidence of absence.
+	// ErrGalaxyServerUnavailable means a metadata request failed in transport (DNS,
+	// TLS, connection, redirects) or got a status but 200, 401, 403, 404 or a
+	// revalidation's 304. It aborts the run: an outage is no evidence of absence.
 	ErrGalaxyServerUnavailable = errors.New("galaxy server unavailable")
 
 	// ErrCollectionsPathEscape names the component under cfg.DownloadPath that made
@@ -640,8 +644,9 @@ var (
 	// answered, and none knows the role. Resolution class, like a collection
 	// no server has.
 	ErrRoleNotFound = errors.New("role not found on any configured Galaxy server")
-	// ErrRoleVersionNotFound reports that the version asked for is not among
-	// the versions the Galaxy server lists for the role.
+	// ErrRoleVersionNotFound reports that the version asked for is not among the
+	// versions the Galaxy server lists for the role, or that the server which
+	// listed the role answers 404 for its versions.
 	ErrRoleVersionNotFound = errors.New("role version not found")
 	// ErrRoleVersionsIncomparable reports role version names that cannot be ordered
 	// (a numeric component against a textual one); ansible fails the same way, and

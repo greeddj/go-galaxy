@@ -8,8 +8,8 @@ code instead of parsing the log.
 | `0` | Success | - | - |
 | `1` | Generic failure: nothing below matched | After a fix | Read the error line |
 | `2` | Usage or configuration error: a bad flag, argument, input file, source or setting | After a fix | Fix what the error names |
-| `3` | Dependency resolution failure: conflicting constraints, or a version, git ref or role the source lacks | After a fix | [Relax a constraint](requirements.md#when-no-version-fits) |
-| `4` | Network or Galaxy API failure: an unreachable Galaxy server or cache backend, a timeout, stall or refusal, a failed `outdated` lookup | Yes, except `--offline` or refused credentials | Retry; check network and credentials |
+| `3` | Dependency resolution failure: conflicting constraints, or a collection, version, git ref or role the source lacks, such as a Galaxy `404` | After a fix | [Relax a constraint](requirements.md#when-no-version-fits) |
+| `4` | Network or Galaxy API failure: an unreachable Galaxy server or cache backend, a timeout, stall or refusal, any Galaxy status but `404`, a metadata document of the wrong shape, a failed `outdated` lookup | Yes, except `--offline` or refused credentials | Retry; check network and credentials |
 | `5` | Install-time failure: unsafe archive content, a foreign role directory, a failed item behind `installation failed` | By hand, for a network cause | Read the `Failed:` lines |
 | `6` | Lockfile error: missing, invalid, not matching the requirements, or out of date under `lock --check` | After a fix | Run [`go-galaxy lock`](lockfile.md#create-the-lockfile), commit it |
 | `7` | Artifact-integrity failure: bytes or a commit not matching their sha256 or pin | Never | Compare the source with the pin |
@@ -121,8 +121,11 @@ mismatch exits `7`, a network failure stays `5`.
 | `network read stalled`, `artifact download deadline exceeded`, `galaxy metadata fetch deadline exceeded`, `cache state object deadline exceeded` | `4` (`5` behind a headline) | A transfer stalled or a [fixed budget](cli.md#timeouts-and-fixed-limits) ran out; retry |
 | `offline mode is enabled, network access is forbidden` | `4` (`5` behind a headline) | Not cached: [warm the cache](caching.md#cache-flags) or drop `--offline` |
 | `cache backend cannot be used as configured` | `2` | A host-less S3 endpoint, a bucket without conditional writes, or [cache directory permissions](ci.md#container-image-bake) |
-| `galaxy server unavailable` | `4` | The server was unreachable (connection, DNS, TLS) or answered an unexpected status; retry, then check its URL |
-| `galaxy metadata response is not JSON`, `answers a web page at every API root` | `4` | The server answered a page, such as a login page; check its [URL](servers-and-auth.md#how-a-collection-picks-its-server) |
+| `galaxy server unavailable` | `4` (`5` behind a headline) | The server was unreachable (connection, DNS, TLS) or answered a metadata request with a status other than success, `401`, `403` or `404`; retry, then check its URL |
+| `galaxy server authentication failed` | `4` (`5` behind a headline) | The server answered a metadata request with `401` or `403`; check the [token](servers-and-auth.md#--token) |
+| `galaxy metadata response is not JSON`, `answers a web page at every API root` | `4` (`5` behind a headline) | The server answered a page, such as a login page; check its [URL](servers-and-auth.md#how-a-collection-picks-its-server) |
+| `galaxy metadata response has the wrong shape` | `4` (`5` behind a headline) | The server answered JSON that does not fit a Galaxy document, such as another API's or a timestamp that does not parse; check its [URL](servers-and-auth.md#how-a-collection-picks-its-server) |
+| `is not published at its server`, `its versions are not published at` | `3` | The server answered `404` for what it had listed or you pinned: a collection, a version, a found role's versions; pin a published one |
 | `cache backend unavailable` | `4` | The cache failed or did not answer; retry |
 | `another process holds the cache`, `another instance is running` | `8` | Another run holds the lock; wait for it |
 | `cache lock ownership was lost to another holder` | `8` | Another run took the lock mid-run |

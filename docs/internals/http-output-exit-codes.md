@@ -143,7 +143,10 @@ sentinel for a stall, a deadline or a lost lock renders its context cause with
 | `ErrResponseTooLarge` -> `ErrStateObjectTooLarge`, via `%v` | `internal/cache/s3` | would match exit 4 and 9 at once |
 | `ErrGitArtifactSelfCheck` cause as text | `collectionbuild`, `rolebuild` | a builder defect is not the remote's |
 | `net.Error` -> `ErrGalaxyServerUnavailable` | `cache.unreachableError`, skipped if the context ended or `isClassifiedFetchError` | a refused dial or DNS failure would exit 1 |
-| JSON syntax error -> `ErrMetadataNotJSON` | `cache.decodeMetadata` (`*notJSONError`) | same; exits 4 via `isMetadataDocumentError` |
+| `*cache.HTTPStatusError` (any status but 200 and a revalidation's 304) -> `ErrGalaxyAuthFailed` (401, 403), else `ErrGalaxyServerUnavailable`; a 404 to nothing | `HTTPStatusError.Unwrap`, by `cache.StatusClass` | a status on any metadata document would exit 1; `Error` leads with the class, so no caller wraps it |
+| A `404` -> `ErrNoSemverCandidates`, or `ErrRoleVersionNotFound` for a found role's versions | `collections.notPublishedError`, `galaxyv1.versionsGoneError` | a bare 404 exits 1, and the role's would read as a server without v1 |
+| JSON syntax error -> `ErrMetadataNotJSON` | `cache.decodeMetadata` (`*notJSONError`) | would exit 1; exits 4 via `isMetadataDocumentError` |
+| Any other decode error (`*json.UnmarshalTypeError`, a timestamp's `*time.ParseError`) -> `ErrMetadataMalformed`; a non-pointer target stays bare | `cache.decodeMetadata` | would exit 1; exits 4 via `isMetadataDocumentError` |
 
 The exit-code tests are closed tables and nothing enumerates `helpers`, so a
 new sentinel needs a predicate and a table row or it silently exits 1;

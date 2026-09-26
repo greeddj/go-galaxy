@@ -118,6 +118,7 @@ misclassified.
 | git and url pins | Answered from the discovery pin, never a Galaxy server |
 | `deps_cache` | Keyed per bound server (`helpers.ScopedDepsCacheKey`): two servers may publish different deps for one version |
 | Version list | 100 per page, `ErrVersionsPagingExceeded` past 100 requests, one `MetadataDeadline` for all pages |
+| A `404` the core cannot model | An exact pin's root, a versions page or a version document gone: `notPublishedError` returns `ErrNoSemverCandidates`, exit 3 |
 | `--no-deps` | `NewNoDepsProvider` answers no dependencies without asking |
 | Prewarm | `prewarmRootMetadata` makes the solve's own calls ahead, on `--workers` |
 

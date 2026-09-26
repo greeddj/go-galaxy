@@ -86,8 +86,8 @@ flowchart TD
   R7 -->|"merged graph valid"| R10
   R3 -->|"yes"| R8
   R8 --> R9["solveCollections over<br/>the server list"]
-  R9 -->|"conflict, no<br/>candidate, cycle"| RX3(["exit 3"])
-  R9 -->|"metadata unavailable,<br/>offline miss"| RX4(["exit 4"])
+  R9 -->|"conflict, cycle, no<br/>candidate or a 404"| RX3(["exit 3"])
+  R9 -->|"a status but 404, bad<br/>document, unreachable, offline miss"| RX4(["exit 4"])
   R9 -->|"metadata URL<br/>with userinfo"| RX5(["exit 5"])
   R9 --> R10["record the resolution<br/>in the snapshot"]
   R10 --> R11(["resolved set and graph"])
@@ -208,8 +208,8 @@ failure would. The snapshot saves only if one already existed. Details:
 | --- | --- | --- |
 | 1 | `openCollectionsRoot`, `openRolesRoot`; solver | empty path, OS error; an unparseable `requirements.yml` constraint |
 | 2 | `loadRoots`, `newVerifyContext`, `planCollections`, discovery | requirements, keyring or signature config; unsafe resolved name, inexact version, duplicate key; two roots for one collection; invalid pin; git `name:` absent; no v1 API |
-| 3 | solver, `planCollections`, discovery | conflict, no candidate, cycle, root unresolved, bad dependency key; unknown ref, role or version; url version mismatch |
-| 4 | resolution, discovery | metadata or Galaxy server unavailable, `--offline` miss, git or url transport |
+| 3 | solver, `planCollections`, discovery | conflict, no candidate (any `404` the solver meets included), cycle, root unresolved, bad dependency key; unknown ref, role or version, a found role's versions `404`; url version mismatch |
+| 4 | resolution, discovery | a Galaxy status but `404` (auth or unavailable), an unreachable server, a document not JSON or of the wrong shape (a bad timestamp included), `--offline` miss, git or url transport |
 | 5 | `openCollectionsRoot`; solver; discovery | symlinked `ansible_collections`; a metadata URL with userinfo; a git tree or url tarball that is no artifact |
 | 7 | discovery | a git remote that did not ship the advertised commit intact |
 | 5, 7, 10 | `installError` | failed items behind `ErrInstallationFailed`; 7 or 10 when a cause is one |

@@ -165,7 +165,7 @@ caches `~/.cache/go-galaxy` under a key that includes
 | :-- | :-- | :-- |
 | `2` | A missing or invalid requirements file, flag or setting | [Requirements files](requirements.md), [Configuration](configuration.md) |
 | `3` | No version fits the constraints, or a collection, role, version or ref does not exist | [When no version fits](requirements.md#when-no-version-fits) |
-| `4` | A server is unavailable, times out, or rejects the credentials | [Servers and credentials](servers-and-auth.md) |
+| `4` | A server is unavailable, times out, answers an error, or rejects the credentials | [Servers and credentials](servers-and-auth.md) |
 | `6` | `galaxy.lock` is missing, invalid, or does not cover a requirement | [Lockfile](lockfile.md) |
 | Any other | See the full table | [Exit codes](exit-codes.md) |
 
