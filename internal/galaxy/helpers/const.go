@@ -55,6 +55,10 @@ const (
 	// bounds what the manifest chain scan RETAINS until the stream ends, which
 	// archive/tar alone would let reach gigabytes; 1024 is darwin's PATH_MAX.
 	ArchiveMaxEntryNameLen = 1024
+	// ArchiveLinkMaxHops bounds the links one archive entry passes through: the
+	// cycle guard, above 1 since Python's tarfile follows a link to a link. Both
+	// treearchive's writer and manifest's chain check hold a chain to it.
+	ArchiveLinkMaxHops = 8
 	// ArchiveProbeMaxBytes caps the decompressed bytes archive.ProbeTarGz reads
 	// before ErrArtifactTarHeaderNotFound. It must clear 4,196,352, what archive/tar
 	// may read before its first header; re-derive it whenever archive/tar changes.

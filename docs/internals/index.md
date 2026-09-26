@@ -148,7 +148,6 @@ ones carry hyphens, capitals and leading digits.
 | return from `gzipstream` without storing the error | the next read blocks in pgzip, which has no context |
 | hand `gzipstream`'s `Reset` another reader than its `*bufio.Reader` | pgzip rebuffers and drops bytes past the member boundary |
 | move `gzipstream`'s context check to the decompressed side | a member of empty stored blocks consumes input unchecked |
-| change `treearchive`'s `linkMaxHops` alone | must equal `manifest`'s `chainMaxLinkHops`; no test pins the pair |
 
 ## One run
 

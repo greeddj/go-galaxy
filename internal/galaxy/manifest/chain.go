@@ -23,10 +23,6 @@ const (
 	// file it digests, so an archive of any size costs one buffer rather than
 	// one per entry.
 	chainHashBufSize = 64 << 10
-	// chainMaxLinkHops bounds how far a listed name is followed through link
-	// entries. Python's tarfile resolves a link to a link, so refusing the second
-	// hop would reject archives it reads; the bound is also the cycle guard.
-	chainMaxLinkHops = 8
 	// filesEntryTypeFile is the ftype FILES.json gives a row whose digest
 	// describes file content. Every other ftype - "dir", most commonly - is
 	// recorded as listed and not digested.
@@ -681,9 +677,9 @@ func verifyListedFile(scan *archiveScan, key string, row *filesEntry) error {
 }
 
 // resolveEntryDigest returns the digest of what key names, following link
-// entries up to chainMaxLinkHops until it reaches a regular file.
+// entries up to helpers.ArchiveLinkMaxHops until it reaches a regular file.
 func resolveEntryDigest(scan *archiveScan, key string) ([32]byte, error) {
-	for hop := 0; hop <= chainMaxLinkHops; hop++ {
+	for hop := 0; hop <= helpers.ArchiveLinkMaxHops; hop++ {
 		if sum, ok := scan.hashes[key]; ok {
 			return sum, nil
 		}
@@ -697,7 +693,7 @@ func resolveEntryDigest(scan *archiveScan, key string) ([32]byte, error) {
 		key = target
 	}
 	return [32]byte{}, fmt.Errorf("%w: %q resolves through more than %d links",
-		helpers.ErrManifestChainMismatch, key, chainMaxLinkHops)
+		helpers.ErrManifestChainMismatch, key, helpers.ArchiveLinkMaxHops)
 }
 
 // checkUnlisted requires every retained entry to appear in FILES.json, since

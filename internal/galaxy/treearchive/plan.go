@@ -15,11 +15,6 @@ import (
 )
 
 const (
-	// linkMaxHops bounds the symlinks one target may pass through before it
-	// is refused as a loop; it must equal manifest's chainMaxLinkHops, or a
-	// written artifact could carry a chain that check refuses.
-	linkMaxHops = 8
-
 	modeFile    = 0o644
 	modeExec    = 0o755
 	modeDir     = 0o755
@@ -341,7 +336,7 @@ type linkState struct {
 }
 
 // resolveLink follows the link at rel to the real entry it names, through
-// directory symlinks on the way and symlinks at the end, up to linkMaxHops.
+// directory symlinks on the way and symlinks at the end, up to helpers.ArchiveLinkMaxHops.
 func (p *Plan) resolveLink(rel string, e Entry) (linkResult, error) {
 	target, err := p.readLinkTarget(rel, e)
 	if err != nil {
@@ -396,9 +391,9 @@ func (p *Plan) followComponents(rel, resolved string, st *linkState) (linkResult
 // components not yet walked along behind its target.
 func (p *Plan) hop(rel, prefix string, entry Entry, rest string, st *linkState) error {
 	st.hops++
-	if st.hops > linkMaxHops {
+	if st.hops > helpers.ArchiveLinkMaxHops {
 		return fmt.Errorf("%w: %s resolves through more than %d links",
-			helpers.ErrGitSymlinkUnresolvable, p.display(rel), linkMaxHops)
+			helpers.ErrGitSymlinkUnresolvable, p.display(rel), helpers.ArchiveLinkMaxHops)
 	}
 	next, err := p.readLinkTarget(prefix, entry)
 	if err != nil {

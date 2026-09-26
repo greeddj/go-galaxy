@@ -1149,8 +1149,8 @@ func TestVerifyChainResolvesLinkChainWithinTheHopBound(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "two hops", entries: linkChainEntries(2)},
-		{name: "at the hop bound", entries: linkChainEntries(chainMaxLinkHops)},
-		{name: "one hop past the bound", entries: linkChainEntries(chainMaxLinkHops + 1), wantErr: true},
+		{name: "at the hop bound", entries: linkChainEntries(helpers.ArchiveLinkMaxHops)},
+		{name: "one hop past the bound", entries: linkChainEntries(helpers.ArchiveLinkMaxHops + 1), wantErr: true},
 		{name: "cycle", entries: linkCycleEntries(), wantErr: true},
 	}
 	for _, tc := range cases {
