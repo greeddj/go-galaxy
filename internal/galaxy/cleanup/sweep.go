@@ -76,7 +76,7 @@ func reportLegacyArtifactSweepCandidate(ctx context.Context, runtime *infra.Infr
 	}
 	// No %q needed: url.QueryEscape percent-encodes control bytes, unlike the
 	// raw directory names reportExtractedSweepPlan prints.
-	runtime.Output.Printf("Would sweep legacy artifact %s", key)
+	runtime.Output.PersistentPrintf("Would sweep legacy artifact %s", key)
 }
 
 // sweepExtractedStore drops extracted entries that no kept installed, role or
@@ -153,6 +153,6 @@ func reportExtractedSweepPlan(runtime *infra.Infra, extractedStore *extracted.St
 	for _, name := range plan {
 		// name comes from a raw directory listing nothing validated, so a local
 		// writer controls it; hence %q.
-		runtime.Output.Printf("Would sweep extracted %q", name)
+		runtime.Output.PersistentPrintf("Would sweep extracted %q", name)
 	}
 }

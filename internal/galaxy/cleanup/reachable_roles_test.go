@@ -131,5 +131,8 @@ func checkUnreadRolesCase(t *testing.T, tc unreadRolesCase) {
 		if _, err := os.Stat(filepath.Join(base, rel)); !os.IsNotExist(err) {
 			t.Fatalf("expected unreachable role %s to be removed, stat error: %v", rel, err)
 		}
+		if want := "Removed role " + filepath.Base(rel); !printer.hasResultContaining(want) {
+			t.Fatalf("expected %q as a result, got %q", want, printer.results)
+		}
 	}
 }

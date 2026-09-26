@@ -51,6 +51,7 @@ type recordingPrinter struct {
 
 	warnings []string
 	prints   []string
+	results  []string
 	errs     []string
 	mu       sync.Mutex
 }
@@ -65,6 +66,13 @@ func (p *recordingPrinter) Printf(format string, args ...any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.prints = append(p.prints, fmt.Sprintf(format, args...))
+}
+
+// PersistentPrintf records a result line, the tier --quiet keeps.
+func (p *recordingPrinter) PersistentPrintf(format string, args ...any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.results = append(p.results, fmt.Sprintf(format, args...))
 }
 
 func (p *recordingPrinter) Errorf(format string, args ...any) {
@@ -85,11 +93,12 @@ func (p *recordingPrinter) hasWarningContaining(substr string) bool {
 	return false
 }
 
-// hasPrintContaining reports whether any recorded Printf line contains substr.
-func (p *recordingPrinter) hasPrintContaining(substr string) bool {
+// hasResultContaining reports whether any recorded PersistentPrintf line
+// contains substr; a report line sent through Printf is not found.
+func (p *recordingPrinter) hasResultContaining(substr string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, line := range p.prints {
+	for _, line := range p.results {
 		if strings.Contains(line, substr) {
 			return true
 		}
@@ -513,7 +522,7 @@ func TestRemoveUnusedCannotForgeAReportLine(t *testing.T) {
 
 	// Checked first: a raw newline in any recorded line is the forged-line
 	// defect itself, reported before its downstream symptoms.
-	for _, line := range append(append([]string{}, printer.warnings...), printer.prints...) {
+	for _, line := range append(append(append([]string{}, printer.warnings...), printer.prints...), printer.results...) {
 		if strings.Contains(line, "\n") {
 			t.Fatalf("recorded output line contains a raw newline, forged-line defect is not closed: %q", line)
 		}
@@ -537,8 +546,8 @@ func TestRemoveUnusedCannotForgeAReportLine(t *testing.T) {
 	if _, err := os.Stat(ordinaryManifest); !os.IsNotExist(err) {
 		t.Fatalf("expected the ordinary, unreferenced collection to be removed, stat error: %v", err)
 	}
-	if !printer.hasPrintContaining("Removed ns.ordinary@1.0.0") {
-		t.Fatalf("expected a removal report line for ns.ordinary@1.0.0, got prints: %v", printer.prints)
+	if !printer.hasResultContaining("Removed ns.ordinary@1.0.0") {
+		t.Fatalf("expected a removal report line for ns.ordinary@1.0.0, got results: %v", printer.results)
 	}
 }
 
@@ -1586,14 +1595,14 @@ func TestDryRunReportsExtractedSweep(t *testing.T) {
 	// Secondary assertion: the report accurately reflects what a real run
 	// would sweep - both the unreachable key's SHA and the true orphan, but
 	// not the reachable, kept key's SHA.
-	if !printer.hasPrintContaining("sha-would-remove") {
-		t.Fatalf("expected a would-sweep report for sha-would-remove, got prints: %v", printer.prints)
+	if !printer.hasResultContaining("sha-would-remove") {
+		t.Fatalf("expected a would-sweep report for sha-would-remove, got results: %v", printer.results)
 	}
-	if !printer.hasPrintContaining("sha-orphan") {
-		t.Fatalf("expected a would-sweep report for sha-orphan, got prints: %v", printer.prints)
+	if !printer.hasResultContaining("sha-orphan") {
+		t.Fatalf("expected a would-sweep report for sha-orphan, got results: %v", printer.results)
 	}
-	if printer.hasPrintContaining("sha-keep") {
-		t.Fatalf("expected no would-sweep report for the reachable, kept sha-keep, got prints: %v", printer.prints)
+	if printer.hasResultContaining("sha-keep") {
+		t.Fatalf("expected no would-sweep report for the reachable, kept sha-keep, got results: %v", printer.results)
 	}
 }
 
@@ -1625,11 +1634,11 @@ func TestDryRunReportsExtractedSweepExcludesWarmedSha(t *testing.T) {
 
 	// Secondary assertion: the report never names a warmed, kept sha, but
 	// still names the true orphan.
-	if printer.hasPrintContaining("sha-warmed") {
-		t.Fatalf("expected no would-sweep report for the warmed sha-warmed, got prints: %v", printer.prints)
+	if printer.hasResultContaining("sha-warmed") {
+		t.Fatalf("expected no would-sweep report for the warmed sha-warmed, got results: %v", printer.results)
 	}
-	if !printer.hasPrintContaining("sha-orphan") {
-		t.Fatalf("expected a would-sweep report for sha-orphan, got prints: %v", printer.prints)
+	if !printer.hasResultContaining("sha-orphan") {
+		t.Fatalf("expected a would-sweep report for sha-orphan, got results: %v", printer.results)
 	}
 }
 
@@ -1666,12 +1675,12 @@ func TestDryRunReportsLegacyArtifactSweep(t *testing.T) {
 		t.Fatalf("expected dry-run to delete nothing, but the legacy artifact is gone: %v", err)
 	}
 	legacyKey := legacyArtifactKey("ns", "name", "1.0.0")
-	if !printer.hasPrintContaining(legacyKey) {
-		t.Fatalf("expected a would-sweep report naming the legacy key %q, got prints: %v", legacyKey, printer.prints)
+	if !printer.hasResultContaining(legacyKey) {
+		t.Fatalf("expected a would-sweep report naming the legacy key %q, got results: %v", legacyKey, printer.results)
 	}
 	otherLegacyKey := legacyArtifactKey("ns", "other", "1.0.0")
-	if printer.hasPrintContaining(otherLegacyKey) {
-		t.Fatalf("expected no would-sweep report for ns.other's own legacy key %q, got prints: %v", otherLegacyKey, printer.prints)
+	if printer.hasResultContaining(otherLegacyKey) {
+		t.Fatalf("expected no would-sweep report for ns.other's own legacy key %q, got results: %v", otherLegacyKey, printer.results)
 	}
 }
 
@@ -2373,8 +2382,8 @@ func TestDryRunReportsNoCandidatesFromEscapingWorkspace(t *testing.T) {
 		t.Fatalf("expected dry-run Start to finish despite the escaping workspace, got %v", err)
 	}
 	// A candidate here would preview a removal no real run could perform.
-	if printer.hasPrintContaining("would remove outside.coll@1.0.0") {
-		t.Fatalf("expected no dry-run candidate for a collection outside the collections tree, got prints: %v", printer.prints)
+	if printer.hasResultContaining("Would remove outside.coll@1.0.0") {
+		t.Fatalf("expected no dry-run candidate for a collection outside the collections tree, got results: %v", printer.results)
 	}
 	// The skip warning must name the project.
 	if !printer.hasWarningContaining(`skipping project "escaping-project"`) {
@@ -2574,8 +2583,8 @@ func TestScanSkipsSymlinkedNameEntry(t *testing.T) {
 		}
 		// Without the name-level IsDir guard the symlink would be unlinked and
 		// reported removed; the no-op printer could not see that line.
-		if printer.hasPrintContaining("removed ns.name@1.0.0") {
-			t.Fatalf("expected the symlinked name entry not to be reported as removed, got prints: %v", printer.prints)
+		if printer.hasResultContaining("Removed ns.name@1.0.0") {
+			t.Fatalf("expected the symlinked name entry not to be reported as removed, got results: %v", printer.results)
 		}
 		// The entry itself must survive, not only go unreported.
 		if _, statErr := os.Lstat(entryPath); statErr != nil {
@@ -3073,8 +3082,8 @@ func TestDryRunReportsNoExtractedSweepWithNoPersistedSnapshot(t *testing.T) {
 		t.Fatalf("expected dry-run Start to succeed, got %v", err)
 	}
 
-	if printer.hasPrintContaining("would sweep extracted") {
-		t.Fatalf("expected no would-sweep-extracted report with no persisted snapshot, got prints: %v", printer.prints)
+	if printer.hasResultContaining("Would sweep extracted") {
+		t.Fatalf("expected no would-sweep-extracted report with no persisted snapshot, got results: %v", printer.results)
 	}
 	assertExtractedDirsSurvive(t, cacheDir, "sha-orphaned-by-no-snapshot")
 }

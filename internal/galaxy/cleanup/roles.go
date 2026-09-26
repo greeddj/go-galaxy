@@ -222,7 +222,7 @@ func removeUnusedRoles(
 		}
 		removed++
 		if cfg.DryRun {
-			runtime.Output.Printf("Would remove role %s", name)
+			runtime.Output.PersistentPrintf("Would remove role %s", name)
 			continue
 		}
 		for _, inst := range byName[name] {
@@ -230,7 +230,7 @@ func removeUnusedRoles(
 				return removed, err
 			}
 		}
-		runtime.Output.Printf("Removed role %s", name)
+		runtime.Output.PersistentPrintf("Removed role %s", name)
 		if st != nil {
 			st.DeleteInstalledRole(name)
 		}

@@ -77,7 +77,7 @@ func runCleanup(ctx context.Context, cfg *config.Config, runtime *infra.Infra) e
 // lock and the backend, so this never releases or closes them.
 func cleanupWithState(ctx context.Context, cfg *config.Config, runtime *infra.Infra, state *cleanupState) error {
 	if state.registry == nil || len(state.registry.Projects) == 0 {
-		runtime.Output.Printf("No projects recorded for GC.")
+		runtime.Output.PersistentPrintf("No projects recorded for GC.")
 		return nil
 	}
 	warnIfSnapshotNotPersisted(runtime, state.store)

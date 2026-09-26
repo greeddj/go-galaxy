@@ -42,7 +42,7 @@ func removeUnused(
 		// Every part of key passed helpers.IsPathElement, which rejects unsafe
 		// runes, so key prints with a bare %s and keeps its greppable shape.
 		if cfg.DryRun {
-			runtime.Output.Printf("Would remove %s", key)
+			runtime.Output.PersistentPrintf("Would remove %s", key)
 			continue
 		}
 		// Only the persisted InstalledEntry records the server the scoped
@@ -55,7 +55,7 @@ func removeUnused(
 				return removed, err
 			}
 		}
-		runtime.Output.Printf("Removed %s", key)
+		runtime.Output.PersistentPrintf("Removed %s", key)
 		if st != nil {
 			st.DeleteInstalled(key)
 			st.DeleteGraph(key)
