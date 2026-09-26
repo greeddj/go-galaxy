@@ -85,7 +85,7 @@ no plan documents, no phase numbers, no task identifiers. Somebody reading
 **Subject in the imperative, lower case after the colon, no trailing period.**
 Wrap the body at 72 columns or so.
 
-**A change someone must act on gets a row in `docs/upgrading.md`.** A `!`
+**A change someone must act on gets a row in `docs/reference/upgrading.md`.** A `!`
 subject, a new lockfile or snapshot schema, a renamed flag or variable: add
 its row to the newest "From" section in the same commit. No other page tells
 release history, so a change without its row reaches users only through the

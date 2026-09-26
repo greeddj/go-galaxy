@@ -6,7 +6,7 @@ the differences below, measured against ansible-core 2.21.2.
 | Surface | go-galaxy |
 | --- | --- |
 | `requirements.yml`, `collections:` and `roles:` | Read the same, except as below |
-| `ansible.cfg` paths, servers, `server_timeout` and `cache_dir`, their `ANSIBLE_*` variables, and `ANSIBLE_GALAXY_*` signature variables | Read the same, except as below ([every key](configuration.md#what-go-galaxy-reads)) |
+| `ansible.cfg` paths, servers, `server_timeout` and `cache_dir`, their `ANSIBLE_*` variables, and `ANSIBLE_GALAXY_*` signature variables | Read the same, except as below ([every key](../reference/configuration.md#what-go-galaxy-reads)) |
 | `ansible.cfg` `[galaxy]` signature keys | Named in a warning, never read |
 | `~/.ansible/galaxy_token`, `[galaxy] token_path` | Not read |
 | `galaxy.toml` | go-galaxy only |
@@ -21,7 +21,7 @@ the differences below, measured against ansible-core 2.21.2.
 > - Your token is [refused](#servers-and-tokens) beside a file-chosen server
 >   URL or relaxed TLS
 > - `~/.ansible/galaxy_token` is not read, so a private hub fails with
->   [`4`](exit-codes.md) ([pass a token](servers-and-auth.md#--token))
+>   [`4`](../reference/exit-codes.md) ([pass a token](../guides/servers-and-auth.md#--token))
 > - [Exit codes](#exit-codes-are-not-ansibles) mean other things
 > - [Installed files](#installed-files-are-read-only) are read-only
 > - [Unsupported sources](#sources) and [flags](#command-and-flag-cheat-sheet)
@@ -38,10 +38,10 @@ the differences below, measured against ansible-core 2.21.2.
 | `-s`, `--api-key`, `-n` | `--server`, `--token`, `--no-deps` |
 | `-U`, `--force`, `--force-with-deps` | None: the resolve decides; `--refresh` asks the servers again |
 | `--pre` | None: an exact pin or a `>=X.Y.Z-0` floor ([Prereleases](#prereleases)) |
-| `-c`, `--ignore-certs`, `[galaxy] ignore_certs`, `ANSIBLE_GALAXY_IGNORE` | None: trust the CA with `SSL_CERT_FILE`, or set a server's [`validate_certs`](servers-and-auth.md#tls-validate_certs) |
+| `-c`, `--ignore-certs`, `[galaxy] ignore_certs`, `ANSIBLE_GALAXY_IGNORE` | None: trust the CA with `SSL_CERT_FILE`, or set a server's [`validate_certs`](../guides/servers-and-auth.md#tls-validate_certs) |
 | `--ignore-signature-status-codes A B` | `--ignore-signature-status-code`, once per code |
 | `-i`, `--ignore-errors`, `--clear-response-cache` | None; each exits `2` |
-| `role list`, `remove`, `init`, `search` | None; [`cleanup`](cli.md#cleanup-options) removes roles no project reaches |
+| `role list`, `remove`, `init`, `search` | None; [`cleanup`](../reference/cli.md#cleanup-options) removes roles no project reaches |
 
 ### Exit codes are not ansible's
 
@@ -53,9 +53,9 @@ the differences below, measured against ansible-core 2.21.2.
 | `5` | Options error | Install-time failure |
 | `99` | Interrupted | Not used |
 | `250` | Unexpected error | Not used |
-| `129`, `130`, `143` | Not used | [Interrupted](exit-codes.md#signals) by SIGHUP, SIGINT or SIGTERM |
+| `129`, `130`, `143` | Not used | [Interrupted](../reference/exit-codes.md#signals) by SIGHUP, SIGINT or SIGTERM |
 
-Codes `3` and `6` to `10` are in [Exit codes](exit-codes.md).
+Codes `3` and `6` to `10` are in [Exit codes](../reference/exit-codes.md).
 
 ## Deliberate differences
 
@@ -63,9 +63,9 @@ Codes `3` and `6` to `10` are in [Exit codes](exit-codes.md).
 
 | Area | ansible-galaxy | go-galaxy | What you do |
 | --- | --- | --- | --- |
-| Several servers | Merges versions from all of them | The first server in [`server_list`](servers-and-auth.md#how-a-collection-picks-its-server) that has the collection owns it | Order `server_list`, or pin with `source:` |
-| A server fails | Skips it | Any error but `404` stops the run: exit `4`, or `5` for [one item](exit-codes.md#when-several-things-fail) at install | Fix the token or the server |
-| Your token with a file-chosen URL or relaxed TLS | Sends it | Refused, exit `2` | Follow [`--token`](servers-and-auth.md#--token) |
+| Several servers | Merges versions from all of them | The first server in [`server_list`](../guides/servers-and-auth.md#how-a-collection-picks-its-server) that has the collection owns it | Order `server_list`, or pin with `source:` |
+| A server fails | Skips it | Any error but `404` stops the run: exit `4`, or `5` for [one item](../reference/exit-codes.md#when-several-things-fail) at install | Fix the token or the server |
+| Your token with a file-chosen URL or relaxed TLS | Sends it | Refused, exit `2` | Follow [`--token`](../guides/servers-and-auth.md#--token) |
 | `[galaxy_server.<id>] timeout` | Read | Ignored with a warning | Use `--timeout` or `server_timeout` |
 | `username`, `password`, `auth_url`, `client_id` | Basic or Keycloak login | Refused, exit `2` | Use an API token |
 
@@ -73,14 +73,14 @@ Codes `3` and `6` to `10` are in [Exit codes](exit-codes.md).
 
 | Area | ansible-galaxy | go-galaxy | What you do |
 | --- | --- | --- | --- |
-| No version fits | Lists the unmet requirements, exit `1` | Prints PubGrub's proof, exit `3` | [Read the proof](requirements.md#when-no-version-fits) |
-| Already installed | Kept unless `-U` or `--force` | Never picks the version; a lower result installs over it | Pin with [`lock`](lockfile.md#create-the-lockfile) |
-| Constraint grammar | Comparison operators, comma-joined; `1.0` means `1.0.0` | Adds `1.x`, `~1.2`, `^1.2`, `1.2 - 1.4`, <code>&#124;&#124;</code>; `1.0` means `1.0.x` | Use [ansible's operators](requirements.md#version-constraints) and full `X.Y.Z` in a shared file |
+| No version fits | Lists the unmet requirements, exit `1` | Prints PubGrub's proof, exit `3` | [Read the proof](../guides/requirements.md#when-no-version-fits) |
+| Already installed | Kept unless `-U` or `--force` | Never picks the version; a lower result installs over it | Pin with [`lock`](../guides/lockfile.md#create-the-lockfile) |
+| Constraint grammar | Comparison operators, comma-joined; `1.0` means `1.0.0` | Adds `1.x`, `~1.2`, `^1.2`, `1.2 - 1.4`, <code>&#124;&#124;</code>; `1.0` means `1.0.x` | Use [ansible's operators](../guides/requirements.md#version-constraints) and full `X.Y.Z` in a shared file |
 | `requires_ansible` | Skips versions that exclude the running core | Not read | Pin a version your ansible-core supports |
 
 A rerun replays the last resolution until the requirements, the servers or
 `--no-deps` change, or you pass `--refresh` or `--no-cache`
-([What a rerun reuses](caching.md#what-a-rerun-reuses)).
+([What a rerun reuses](../guides/caching.md#what-a-rerun-reuses)).
 
 ### Prereleases
 
@@ -95,7 +95,7 @@ A `>=1.0.0` floor keeps a resolve on releases.
 
 ### Sources
 
-| Source | Collections | Roles | [Pinned](lockfile.md#what-each-entry-is-pinned-by) by |
+| Source | Collections | Roles | [Pinned](../guides/lockfile.md#what-each-entry-is-pinned-by) by |
 | --- | --- | --- | --- |
 | Galaxy server | Yes | Yes, through the v1 role API | Version and sha256; a role by commit |
 | `git+` or `git@` repository | Yes | Yes | Commit |
@@ -104,14 +104,14 @@ A `>=1.0.0` floor keeps a resolve on releases.
 | `scm: hg` | - | Refused, exit `2` | - |
 | A bare top-level list | Read as collections | Not read: put roles under `roles:` | - |
 
-Refused rows fail at load ([What is refused](requirements.md#what-is-refused)).
+Refused rows fail at load ([What is refused](../guides/requirements.md#what-is-refused)).
 A url collection's `version:` must match its `MANIFEST.json`, or the run
 exits `3`.
 
 No `git` binary runs, so credential helpers, `~/.netrc` and `~/.ssh/config`
 are not read, and an ssh URL must name its user (`ssh://git@host/...`). Set
 credentials and `known_hosts` per
-[Git sources and credentials](servers-and-auth.md#git-sources-and-credentials).
+[Git sources and credentials](../guides/servers-and-auth.md#git-sources-and-credentials).
 
 <details markdown>
 <summary>Git build details</summary>
@@ -136,8 +136,8 @@ credentials and `known_hosts` per
 - Submodules are skipped with a warning.
 
 How a repository becomes an artifact is in
-[Git discovery](internals/install-pipeline.md#git-discovery); what is validated is in
-[Git and url sources](internals/boundaries.md#git-and-url-sources).
+[Git discovery](../internals/install-pipeline.md#git-discovery); what is validated is in
+[Git and url sources](../internals/boundaries.md#git-and-url-sources).
 
 </details>
 
@@ -148,7 +148,7 @@ How a repository becomes an artifact is in
 | `collections_path`, `roles_path` | Searches every `:` entry | First entry only, the rest warned about | List one path |
 | Default paths | `~/.ansible/collections`, `~/.ansible/roles` | `.collections`, `.roles` in the working directory | Point ansible's paths there |
 | `~` and `$VAR` | Expanded in every path | Keyring path only: a leading `~` or `~/` | Write full paths |
-| [`--timeout`](cli.md#timeouts-and-fixed-limits) | `60`, whole seconds only | `30s`; also a duration such as `90s` | Raise it for a slow hub; whole seconds in shared files |
+| [`--timeout`](../reference/cli.md#timeouts-and-fixed-limits) | `60`, whole seconds only | `30s`; also a duration such as `90s` | Raise it for a slow hub; whole seconds in shared files |
 
 ### Installed files are read-only
 
@@ -166,7 +166,7 @@ How a repository becomes an artifact is in
 ```
 
 Extracted files have no write bit, since an install may
-[share their bytes](internals/cache.md#extracted-store-content-addressed-materialized-by-hardlink)
+[share their bytes](../internals/cache.md#extracted-store-content-addressed-materialized-by-hardlink)
 with the cache and other installs; directories and sidecar files stay
 writable. An in-place edit that worked after `ansible-galaxy` fails; edit
 a copy outside the tree.
@@ -182,7 +182,7 @@ ignores it.
 | --- | --- | --- | --- |
 | Verifier | Runs `gpg` | Pure Go; a `.kbx` keybox is refused, exit `2` | Export with `gpg --export --armor` |
 | Required count | Counts signatures | Counts distinct signing keys | Sign with distinct keys |
-| `FILES.json` | Checks each listed file's hash | [Checked both ways](signatures.md#manifest-chain-check) once a signature verifies | - |
+| `FILES.json` | Checks each listed file's hash | [Checked both ways](../guides/signatures.md#manifest-chain-check) once a signature verifies | - |
 
 ### galaxy.toml
 
@@ -193,15 +193,15 @@ ignores it.
 | Both | `galaxy.toml`, warning that `requirements.yml` is ignored |
 
 `ansible-galaxy` reads only what `-r` names, and never `galaxy.toml`. A
-server list in [`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table)
+server list in [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table)
 replaces `ansible.cfg`'s `server_list` and `[galaxy_server.*]` for go-galaxy
-only ([galaxy.toml](requirements.md#galaxytoml)).
+only ([galaxy.toml](../guides/requirements.md#galaxytoml)).
 
 ## Roles
 
 Roles install under `roles_path` with ansible's `meta/.galaxy_install_info`.
 A Galaxy role is fetched by git at its tag, not as a GitHub tarball
-([Roles and the v1 role API](servers-and-auth.md#roles-and-the-v1-role-api)).
+([Roles and the v1 role API](../guides/servers-and-auth.md#roles-and-the-v1-role-api)).
 
 | An existing role directory holds | go-galaxy |
 | --- | --- |

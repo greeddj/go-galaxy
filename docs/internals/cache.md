@@ -2,7 +2,7 @@
 
 How the persistent cache is built: keys, stores, the snapshot and the seam two
 backends implement. Its layout, freshness and flags are on
-[Caching](../caching.md).
+[Caching](../guides/caching.md).
 
 ```mermaid
 flowchart TD
@@ -223,7 +223,7 @@ and usage.
 
 A class follows where a failure was found, not how permanent it looks;
 `sentinelClassCases` pins each sentinel to at most one. Retries are on
-[S3 cache](../caching.md#s3-cache-optional), the endpoint boundary on
+[S3 cache](../guides/caching.md#s3-cache-optional), the endpoint boundary on
 [Security boundaries](boundaries.md).
 
 ### The S3 distributed lock

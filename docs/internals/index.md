@@ -2,7 +2,7 @@
 
 These pages describe how go-galaxy is built: which package owns what, the seams
 between packages and the rules a change must keep. What a command does for an
-operator is on the user pages, starting with the [CLI reference](../cli.md).
+operator is on the user pages, starting with the [CLI reference](../reference/cli.md).
 
 ## Package map
 
@@ -216,4 +216,4 @@ draws every command branch by branch.
 | What does `outdated` compare? | [outdated flow](flow-outdated.md) |
 | What do `hash`, `tree` and `explain` read? | [hash, tree and explain](flow-hash-tree-explain.md) |
 | How are tests, gates, lint and the docs site run? | [Development](development.md) |
-| How is a release verified, and what must an operator trust? | [Security](../security.md) |
+| How is a release verified, and what must an operator trust? | [Security](../guides/security.md) |

@@ -13,7 +13,7 @@ versions, and run the same install in CI.
 
     Works on macOS and Linux. On macOS it clears the quarantine flag of these
     unnotarized builds, skipping Gatekeeper;
-    [verify the release](security.md#verifying-a-release) yourself.
+    [verify the release](../guides/security.md#verifying-a-release) yourself.
 
 === "go install"
 
@@ -32,7 +32,7 @@ versions, and run the same install in CI.
     ```
 
     Swap in `linux-arm64`, `darwin-amd64` or `darwin-arm64`; darwin needs
-    macOS 13 or later. [Verify it](security.md#verifying-a-release) before use.
+    macOS 13 or later. [Verify it](../guides/security.md#verifying-a-release) before use.
 
 === "Container"
 
@@ -40,7 +40,7 @@ versions, and run the same install in CI.
     docker run --rm ghcr.io/greeddj/go-galaxy --version
     ```
 
-    Meant for [baking into a CI image](ci.md#container-image-bake); the steps
+    Meant for [baking into a CI image](../guides/ci.md#container-image-bake); the steps
     below need a local binary.
 
 === "GitHub Actions"
@@ -70,7 +70,7 @@ versions, and run the same install in CI.
     ```
 
     1.  The constraint after the name is optional.
-        [Version constraints](requirements.md#version-constraints) has the
+        [Version constraints](../guides/requirements.md#version-constraints) has the
         grammar.
 
 === "requirements.yml"
@@ -85,7 +85,7 @@ versions, and run the same install in CI.
       - name: geerlingguy.docker
     ```
 
-    1.  Optional. [Version constraints](requirements.md#version-constraints)
+    1.  Optional. [Version constraints](../guides/requirements.md#version-constraints)
         has the grammar.
 
 Save either file in the project root, then run `go-galaxy install` there:
@@ -108,9 +108,9 @@ $ go-galaxy install
 .roles/geerlingguy.docker/
 ```
 
-go-galaxy [reads](requirements.md#which-file-is-read) `./galaxy.toml` when
+go-galaxy [reads](../guides/requirements.md#which-file-is-read) `./galaxy.toml` when
 present, else `./requirements.yml`. It installs dependencies too, such as
-`community.library_inventory_filtering_v1`, and [caches](caching.md) each
+`community.library_inventory_filtering_v1`, and [caches](../guides/caching.md) each
 artifact in `~/.cache/go-galaxy`. Add `.collections/` and `.roles/` to
 `.gitignore`.
 
@@ -133,7 +133,7 @@ go-galaxy install --frozen   # (3)!
 2.  Commit it, and rerun `go-galaxy lock` whenever you edit the requirements.
 3.  Installs exactly what the lockfile pins, without resolving. A missing
     lockfile, or one that no longer covers the requirements, fails with exit
-    [`6`](exit-codes.md); [`lock --check`](lockfile.md#catch-drift) catches
+    [`6`](../reference/exit-codes.md); [`lock --check`](../guides/lockfile.md#catch-drift) catches
     other drift.
 
 ```text
@@ -141,7 +141,7 @@ $ go-galaxy lock
 ✔ Lockfile written to galaxy.lock (3 collections, 1 roles)
 ```
 
-The [lockfile](lockfile.md#what-each-entry-is-pinned-by) pins each collection
+The [lockfile](../guides/lockfile.md#what-each-entry-is-pinned-by) pins each collection
 to a version and sha256, and the role to a git commit.
 
 ## Run it in CI
@@ -160,18 +160,18 @@ jobs:
 
 On Linux and macOS runners, the action installs a checksum-verified binary,
 caches `~/.cache/go-galaxy` under a key that includes
-[`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) and runs
-`go-galaxy install --frozen`; [CI pipelines](ci.md) has the rest.
+[`go-galaxy hash`](../guides/lockfile.md#a-cache-key-for-ci) and runs
+`go-galaxy install --frozen`; [CI pipelines](../guides/ci.md) has the rest.
 
 ## If a run fails
 
 | Exit | Likely cause | Read |
 | :-- | :-- | :-- |
-| `2` | A missing or invalid requirements file, flag or setting | [Requirements files](requirements.md), [Configuration](configuration.md) |
-| `3` | No version fits the constraints, or a collection, role, version or ref does not exist | [When no version fits](requirements.md#when-no-version-fits) |
-| `4` | A server is unavailable, times out, answers an error, or rejects the credentials | [Servers and credentials](servers-and-auth.md) |
-| `6` | `galaxy.lock` is missing, invalid, or does not cover a requirement | [Lockfile](lockfile.md) |
-| Any other | See the full table | [Exit codes](exit-codes.md) |
+| `2` | A missing or invalid requirements file, flag or setting | [Requirements files](../guides/requirements.md), [Configuration](../reference/configuration.md) |
+| `3` | No version fits the constraints, or a collection, role, version or ref does not exist | [When no version fits](../guides/requirements.md#when-no-version-fits) |
+| `4` | A server is unavailable, times out, answers an error, or rejects the credentials | [Servers and credentials](../guides/servers-and-auth.md) |
+| `6` | `galaxy.lock` is missing, invalid, or does not cover a requirement | [Lockfile](../guides/lockfile.md) |
+| Any other | See the full table | [Exit codes](../reference/exit-codes.md) |
 
 Rerun with `--verbose` to log the servers, the settings `galaxy.toml` or
 `ansible.cfg` supplied, each metadata request and step timings.
@@ -186,19 +186,19 @@ Rerun with `--verbose` to log the servers, the settings `galaxy.toml` or
 
     What carries over, and what a migration runs into.
 
--   :lucide-lock: **[Lockfile](lockfile.md)**
+-   :lucide-lock: **[Lockfile](../guides/lockfile.md)**
 
     ---
 
     Catch drift, inspect what is locked, and find newer versions.
 
--   :lucide-workflow: **[CI pipelines](ci.md)**
+-   :lucide-workflow: **[CI pipelines](../guides/ci.md)**
 
     ---
 
     Action inputs, GitLab CI, a drift gate and a baked image.
 
--   :lucide-key-round: **[Servers and credentials](servers-and-auth.md)**
+-   :lucide-key-round: **[Servers and credentials](../guides/servers-and-auth.md)**
 
     ---
 

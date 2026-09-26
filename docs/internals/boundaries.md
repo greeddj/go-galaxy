@@ -2,7 +2,7 @@
 
 Where untrusted input crosses into go-galaxy, what each boundary refuses, and
 the property a change must keep. What an operator does about the residuals is
-in [Trust model](../security.md#trust-model).
+in [Trust model](../guides/security.md#trust-model).
 
 ```mermaid
 flowchart TD

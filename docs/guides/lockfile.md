@@ -28,7 +28,7 @@ go-galaxy lock
 
 `lock` resolves the collections and roles of your
 [requirements file](requirements.md) and writes `galaxy.lock` beside it, or at
-the path [`--lock-file` or `lock_file`](cli.md#lockfile) names. Commit the
+the path [`--lock-file` or `lock_file`](../reference/cli.md#lockfile) names. Commit the
 file. `lock` reuses what the cache already resolved, so run
 `go-galaxy lock --refresh` to take newer releases your constraints allow.
 
@@ -48,9 +48,9 @@ go-galaxy lock --dry-run
 · Dry run: lockfile would change; 1 would be added, 1 would be updated, 2 would be removed, 0 unchanged (galaxy.lock)
 ```
 
-`lock` exits [`5`](exit-codes.md) when a server names a `download_url` that
+`lock` exits [`5`](../reference/exit-codes.md) when a server names a `download_url` that
 carries a query string or is not its own artifact URL
-([why the lockfile refuses these](internals/boundaries.md#loading-requirementsyml-and-the-lockfile)).
+([why the lockfile refuses these](../internals/boundaries.md#loading-requirementsyml-and-the-lockfile)).
 Such a server works only without a lockfile.
 
 ### What each entry is pinned by
@@ -107,7 +107,7 @@ schema_version: 5
 ```
 
 Every field and how `lock` chooses the schema:
-[The lockfile](internals/lockfile-format.md).
+[The lockfile](../internals/lockfile-format.md).
 
 </details>
 
@@ -255,7 +255,7 @@ community.library_inventory_filtering_v1 1.1.5
 
 `hash`, `tree` and `explain` read only files, with no network, cache or lock,
 and share the `hash` table's `galaxy.toml` row
-([flags](cli.md#hash-tree-and-explain)).
+([flags](../reference/cli.md#hash-tree-and-explain)).
 
 ## Find newer versions
 
@@ -280,7 +280,7 @@ go-galaxy outdated
 (under `--verbose`) and the summary to stdout.
 
 `outdated` exits `0` even when entries are behind, and `4` when a lookup failed
-([exceptions](exit-codes.md#special-cases-by-command)). It needs the network
+([exceptions](../reference/exit-codes.md#special-cases-by-command)). It needs the network
 but no cache or lock, so it can run beside an install. Take an upgrade with
 `go-galaxy lock --refresh`, raising the constraint first if it excludes the new
 version.

@@ -1,7 +1,7 @@
 # Lockfile format
 
 `internal/galaxy/lockfile` reads, validates and writes `galaxy.lock`, the pins
-a frozen install trusts. How to use the file: [Lockfile](../lockfile.md).
+a frozen install trusts. How to use the file: [Lockfile](../guides/lockfile.md).
 
 ## Schema versions
 
@@ -95,7 +95,7 @@ request.
 
 A verifying run passes `lockedURLs` false and fetches version metadata, which
 its signatures ride on. Behavior:
-[Install from the lockfile](../lockfile.md#install-from-the-lockfile).
+[Install from the lockfile](../guides/lockfile.md#install-from-the-lockfile).
 
 | `lock` refuses a download URL that | Sentinel | Exit | Because |
 | --- | --- | --- | --- |

@@ -15,51 +15,51 @@ hardlinks out of a content-addressed cache on warm runs, and skips the network
 entirely under `--frozen --offline`. With a lockfile and warm caches,
 installing 100 collections takes seconds rather than minutes.
 
-![go-galaxy against ansible-galaxy, install speedup by cache state and collection count](benchmark.svg)
+![go-galaxy against ansible-galaxy, install speedup by cache state and collection count](assets/benchmark.svg)
 
 *Mean of 5 runs on Linux, both tools with `--no-deps`; the warm rows compare
-[two cache designs](benchmarks.md#what-each-tool-caches).*
+[two cache designs](reference/benchmarks.md#what-each-tool-caches).*
 
 ## Start here
 
 <div class="grid cards" markdown>
 
--   :lucide-rocket: **[Get started](getting-started.md)**
+-   :lucide-rocket: **[Get started](get-started/getting-started.md)**
 
     ---
 
     Install the binary, run a first install, pin it for CI.
 
--   :lucide-arrow-right-left: **[Coming from ansible-galaxy](ansible-galaxy-compat.md)**
+-   :lucide-arrow-right-left: **[Coming from ansible-galaxy](get-started/ansible-galaxy-compat.md)**
 
     ---
 
     What stays the same, and what a migration runs into.
 
--   :lucide-file-text: **[Requirements files](requirements.md)**
+-   :lucide-file-text: **[Requirements files](guides/requirements.md)**
 
     ---
 
     Collections and roles from Galaxy, git or a URL.
 
--   :lucide-lock: **[Lockfile and CI](lockfile.md)**
+-   :lucide-lock: **[Lockfile and CI](guides/lockfile.md)**
 
     ---
 
-    Pin every version, then install exactly those in [CI](ci.md).
+    Pin every version, then install exactly those in [CI](guides/ci.md).
 
--   :lucide-key-round: **[Servers and credentials](servers-and-auth.md)**
+-   :lucide-key-round: **[Servers and credentials](guides/servers-and-auth.md)**
 
     ---
 
     Private hubs, tokens, TLS, and git and URL credentials.
 
--   :lucide-book-open: **[Reference](cli.md)**
+-   :lucide-book-open: **[Reference](reference/cli.md)**
 
     ---
 
-    Every command and option, plus [configuration](configuration.md),
-    [exit codes](exit-codes.md) and [upgrading](upgrading.md).
+    Every command and option, plus [configuration](reference/configuration.md),
+    [exit codes](reference/exit-codes.md) and [upgrading](reference/upgrading.md).
 
 </div>
 
@@ -72,10 +72,10 @@ go-galaxy install --frozen   # (3)!
 ```
 
 1.  Reads `-r <file>`, else
-    [`./galaxy.toml`, else `./requirements.yml`](requirements.md#which-file-is-read).
+    [`./galaxy.toml`, else `./requirements.yml`](guides/requirements.md#which-file-is-read).
     Installs into `.collections` and `.roles` by default;
-    [point ansible there](getting-started.md#your-first-install).
+    [point ansible there](get-started/getting-started.md#your-first-install).
 2.  Pins every transitive collection and role in `galaxy.lock`. Commit it.
-3.  Installs exactly the [locked versions](lockfile.md#install-from-the-lockfile),
+3.  Installs exactly the [locked versions](guides/lockfile.md#install-from-the-lockfile),
     failing if `galaxy.lock` is missing or no longer matches the requirements.
     On a warm local cache, `--offline` skips the network.

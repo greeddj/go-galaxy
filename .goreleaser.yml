@@ -127,7 +127,7 @@ homebrew_casks:
       These builds are not Apple-notarized, so this cask clears the macOS
       quarantine attribute from the binary it installs. That skips a Gatekeeper
       check on your behalf. To verify the download instead, see
-      https://github.com/greeddj/go-galaxy/blob/main/docs/security.md#verifying-a-release
+      https://github.com/greeddj/go-galaxy/blob/{{ .Tag }}/docs/guides/security.md#verifying-a-release
     custom_block: |
       postflight_steps do
         on_macos do

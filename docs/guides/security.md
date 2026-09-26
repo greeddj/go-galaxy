@@ -127,4 +127,4 @@ writable by the run's user only. A `file://` read has no deadline, so keep
 signature files off network mounts.
 
 How the code enforces each boundary is in
-[Security boundaries](internals/boundaries.md).
+[Security boundaries](../internals/boundaries.md).

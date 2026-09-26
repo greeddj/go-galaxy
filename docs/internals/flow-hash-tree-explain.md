@@ -2,9 +2,9 @@
 
 These three commands read files only: no `BuildCollectionConfig`, no
 `ansible.cfg`, no cache backend, no network, no write. Options:
-[`hash`, `tree` and `explain`](../cli.md#hash-tree-and-explain); what they
-print: [Inspect what is locked](../lockfile.md#inspect-what-is-locked) and
-[A cache key for CI](../lockfile.md#a-cache-key-for-ci).
+[`hash`, `tree` and `explain`](../reference/cli.md#hash-tree-and-explain); what they
+print: [Inspect what is locked](../guides/lockfile.md#inspect-what-is-locked) and
+[A cache key for CI](../guides/lockfile.md#a-cache-key-for-ci).
 
 ## The lockfile path
 

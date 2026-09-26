@@ -83,9 +83,9 @@ runners, amd64 or arm64.
 | `version` | The `@` reference's release, else the latest | Release to install, `1.1.0` or later |
 
 An unset input adds no flag, leaving the matching variable
-[in charge](configuration.md#where-a-setting-comes-from). Export
+[in charge](../reference/configuration.md#where-a-setting-comes-from). Export
 `ANSIBLE_COLLECTIONS_PATH` and `ANSIBLE_ROLES_PATH` on the job, and a later
-`ansible-playbook` step [finds the installs](getting-started.md#your-first-install).
+`ansible-playbook` step [finds the installs](../get-started/getting-started.md#your-first-install).
 
 | Output | Value |
 | :-- | :-- |
@@ -166,14 +166,14 @@ Anything the inputs miss goes through `env`, at workflow, job or step level.
     ```
 
 Moving settings such as an [S3 cache](caching.md#s3-cache-optional) into
-[`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table) leaves only
+[`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table) leaves only
 secrets in the workflow. A set `GO_GALAXY_*` variable still outranks the file,
 key by key.
 
 > [!WARNING]
 > Export each `${VAR}` where the cache-key step sees it too: on the job, or on
 > the step that calls the action. `go-galaxy hash` reads `galaxy.toml` and
-> exits [`2`](exit-codes.md) on an unset variable.
+> exits [`2`](../reference/exit-codes.md) on an unset variable.
 
 ## GitLab CI
 
@@ -295,7 +295,7 @@ go-galaxy install --frozen --offline
 | No `chown`, or the wrong uid | - | - | `cache backend cannot be used as configured`, exit `2` |
 
 With the uid unknown at build time, nothing keeps both hardlinks and
-[read-only installed files](ansible-galaxy-compat.md#installed-files-are-read-only),
+[read-only installed files](../get-started/ansible-galaxy-compat.md#installed-files-are-read-only),
 so bake for a known uid.
 
 <details markdown>
@@ -333,4 +333,4 @@ Pin it in each place:
 | A baked image | `ghcr.io/greeddj/go-galaxy:1.2.3` |
 
 Run `go-galaxy lock` with that release too, on developer machines included.
-[Upgrading](upgrading.md) lists what each release changes.
+[Upgrading](../reference/upgrading.md) lists what each release changes.

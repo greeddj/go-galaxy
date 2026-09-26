@@ -31,7 +31,7 @@ go-galaxy can write a JSON report of each `install`, `warm`, `lock` and
     ```
 
 Missing directories are created, and the file is
-[replaced atomically](internals/boundaries.md#the-collections-tree-and-the-cache-directory).
+[replaced atomically](../internals/boundaries.md#the-collections-tree-and-the-cache-directory).
 A flag or variable [outranks](configuration.md#where-a-setting-comes-from)
 `metrics_file`, and an exported empty `GO_GALAXY_METRICS_FILE` turns the report
 off.
@@ -65,7 +65,7 @@ A cold `install --frozen` of three collections and one Galaxy role:
 | `command` | `install`, `warm`, `lock` or `outdated` |
 | `server` | URL of the first configured server only |
 | `lockfile` | Resolved lockfile path, even when none exists |
-| `lockfile_hash` | [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) minus `sha256:`; absent without a loadable lockfile |
+| `lockfile_hash` | [`go-galaxy hash`](../guides/lockfile.md#a-cache-key-for-ci) minus `sha256:`; absent without a loadable lockfile |
 | `duration_ns` | Run time in nanoseconds |
 | `cache_hits` | [Artifact hits](#how-the-counters-count) |
 | `cache_misses` | [Artifact misses](#how-the-counters-count) |
@@ -79,7 +79,7 @@ A cold `install --frozen` of three collections and one Galaxy role:
 | :-- | :-- | :-- |
 | `install`, `warm` | Planned entries, dependencies and already-installed ones included | Failed collections plus failed roles |
 | `lock` | Entries in the fresh resolve | Always `0` |
-| `outdated` | [Entries compared](lockfile.md#find-newer-versions) | Failed lookups |
+| `outdated` | [Entries compared](../guides/lockfile.md#find-newer-versions) | Failed lookups |
 
 Nothing in a `lock` report tells a `--check` run from a write.
 
@@ -130,11 +130,11 @@ counts nothing.
 - A miss counts once per acquisition, after retries.
 - `bytes_downloaded` adds every Galaxy or url download attempt, a failed
   partial body included; a git fetch adds its pack only once it succeeds.
-- A corrupt cached collection is [refetched](internals/install-pipeline.md#bounded-recovery):
+- A corrupt cached collection is [refetched](../internals/install-pipeline.md#bounded-recovery):
   a hit and a miss locally, only the miss when S3 catches it on read.
 - A corrupt cached role is not refetched: its install fails.
 - On a failed `install` the counters are a lower bound:
-  [prefetch workers still in flight](internals/install-pipeline.md#prefetch-and-handoff)
+  [prefetch workers still in flight](../internals/install-pipeline.md#prefetch-and-handoff)
   count after the report is built.
 
 </details>

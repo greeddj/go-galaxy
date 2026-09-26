@@ -31,8 +31,8 @@ see where each credential may go.
     ```
 
     1.  Expanded when the file loads; an unset `HUB_TOKEN` exits
-        [`2`](exit-codes.md)
-        ([`${VAR}` expansion](configuration.md#var-expansion)). The token is
+        [`2`](../reference/exit-codes.md)
+        ([`${VAR}` expansion](../reference/configuration.md#var-expansion)). The token is
         the file's own, as a literal one is, so the address needs no export
         ([`--token`](#--token)).
 
@@ -94,7 +94,7 @@ flowchart TD
 ```
 
 Other settings follow
-[Where a setting comes from](configuration.md#where-a-setting-comes-from).
+[Where a setting comes from](../reference/configuration.md#where-a-setting-comes-from).
 
 ## How a collection picks its server
 
@@ -108,7 +108,7 @@ flowchart TD
     B -->|"anything else"| F["Stop the run, no fallback"]
 ```
 
-Any other answer exits [`4`](exit-codes.md): a 401 or 403, any other status
+Any other answer exits [`4`](../reference/exit-codes.md): a 401 or 403, any other status
 (a 429, 500, 502, 503 or 504 only after the retries), a document of the wrong
 shape, or a refused connection, DNS or TLS failure. A web page at an API root,
 as galaxy.ansible.com serves under `/v3`, is passed over, but a server with web
@@ -118,7 +118,7 @@ configuration mistake exits `2` before any request: fix it.
 While resolving or locking, every later request to the server that owns a
 collection (a versions page, a version document) fails the same way, except
 that a `404` there exits `3`: the server lacks the version or list asked for.
-At install, such a failure is [one item's](exit-codes.md#when-several-things-fail)
+At install, such a failure is [one item's](../reference/exit-codes.md#when-several-things-fail)
 and exits `5`.
 
 A [`source:`](requirements.md#collections) pins one collection to one server:
@@ -162,9 +162,9 @@ An address is yours when it comes from `--server=<url>`, `GO_GALAXY_SERVER`,
 `ANSIBLE_GALAXY_SERVER`, `ANSIBLE_GALAXY_SERVER_<ID>_URL` or the default;
 `--server=<id>` and `url = "${VAR}"` leave it the file's. The rule stops a
 checked-out repository from choosing where your secret goes
-([why](internals/boundaries.md#credentials-and-the-token-pairing-rule)). A
+([why](../internals/boundaries.md#credentials-and-the-token-pairing-rule)). A
 `galaxy.toml` that names a variable is trusted with its value, as with every
-[`${VAR}`](configuration.md#var-expansion).
+[`${VAR}`](../reference/configuration.md#var-expansion).
 
 ```text
 ✗ galaxy server token destination came from a configuration file: server "hub" (https://hub.example.internal:443) in ansible.cfg
@@ -397,7 +397,7 @@ Entries are spelled under [Collections](requirements.md#collections) and
 [Roles](requirements.md#roles). Certificates are always verified
 ([TLS](#tls-validate_certs)) and cross-origin redirects refused. No secret is
 printed or stored, and no flag takes one
-([the full boundary](internals/boundaries.md#git-and-url-sources)).
+([the full boundary](../internals/boundaries.md#git-and-url-sources)).
 
 > [!NOTE]
 > An unknown or changed ssh host key exits `4`: there is no trust on first

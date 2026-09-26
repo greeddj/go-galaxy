@@ -2,7 +2,7 @@
 
 Which HTTP client carries a request, how a line reaches the terminal, and how
 a run gets its exit code. What each code means is on
-[Exit codes](../exit-codes.md).
+[Exit codes](../reference/exit-codes.md).
 
 ## HTTP clients
 
@@ -52,7 +52,7 @@ Per-hop credentials: [Redirects](boundaries.md#redirects).
 | Result | `PersistentPrintf`, `Okf`, `OkVersionf`, `Updatef` | printed | printed | printed | stdout |
 | Diagnostic | `Errorf`, `ErrorVersionf`, `Warnf` | printed | printed | printed | stderr |
 
-What a user sees: [Output and color](../cli.md#output-and-color).
+What a user sees: [Output and color](../reference/cli.md#output-and-color).
 
 - `internal/progress` is the one `Printer`, and under `--verbose` the `log`
   sink too, so a dependency's line is sanitized.
@@ -156,7 +156,7 @@ to `%w`. `internal/galaxy/extracted`'s sentinels stay unclassified: only
 workers raise them, behind `ErrInstallationFailed`.
 
 `--help`'s exit index is literals in `newRootCommand`, each leading its row in
-[Exit codes](../exit-codes.md).
+[Exit codes](../reference/exit-codes.md).
 `TestRootCommandDisclosesDefaultCommandAndExitCodes` pins them to the
 `exitcode` constants but never reads the doc: change literal, test row and
 doc row together.

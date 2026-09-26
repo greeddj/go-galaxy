@@ -574,7 +574,7 @@ func pickConfigValue(c *cli.Command, flag, ansibleValue string) (string, bool) {
 }
 
 // The ansible.cfg keys read here, their ANSIBLE_* environment spellings, the
-// discovery order and the galaxy.toml layer are tabulated in docs/configuration.md.
+// discovery order and the galaxy.toml layer are tabulated in docs/reference/configuration.md.
 
 // loadAnsibleConfig loads and parses ansible.cfg. Absence stays a bare
 // fs.ErrNotExist for the caller to judge; any other open, read or scan

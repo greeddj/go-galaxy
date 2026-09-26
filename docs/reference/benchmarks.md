@@ -19,7 +19,7 @@ and a warm cache.
 
 </div>
 
-![Install speedup by cache state and collection count](benchmark.svg)
+![Install speedup by cache state and collection count](../assets/benchmark.svg)
 
 > [!NOTE]
 > Mean of 5 runs, both tools with `--no-deps`, on Linux with xfs against
@@ -51,7 +51,7 @@ two decimals, the table to one.
 
 A warm `ansible-galaxy` run still downloads every tarball; a warm go-galaxy run
 sends no request. The warm rows compare two [cache
-designs](caching.md#what-the-directory-holds), not one design done faster.
+designs](../guides/caching.md#what-the-directory-holds), not one design done faster.
 
 ## Why your numbers will differ
 
@@ -195,7 +195,7 @@ SIZES=10 SCENARIOS="cold warm" testing/bench.sh # (3)!
 1.  Only for the S3 scenarios; without MinIO they are skipped with a warning.
 2.  Every size and scenario: about three hours.
 3.  Or one size, two scenarios. See
-    [every knob and output file](internals/development.md#the-benchmark-harness).
+    [every knob and output file](../internals/development.md#the-benchmark-harness).
 
 Role figures are not published; `SCENARIOS="roles-cold roles-warm"
 testing/bench.sh` measures them. `ansible-galaxy` keeps no role cache, so its

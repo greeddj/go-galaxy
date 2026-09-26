@@ -2,9 +2,9 @@
 
 `outdated` compares what the project runs, its lockfile or else its installed
 collections tree, with what each source offers now. Options:
-[`outdated`](../cli.md#outdated); the report:
-[Find newer versions](../lockfile.md#find-newer-versions); code meanings:
-[Exit codes](../exit-codes.md).
+[`outdated`](../reference/cli.md#outdated); the report:
+[Find newer versions](../guides/lockfile.md#find-newer-versions); code meanings:
+[Exit codes](../reference/exit-codes.md).
 
 ## Overview
 

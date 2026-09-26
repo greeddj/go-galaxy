@@ -17,13 +17,13 @@ flowchart LR
 
 The cache lives in `$HOME/.cache/go-galaxy` unless `--cache-dir`, its
 variables or a `cache_dir` in `galaxy.toml` or `ansible.cfg` names another
-directory ([which wins](configuration.md#where-a-setting-comes-from)).
-One run holds it at a time; a second exits [`8`](exit-codes.md) at once with
+directory ([which wins](../reference/configuration.md#where-a-setting-comes-from)).
+One run holds it at a time; a second exits [`8`](../reference/exit-codes.md) at once with
 `another instance is running`.
 
 > [!WARNING]
 > Installed files are read-only hardlinks into the cache: edit a copy
-> ([why](ansible-galaxy-compat.md#installed-files-are-read-only)).
+> ([why](../get-started/ansible-galaxy-compat.md#installed-files-are-read-only)).
 
 ### What the directory holds
 
@@ -74,7 +74,7 @@ Only bbolt's `ErrInvalid` (truncation included), `ErrVersionMismatch` and
 | url role | `url+<url>#sha256:<hex>` | The sha256 its URL served, under the same `version:` label | `--refresh`, `--clear-cache` |
 
 Reuse contacts no source. Editing an entry re-resolves it, and nothing here
-expires by age ([why this keying](internals/cache.md#artifact-cache-scoped-by-server-not-by-content)).
+expires by age ([why this keying](../internals/cache.md#artifact-cache-scoped-by-server-not-by-content)).
 
 ## Freshness and retention
 
@@ -104,7 +104,7 @@ reading never renews an entry.
 A future timestamp counts as stale, with no clock-skew allowance, and a body
 that no longer decodes is refetched without validators. A presigned
 `download_url` is cached verbatim and usable until it expires; `lock` refuses
-to commit one ([why](internals/lockfile-format.md#download_url-and-frozen-installs)).
+to commit one ([why](../internals/lockfile-format.md#download_url-and-frozen-installs)).
 
 </details>
 
@@ -120,7 +120,7 @@ to commit one ([why](internals/lockfile-format.md#download_url-and-frozen-instal
 `--offline` wins over `--refresh`, with a warning; beside `--no-cache` it
 still reads cached metadata and pins, but anything it must install fails.
 `warm` refuses `--no-cache` (exit `2`); variables are under
-[Cache behavior](cli.md#cache-behavior).
+[Cache behavior](../reference/cli.md#cache-behavior).
 
 ## Clearing and cleanup
 
@@ -132,7 +132,7 @@ still reads cached metadata and pins, but anything it must install fails.
 
 A failed clear never blocks later runs. An artifact no install record names,
 such as a superseded git commit's, stays until `--clear-cache`; what `cleanup`
-keeps is under [cleanup options](cli.md#cleanup-options).
+keeps is under [cleanup options](../reference/cli.md#cleanup-options).
 
 <details markdown>
 <summary>Legacy flat-key artifacts</summary>
@@ -188,8 +188,8 @@ go-galaxy creates a missing bucket. Extracted trees stay local, so keep caching
 the cache directory.
 
 An S3-compatible store such as MinIO also needs `--s3-endpoint`
-([S3 options](cli.md#s3)). A flag or variable
-[outranks](configuration.md#where-a-setting-comes-from) the file key. The backend
+([S3 options](../reference/cli.md#s3)). A flag or variable
+[outranks](../reference/configuration.md#where-a-setting-comes-from) the file key. The backend
 needs:
 
 - Both keys, or the run exits `2`.

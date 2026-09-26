@@ -1,8 +1,8 @@
 # Command flows
 
 These pages draw each command's control flow and the exit code at every place
-it can stop. Option meanings are on the [CLI reference](../cli.md), code
-meanings on [Exit codes](../exit-codes.md).
+it can stop. Option meanings are on the [CLI reference](../reference/cli.md), code
+meanings on [Exit codes](../reference/exit-codes.md).
 
 ## How to read the diagrams
 
@@ -92,7 +92,7 @@ the word would be dropped silently.
 ## Requirements file discovery
 
 `config.RequirementsPath` implements
-[Which file is read](../requirements.md#which-file-is-read) and never fails.
+[Which file is read](../guides/requirements.md#which-file-is-read) and never fails.
 
 | Caller | Commands | Its warning |
 | --- | --- | --- |
@@ -146,7 +146,7 @@ client refuse every request; the extracted store is nil under `--no-cache`.
 `BuildCollectionConfig` refuses in this order, each refusal exit 2, so a
 configuration broken in several places always reports the same one first.
 Construction and precedence are on [Configuration loading](config-loading.md)
-and [Where a setting comes from](../configuration.md#where-a-setting-comes-from).
+and [Where a setting comes from](../reference/configuration.md#where-a-setting-comes-from).
 
 | Order | Step | Refuses |
 | ---: | --- | --- |

@@ -2,7 +2,7 @@
 
 `install` resolves the requirements file, or reads the lockfile under
 `--frozen`, then installs collections level by level and roles after them.
-Options: [Options](../cli.md#options); codes: [Exit codes](../exit-codes.md);
+Options: [Options](../reference/cli.md#options); codes: [Exit codes](../reference/exit-codes.md);
 mechanism: [Install pipeline](install-pipeline.md).
 
 ## Overview

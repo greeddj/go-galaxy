@@ -3,7 +3,7 @@
 `config.BuildCollectionConfig` turns flags, the environment, a galaxy.toml
 `[tool.go-galaxy]` table and ansible.cfg into one `*Config` per run. Which
 source wins for a key is behavior, on
-[Configuration](../configuration.md#where-a-setting-comes-from); this page is
+[Configuration](../reference/configuration.md#where-a-setting-comes-from); this page is
 how the code gets there.
 
 ## Order of construction
@@ -48,9 +48,9 @@ queued for whoever prints later:
 | Source | Read by | Rule in the code |
 | --- | --- | --- |
 | Flags and their variables | urfave, from `cliflags` declarations | `c.IsSet` counts an exported-empty variable as set |
-| Requirements path | `RequirementsPath` | a set flag verbatim with no `Stat`, else [discovery](../requirements.md#which-file-is-read) |
+| Requirements path | `RequirementsPath` | a set flag verbatim with no `Stat`, else [discovery](../guides/requirements.md#which-file-is-read) |
 | `[tool.go-galaxy]` | `loadProjectSettings`, `projectfile.LoadSettings` | an `IsTOMLPath` path only; expanded once, passed by value, kept nowhere |
-| ansible.cfg | `loadAnsibleConfigFromCLI`, `applyAnsibleConfig` | a file `--ansible-config` names must exist; a [discovered](../configuration.md#where-it-is-found) one is optional |
+| ansible.cfg | `loadAnsibleConfigFromCLI`, `applyAnsibleConfig` | a file `--ansible-config` names must exist; a [discovered](../reference/configuration.md#where-it-is-found) one is optional |
 | Galaxy servers | `resolveServers` | see [Servers](#servers) |
 | `GO_GALAXY_GIT_*`, `GO_GALAXY_URL_*` | `loadGitCredentials`, `loadURLCredentials` | environment only; no file binds a git or url credential |
 | S3 settings | `loadS3CacheConfig` | a bucket without both keys is `ErrS3EmptyCreds` |
@@ -71,7 +71,7 @@ field it reads; each zero value is defused where it is consumed.
 | Function | Does | Why it matters |
 | --- | --- | --- |
 | `projectfile.Decode` | checks the closed schema, expands nothing | `requirements.ParseTOML` calls it, so reading `[project]` never needs the environment |
-| `projectfile.LoadSettings` | decodes, [expands](../configuration.md#var-expansion) `${VAR}`, re-checks server ids, joins relative paths under the file's directory | an absent file is zero `Settings`; every unset name lands in one `ErrProjectFileEnvUnset` |
+| `projectfile.LoadSettings` | decodes, [expands](../reference/configuration.md#var-expansion) `${VAR}`, re-checks server ids, joins relative paths under the file's directory | an absent file is zero `Settings`; every unset name lands in one `ErrProjectFileEnvUnset` |
 | `commands.lockfilePath` | calls `LoadSettings` for `lock_file` | `hash` exits 2 on a galaxy.toml that does not load |
 
 ## Servers
@@ -98,7 +98,7 @@ flowchart TD
 an ansible.cfg `[galaxy_server.<id>]` section yields, so one `buildServer` and
 its `ANSIBLE_GALAXY_SERVER_<ID>_*` overrides (`envOrIni`) serve both files. The
 files are never merged; the id order is on
-[Which servers a run uses](../servers-and-auth.md#which-servers-a-run-uses).
+[Which servers a run uses](../guides/servers-and-auth.md#which-servers-a-run-uses).
 The list path also runs `validateServerIDs` and `checkOriginConflicts`.
 
 `buildServer` records provenance on unexported `Server` fields (`urlFromFile`,
@@ -106,7 +106,7 @@ The list path also runs `validateServerIDs` and `checkOriginConflicts`.
 A `${VAR}` token arrives already expanded, so it counts as the file's own.
 `checkTokenPairing` must run after `applyTokenFlag`, which installs `--token`,
 and `tokenPairingOffense` is the only code that decides on provenance. The rule
-is on [`--token`](../servers-and-auth.md#--token), the threat on
+is on [`--token`](../guides/servers-and-auth.md#--token), the threat on
 [Security boundaries](boundaries.md#credentials-and-the-token-pairing-rule).
 
 ## Secrets

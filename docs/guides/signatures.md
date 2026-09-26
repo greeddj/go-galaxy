@@ -39,7 +39,7 @@ flowchart LR
 
 Only `install` and `warm` read these; `~` and `~/` expand in the keyring
 path. An empty keyring or count, such as a withheld CI secret, exits
-[`2`](exit-codes.md) rather than falling back.
+[`2`](../reference/exit-codes.md) rather than falling back.
 
 `signatures:` with no keyring exits `2`, or warns under `--disable-gpg-verify`,
 which also warns beside a keyring. `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` also
@@ -136,7 +136,7 @@ query string is sent but never printed or stored.
 | Connecting to a source             | 10 s                       |
 | Keyring                            | 64 MiB, 4096 packets       |
 
-Time budgets: [Timeouts and fixed limits](cli.md#timeouts-and-fixed-limits).
+Time budgets: [Timeouts and fixed limits](../reference/cli.md#timeouts-and-fixed-limits).
 
 </details>
 
@@ -169,7 +169,7 @@ vouches for any collection, and revocation is only as fresh as the keyring file
 
 Each armor block costs one packet, so 1024 minimal three-packet exports load
 and 1025 do not. See
-[Signatures and OpenPGP framing](internals/boundaries.md#signatures-and-openpgp-framing).
+[Signatures and OpenPGP framing](../internals/boundaries.md#signatures-and-openpgp-framing).
 
 </details>
 
@@ -210,7 +210,7 @@ flowchart LR
 
 The check runs once a signature verifies and covers every file, symlink and
 hardlink in the archive. Mixed failures follow
-[When several things fail](exit-codes.md#when-several-things-fail).
+[When several things fail](../reference/exit-codes.md#when-several-things-fail).
 
 | Refusal                                                              | Exit |
 |:---------------------------------------------------------------------|:-----|
@@ -232,6 +232,6 @@ hardlink in the archive. Mixed failures follow
 
 `MANIFEST.json` and `FILES.json` may go unlisted. Each identity key must appear
 once, spelled exactly, and match byte for byte. See
-[Reading a manifest](internals/boundaries.md#reading-a-manifest).
+[Reading a manifest](../internals/boundaries.md#reading-a-manifest).
 
 </details>

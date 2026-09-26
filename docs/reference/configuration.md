@@ -5,7 +5,7 @@ A setting comes from a flag, a variable, the `[tool.go-galaxy]` table of
 
 > [!TIP]
 > Looking for `requirements.yml` or the `[project]` table of `galaxy.toml`?
-> Both are on [Requirements files](requirements.md).
+> Both are on [Requirements files](../guides/requirements.md).
 
 ## Where a setting comes from
 
@@ -27,9 +27,9 @@ and the values `ansible.cfg` supplied.
 > [!NOTE]
 > `ANSIBLE_GALAXY_SERVER` stands in for `[galaxy] server`, below any server
 > list, not for `--server`
-> ([Which servers a run uses](servers-and-auth.md#which-servers-a-run-uses)).
+> ([Which servers a run uses](../guides/servers-and-auth.md#which-servers-a-run-uses)).
 > `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` takes ansible's booleans, such as `yes`,
-> on `install` and `warm` only ([Turning it on](signatures.md#turning-it-on)).
+> on `install` and `warm` only ([Turning it on](../guides/signatures.md#turning-it-on)).
 
 ## The `[tool.go-galaxy]` table
 
@@ -64,19 +64,19 @@ url = "https://galaxy.ansible.com"
 1.  `~` is not expanded: write `${HOME}`.
 2.  A TOML integer, never `"4"`. Outside `1` to the CPU count this process may
     use (at least `2`), the default applies with a warning.
-3.  A non-empty `bucket` switches to the [S3 cache](caching.md#s3-cache-optional)
+3.  A non-empty `bucket` switches to the [S3 cache](../guides/caching.md#s3-cache-optional)
     and needs `access_key` and `secret_key`, here or in their variables. It is
     refused beside `--offline`.
 4.  A TOML boolean: `true` selects virtual-hosted-style addressing.
 5.  The server list, in order; its keys are under
-    [Server settings](servers-and-auth.md#server-settings).
+    [Server settings](../guides/servers-and-auth.md#server-settings).
 
 With `HUB_TOKEN` and both S3 keys exported, `go-galaxy install` needs
 nothing more: a `${VAR}` token is the file's own, as a literal is, so it goes
-to the entry's `url` ([`--token`](servers-and-auth.md#--token)).
+to the entry's `url` ([`--token`](../guides/servers-and-auth.md#--token)).
 
 The table is read from the requirements file the run uses
-([Which file is read](requirements.md#which-file-is-read)), so a run on
+([Which file is read](../guides/requirements.md#which-file-is-read)), so a run on
 `requirements.yml` has none; a relative path resolves from the file's
 directory. It is closed: an unknown key is refused.
 
@@ -90,7 +90,7 @@ directory. It is closed: an unknown key is refused.
 | `s3.bucket`, `region`, `prefix`, `endpoint` | `--s3-<key>`, `GO_GALAXY_S3_<KEY>` | - | no bucket: the local cache |
 | `s3.access_key`, `secret_key`, `session_token` | `--s3-<key>`, `GO_GALAXY_S3_<KEY>`, then `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | - | unset |
 | `s3.path_style_disabled` (boolean) | `--s3-path-style-disabled`, `GO_GALAXY_S3_PATH_STYLE_DISABLED` | - | `false`: path style |
-| `servers` (array of tables) | `--server`, `GO_GALAXY_SERVER`, `ANSIBLE_GALAXY_SERVER_LIST`, `ANSIBLE_GALAXY_SERVER_<ID>_*` | `server_list`, `[galaxy_server.<id>]` | [Which servers a run uses](servers-and-auth.md#which-servers-a-run-uses) |
+| `servers` (array of tables) | `--server`, `GO_GALAXY_SERVER`, `ANSIBLE_GALAXY_SERVER_LIST`, `ANSIBLE_GALAXY_SERVER_<ID>_*` | `server_list`, `[galaxy_server.<id>]` | [Which servers a run uses](../guides/servers-and-auth.md#which-servers-a-run-uses) |
 
 The install paths (`--download-path`, `--roles-path`) and `--timeout` have
 no key: keep them in `ansible.cfg`, a flag or a variable. Nor do signature
@@ -112,7 +112,7 @@ policy, git and url credentials, `--ansible-config` and switches such as
 - Every command that loads the file needs every variable: `hash`, `tree`,
   `explain` and `cleanup` too, unless `--lock-file` is set for the first three.
 - A `${VAR}` can read any variable the run exports
-  ([what that trusts the file with](internals/boundaries.md#loading-requirementsyml-and-the-lockfile)).
+  ([what that trusts the file with](../internals/boundaries.md#loading-requirementsyml-and-the-lockfile)).
 
 <details markdown>
 <summary>Exact messages</summary>
@@ -202,7 +202,7 @@ The `[galaxy]` keys `gpg_keyring`, `required_valid_signature_count`,
 `install` and `warm` warn and read the matching `ANSIBLE_GALAXY_*` variables
 instead. Any other key is ignored, the plural `collections_paths` included,
 except in a `[galaxy_server.<id>]` section
-([Server settings](servers-and-auth.md#server-settings)).
+([Server settings](../guides/servers-and-auth.md#server-settings)).
 
 `collections_path` and `roles_path` are `:` lists, of which go-galaxy uses
 only the first entry ([Paths and files](cli.md#paths-and-files)).
@@ -246,11 +246,11 @@ comment marker, so watch for these lines:
 | Variable | What it sets | Explained in |
 |:---------|:-------------|:----------------------|
 | `ANSIBLE_CONFIG` | the first `ansible.cfg` candidate | [Where it is found](#where-it-is-found) |
-| `GO_GALAXY_GIT_CREDENTIALS`, `GO_GALAXY_GIT_<ID>_*` | a credential bound to a git host | [Git sources and credentials](servers-and-auth.md#git-sources-and-credentials) |
-| `GO_GALAXY_URL_CREDENTIALS`, `GO_GALAXY_URL_<ID>_*` | a Bearer token bound to a url-source origin | [URL sources and credentials](servers-and-auth.md#url-sources-and-credentials) |
-| `SSH_AUTH_SOCK`, `SSH_KNOWN_HOSTS`, `ALL_PROXY`, `NO_PROXY` | the ssh agent, the known_hosts file and a `socks5://` proxy for ssh git fetches | [Git sources and credentials](servers-and-auth.md#git-sources-and-credentials) |
-| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | the proxy for every HTTP request | [what a proxy is sent](internals/boundaries.md#redirects) |
-| `SSL_CERT_FILE`, `SSL_CERT_DIR` | a private CA, replacing the default trust store | [TLS: validate_certs](servers-and-auth.md#tls-validate_certs) |
+| `GO_GALAXY_GIT_CREDENTIALS`, `GO_GALAXY_GIT_<ID>_*` | a credential bound to a git host | [Git sources and credentials](../guides/servers-and-auth.md#git-sources-and-credentials) |
+| `GO_GALAXY_URL_CREDENTIALS`, `GO_GALAXY_URL_<ID>_*` | a Bearer token bound to a url-source origin | [URL sources and credentials](../guides/servers-and-auth.md#url-sources-and-credentials) |
+| `SSH_AUTH_SOCK`, `SSH_KNOWN_HOSTS`, `ALL_PROXY`, `NO_PROXY` | the ssh agent, the known_hosts file and a `socks5://` proxy for ssh git fetches | [Git sources and credentials](../guides/servers-and-auth.md#git-sources-and-credentials) |
+| `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` | the proxy for every HTTP request | [what a proxy is sent](../internals/boundaries.md#redirects) |
+| `SSL_CERT_FILE`, `SSL_CERT_DIR` | a private CA, replacing the default trust store | [TLS: validate_certs](../guides/servers-and-auth.md#tls-validate_certs) |
 | `NO_COLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR`, `TERM` | whether output is colored (`TERM=dumb`: the spinner only) | [Output and color](cli.md#output-and-color) |
 
 `ANSIBLE_GALAXY_REQUIREMENTS_FILE` looks like an ansible variable but is

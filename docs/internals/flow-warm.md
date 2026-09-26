@@ -2,8 +2,8 @@
 
 `warm` resolves like `install`, then fills the artifact cache and the extracted
 store for every collection and role without writing a collections or roles
-tree. Options: [`warm`](../cli.md#warm); code meanings:
-[Exit codes](../exit-codes.md).
+tree. Options: [`warm`](../reference/cli.md#warm); code meanings:
+[Exit codes](../reference/exit-codes.md).
 
 ## Overview
 

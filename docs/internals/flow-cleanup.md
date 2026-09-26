@@ -2,8 +2,8 @@
 
 `cleanup` computes, across every project in the cache registry, what some
 project's requirements still reach, then removes the rest from disk and from
-the cache. Options: [`cleanup` options](../cli.md#cleanup-options); code
-meanings: [Exit codes](../exit-codes.md).
+the cache. Options: [`cleanup` options](../reference/cli.md#cleanup-options); code
+meanings: [Exit codes](../reference/exit-codes.md).
 
 ## Overview
 

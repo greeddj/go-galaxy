@@ -9,28 +9,29 @@ go-galaxy is a fast Ansible Galaxy collections and roles installer for CI, writt
 ## Documentation
 
 `README.md` is a short landing page (GitHub-renderable syntax only); the
-reference material lives in `docs/`, which
-builds into a Zensical site (`zensical.toml` at the root, `docs/index.md` its
-landing page, `docs/assets/` the logo, favicon and site CSS). The site is the
-primary reading surface, so user pages may use its admonitions, tabs, cards and
-code annotations. An example given in both formats leads with `galaxy.toml`:
-the first (default) tab before `requirements.yml`, or the left column of a
+reference material lives in `docs/`, which builds into a Zensical site
+(`zensical.toml` at the root, `docs/index.md` its landing page, `docs/assets/`
+the logo, favicon, benchmark chart and site CSS). The site is the primary
+reading surface, so user pages may use its admonitions, tabs, cards and code
+annotations. An example given in both formats leads with `galaxy.toml`: the
+first (default) tab before `requirements.yml`, or the left column of a
 side-by-side comparison, which suits only lines short enough not to scroll.
-Keep the pages true after a behavior change. The user pages,
-basics first: `docs/getting-started.md` (install, first run, lockfile, CI),
-`docs/ansible-galaxy-compat.md` (every deliberate divergence),
-`docs/requirements.md` (requirements.yml and galaxy.toml entries, constraints,
-which file is read), `docs/lockfile.md` (lock, `--frozen`, `lock --check`,
-hash, tree, explain, outdated), `docs/ci.md`, `docs/servers-and-auth.md`,
-`docs/caching.md`, `docs/signatures.md`, `docs/security.md` (verifying a
-release and the operator's trust model; its `#verifying-a-release` anchor is
-linked from the Homebrew cask), `docs/cli.md` (commands and options),
-`docs/configuration.md` (setting precedence, `[tool.go-galaxy]`, ansible.cfg
-and the environment), `docs/exit-codes.md`, `docs/metrics.md`,
-`docs/upgrading.md` (the only page that carries release-to-release history)
-and `docs/benchmarks.md`. Each rule has one home page and every other mention
-is a clause plus a link, which is what keeps them short. The internals live in
-`docs/internals/`, short pages that link the user pages for behavior:
+Keep the pages true after a behavior change. Each `nav` section of
+`zensical.toml` is one directory, and a page lives in its section's. Get
+started, `docs/get-started/`: `getting-started.md` (install, first run,
+lockfile, CI) and `ansible-galaxy-compat.md` (every deliberate divergence).
+Guides, `docs/guides/`: `requirements.md` (requirements.yml and galaxy.toml
+entries, constraints, which file is read), `lockfile.md` (lock, `--frozen`,
+`lock --check`, hash, tree, explain, outdated), `ci.md`, `servers-and-auth.md`,
+`caching.md`, `signatures.md` and `security.md` (verifying a release and the
+operator's trust model; its `#verifying-a-release` anchor is linked from the
+Homebrew cask, pinned to the release tag). Reference, `docs/reference/`:
+`cli.md` (commands and options), `configuration.md` (setting precedence,
+`[tool.go-galaxy]`, ansible.cfg and the environment), `exit-codes.md`,
+`metrics.md`, `upgrading.md` (the only page that carries release-to-release
+history) and `benchmarks.md`. Each rule has one home page and every other
+mention is a clause plus a link, which is what keeps them short. The internals
+live in `docs/internals/`, short pages that link the user pages for behavior:
 `index.md` (the package map and one run end to end), `config-loading.md`,
 `solver.md`, `install-pipeline.md`, `cache.md`, `lockfile-format.md`,
 `http-output-exit-codes.md` (the clients, output tiers, how an error becomes
@@ -46,7 +47,7 @@ binary and `LICENSE` alone (`archives.files`), so no page is shipped and none
 constrains where the docs live.
 `cmd/go-galaxy/main.go`'s `--help` exit-code index is hand-kept string literals
 in `newRootCommand`'s Description, each phrase leading its row in
-`docs/exit-codes.md`; `TestRootCommandDisclosesDefaultCommandAndExitCodes` pins
+`docs/reference/exit-codes.md`; `TestRootCommandDisclosesDefaultCommandAndExitCodes` pins
 the literals against the `exitcode` constants but does not read the doc, so
 change both together.
 
@@ -69,7 +70,7 @@ Single test: `go test ./internal/galaxy/archive/ -run 'TestName'` (standard Go; 
 
 CI (`.github/workflows/ci.yml`) runs the same checks plus `go test -v -race -coverprofile=...`, so run tests with `-race` before considering concurrency work done.
 
-Benchmarks: `testing/bench.sh` (needs `hyperfine`, a `.venv` with ansible-core, and `docker compose -f testing/docker-compose.yaml up -d minio-svc` for the s3-* scenarios). See `docs/benchmarks.md`.
+Benchmarks: `testing/bench.sh` (needs `hyperfine`, a `.venv` with ansible-core, and `docker compose -f testing/docker-compose.yaml up -d minio-svc` for the s3-* scenarios). See `docs/reference/benchmarks.md`.
 
 ## Things that fail the build in non-obvious ways
 

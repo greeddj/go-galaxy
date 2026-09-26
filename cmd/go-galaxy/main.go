@@ -55,7 +55,7 @@ func (r *errRecorder) Write(p []byte) (int, error) {
 
 // newRootCommand builds the root command; onErr receives ExitErrHandler's error
 // and errOut becomes the root's ErrWriter, wrapped in the returned errRecorder.
-// Each exit phrase in Description leads its row in docs/exit-codes.md.
+// Each exit phrase in Description leads its row in docs/reference/exit-codes.md.
 func newRootCommand(onErr func(error), errOut io.Writer) (*cli.Command, *errRecorder) {
 	report := &errRecorder{w: errOut}
 	cmd := &cli.Command{

@@ -169,7 +169,7 @@ func (f *Fetcher) fetchFile(u *url.URL, display string) (Blob, error) {
 
 	// #nosec G304,G703 -- u.Path comes from a requirements file, which is
 	// repository content; reading the local path it names is the entire
-	// operation, and the residual that accepts is disclosed in docs/security.md.
+	// operation, and the residual that accepts is disclosed in docs/guides/security.md.
 	file, err := os.OpenFile(u.Path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return Blob{}, unreadableFileSource(display)
@@ -214,7 +214,7 @@ func (f *Fetcher) readFile(file *os.File, size int64) ([]byte, error) {
 
 // fetchHTTP fetches a blob over http or https in one attempt; a non-200 is
 // named by its status code alone and its body is never read. Redirects are
-// followed and no address class is refused, which docs/security.md discloses.
+// followed and no address class is refused, which docs/guides/security.md discloses.
 func (f *Fetcher) fetchHTTP(ctx context.Context, source, display string) (Blob, error) {
 	if f.offline {
 		return Blob{}, fmt.Errorf("%w: %q: %w", helpers.ErrSignatureSourceUnavailable, display, helpers.ErrOfflineMode)

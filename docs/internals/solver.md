@@ -54,7 +54,7 @@ logic may branch on.
 The mirror replicates vendored Masterminds v3.5.0
 (`TestVerSetDifferentialAgainstCheck`); refusing accepted input is a solver
 bug. The refused shape is an infinite comb that would break closure under
-complement. User rule: [Prereleases](../ansible-galaxy-compat.md#prereleases).
+complement. User rule: [Prereleases](../get-started/ansible-galaxy-compat.md#prereleases).
 
 ## The loop
 
@@ -156,8 +156,8 @@ in both directions.
 
 | Outcome | Returned as | Exit |
 | --- | --- | --- |
-| No version fits | `*ConflictError`, whose `Is` matches `helpers.ErrNoVersionSatisfiesConstraints` | [`3`](../exit-codes.md) |
-| Canceled | Bare `ctx.Err()` from the per-iteration check | [By cause](../exit-codes.md#signals) |
+| No version fits | `*ConflictError`, whose `Is` matches `helpers.ErrNoVersionSatisfiesConstraints` | [`3`](../reference/exit-codes.md) |
+| Canceled | Bare `ctx.Err()` from the per-iteration check | [By cause](../reference/exit-codes.md#signals) |
 | Provider failure | Wrapped, never modeled as an incompatibility | By its sentinel |
 | Broken invariant | Wraps the unexported `errSolverBug`, no panic | `1` |
 
@@ -185,7 +185,7 @@ after 10,000 steps, and a root cause that is not almost satisfied ends as a
 `buildConflictError` walks the derivation graph into PubGrub's numbered
 explanation. A node referenced twice gets a line number, and a derived
 terminal line is rewritten to begin `So,` and end `version solving failed.`
-How to read one: [When no version fits](../requirements.md#when-no-version-fits).
+How to read one: [When no version fits](../guides/requirements.md#when-no-version-fits).
 
 | Incompatibility | Reads |
 | --- | --- |

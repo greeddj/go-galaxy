@@ -109,7 +109,7 @@ roles:
         1.  Its `MANIFEST.json` names the collection; the downloaded bytes are
             pinned by sha256.
         2.  `version` is an assertion: it must match the manifest, or the run
-            exits [`3`](exit-codes.md).
+            exits [`3`](../reference/exit-codes.md).
         3.  A caching proxy: the embedded URL needs a lower-case scheme and
             host, and no default port.
 
@@ -127,7 +127,7 @@ roles:
         1.  Its `MANIFEST.json` names the collection; the downloaded bytes are
             pinned by sha256.
         2.  An assertion: it must match the manifest, or the run exits
-            [`3`](exit-codes.md).
+            [`3`](../reference/exit-codes.md).
         3.  A caching proxy: the embedded URL needs a lower-case scheme and
             host, and no default port.
 
@@ -157,7 +157,7 @@ A bare top-level list is read as `collections:`.
 | x-range | `1.x` | `>=1.0.0, <2.0.0` | No |
 
 Every other form admits a prerelease only when it names one, as `>=1.0.0-0`
-does ([Prereleases](ansible-galaxy-compat.md#prereleases)).
+does ([Prereleases](../get-started/ansible-galaxy-compat.md#prereleases)).
 
 > [!TIP]
 > Quote every version in YAML: an unquoted `1.10` reaches go-galaxy as the
@@ -192,9 +192,9 @@ So, because root depends on ansible.netcommon >=8.7.0 and root depends on ansibl
 hint: pre-release versions of ansible.netcommon exist and are excluded by plain constraints; if you intended to allow them, use a >=X.Y.Z-0 floor or an exact pin
 ```
 
-go-galaxy's [PubGrub solver](internals/solver.md) tries older
+go-galaxy's [PubGrub solver](../internals/solver.md) tries older
 releases when a newer one conflicts. When no combination fits, it exits
-[`3`](exit-codes.md) rather than pick leniently; the proof's `So, because`
+[`3`](../reference/exit-codes.md) rather than pick leniently; the proof's `So, because`
 line names the constraints to relax.
 
 ## Roles
@@ -296,7 +296,7 @@ local role (no dot) is skipped, and so, with a warning, is a collection's role
 
 | Use | When |
 | --- | --- |
-| `galaxy.toml` | You want the constraint beside the name, a strict schema, and run settings in [`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table) |
+| `galaxy.toml` | You want the constraint beside the name, a strict schema, and run settings in [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table) |
 | `requirements.yml` | `ansible-galaxy` must read the file too |
 
 ### The `[project]` table
@@ -326,7 +326,7 @@ roles = ["geerlingguy.docker,8.0.0"] # (4)!
 
 `collections = []` installs nothing; a file with neither list exits `2`. A
 `${VAR}` in an entry stays literal: only
-[`[tool.go-galaxy]`](configuration.md#var-expansion) expands one.
+[`[tool.go-galaxy]`](../reference/configuration.md#var-expansion) expands one.
 
 ### Dependency strings
 
@@ -403,7 +403,7 @@ When discovery finds both files, go-galaxy warns:
 
 With neither file, `install`, `warm`, `lock` and `hash` exit `2`. A
 world-writable directory does not stop discovery, as
-[Security](internals/boundaries.md#loading-requirementsyml-and-the-lockfile) explains.
+[Security](../internals/boundaries.md#loading-requirementsyml-and-the-lockfile) explains.
 
 ## What is refused
 
@@ -448,7 +448,7 @@ resolve.
 ## Moving to galaxy.toml
 
 - [ ] Upgrade every go-galaxy sharing the cache or the lockfile first
-      ([From v1.2.x](upgrading.md#from-v12x)).
+      ([From v1.2.x](../reference/upgrading.md#from-v12x)).
 - [ ] Rewrite the entries, copying each constraint exactly, and delete
       `requirements.yml`, or every run that names no file warns.
 - [ ] Run `go-galaxy lock --check`: the same entries give the same
@@ -457,4 +457,4 @@ resolve.
       [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) key; a respelled
       constraint (`"1.0.0"` as `== 1.0.0`) costs one fresh resolve.
 - [ ] Optionally move `cache_dir` and the whole server list from `ansible.cfg`
-      into [`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table).
+      into [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table).

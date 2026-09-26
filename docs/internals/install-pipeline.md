@@ -175,7 +175,7 @@ Roles are never prefetched. The prefetcher is off under `--dry-run`,
 
 The metrics report is written before the deferred `Close` joins the pool. On a
 failed install, a worker still downloading an undispatched level counts after
-it, so the [counters](../metrics.md#how-the-counters-count) are a lower bound.
+it, so the [counters](../reference/metrics.md#how-the-counters-count) are a lower bound.
 
 ## Acquiring an artifact
 
@@ -323,7 +323,7 @@ shared slot.
 
 Only S3 fails a hit on read, comparing the bytes with `x-amz-meta-sha256`
 exactly; the local store checks no digest on read. Hence
-[metrics](../metrics.md#how-the-counters-count) count a hit and a miss
+[metrics](../reference/metrics.md#how-the-counters-count) count a hit and a miss
 locally, only the miss on S3.
 
 | Never evicted | Predicate | Because |
@@ -364,4 +364,4 @@ probe failure, cached, would download.
 - A dry run saves only an existing snapshot (`saveDryRunSnapshotIfPersisted`):
   cleanup would read a fresh empty one as nothing installed.
 
-Behavior: [Dry run](../cli.md#dry-run).
+Behavior: [Dry run](../reference/cli.md#dry-run).

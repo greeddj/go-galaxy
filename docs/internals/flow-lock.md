@@ -3,7 +3,7 @@
 `lock` resolves the requirements file as install does without `--frozen`,
 builds the lockfile in memory and writes it, previews it under `--dry-run` or
 compares it under `--check`. Options:
-[`lock`](../cli.md#lock); code meanings: [Exit codes](../exit-codes.md); the
+[`lock`](../reference/cli.md#lock); code meanings: [Exit codes](../reference/exit-codes.md); the
 file itself: [Lockfile format](lockfile-format.md).
 
 ## Overview

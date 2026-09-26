@@ -58,7 +58,7 @@ go test ./internal/galaxy/solver -fuzz FuzzSolve -fuzztime 60s
   `--match` in the Justfile's `git describe`.
 
 Release notes come from [commit subjects](https://github.com/greeddj/go-galaxy/blob/main/CONTRIBUTING.md#commit-subjects);
-checking a release is [Verifying a release](../security.md#verifying-a-release).
+checking a release is [Verifying a release](../guides/security.md#verifying-a-release).
 
 ## The repository audits itself
 
@@ -200,10 +200,11 @@ packet-bearing fixture needs a `gatedFixtures` row and restated
   the strict build refuses a relative one that leaves it.
 - A new page needs a `nav` entry in `zensical.toml`, or it renders without
   warning and nothing links to it.
+- Each `nav` section is one directory: `get-started/`, `guides/`,
+  `reference/` and `internals/`, with `index.md` and `assets/` at the top.
+  A page in one section links another as `../<section>/page.md`.
 - A release archive ships the binary and `LICENSE` only, so no page or image
   under `docs/` has to be listed in `.goreleaser.yml`.
-- Internals pages live in `docs/internals/` and link user pages as
-  `../page.md`.
 - `docs/index.md` repeats `README.md`'s opening paragraph: change both. The
   build writes `site/` and `.cache/`, both git-ignored.
 
@@ -246,7 +247,7 @@ repository, where extracted Go files would reach a linter.
 
 `cmd/go-galaxy-benchmark` narrows the comparison to collections in `cold` and
 `warm`: `run` measures and writes `report.json`, `show` re-renders it as a
-table or SVG. Flags and a sample run: [Benchmarks](../benchmarks.md#go-galaxy-benchmark).
+table or SVG. Flags and a sample run: [Benchmarks](../reference/benchmarks.md#go-galaxy-benchmark).
 
 - It overrides only `GO_GALAXY_CACHE_DIR` and `TMPDIR`, so an exported
   `GO_GALAXY_S3_BUCKET` turns the run into an S3 run.

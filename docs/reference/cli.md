@@ -71,8 +71,8 @@ flags.
 `--check` compares instead of writing and exits `6` on drift; `--dry-run`
 prints the difference. A `download_url` with a query string, or off its
 server's artifact path, exits `5`. Workflow: [Create the
-lockfile](lockfile.md#create-the-lockfile) and [Catch
-drift](lockfile.md#catch-drift).
+lockfile](../guides/lockfile.md#create-the-lockfile) and [Catch
+drift](../guides/lockfile.md#catch-drift).
 
 ### `warm`
 
@@ -85,7 +85,7 @@ without installing, so a later `install` only links.
 It takes the `install` options and needs a cache, so `--no-cache` exits `2`.
 
 `cleanup` keeps a warmed tree for 30 days after its last warm. Recipe:
-[Container image bake](ci.md#container-image-bake).
+[Container image bake](../guides/ci.md#container-image-bake).
 
 ### `outdated`
 
@@ -100,7 +100,7 @@ no lock, so it can run beside `install`, and a failed lookup exits `4` (with
 
 It warns once that `--clear-cache`, `--no-cache`, `--refresh`, `--no-deps`,
 `--frozen` and `--s3-bucket` do nothing. The report: [Find newer
-versions](lockfile.md#find-newer-versions).
+versions](../guides/lockfile.md#find-newer-versions).
 
 ### `hash`, `tree` and `explain`
 
@@ -114,8 +114,8 @@ of the requirements file's bytes when there is none.
 
 `tree` and `explain` exit `6` without a lockfile, and `explain` exits `1` for a
 name the lockfile lacks. Every case: [Inspect what is
-locked](lockfile.md#inspect-what-is-locked) and [A cache key for
-CI](lockfile.md#a-cache-key-for-ci).
+locked](../guides/lockfile.md#inspect-what-is-locked) and [A cache key for
+CI](../guides/lockfile.md#a-cache-key-for-ci).
 
 ### `cleanup` options
 
@@ -156,7 +156,7 @@ flowchart TD
 | Installed role | A recorded project's `roles:` reaches it | Removed, if go-galaxy installed it under a recorded `roles_path` |
 | Extracted tree | A kept install uses it, or a warm within 30 days | Swept |
 | Cached artifact | No removed install names it | Removed with that install, if its record names the server |
-| [Legacy flat-key](caching.md#clearing-and-cleanup) artifact | Its collection is installed in no recorded project | Removed, reachable or not |
+| [Legacy flat-key](../guides/caching.md#clearing-and-cleanup) artifact | Its collection is installed in no recorded project | Removed, reachable or not |
 
 <details markdown>
 <summary>When cleanup warns, skips or stops</summary>
@@ -172,7 +172,7 @@ flowchart TD
 | Any other read error, or a failed removal | Stops the run; nothing unremoved is reported as removed |
 
 The scan in detail: [Scan: every recorded project's
-installs](internals/flow-cleanup.md#scan-every-recorded-projects-installs).
+installs](../internals/flow-cleanup.md#scan-every-recorded-projects-installs).
 
 </details>
 
@@ -185,7 +185,7 @@ installs](internals/flow-cleanup.md#scan-every-recorded-projects-installs).
 | `--verbose` | `GO_GALAXY_VERBOSE` | Adds debug lines: where each setting came from, requests, timings |
 | `--quiet`, `-q` | `GO_GALAXY_QUIET` | Drops progress lines; results, warnings and errors still print. Ignored with `--verbose` |
 | `--dry-run` | `GO_GALAXY_DRY_RUN` | Reports what would happen; see [Dry run](#dry-run) |
-| `--cache-dir` | `GO_GALAXY_CACHE_DIR`, `ANSIBLE_GALAXY_CACHE_DIR` | The [local cache](caching.md#the-local-cache); unset, `galaxy.toml`'s `cache_dir`, then `ansible.cfg`'s `[galaxy] cache_dir`, then `~/.cache/go-galaxy` |
+| `--cache-dir` | `GO_GALAXY_CACHE_DIR`, `ANSIBLE_GALAXY_CACHE_DIR` | The [local cache](../guides/caching.md#the-local-cache); unset, `galaxy.toml`'s `cache_dir`, then `ansible.cfg`'s `[galaxy] cache_dir`, then `~/.cache/go-galaxy` |
 
 ## Options
 
@@ -226,7 +226,7 @@ when the run has roles.
 Every command but `hash`, `tree` and `explain` under `--lock-file` loads
 [`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table) first, and a
 `galaxy.toml` that fails to load exits `2`. Discovery: [Which file is
-read](requirements.md#which-file-is-read).
+read](../guides/requirements.md#which-file-is-read).
 
 ### Servers and network
 
@@ -244,8 +244,8 @@ a transfer: [Timeouts and fixed limits](#timeouts-and-fixed-limits).
 `ANSIBLE_GALAXY_SERVER` outranks `[galaxy] server`. `--token` with several
 servers in effect exits `2`, and an empty value clears a configured token. The
 rules: [Which servers a run
-uses](servers-and-auth.md#which-servers-a-run-uses) and
-[`--token`](servers-and-auth.md#--token).
+uses](../guides/servers-and-auth.md#which-servers-a-run-uses) and
+[`--token`](../guides/servers-and-auth.md#--token).
 
 ### Concurrency
 
@@ -272,7 +272,7 @@ differ](benchmarks.md#why-your-numbers-will-differ).
 
 `--offline` beats `--refresh` with a warning. `--refresh` and `--no-deps` do
 nothing under `--frozen`; write the lockfile with `lock --refresh` or
-`lock --no-deps` instead. Compared: [Cache flags](caching.md#cache-flags).
+`lock --no-deps` instead. Compared: [Cache flags](../guides/caching.md#cache-flags).
 
 ### Lockfile
 
@@ -290,7 +290,7 @@ The path is the first of:
 
 `lock --frozen` exits `2`, and `GO_GALAXY_FROZEN` never reaches `lock`. What
 the pins enforce: [What a frozen install
-checks](lockfile.md#what-a-frozen-install-checks).
+checks](../guides/lockfile.md#what-a-frozen-install-checks).
 
 ### Signatures
 
@@ -302,7 +302,7 @@ checks](lockfile.md#what-a-frozen-install-checks).
 | `--disable-gpg-verify` | `GO_GALAXY_DISABLE_GPG_VERIFY`, `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` | | Skips verification even with a keyring |
 
 No file sets these: an `ansible.cfg`'s signature keys draw a warning. How
-verification works: [Turning it on](signatures.md#turning-it-on).
+verification works: [Turning it on](../guides/signatures.md#turning-it-on).
 
 ### S3
 
@@ -319,7 +319,7 @@ verification works: [Turning it on](signatures.md#turning-it-on).
 
 A bucket without both keys, or with `--offline`, exits `2`. Pass secrets as
 variables: other processes can see flags. Setup: [S3 cache
-(optional)](caching.md#s3-cache-optional).
+(optional)](../guides/caching.md#s3-cache-optional).
 
 ### Timeouts and fixed limits
 
@@ -349,7 +349,7 @@ a cached copy that fails its check, spends a second.
 
 The state budget is tighter because it runs while the S3 lock blocks every
 other runner. Mechanism: [Acquiring an
-artifact](internals/install-pipeline.md#acquiring-an-artifact).
+artifact](../internals/install-pipeline.md#acquiring-an-artifact).
 
 </details>
 
@@ -402,7 +402,7 @@ the real run could still fail on such bytes.
 `warm` reports `Already warm` only when the extracted tree is ready under the
 pinned or last-warmed sha256, so a fresh runner over a warm bucket reports
 `Would warm: <name> (artifact cached)`. Details: [Dry
-run](internals/install-pipeline.md#dry-run).
+run](../internals/install-pipeline.md#dry-run).
 
 </details>
 
