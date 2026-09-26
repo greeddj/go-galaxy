@@ -321,6 +321,11 @@ func validateGalaxyEntry(e Entry, schema int) error {
 	if reason := downloadURLProblem(e.DownloadURL); reason != "" {
 		return fmt.Errorf("%w: %s: %s", helpers.ErrLockfileInvalid, e.Name, reason)
 	}
+	// Empty is a digest-less server's pin; anything else must be what lock
+	// writes, or a hand-edited pin would surface only as an install mismatch.
+	if e.SHA256 != "" && !helpers.IsSHA256Hex(e.SHA256) {
+		return fmt.Errorf("%w: %s: sha256 is not 64 lowercase hex digits", helpers.ErrLockfileInvalid, e.Name)
+	}
 	return nil
 }
 

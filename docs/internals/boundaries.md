@@ -149,6 +149,7 @@ check and extractor a download does; no signature can vouch for it.
 | A requirements `source:` | it carries userinfo | `requirements.checkSourceUserinfo` | `ErrGalaxyServerURLUserinfo` | 2 |
 | A lockfile `source` or `name` | userinfo, never printed; a name outside its alphabet | `lockfile.validate` | `ErrLockfileInvalid` | 6 |
 | A Galaxy entry's `download_url` | not canonical `http(s)`, or with userinfo, query or fragment | `lockfile.downloadURLProblem` | `ErrLockfileInvalid` | 6 |
+| A Galaxy entry's `sha256` | neither empty nor 64 lowercase hex digits | `lockfile.validateGalaxyEntry` | `ErrLockfileInvalid` | 6 |
 | The same under `--frozen` | off its server's origin, or not ending `/<ns>-<name>-<version>.tar.gz` | `checkLockedDownloadURLs` | `ErrLockfileInvalid` | 6 |
 | A download URL at `lock` | a query, or not its server's own artifact | `lockableDownloadURL`, `checkServerArtifactURL` | `ErrDownloadURLQuery`, `ErrDownloadURLNotServerArtifact` | 5 |
 | A `galaxy.toml` | a syntax error, shown as line and last key; an unknown table or key | `projectfile.Decode` | `ErrInvalidRequirementsTOML`, `ErrUnsupportedRequirementsFormat` | 2 |

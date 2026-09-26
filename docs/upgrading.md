@@ -18,6 +18,7 @@ refuses what a newer one writes ([Pin one release](ci.md#pin-one-release)).
 | A collection no server has exits `3`, not `1`, where a server also serves its web UI at an API root, as galaxy.ansible.com does under `/v3`; a server answering web pages at every API root exits `4` | Nothing, unless a step matched exit `1` for a misspelled name | That step no longer matches |
 | An S3 snapshot object that inflates but does not decode exits [`9`](exit-codes.md), not `1` | Delete the S3 key the message names, as for any exit `9` | A step that branched on `1` for it no longer matches |
 | `lock` exits [`3`](exit-codes.md), not `1`, when a collection or version the resolve named is gone from its server, as after a resolve replayed from the cache | Relax the constraint or pick a published version, then `lock` again | A step that branched on `1` for it no longer matches |
+| A Galaxy entry in `galaxy.lock` whose `sha256` is set but not 64 lowercase hex digits is refused on load, exit [`6`](exit-codes.md), where an install failed on it with `7` | Nothing for a file `lock` wrote; `go-galaxy lock` rewrites a hand-edited one | `install --frozen`, `warm --frozen`, `lock --check`, `hash`, `tree`, `explain` and `outdated` exit `6` on that file |
 
 Every change above is new since v1.2.3. On v1.1.0 to v1.2.2, also read the
 breaking changes in the

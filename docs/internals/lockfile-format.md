@@ -33,8 +33,10 @@ Every entry also has a `name`, a `version` and optional `deps`.
 
 - A git pin has no `sha256`, since a rebuild's gzip bytes depend on the
   toolchain; a url pin's bytes are the origin's own.
-- A Galaxy `sha256` may be empty, which keeps digest-less servers usable; a
-  malformed one fails `lock` with `ErrMalformedArtifactSHA256`, exit 7.
+- A Galaxy `sha256` may be empty, which keeps digest-less servers usable.
+  Otherwise it is 64 lowercase hex digits: a malformed one from the server
+  fails `lock` (`ErrMalformedArtifactSHA256`, exit 7), and one in the file
+  fails `Load` (`ErrLockfileInvalid`, exit 6).
 - A role `version` is not semver, since a branch is legal; a url role's
   default is the sha's first 12 hex digits.
 - A Galaxy role's `ref` is `refs/tags/<tag>` for a listed tag, else
