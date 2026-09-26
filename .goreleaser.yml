@@ -33,12 +33,6 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     files:
       - LICENSE
-      - README.md
-      - CONTRIBUTING.md
-      - docs/*.md
-      - docs/internals/*.md
-      - docs/*.svg
-      - docs/assets/logo*.svg
   - id: binary
     ids:
       - go-galaxy

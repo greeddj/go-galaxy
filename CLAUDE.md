@@ -8,8 +8,8 @@ go-galaxy is a fast Ansible Galaxy collections and roles installer for CI, writt
 
 ## Documentation
 
-`README.md` is a short landing page (GitHub-renderable syntax only, since it
-also ships in release tarballs); the reference material lives in `docs/`, which
+`README.md` is a short landing page (GitHub-renderable syntax only); the
+reference material lives in `docs/`, which
 builds into a Zensical site (`zensical.toml` at the root, `docs/index.md` its
 landing page, `docs/assets/` the logo, favicon and site CSS). The site is the
 primary reading surface, so user pages may use its admonitions, tabs, cards and
@@ -41,10 +41,9 @@ and `development.md` (tests, gates, lint, the docs site, the benchmark
 harness). A new page needs a `nav` entry in `zensical.toml`, and a link out of
 `docs/` must be absolute. One document sits at the root instead, because
 GitHub reads it from there: `CONTRIBUTING.md` (the commit subjects the release
-notes are grouped from, and cutting a release) - which is why it is named in
-`archives.files` beside `README.md`, `docs/*.md`, `docs/internals/*.md`,
-`docs/*.svg` and the logos, or the README would ship a dead link or a broken
-image inside every tarball.
+notes are grouped from, and cutting a release). A release archive carries the
+binary and `LICENSE` alone (`archives.files`), so no page is shipped and none
+constrains where the docs live.
 `cmd/go-galaxy/main.go`'s `--help` exit-code index is hand-kept string literals
 in `newRootCommand`'s Description, each phrase leading its row in
 `docs/exit-codes.md`; `TestRootCommandDisclosesDefaultCommandAndExitCodes` pins

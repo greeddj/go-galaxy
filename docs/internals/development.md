@@ -200,6 +200,8 @@ packet-bearing fixture needs a `gatedFixtures` row and restated
   the strict build refuses a relative one that leaves it.
 - A new page needs a `nav` entry in `zensical.toml`, or it renders without
   warning and nothing links to it.
+- A release archive ships the binary and `LICENSE` only, so no page or image
+  under `docs/` has to be listed in `.goreleaser.yml`.
 - Internals pages live in `docs/internals/` and link user pages as
   `../page.md`.
 - `docs/index.md` repeats `README.md`'s opening paragraph: change both. The
