@@ -206,6 +206,91 @@ func TestMultiServerAdvancesOnPlain404(t *testing.T) {
 	}
 }
 
+// TestMultiServerNoDepsExactPinFindsItsServer pins that --no-deps binds an
+// exact pin to the server that has it, as a resolve with dependencies does:
+// ns.b is only on B, so install fetches it from B and lock records B.
+func TestMultiServerNoDepsExactPinFindsItsServer(t *testing.T) {
+	t.Parallel()
+	srvA := fakegalaxy.New(t)
+	srvB := fakegalaxy.New(t)
+	srvB.AddVersion("ns", "b", "1.0.0", nil)
+	servers := []config.Server{{ID: "a", URL: srvA.URL()}, {ID: "b", URL: srvB.URL()}}
+	const pinned = "collections:\n  - name: ns.b\n    version: \"1.0.0\"\n"
+
+	installCfg := newMultiServerConfig(t, servers, pinned)
+	installCfg.NoDeps = true
+	if err := collections.Start(context.Background(), installCfg, multiServerRuntime(installCfg)); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	msAssertInstalled(t, installCfg.DownloadPath, "b")
+
+	lockCfg := newMultiServerConfig(t, servers, pinned)
+	lockCfg.NoDeps = true
+	lf := msLockFile(t, lockCfg, multiServerRuntime(lockCfg))
+	if e := findLockEntry(t, lf, "ns.b"); e.Source != srvB.URL() {
+		t.Fatalf("ns.b lockfile source = %q, want %q", e.Source, srvB.URL())
+	}
+}
+
+// TestMultiServerNoDepsBindFailureEndsTheResolve pins that a --no-deps exact
+// pin whose server walk fails ends the resolve as with dependencies: 3 for a
+// pin no server has, 4 for a failing server, never a first-server fallback.
+func TestMultiServerNoDepsBindFailureEndsTheResolve(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		arm      func(srvA *fakegalaxy.Server)
+		name     string
+		wantCode int
+	}{
+		{name: "pin no server has", arm: func(*fakegalaxy.Server) {}, wantCode: exitcode.ExitResolution},
+		{name: "first server refuses", arm: func(srvA *fakegalaxy.Server) {
+			srvA.Fail(fakegalaxy.EndpointRootMetadata, "ns", "gone", fakegalaxy.Fault{Status: http.StatusUnauthorized, Count: -1})
+		}, wantCode: exitcode.ExitNetwork},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srvA := fakegalaxy.New(t)
+			srvB := fakegalaxy.New(t)
+			tt.arm(srvA)
+			servers := []config.Server{{ID: "a", URL: srvA.URL()}, {ID: "b", URL: srvB.URL()}}
+			cfg := newMultiServerConfig(t, servers, "collections:\n  - name: ns.gone\n    version: \"1.0.0\"\n")
+			cfg.NoDeps = true
+			err := collections.Start(context.Background(), cfg, multiServerRuntime(cfg))
+			if got := exitcode.FromError(err); got != tt.wantCode {
+				t.Fatalf("exit = %d, want %d; err = %v", got, tt.wantCode, err)
+			}
+			if errors.Is(err, helpers.ErrInstallationFailed) {
+				t.Fatalf("err = %v, want the resolve to fail, not an install item", err)
+			}
+		})
+	}
+}
+
+// TestMultiServerNoDepsFailedBindRecordsNothing pins that a --no-deps resolve
+// whose server walk failed records no resolution: once B recovers, the next run
+// on the same cache finds ns.b there instead of replaying the first server.
+func TestMultiServerNoDepsFailedBindRecordsNothing(t *testing.T) {
+	t.Parallel()
+	srvA := fakegalaxy.New(t)
+	srvB := fakegalaxy.New(t)
+	srvB.AddVersion("ns", "b", "1.0.0", nil)
+	outage := fakegalaxy.Fault{Status: http.StatusServiceUnavailable, Count: helpers.FetchRetryMaxAttempts}
+	srvB.Fail(fakegalaxy.EndpointRootMetadata, "ns", "b", outage)
+	servers := []config.Server{{ID: "a", URL: srvA.URL()}, {ID: "b", URL: srvB.URL()}}
+	cfg := newMultiServerConfig(t, servers, "collections:\n  - name: ns.b\n    version: \"1.0.0\"\n")
+	cfg.NoDeps = true
+
+	err := collections.Start(context.Background(), cfg, multiServerRuntime(cfg))
+	if got := exitcode.FromError(err); got != exitcode.ExitNetwork {
+		t.Fatalf("first run exit = %d, want %d; err = %v", got, exitcode.ExitNetwork, err)
+	}
+	if err := collections.Start(context.Background(), cfg, multiServerRuntime(cfg)); err != nil {
+		t.Fatalf("second run after B recovered: %v", err)
+	}
+	msAssertInstalled(t, cfg.DownloadPath, "b")
+}
+
 // TestMultiServerAuthFailureAbortsClosed pins that a 401 from A aborts the
 // run with helpers.ErrGalaxyAuthFailed naming A and never falls through to B.
 func TestMultiServerAuthFailureAbortsClosed(t *testing.T) {

@@ -352,16 +352,48 @@ type noDepsProvider struct {
 	solver.Provider
 }
 
+// serverBinder is the one part of Dependencies a --no-deps run keeps: binding
+// an exact pin, which the solver asks nothing else, to the server that has it.
+type serverBinder interface {
+	bindServer(ctx context.Context, fqdn string, v solver.Version) error
+}
+
 // NewNoDepsProvider wraps p so its Dependencies never contributes an edge,
 // leaving Highest/Universe delegated to p unchanged.
 func NewNoDepsProvider(p solver.Provider) solver.Provider {
 	return noDepsProvider{Provider: p}
 }
 
-// Dependencies always reports no dependencies, without ever calling the
-// wrapped provider.
-func (noDepsProvider) Dependencies(context.Context, string, solver.Version) (map[string]solver.Constraint, error) {
+// Dependencies reports no dependencies and never asks the wrapped provider for
+// them; it binds fqdn's server first, else an exact pin falls to the first one.
+func (p noDepsProvider) Dependencies(ctx context.Context, fqdn string, v solver.Version) (map[string]solver.Constraint, error) {
+	if binder, ok := p.Provider.(serverBinder); ok {
+		if err := binder.bindServer(ctx, fqdn, v); err != nil {
+			return nil, err
+		}
+	}
 	return map[string]solver.Constraint{}, nil
+}
+
+// bindServer binds fqdn as Dependencies does: no request for one candidate, else
+// a root walk whose failure ends the solve, a pin no server has being
+// ErrNoSemverCandidates. A git or url pin has its own source.
+func (p *MetadataProvider) bindServer(ctx context.Context, fqdn string, v solver.Version) error {
+	if _, pinned := p.pins[fqdn]; pinned {
+		return nil
+	}
+	ns, name, err := splitFQDN(fqdn)
+	if err != nil {
+		return err
+	}
+	col := collection{Namespace: ns, Name: name, Source: p.sourceOf(fqdn)}
+	if _, err := p.boundBaseFor(ctx, col, fqdn, cacheManager.PolicyForConstraint(p.deps.cfg, true)); err != nil {
+		if isUnknownPackageError(err) {
+			return notPublishedError(err, fqdn, v.Original())
+		}
+		return fmt.Errorf("finding the server of %s: %w", fqdn, err)
+	}
+	return nil
 }
 
 // pinnedVersion returns the single version a git or url pin declares for

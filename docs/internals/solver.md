@@ -119,7 +119,7 @@ misclassified.
 | `deps_cache` | Keyed per bound server (`helpers.ScopedDepsCacheKey`): two servers may publish different deps for one version |
 | Version list | 100 per page, `ErrVersionsPagingExceeded` past 100 requests, one `MetadataDeadline` for all pages |
 | A `404` the core cannot model | An exact pin's root, a versions page or a version document gone: `notPublishedError` returns `ErrNoSemverCandidates`, exit 3 |
-| `--no-deps` | `NewNoDepsProvider` answers no dependencies without asking |
+| `--no-deps` | `NewNoDepsProvider` answers no dependencies without asking, after `bindServer` binds an exact pin's server as `Dependencies` would |
 | Prewarm | `prewarmRootMetadata` makes the solve's own calls ahead, on `--workers` |
 
 > [!WARNING]
@@ -135,7 +135,7 @@ misclassified.
 | Calls `Highest` or `Dependencies`, never `Universe` | The same call on both sides makes a warmed document a cache hit |
 | Needs a store, two roots, a read-write policy | Else it saves nothing or pays twice; `--offline` and `--no-cache` disable it |
 | `--refresh` warms exact pins only | Only their policy still reads back |
-| Skips git and url roots, exact pins under `--no-deps` | The solve asks no server for them |
+| Skips git and url roots; under `--no-deps` warms only an exact pin's server binding | As with dependencies: a first server's pin then costs the solve nothing, a later server's repeats the 404s |
 | An error stops dispatch, logged under `--verbose` | The solve reports it once, on the caller's own context |
 | Runs below the snapshot-replay return | A replay makes no metadata request |
 

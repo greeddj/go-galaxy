@@ -63,9 +63,9 @@ func prewarmEnabled(deps collectionDeps, roots []collection) bool {
 		prewarmPolicyUsable(cacheManager.PolicyForConstraint(deps.cfg, true))
 }
 
-// prewarmOne warms root via Highest, or via Dependencies for an exact pin.
-// It skips git and url roots, an exact pin under NoDeps (the solve asks
-// nothing for it), a malformed constraint and an unusable policy.
+// prewarmOne warms what the solve asks for root: Highest, or for an exact pin
+// Dependencies, or under NoDeps only its server binding. It skips git and url
+// roots, a malformed constraint and an unusable policy.
 func prewarmOne(ctx context.Context, deps collectionDeps, sources map[string]string, root collection) error {
 	// A git or url root is answered by discovery; a server would only 404.
 	if root.isGit() || root.isURL() {
@@ -78,9 +78,6 @@ func prewarmOne(ctx context.Context, deps collectionDeps, sources map[string]str
 	version, exact, err := exactVersionFromConstraints([]string{constraint})
 	if err != nil {
 		// The solve hits the same parse and reports it, exactly once.
-		return nil
-	}
-	if exact && deps.cfg.NoDeps {
 		return nil
 	}
 	if !prewarmPolicyUsable(cacheManager.PolicyForConstraint(deps.cfg, exact)) {
@@ -101,6 +98,9 @@ func prewarmOne(ctx context.Context, deps collectionDeps, sources map[string]str
 		// Unreachable: exactVersionFromConstraints already parsed version.
 		// Skipped rather than reported, like every other prewarm failure.
 		return nil
+	}
+	if deps.cfg.NoDeps {
+		return mp.bindServer(ctx, fqdn, v)
 	}
 	_, err = mp.Dependencies(ctx, fqdn, v)
 	return err

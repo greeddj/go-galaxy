@@ -110,9 +110,10 @@ flowchart TD
     full --> rec2["Record resolution"]
 ```
 
-`requirementsSignatureFromSpec` hashes `no-deps=<bool>`,
+`requirementsSignatureFromSpec` hashes `no-deps=false` or `no-deps=bound`,
 `servers=<serversSignature>`, then sorted `fqdn|constraint|source|type|signatures`
-lines.
+lines. `bound` replaced `true` so no older `--no-deps` resolution replays: it
+may hold an exact pin on the first server, never asked.
 
 | Input | Rule | Why |
 | :-- | :-- | :-- |

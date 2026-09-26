@@ -868,7 +868,13 @@ func requirementsSignatureFromSpec(spec map[string]store.RequirementSpec, noDeps
 		parts = append(parts, fmt.Sprintf("%s|%s|%s|%s|%s", fqdn, constraint, entry.Source, entry.Type, signatureKey))
 	}
 	slices.Sort(parts)
-	header := fmt.Sprintf("no-deps=%t\nservers=%s", noDeps, serversSig)
+	// "bound": a --no-deps resolution an older binary recorded may hold an exact
+	// pin on the first server without asking it, so none of those replays.
+	noDepsKey := "false"
+	if noDeps {
+		noDepsKey = "bound"
+	}
+	header := fmt.Sprintf("no-deps=%s\nservers=%s", noDepsKey, serversSig)
 	sum := sha256.Sum256([]byte(header + "\n" + strings.Join(parts, "\n")))
 	return hex.EncodeToString(sum[:])
 }

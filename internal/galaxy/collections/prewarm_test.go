@@ -246,10 +246,10 @@ func TestPrewarmSkippedWhenSnapshotReplays(t *testing.T) {
 	}
 }
 
-// TestPrewarmSkippedForExactPinWithNoDeps pins that an exact pin under
-// --no-deps is not warmed, since the solve asks nothing for it; its positive
-// control is TestPrewarmFetchesVersionMetadataForExactPin.
-func TestPrewarmSkippedForExactPinWithNoDeps(t *testing.T) {
+// TestPrewarmExactPinWithNoDepsOnOneServerAsksNothing pins that an exact pin
+// under --no-deps costs no request with one server, prewarm and solve alike:
+// binding it needs none. TestPrewarmBindsNoDepsExactPinsConcurrently is the control.
+func TestPrewarmExactPinWithNoDepsOnOneServerAsksNothing(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)
 	roots := exactPinnedPrewarmRoots(srv, srv.URL(), 2)
@@ -267,9 +267,39 @@ func TestPrewarmSkippedForExactPinWithNoDeps(t *testing.T) {
 	}
 }
 
+// TestPrewarmBindsNoDepsExactPinsConcurrently pins that with several servers
+// prewarm binds --no-deps exact pins up to cfg.Workers at once, where the solve
+// alone would walk the servers for them one pin at a time.
+func TestPrewarmBindsNoDepsExactPinsConcurrently(t *testing.T) {
+	t.Parallel()
+	srvA := fakegalaxy.New(t)
+	srvB := fakegalaxy.New(t)
+	roots := exactPinnedPrewarmRoots(srvB, "", 4)
+
+	runtime, barrier := newPrewarmBarrierRuntime(srvA, 4)
+	cfg := &config.Config{
+		Servers: []config.Server{{ID: "a", URL: srvA.URL()}, {ID: "b", URL: srvB.URL()}},
+		Server:  srvA.URL(), Workers: 4, NoDeps: true,
+	}
+	deps := newCollectionDeps(cfg, runtime, store.New())
+
+	resolved, _, err := resolveCollectionsInternal(context.Background(), deps, roots, resolveNestedPartial)
+	if err != nil {
+		t.Fatalf("resolveCollectionsInternal: %v", err)
+	}
+	if peak := barrier.peakConcurrency(); peak < 4 {
+		t.Fatalf("peak concurrency = %d, want >= 4", peak)
+	}
+	for fqdn, col := range resolved {
+		if col.Source != srvB.URL() {
+			t.Fatalf("%s source = %q, want %q", fqdn, col.Source, srvB.URL())
+		}
+	}
+}
+
 // TestPrewarmFetchesVersionMetadataForExactPin pins that prewarmOne's exact
 // pin arm calls Dependencies and overlaps those calls up to cfg.Workers; it
-// is the positive control for TestPrewarmSkippedForExactPinWithNoDeps.
+// is the positive control for TestPrewarmExactPinWithNoDepsOnOneServerAsksNothing.
 func TestPrewarmFetchesVersionMetadataForExactPin(t *testing.T) {
 	t.Parallel()
 	srv := fakegalaxy.New(t)

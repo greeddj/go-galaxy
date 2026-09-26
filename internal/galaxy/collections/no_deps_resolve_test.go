@@ -79,3 +79,18 @@ func TestNoDepsPinnedRootSkipsMetadataFetch(t *testing.T) {
 		)
 	}
 }
+
+// TestNoDepsSignatureMissesAnOlderBinarysResolution pins that a --no-deps
+// requirements signature differs from the one an older binary recorded, whose
+// resolution may hold an unasked first-server pin; without --no-deps it matches.
+func TestNoDepsSignatureMissesAnOlderBinarysResolution(t *testing.T) {
+	t.Parallel()
+	spec := buildRequirementsSpec([]collection{{Namespace: "acme", Name: "pinned", Constraint: "1.0.0"}})
+	const serversSig = "servers-signature"
+	if requirementsSignatureFromSpec(spec, true, serversSig) == legacyRequirementsSignature(t, spec, true, serversSig) {
+		t.Fatalf("the --no-deps signature equals an older binary's, so its resolution would replay")
+	}
+	if requirementsSignatureFromSpec(spec, false, serversSig) != legacyRequirementsSignature(t, spec, false, serversSig) {
+		t.Fatalf("the signature without --no-deps changed, so every cache would resolve again")
+	}
+}
