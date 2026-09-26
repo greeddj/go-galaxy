@@ -319,7 +319,7 @@ func (s *solveState) dependencyIncompatibilities(ctx context.Context, pkg string
 		constraint := deps[dep]
 		set, err := newVerSet(constraint)
 		if err != nil {
-			return nil, fmt.Errorf("invalid dependency constraint %q for %s -> %s: %w", constraint, pkg, dep, err)
+			return nil, fmt.Errorf("invalid dependency constraint %q for %s -> %s: %w", constraint, displayPkg(pkg), dep, err)
 		}
 		terms := []term{parentTerm, {Package: dep, Set: set, Positive: false}}
 		if set.isEmpty() {

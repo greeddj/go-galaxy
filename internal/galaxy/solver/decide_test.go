@@ -1,6 +1,9 @@
 package solver
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // testPkgFoo and testVersion100 are this file's dominant test fixture
 // literals, pulled out as consts purely to satisfy goconst - they carry no
@@ -200,4 +203,23 @@ func mustDummyCause(t *testing.T, s *solveState) int {
 	t.Helper()
 	idx, _ := s.store.add(&incompatibility{Terms: []term{{Package: "\x00dummy", Set: fullVerSet(), Positive: true}}})
 	return idx
+}
+
+// TestInvalidRootConstraintNamesTheRoot pins that a requirement's unparsable
+// constraint names its parent as "root", never the synthetic package's NUL,
+// and that a dependency's names the real parent unchanged.
+func TestInvalidRootConstraintNamesTheRoot(t *testing.T) {
+	t.Parallel()
+	p := newFakeProvider().withVersions(testPkgFoo, testVersion100)
+	_, err := Solve(t.Context(), []Requirement{{Package: testPkgFoo, Constraint: ">=1.0 <<2"}}, p)
+	if err == nil || !strings.Contains(err.Error(), "for root -> foo") || strings.ContainsRune(err.Error(), 0) {
+		t.Fatalf("Solve error = %q, want it to name the parent as %q with no NUL", err, "root")
+	}
+
+	p = newFakeProvider().withVersions(testPkgFoo, testVersion100).withVersions("bar", testVersion100).
+		withDeps(testPkgFoo, testVersion100, map[string]string{"bar": ">=1.0 <<2"})
+	_, err = Solve(t.Context(), []Requirement{{Package: testPkgFoo, Constraint: testVersion100}}, p)
+	if err == nil || !strings.Contains(err.Error(), "for foo -> bar") {
+		t.Fatalf("Solve error = %q, want it to name the parent %q", err, testPkgFoo)
+	}
 }

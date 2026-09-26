@@ -14,6 +14,15 @@ import (
 // decision heuristic and root-requirement processing rely on.
 const rootPkg = "\x00root"
 
+// displayPkg renders pkg for an error message: the root reads "root", as the
+// failure report names it, and its NUL never reaches the operator's terminal.
+func displayPkg(pkg string) string {
+	if pkg == rootPkg {
+		return "root"
+	}
+	return pkg
+}
+
 // rootVersionString is the single version of the synthetic root package.
 const rootVersionString = "0.0.0"
 
