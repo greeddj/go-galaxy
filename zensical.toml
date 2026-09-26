@@ -74,6 +74,13 @@ features = [
 ]
 
 [[project.theme.palette]]
+media = "(prefers-color-scheme)"
+primary = "indigo"
+accent = "blue"
+toggle.icon = "lucide/sun-moon"
+toggle.name = "Switch to light mode"
+
+[[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
 scheme = "default"
 primary = "indigo"
@@ -87,7 +94,7 @@ scheme = "slate"
 primary = "indigo"
 accent = "blue"
 toggle.icon = "lucide/moon"
-toggle.name = "Switch to light mode"
+toggle.name = "Switch to system preference"
 
 [project.theme.icon]
 repo = "fontawesome/brands/github"
