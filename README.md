@@ -53,6 +53,7 @@ before you switch.
 | Method | Command |
 | :-- | :-- |
 | GitHub Action | `uses: greeddj/go-galaxy@v1` runs a cached `install` on Linux or macOS; `install: false` only puts it on PATH ([inputs](docs/guides/ci.md#inputs-and-outputs)) |
+| GitLab CI | `ghcr.io/greeddj/go-galaxy:<version>-alpine` as the job image, with `entrypoint: [""]` ([job](docs/guides/ci.md#gitlab-ci)) |
 | Homebrew | `brew install --cask greeddj/tap/go-galaxy` |
 | Go | `go install github.com/greeddj/go-galaxy/cmd/go-galaxy@latest` |
 | Release binary | the `curl` lines below |

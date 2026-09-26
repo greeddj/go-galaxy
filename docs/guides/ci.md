@@ -3,7 +3,8 @@
 Commit a [lockfile](lockfile.md), then have every CI job install exactly what
 it pins, from a warm cache. A GitHub Actions job keys its cache on
 [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) in four steps, and the
-action runs all four for you.
+action runs all four for you; a [GitLab CI](#gitlab-ci) job keys it on
+`galaxy.lock`.
 
 ```mermaid
 flowchart LR
@@ -205,6 +206,18 @@ install:
 4. Not `--offline`: the first pipeline after a lockfile change misses the
    cache.
 
+A later job does not see this job's files: hand `.collections` and `.roles`
+on as `artifacts:`, or run the install in the playbook job itself, on an image
+with go-galaxy [copied in](#container-image-bake). Either way, export
+`ANSIBLE_COLLECTIONS_PATH` and `ANSIBLE_ROLES_PATH` on the playbook job.
+
+Keep secrets in masked CI/CD variables, not in `.gitlab-ci.yml`: GitLab
+exports each into the job's environment, where `GO_GALAXY_TOKEN`, the
+`GO_GALAXY_GIT_*` and `GO_GALAXY_S3_*` variables and a `galaxy.toml` `${VAR}`
+read it. Pass none on the command line ([why](security.md#trust-model)). A
+private repository on the same GitLab takes `$CI_JOB_TOKEN`, bound as in
+[Git sources and credentials](servers-and-auth.md#git-sources-and-credentials).
+
 > [!NOTE]
 > With several runners, share one [S3 cache](caching.md#s3-cache-optional) and
 > keep the `cache:` block, since extraction stays local. Jobs sharing a bucket
@@ -213,41 +226,59 @@ install:
 
 ## Lockfile drift gate
 
-```yaml
-name: lockfile-drift
-on:
-  push:
-    branches: [main]
-  pull_request:
+=== "GitHub Actions"
 
-jobs:
-  lockfile-drift:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: greeddj/go-galaxy@v1
-        id: gg
-        with:
-          install: false # (1)!
-      - id: key
-        run: echo "hash=$(go-galaxy hash)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6 # (2)!
-        with:
-          path: ~/.cache/go-galaxy
-          key: go-galaxy-drift-${{ runner.os }}-${{ runner.arch }}-${{ steps.gg.outputs.version }}-${{ steps.key.outputs.hash }}
-      - run: go-galaxy lock --check # (3)!
-      - run: go-galaxy lock --check --refresh
-```
+    ```yaml
+    name: lockfile-drift
+    on:
+      push:
+        branches: [main]
+      pull_request:
 
-1. Only puts go-galaxy on PATH.
-2. Its own key, saved by the run on `main` for every pull request: plain
-   `lock --check` replays the resolve saved there, which an install cache lacks.
-3. Fails on requirements edited without relocking; on a cold cache, also on
-   a newer upstream release, which `--refresh` always catches.
+    jobs:
+      lockfile-drift:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v7
+          - uses: greeddj/go-galaxy@v1
+            id: gg
+            with:
+              install: false # (1)!
+          - id: key
+            run: echo "hash=$(go-galaxy hash)" >> "$GITHUB_OUTPUT"
+          - uses: actions/cache@v6 # (2)!
+            with:
+              path: ~/.cache/go-galaxy
+              key: go-galaxy-drift-${{ runner.os }}-${{ runner.arch }}-${{ steps.gg.outputs.version }}-${{ steps.key.outputs.hash }}
+          - run: go-galaxy lock --check # (3)!
+          - run: go-galaxy lock --check --refresh
+    ```
 
-On drift either step exits `6`: run `go-galaxy lock` (with `--refresh` for
-the second) and commit. [Catch drift](lockfile.md#catch-drift) explains both
-checks.
+    1. Only puts go-galaxy on PATH.
+    2. Its own key, saved by the run on `main` for every pull request: plain
+       `lock --check` replays the resolve saved there, which an install cache
+       lacks.
+    3. Fails on requirements edited without relocking; on a cold cache, also
+       on a newer upstream release, which `--refresh` always catches.
+
+=== "GitLab CI"
+
+    ```yaml
+    lockfile-drift:
+      image:
+        name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine
+        entrypoint: [""]
+      script:
+        - go-galaxy lock --check --refresh # (1)!
+    ```
+
+    1. One step and no cache: by default GitLab keeps a protected branch's
+       cache from unprotected ones, so a merge request cannot replay the
+       resolve saved on `main`. This step catches both kinds of drift.
+
+On drift a step exits `6`: run `go-galaxy lock` (with `--refresh` for an
+upstream release) and commit. [Catch drift](lockfile.md#catch-drift) explains
+both checks.
 
 ## Container image bake
 
@@ -329,6 +360,7 @@ Pin it in each place:
 | The action | `@v1.2.3`, or `@v1` with `version: 1.2.3` |
 | A downloaded binary | A fixed release URL, `releases/download/v1.2.3/` |
 | A baked image | `ghcr.io/greeddj/go-galaxy:1.2.3` |
+| A GitLab CI job | Its image, `ghcr.io/greeddj/go-galaxy:1.3.0-alpine`, and the cache key's `prefix` with it |
 
 Run `go-galaxy lock` with that release too, on developer machines included.
 [Upgrading](../reference/upgrading.md) lists what each release changes.

@@ -202,7 +202,8 @@ sha256:cd042c8bf64fc5315301eb10613e03a61b699c35bac3942d1d50ce5627d823f0
 
 Put the go-galaxy release ([why](ci.md#pin-one-release)) and the runner's OS
 and architecture in the key too; the [GitHub Action](ci.md#github-actions)
-builds that key for you.
+builds that key for you. GitLab fixes a job's cache key before any script
+runs, so a [GitLab CI](ci.md#gitlab-ci) job keys on `galaxy.lock` instead.
 
 ## Inspect what is locked
 

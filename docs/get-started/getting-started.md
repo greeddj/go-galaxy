@@ -56,6 +56,17 @@ versions, and run the same install in CI.
 
     The job is under [Run it in CI](#run-it-in-ci).
 
+=== "GitLab CI"
+
+    ```yaml
+    image:
+      name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine
+      entrypoint: [""]
+    ```
+
+    The Alpine image, with a shell for the job's script. The job is under
+    [Run it in CI](#run-it-in-ci).
+
 > [!NOTE]
 > Already using ansible-galaxy? Your `requirements.yml`, and the `ansible.cfg`
 > keys and `ANSIBLE_*` variables for paths and servers, carry over;
@@ -151,22 +162,50 @@ to a version and sha256, and the role to a git commit.
 
 ## Run it in CI
 
-```yaml title=".github/workflows/ansible-deps.yml"
-on: [push, pull_request]
-jobs:
-  install:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: greeddj/go-galaxy@v1
-        with:
-          frozen: true
-```
+=== "GitHub Actions"
 
-On Linux and macOS runners, the action installs a checksum-verified binary,
-caches `~/.cache/go-galaxy` under a key that includes
-[`go-galaxy hash`](../guides/lockfile.md#a-cache-key-for-ci) and runs
-`go-galaxy install --frozen`; [CI pipelines](../guides/ci.md) has the rest.
+    ```yaml title=".github/workflows/ansible-deps.yml"
+    on: [push, pull_request]
+    jobs:
+      install:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v7
+          - uses: greeddj/go-galaxy@v1
+            with:
+              frozen: true
+    ```
+
+    On Linux and macOS runners, the action installs a checksum-verified
+    binary, caches `~/.cache/go-galaxy` under a key that includes
+    [`go-galaxy hash`](../guides/lockfile.md#a-cache-key-for-ci) and runs
+    `go-galaxy install --frozen`.
+
+=== "GitLab CI"
+
+    ```yaml title=".gitlab-ci.yml"
+    variables:
+      GO_GALAXY_CACHE_DIR: "$CI_PROJECT_DIR/.cache/go-galaxy"
+
+    install:
+      image:
+        name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine
+        entrypoint: [""]
+      cache:
+        key:
+          files: [galaxy.lock]
+          prefix: go-galaxy-1.3.0
+        paths: [.cache/go-galaxy]
+      script:
+        - go-galaxy install --frozen
+    ```
+
+    The job keeps its cache inside the project directory, the only place
+    GitLab caches, under a key built from `galaxy.lock` and the release. A
+    playbook job does not see its files:
+    [GitLab CI](../guides/ci.md#gitlab-ci) shows how to hand them on.
+
+[CI pipelines](../guides/ci.md) has the rest.
 
 ## If a run fails
 
