@@ -38,6 +38,38 @@ linters:
             - go.etcd.io/bbolt
             - go.yaml.in/yaml/v3
             - github.com/BurntSushi/toml
+        # go-git and its billy filesystem reach production code through
+        # gitfetch alone; fakegit builds the test remotes with them.
+        go-git:
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/galaxy/gitfetch/**"
+            - "!**/internal/testing/fakegit/**"
+          deny:
+            - pkg: github.com/go-git/go-git
+              desc: only internal/galaxy/gitfetch may import go-git
+            - pkg: github.com/go-git/go-billy
+              desc: only internal/galaxy/gitfetch may import go-git
+        # A concrete cache backend is chosen in internal/cache alone; the rest
+        # codes to the Backend and ArtifactStore seam.
+        cache-backends:
+          files:
+            - $all
+            - "!$test"
+            - "!**/internal/cache/cache.go"
+          deny:
+            - pkg: github.com/greeddj/go-galaxy/internal/cache/local
+              desc: only internal/cache.New may name a concrete backend
+            - pkg: github.com/greeddj/go-galaxy/internal/cache/s3
+              desc: only internal/cache.New may name a concrete backend
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^(fmt\.Print(|f|ln)|print|println)$
+        - pattern: ^tar\.NewWriter$
+          pkg: ^archive/tar$
+          msg: only internal/galaxy/treearchive writes tar archives
     goconst:
       exclude-types:
         - Call
@@ -56,6 +88,12 @@ linters:
       locale: US
   exclusions:
     generated: lax
+    rules:
+      # Tests and the fakegalaxy double build fixture archives by hand.
+      - path: (_test\.go$|internal/testing/|internal/galaxy/treearchive/)
+        linters:
+          - forbidigo
+        text: tar\.NewWriter
     paths:
       - vendor
       - third_party$

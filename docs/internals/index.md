@@ -123,8 +123,8 @@ each rule.
 
 The monopolies on pgzip and toml are tests
 (`TestPgzipBeyondItsWriterAPIIsThisPackagesAlone`,
-`TestTOMLIsThisPackagesAlone`). The others rest on review, since depguard's
-one allow-list says which modules may be imported, not by whom.
+`TestTOMLIsThisPackagesAlone`); the go-git, backend and tar-writer ones are
+lint rules, listed under [Lint](development.md#lint).
 
 A collection name has two alphabets, picked by source kind:
 `IsCollectionNamePart` (`^[a-z][a-z0-9_]*$`, what Galaxy servers accept) and

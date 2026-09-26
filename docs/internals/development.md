@@ -119,6 +119,13 @@ exclusions, so expect linters most projects leave off, in tests too.
 
 - depguard allows only the standard library, `go/ast`, `go/parser`,
   `go/token`, this module and the direct dependencies; any other import fails.
+- Three monopolies are lint rules outside tests: depguard's `go-git` list
+  keeps go-git and go-billy in `gitfetch` (and `fakegit`), its
+  `cache-backends` list keeps `internal/cache/local` and `internal/cache/s3`
+  to `internal/cache/cache.go`, and a forbidigo pattern keeps
+  `tar.NewWriter` in `treearchive` (and `internal/testing`). forbidigo's
+  default `fmt.Print` pattern is spelled out beside it, since a `forbid`
+  list replaces the default.
 - `fieldalignment` fails a padded struct layout, test structs included; `just
   fix` reorders it in place.
 - Never respell a dependency's anonymous struct type locally: `just fix`
