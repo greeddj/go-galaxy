@@ -146,17 +146,6 @@ unless that key looks scoped: a namespace directory may contain a dot, so
 
 ## S3 cache (optional)
 
-=== "Environment"
-
-    ```bash
-    export GO_GALAXY_S3_BUCKET=ci-galaxy-cache
-    export GO_GALAXY_S3_REGION=eu-central-1
-    export GO_GALAXY_S3_PREFIX=go-galaxy/
-    export AWS_ACCESS_KEY_ID="${CI_S3_ACCESS_KEY}"
-    export AWS_SECRET_ACCESS_KEY="${CI_S3_SECRET_KEY}"
-    go-galaxy install
-    ```
-
 === "galaxy.toml"
 
     ```toml
@@ -170,6 +159,17 @@ unless that key looks scoped: a namespace directory may contain a dot, so
 
     1.  Expanded from the environment as the file loads; an unset variable
         exits `2`.
+
+=== "Environment"
+
+    ```bash
+    export GO_GALAXY_S3_BUCKET=ci-galaxy-cache
+    export GO_GALAXY_S3_REGION=eu-central-1
+    export GO_GALAXY_S3_PREFIX=go-galaxy/
+    export AWS_ACCESS_KEY_ID="${CI_S3_ACCESS_KEY}"
+    export AWS_SECRET_ACCESS_KEY="${CI_S3_SECRET_KEY}"
+    go-galaxy install
+    ```
 
 === "Flags"
 

@@ -14,28 +14,6 @@ see where each credential may go.
 
 ## A private hub, then public Galaxy
 
-=== "ansible.cfg"
-
-    ```ini
-    [galaxy]
-    server_list = hub, galaxy
-
-    [galaxy_server.hub]
-    url = https://hub.example.internal/api/galaxy
-
-    [galaxy_server.galaxy]
-    url = https://galaxy.ansible.com
-    ```
-
-    ```bash
-    export ANSIBLE_GALAXY_SERVER_HUB_URL=https://hub.example.internal/api/galaxy # (1)!
-    export ANSIBLE_GALAXY_SERVER_HUB_TOKEN="${HUB_TOKEN}"
-    go-galaxy install
-    ```
-
-    1.  The file's address again: a token you supply goes only to an
-        address you supplied ([`--token`](#--token)).
-
 === "galaxy.toml"
 
     ```toml
@@ -57,6 +35,28 @@ see where each credential may go.
         ([`${VAR}` expansion](configuration.md#var-expansion)). The token is
         the file's own, as a literal one is, so the address needs no export
         ([`--token`](#--token)).
+
+=== "ansible.cfg"
+
+    ```ini
+    [galaxy]
+    server_list = hub, galaxy
+
+    [galaxy_server.hub]
+    url = https://hub.example.internal/api/galaxy
+
+    [galaxy_server.galaxy]
+    url = https://galaxy.ansible.com
+    ```
+
+    ```bash
+    export ANSIBLE_GALAXY_SERVER_HUB_URL=https://hub.example.internal/api/galaxy # (1)!
+    export ANSIBLE_GALAXY_SERVER_HUB_TOKEN="${HUB_TOKEN}"
+    go-galaxy install
+    ```
+
+    1.  The file's address again: a token you supply goes only to an
+        address you supplied ([`--token`](#--token)).
 
 === "Environment"
 
@@ -131,13 +131,25 @@ warning and no token. The lockfile records the server's URL for an id, the
 > `source:` pins only that collection, not its dependencies: they walk the
 > whole list. Pin a dependency as a root of its own, or put the hub first.
 >
-> ```yaml
-> collections:
->   - name: acme.app
->     source: hub
->   - name: acme.common
->     source: hub
-> ```
+> === "galaxy.toml"
+>
+>     ```toml
+>     [project]
+>     collections = [
+>       { name = "acme.app", source = "hub" },
+>       { name = "acme.common", source = "hub" },
+>     ]
+>     ```
+>
+> === "requirements.yml"
+>
+>     ```yaml
+>     collections:
+>       - name: acme.app
+>         source: hub
+>       - name: acme.common
+>         source: hub
+>     ```
 
 ## `--token`
 

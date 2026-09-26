@@ -13,7 +13,10 @@ also ships in release tarballs); the reference material lives in `docs/`, which
 builds into a Zensical site (`zensical.toml` at the root, `docs/index.md` its
 landing page, `docs/assets/` the logo, favicon and site CSS). The site is the
 primary reading surface, so user pages may use its admonitions, tabs, cards and
-code annotations. Keep the pages true after a behavior change. The user pages,
+code annotations. An example given in both formats leads with `galaxy.toml`:
+the first (default) tab before `requirements.yml`, or the left column of a
+side-by-side comparison, which suits only lines short enough not to scroll.
+Keep the pages true after a behavior change. The user pages,
 basics first: `docs/getting-started.md` (install, first run, lockfile, CI),
 `docs/ansible-galaxy-compat.md` (every deliberate divergence),
 `docs/requirements.md` (requirements.yml and galaxy.toml entries, constraints,

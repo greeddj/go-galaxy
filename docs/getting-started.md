@@ -58,6 +58,21 @@ versions, and run the same install in CI.
 
 ## Your first install
 
+=== "galaxy.toml"
+
+    ```toml
+    [project]
+    collections = [
+      "community.general >= 10.0.0", # (1)!
+      "ansible.utils",
+    ]
+    roles = ["geerlingguy.docker"]
+    ```
+
+    1.  The constraint after the name is optional.
+        [Version constraints](requirements.md#version-constraints) has the
+        grammar.
+
 === "requirements.yml"
 
     ```yaml
@@ -72,17 +87,6 @@ versions, and run the same install in CI.
 
     1.  Optional. [Version constraints](requirements.md#version-constraints)
         has the grammar.
-
-=== "galaxy.toml"
-
-    ```toml
-    [project]
-    collections = [
-      "community.general >= 10.0.0",
-      "ansible.utils",
-    ]
-    roles = ["geerlingguy.docker"]
-    ```
 
 Save either file in the project root, then run `go-galaxy install` there:
 

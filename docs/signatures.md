@@ -68,7 +68,19 @@ Keys are counted, not files: one key signing twice counts once. `ALL`, `++1`
 and a count with spaces exit `2`. Git and url collections carry no signature,
 and roles are never verified.
 
-## `signatures:` in requirements.yml
+## Signatures in the requirements file
+
+=== "galaxy.toml"
+
+    ```toml
+    [[project.collections]]
+    name = "community.general"
+    version = "11.1.0"
+    signatures = [
+      "https://sigs.example.com/community.general-11.1.0.asc",
+      "file:///etc/pki/collections/community.general.asc",
+    ]
+    ```
 
 === "requirements.yml"
 
@@ -79,15 +91,6 @@ and roles are never verified.
         signatures:
           - https://sigs.example.com/community.general-11.1.0.asc
           - file:///etc/pki/collections/community.general.asc
-    ```
-
-=== "galaxy.toml"
-
-    ```toml
-    [project]
-    collections = [
-      { name = "community.general", version = "11.1.0", signatures = ["file:///etc/pki/collections/community.general.asc"] },
-    ]
     ```
 
 | Source                                            | Accepted |

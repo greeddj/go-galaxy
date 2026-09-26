@@ -1,83 +1,135 @@
 # Requirements files
 
 A requirements file lists the collections and roles that `go-galaxy install`
-puts in place. Write ansible's `requirements.yml` or go-galaxy's own
-`galaxy.toml`: both hold the same two lists.
+puts in place. Write go-galaxy's own `galaxy.toml` or ansible's
+`requirements.yml`: both hold the same two lists.
 
-=== "requirements.yml"
+<div class="grid" markdown>
 
-    ```yaml
-    ---
-    collections:
-      - name: community.general
-        version: ">=10.0.0"
-      - git+https://github.com/acme/app.git,v1.2.0
-      - https://dl.example.com/acme-lib-2.1.0.tar.gz
-    roles:
-      - geerlingguy.docker,8.0.0
-    ```
+```toml title="galaxy.toml"
+[project]
+collections = [
+  "community.general >=10.0.0",
+  "ansible.utils",
+]
+roles = ["geerlingguy.docker,8.0.0"]
+```
 
-=== "galaxy.toml"
+```yaml title="requirements.yml"
+---
+collections:
+  - name: community.general
+    version: ">=10.0.0"
+  - name: ansible.utils
+roles:
+  - geerlingguy.docker,8.0.0
+```
 
-    ```toml
-    [project]
-    collections = [
-      "community.general >=10.0.0",
-      "git+https://github.com/acme/app.git,v1.2.0",
-      "https://dl.example.com/acme-lib-2.1.0.tar.gz",
-    ]
-    roles = ["geerlingguy.docker,8.0.0"]
-    ```
+</div>
 
 ## Collections
 
 === "Galaxy"
 
-    ```yaml
-    collections:
-      - name: community.general
-        version: ">=10.0.0,<12.0.0" # (1)!
-        source: hub # (2)!
-    ```
+    === "galaxy.toml"
 
-    1.  A [constraint](#version-constraints); absent means any version.
-    2.  Optional: the one
-        [server to ask](servers-and-auth.md#how-a-collection-picks-its-server).
+        ```toml
+        [[project.collections]]
+        name = "community.general"
+        version = ">=10.0.0,<12.0.0" # (1)!
+        source = "hub" # (2)!
+        ```
+
+        1.  A [constraint](#version-constraints); absent means any version.
+            Without `source`, the string `"community.general >=10.0.0,<12.0.0"`
+            says the same.
+        2.  Optional: the one
+            [server to ask](servers-and-auth.md#how-a-collection-picks-its-server).
+
+    === "requirements.yml"
+
+        ```yaml
+        collections:
+          - name: community.general
+            version: ">=10.0.0,<12.0.0" # (1)!
+            source: hub # (2)!
+        ```
+
+        1.  A [constraint](#version-constraints); absent means any version.
+        2.  Optional: the one
+            [server to ask](servers-and-auth.md#how-a-collection-picks-its-server).
 
 === "git"
 
-    ```yaml
-    collections:
-      - name: https://github.com/acme/app.git
-        type: git # (1)!
-        version: v1.2.0 # (2)!
-      - git+https://github.com/acme/mono.git#collections/app,main # (3)!
-    ```
+    === "galaxy.toml"
 
-    1.  Needed here: a bare `https://` URL is a tarball, not a repository.
-    2.  A branch, a tag or a full 40-hex commit, never an abbreviated one.
-        Absent means `HEAD`.
-    3.  `#` picks a directory and `,` the ref, which overrides `version:`.
-        With no `galaxy.yml` or `MANIFEST.json` there, every collection one
-        level down installs.
+        ```toml
+        [project]
+        collections = [
+          "git+https://github.com/acme/app.git,v1.2.0", # (1)!
+          "git+https://github.com/acme/mono.git#collections/app,main", # (2)!
+        ]
+        ```
+
+        1.  `,` names the ref: a branch, a tag or a full 40-hex commit, never
+            an abbreviated one. Absent means `HEAD`.
+        2.  `#` picks a directory. With no `galaxy.yml` or `MANIFEST.json`
+            there, every collection one level down installs.
+
+    === "requirements.yml"
+
+        ```yaml
+        collections:
+          - name: https://github.com/acme/app.git
+            type: git # (1)!
+            version: v1.2.0 # (2)!
+          - git+https://github.com/acme/mono.git#collections/app,main # (3)!
+        ```
+
+        1.  Needed here: a bare `https://` URL is a tarball, not a repository.
+        2.  A branch, a tag or a full 40-hex commit, never an abbreviated one.
+            Absent means `HEAD`.
+        3.  `#` picks a directory and `,` the ref, which overrides `version:`.
+            With no `galaxy.yml` or `MANIFEST.json` there, every collection one
+            level down installs.
 
 === "url"
 
-    ```yaml
-    collections:
-      - https://dl.example.com/acme-lib-2.1.0.tar.gz # (1)!
-      - name: https://dl.example.com/acme-app-1.4.0.tar.gz
-        type: url
-        version: "1.4.0" # (2)!
-      - http://cache.example.com/https://dl.example.com/acme-db-1.0.0.tar.gz # (3)!
-    ```
+    === "galaxy.toml"
 
-    1.  Its `MANIFEST.json` names the collection; the downloaded bytes are
-        pinned by sha256.
-    2.  An assertion: it must match the manifest, or the run exits
-        [`3`](exit-codes.md).
-    3.  A caching proxy: the embedded URL needs a lower-case scheme and host,
-        and no default port.
+        ```toml
+        [project]
+        collections = [
+          "https://dl.example.com/acme-lib-2.1.0.tar.gz", # (1)!
+          { name = "https://dl.example.com/acme-app-1.4.0.tar.gz", version = "1.4.0" }, # (2)!
+          "http://cache.example.com/https://dl.example.com/acme-db-1.0.0.tar.gz", # (3)!
+        ]
+        ```
+
+        1.  Its `MANIFEST.json` names the collection; the downloaded bytes are
+            pinned by sha256.
+        2.  `version` is an assertion: it must match the manifest, or the run
+            exits [`3`](exit-codes.md).
+        3.  A caching proxy: the embedded URL needs a lower-case scheme and
+            host, and no default port.
+
+    === "requirements.yml"
+
+        ```yaml
+        collections:
+          - https://dl.example.com/acme-lib-2.1.0.tar.gz # (1)!
+          - name: https://dl.example.com/acme-app-1.4.0.tar.gz
+            type: url
+            version: "1.4.0" # (2)!
+          - http://cache.example.com/https://dl.example.com/acme-db-1.0.0.tar.gz # (3)!
+        ```
+
+        1.  Its `MANIFEST.json` names the collection; the downloaded bytes are
+            pinned by sha256.
+        2.  An assertion: it must match the manifest, or the run exits
+            [`3`](exit-codes.md).
+        3.  A caching proxy: the embedded URL needs a lower-case scheme and
+            host, and no default port.
 
 | Key | Galaxy | git | url |
 | --- | --- | --- | --- |
@@ -86,7 +138,7 @@ puts in place. Write ansible's `requirements.yml` or go-galaxy's own
 | `version` | Constraint | Ref | Exact version |
 | `source` | Server id or URL | Repository URL (optional) | Refused |
 | `type` | `galaxy` or absent | `git`, or a `git+` or `git@` name | `url`, or an `http(s)://` name |
-| `signatures` | [Allowed](signatures.md#signatures-in-requirementsyml) | Refused | Refused |
+| `signatures` | [Allowed](signatures.md#signatures-in-the-requirements-file) | Refused | Refused |
 
 A bare top-level list is read as `collections:`.
 
@@ -113,13 +165,25 @@ does ([Prereleases](ansible-galaxy-compat.md#prereleases)).
 
 ### When no version fits
 
-```yaml
-collections:
-  - name: ansible.netcommon
-    version: ">=8.7.0"
-  - name: ansible.utils
-    version: "<3.0.0"
-```
+=== "galaxy.toml"
+
+    ```toml
+    [project]
+    collections = [
+      "ansible.netcommon >=8.7.0",
+      "ansible.utils <3.0.0",
+    ]
+    ```
+
+=== "requirements.yml"
+
+    ```yaml
+    collections:
+      - name: ansible.netcommon
+        version: ">=8.7.0"
+      - name: ansible.utils
+        version: "<3.0.0"
+    ```
 
 ```text
 $ go-galaxy install
@@ -137,39 +201,82 @@ line names the constraints to relax.
 
 === "Galaxy role"
 
-    ```yaml
-    roles:
-      - geerlingguy.docker
-      - geerlingguy.nginx,3.2.0,nginx # (1)!
-      - name: geerlingguy.java
-        version: "2.3.0"
-    ```
+    === "galaxy.toml"
 
-    1.  `src,version,name`: the name is the directory under `roles_path`.
+        ```toml
+        [project]
+        roles = [
+          "geerlingguy.docker",
+          "geerlingguy.nginx,3.2.0,nginx", # (1)!
+          { name = "geerlingguy.java", version = "2.3.0" },
+        ]
+        ```
+
+        1.  `src,version,name`: the name is the directory under `roles_path`.
+
+    === "requirements.yml"
+
+        ```yaml
+        roles:
+          - geerlingguy.docker
+          - geerlingguy.nginx,3.2.0,nginx # (1)!
+          - name: geerlingguy.java
+            version: "2.3.0"
+        ```
+
+        1.  `src,version,name`: the name is the directory under `roles_path`.
 
 === "git role"
 
-    ```yaml
-    roles:
-      - git+https://git.example.com/platform/ansible-role-base.git,v1.4.0,base
-      - src: https://git.example.com/platform/ansible-role-app.git
-        scm: git
-        version: release/1.x
-      - src: https://github.com/acme/ansible-role-cache # (1)!
-    ```
+    === "galaxy.toml"
 
-    1.  A `github.com` URL without `.tar.gz` is a repository, as in ansible.
+        ```toml
+        [project]
+        roles = [
+          "git+https://git.example.com/platform/ansible-role-base.git,v1.4.0,base",
+          "git+https://git.example.com/platform/ansible-role-app.git,release/1.x",
+          "https://github.com/acme/ansible-role-cache", # (1)!
+        ]
+        ```
+
+        1.  A `github.com` URL without `.tar.gz` is a repository, as in ansible.
+
+    === "requirements.yml"
+
+        ```yaml
+        roles:
+          - git+https://git.example.com/platform/ansible-role-base.git,v1.4.0,base
+          - src: https://git.example.com/platform/ansible-role-app.git
+            scm: git
+            version: release/1.x
+          - src: https://github.com/acme/ansible-role-cache # (1)!
+        ```
+
+        1.  A `github.com` URL without `.tar.gz` is a repository, as in ansible.
 
 === "url role"
 
-    ```yaml
-    roles:
-      - src: https://dl.example.com/roles/acme-cache-2.0.0.tar.gz
-        name: cache
-        version: "2.0.0" # (1)!
-    ```
+    === "galaxy.toml"
 
-    1.  Only a label: the bytes are pinned by sha256.
+        ```toml
+        [[project.roles]]
+        src = "https://dl.example.com/roles/acme-cache-2.0.0.tar.gz"
+        name = "cache"
+        version = "2.0.0" # (1)!
+        ```
+
+        1.  Only a label: the bytes are pinned by sha256.
+
+    === "requirements.yml"
+
+        ```yaml
+        roles:
+          - src: https://dl.example.com/roles/acme-cache-2.0.0.tar.gz
+            name: cache
+            version: "2.0.0" # (1)!
+        ```
+
+        1.  Only a label: the bytes are pinned by sha256.
 
 | Source | Detected by | `version:` | Default install name |
 | --- | --- | --- | --- |
@@ -189,8 +296,8 @@ local role (no dot) is skipped, and so, with a warning, is a collection's role
 
 | Use | When |
 | --- | --- |
-| `requirements.yml` | `ansible-galaxy` must read the file too |
 | `galaxy.toml` | You want the constraint beside the name, a strict schema, and run settings in [`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table) |
+| `requirements.yml` | `ansible-galaxy` must read the file too |
 
 ### The `[project]` table
 

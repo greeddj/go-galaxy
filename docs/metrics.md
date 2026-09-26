@@ -5,6 +5,18 @@ go-galaxy can write a JSON report of each `install`, `warm`, `lock` and
 
 ## Turn it on
 
+=== "galaxy.toml"
+
+    ```toml
+    [project]
+    collections = ["community.general"]
+
+    [tool.go-galaxy]
+    metrics_file = "build/go-galaxy-metrics.json" # (1)!
+    ```
+
+    1.  Relative to the directory of `galaxy.toml`.
+
 === "Flags"
 
     ```bash
@@ -17,18 +29,6 @@ go-galaxy can write a JSON report of each `install`, `warm`, `lock` and
     export GO_GALAXY_METRICS_FILE=build/go-galaxy-metrics.json
     go-galaxy install
     ```
-
-=== "galaxy.toml"
-
-    ```toml
-    [project]
-    collections = ["community.general"]
-
-    [tool.go-galaxy]
-    metrics_file = "build/go-galaxy-metrics.json" # (1)!
-    ```
-
-    1.  Relative to the directory of `galaxy.toml`.
 
 Missing directories are created, and the file is
 [replaced atomically](internals/boundaries.md#the-collections-tree-and-the-cache-directory).

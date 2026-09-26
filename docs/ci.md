@@ -135,18 +135,6 @@ Anything the inputs miss goes through `env`, at workflow, job or step level.
 
 ### Settings in galaxy.toml
 
-=== "Environment"
-
-    ```yaml
-    jobs:
-      install:
-        env:
-          GO_GALAXY_S3_BUCKET: ci-galaxy-cache
-          GO_GALAXY_S3_ENDPOINT: https://s3.example.com
-          GO_GALAXY_S3_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
-          GO_GALAXY_S3_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
-    ```
-
 === "galaxy.toml"
 
     ```toml
@@ -163,6 +151,18 @@ Anything the inputs miss goes through `env`, at workflow, job or step level.
         env:
           S3_CACHE_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
           S3_CACHE_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
+    ```
+
+=== "Environment"
+
+    ```yaml
+    jobs:
+      install:
+        env:
+          GO_GALAXY_S3_BUCKET: ci-galaxy-cache
+          GO_GALAXY_S3_ENDPOINT: https://s3.example.com
+          GO_GALAXY_S3_ACCESS_KEY: ${{ secrets.S3_CACHE_ACCESS_KEY }}
+          GO_GALAXY_S3_SECRET_KEY: ${{ secrets.S3_CACHE_SECRET_KEY }}
     ```
 
 Moving settings such as an [S3 cache](caching.md#s3-cache-optional) into

@@ -88,14 +88,14 @@ To check a download's signature and provenance yourself, follow
 
 ## Quick start
 
-```yaml
-# requirements.yml
-collections:
-  - name: community.general
-    version: ">=10.0.0"
-  - name: ansible.utils
-roles:
-  - name: geerlingguy.docker
+```toml
+# galaxy.toml
+[project]
+collections = [
+  "community.general >= 10.0.0",
+  "ansible.utils",
+]
+roles = ["geerlingguy.docker"]
 ```
 
 ```bash
@@ -113,18 +113,18 @@ commit it, and `install --frozen` installs exactly what it pins.
 CI job.
 
 <details markdown>
-<summary>The same project in galaxy.toml</summary>
+<summary>The same project in requirements.yml</summary>
 
-```toml
-[project]
-collections = [
-  "community.general >= 10.0.0",
-  "ansible.utils",
-]
-roles = ["geerlingguy.docker"]
+```yaml
+collections:
+  - name: community.general
+    version: ">=10.0.0"
+  - name: ansible.utils
+roles:
+  - name: geerlingguy.docker
 ```
 
-`ansible-galaxy` does not read this file.
+Write this file instead when `ansible-galaxy` must read it too.
 
 </details>
 
