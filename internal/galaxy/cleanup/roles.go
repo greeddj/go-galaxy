@@ -11,10 +11,10 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
+	"github.com/greeddj/go-galaxy/internal/galaxy/extractmarker"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
@@ -166,20 +166,14 @@ func recordsByInstallPath(st *store.Store) map[string]store.InstalledRoleEntry {
 }
 
 // roleMarkerSHA reports whether the role directory name under root holds an
-// extract marker of this tool's, and the sha it names. Only a regular file
-// with the marker prefix and a sha-shaped suffix counts.
+// extract marker of this tool's, and the sha it names: its presence is the
+// evidence, since ansible-galaxy replaces a role directory whole.
 func roleMarkerSHA(root *os.Root, name string) (string, bool) {
-	entries, err := fs.ReadDir(root.FS(), name)
-	if err != nil {
+	shas := extractmarker.SHAs(root, name)
+	if len(shas) == 0 {
 		return "", false
 	}
-	for _, e := range entries {
-		sha, ok := strings.CutPrefix(e.Name(), helpers.ExtractMarkerPrefix)
-		if ok && e.Type().IsRegular() && helpers.IsSHA256Hex(sha) {
-			return sha, true
-		}
-	}
-	return "", false
+	return shas[0], true
 }
 
 // markReachableRoles marks every role name a project's requirements reach:

@@ -10,7 +10,7 @@ import (
 const validSHA256Hex = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
 
 // TestIsSHA256Hex pins the exact shape IsSHA256Hex accepts and rejects,
-// including the ".." and "." shapes markerRel relies on it to refuse.
+// including the ".." and "." shapes extractmarker.Rel relies on it to refuse.
 func TestIsSHA256Hex(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

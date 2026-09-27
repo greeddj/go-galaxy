@@ -386,6 +386,7 @@ blocks at line-start opening lines, one packet ceiling per file.
 | A project's `ansible_collections` | its probe fails with anything but not-exist | `cleanup.openProjectWorkspace` | project skipped, warned |
 | A scanned namespace, name or version | not `helpers.IsPathElement` | `cleanup` scan | skipped, warned |
 | The same at removal | not `IsPathElement`, or the install path outside the collections path | `cleanup.removeInstalled` | `ErrUnsafeRemovalPath`, exit 5 |
+| A scanned collection copy | no regular extract marker, in its version's `.info` directory or in the collection directory, that parses and whose tally equals the tree now, as in a tree `ansible-galaxy` installed or changed | `cleanup.trustedCopy` through `extractmarker.Check`, then `trustedCopies` | kept, counted for reachability only |
 | A role directory | no recorded roles path, not an install name, or no extract marker | `cleanup.scanProjectRoles`, `scannedRole` | never indexed |
 | A recorded requirements file | not a regular file by `Stat` | `requirements.Read`, from `cleanup.projectRequirementRoots` | `ErrProjectRequirementsUnreadable`, exit 2 |
 | `MANIFEST.json`, `GALAXY.yml`, install info | not a regular file by `Lstat` through the root | `manifestIsRegularFile`, `readRegularFile` | skipped |

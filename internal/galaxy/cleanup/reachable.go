@@ -28,7 +28,6 @@ func buildReachable(
 	reachable := make(map[string]bool)
 	roles := roleReachability{reachable: make(map[string]bool), byName: make(rolesByName)}
 	installedIndex := make(map[string][]installedCollection)
-	depsByKey := make(map[string]map[string]string)
 	// installedByKey holds every on-disk copy of a key across projects, so
 	// removeUnused removes all of them in one run.
 	installedByKey := make(map[string][]installedCollection)
@@ -42,7 +41,7 @@ func buildReachable(
 	// root resolves against it.
 	for _, projectPath := range projectPaths {
 		if err := scanProjectWorkspace(
-			runtime.Output, projectPath, registry.Projects[projectPath], installedIndex, installedByKey, depsByKey,
+			runtime.Output, projectPath, registry.Projects[projectPath], installedIndex, installedByKey,
 		); err != nil {
 			return nil, nil, roleReachability{}, err
 		}
@@ -61,9 +60,33 @@ func buildReachable(
 			markReachableRoles(keepProjectRoles(registry.Projects[projectPath], roles.byName), roles.byName, roles.reachable)
 		}
 		markReachableRoles(roleRootNames(file), roles.byName, roles.reachable)
-		markCollectionRoots(st, file.Collections, reachable, installedByKey, installedIndex, depsByKey, constraints)
+		markCollectionRoots(st, file.Collections, reachable, installedByKey, installedIndex, constraints)
 	}
+	markKeptCopyDependencies(installedByKey, reachable, installedIndex, constraints)
 	return reachable, installedByKey, roles, nil
+}
+
+// markKeptCopyDependencies marks what each untrusted copy's own manifest needs:
+// cleanup keeps that copy, so deleting its dependencies would break it. The
+// copy's key stays unmarked, so a trusted copy of it elsewhere still goes.
+func markKeptCopyDependencies(
+	installedByKey map[string][]installedCollection,
+	reachable map[string]bool,
+	installedIndex map[string][]installedCollection,
+	constraints map[string]*semver.Constraints,
+) {
+	for _, insts := range installedByKey {
+		for _, inst := range insts {
+			if inst.Trusted {
+				continue
+			}
+			for depFQDN, constraint := range inst.Deps {
+				for _, dep := range selectInstalled(installedIndex, constraints, depFQDN, constraint) {
+					markReachable(dep.Key, reachable, installedByKey, installedIndex, constraints)
+				}
+			}
+		}
+	}
 }
 
 // markCollectionRoots marks every installed collection one project's
@@ -73,25 +96,24 @@ func markCollectionRoots(
 	roots []requirements.CollectionRequirement,
 	reachable map[string]bool,
 	installedByKey, installedIndex map[string][]installedCollection,
-	depsByKey map[string]map[string]string,
 	constraints map[string]*semver.Constraints,
 ) {
 	for _, root := range roots {
 		if root.IsGit() {
 			for _, key := range gitRootKeys(st, installedByKey, root) {
-				markReachable(key, reachable, depsByKey, installedIndex, constraints)
+				markReachable(key, reachable, installedByKey, installedIndex, constraints)
 			}
 			continue
 		}
 		if root.IsURL() {
 			for _, key := range urlRootKeys(st, installedByKey, root) {
-				markReachable(key, reachable, depsByKey, installedIndex, constraints)
+				markReachable(key, reachable, installedByKey, installedIndex, constraints)
 			}
 			continue
 		}
 		fqdn := fmt.Sprintf("%s.%s", root.Namespace, root.Name)
 		for _, inst := range selectInstalled(installedIndex, constraints, fqdn, root.Version) {
-			markReachable(inst.Key, reachable, depsByKey, installedIndex, constraints)
+			markReachable(inst.Key, reachable, installedByKey, installedIndex, constraints)
 		}
 	}
 }
@@ -327,11 +349,12 @@ func selectInstalled(
 	return out
 }
 
-// markReachable marks all reachable dependencies starting at key.
+// markReachable marks key and what it reaches through the dependencies of
+// every copy of each key, since two copies of one version can differ.
 func markReachable(
 	key string,
 	reachable map[string]bool,
-	deps map[string]map[string]string,
+	byKey map[string][]installedCollection,
 	index map[string][]installedCollection,
 	constraints map[string]*semver.Constraints,
 ) {
@@ -343,10 +366,12 @@ func markReachable(
 			continue
 		}
 		reachable[current] = true
-		for depFQDN, constraint := range deps[current] {
-			for _, inst := range selectInstalled(index, constraints, depFQDN, constraint) {
-				if !reachable[inst.Key] {
-					queue = append(queue, inst.Key)
+		for _, copyOf := range byKey[current] {
+			for depFQDN, constraint := range copyOf.Deps {
+				for _, inst := range selectInstalled(index, constraints, depFQDN, constraint) {
+					if !reachable[inst.Key] {
+						queue = append(queue, inst.Key)
+					}
 				}
 			}
 		}

@@ -118,7 +118,7 @@ func TestSweepLegacyArtifactsStopsWhenTheContextEnds(t *testing.T) {
 				t.Fatalf("seed legacy artifact: %v", err)
 			}
 			installedByKey := map[string][]installedCollection{
-				"ns.name@1.0.0": {{Namespace: "ns", Name: "name", Version: "1.0.0"}},
+				"ns.name@1.0.0": {{Namespace: "ns", Name: "name", Version: "1.0.0", Trusted: true}},
 			}
 
 			sweepLegacyArtifacts(cleanupTestContext(t, tc.canceled), cfg, runtime, backend, installedByKey)

@@ -34,8 +34,11 @@ func removeUnused(
 		if err := ctx.Err(); err != nil {
 			return removed, fmt.Errorf("cleanup stopped at %s: %w", key, err)
 		}
-		insts := installedByKey[key]
 		if reachable[key] {
+			continue
+		}
+		insts := trustedCopies(runtime, key, installedByKey[key])
+		if len(insts) == 0 {
 			continue
 		}
 		removed++
@@ -48,8 +51,8 @@ func removeUnused(
 		// Only the persisted InstalledEntry records the server the scoped
 		// artifact key must be built from; the disk scan knows none.
 		source := installedSource(st, key)
-		// Every project's copy of key goes in this run; the snapshot is
-		// pruned once afterward.
+		// Every project's trusted copy of key goes in this run; the snapshot
+		// is pruned once afterward.
 		for _, inst := range insts {
 			if err := removeInstalled(ctx, inst, backend.Artifacts(), source); err != nil {
 				return removed, err
@@ -67,6 +70,27 @@ func removeUnused(
 		}
 	}
 	return removed, nil
+}
+
+// trustedCopies returns the copies of an unreached key this tool installed, the
+// only ones removed; any other copy, such as ansible-galaxy's in a shared tree,
+// stays on disk, and its artifact and records are purged on no account of it.
+func trustedCopies(runtime *infra.Infra, key string, insts []installedCollection) []installedCollection {
+	trusted := make([]installedCollection, 0, len(insts))
+	for _, inst := range insts {
+		if inst.Trusted {
+			trusted = append(trusted, inst)
+			continue
+		}
+		runtime.Output.Debugf("keeping %s at %q: no go-galaxy extract marker there matches its tree", key, inst.InstallPath)
+	}
+	return trusted
+}
+
+// hasTrustedCopy reports whether any copy of a key is this tool's by
+// trustedCopy, which is what makes the key removable once no project reaches it.
+func hasTrustedCopy(insts []installedCollection) bool {
+	return slices.ContainsFunc(insts, func(inst installedCollection) bool { return inst.Trusted })
 }
 
 // installedSource returns the Source of key's persisted InstalledEntry, or ""
@@ -143,7 +167,7 @@ func removeInstallPath(root *os.Root, inst installedCollection, namespace, name 
 // RemoveAll failure is ignored.
 func removeInfoDir(root *os.Root, inst installedCollection, namespace, name string) error {
 	acRoot := filepath.Join(inst.CollectionsDir, "ansible_collections")
-	infoName := fmt.Sprintf("%s.%s-%s.info", namespace, name, inst.Version)
+	infoName := infoDirName(namespace, name, inst.Version)
 	infoDir := filepath.Join(acRoot, infoName)
 	// Unreachable while removeInstalled checks IsPathElement, kept as the
 	// last guard before a RemoveAll.

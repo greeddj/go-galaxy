@@ -25,7 +25,7 @@ cache lock is held, losing it mid-run turns any result into exit 8.
 | `install` | [install flow](flow-install.md) | Resolves, or reads the lockfile under `--frozen`, then installs collections and roles |
 | `lock` | [lock flow](flow-lock.md) | Resolves and writes `galaxy.lock`, or gates on drift under `--check` |
 | `warm` | [warm flow](flow-warm.md) | Fills the artifact cache and extracted store, installs nothing |
-| `cleanup` | [cleanup flow](flow-cleanup.md) | Removes what no recorded project reaches |
+| `cleanup` | [cleanup flow](flow-cleanup.md) | Removes what go-galaxy installed and no recorded project reaches |
 | `outdated` | [outdated flow](flow-outdated.md) | Compares locked or installed versions with their sources, no cache |
 | `hash`, `tree`, `explain` | [hash, tree and explain flows](flow-hash-tree-explain.md) | Read the lockfile and requirements file from disk |
 

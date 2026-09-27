@@ -23,9 +23,9 @@ func legacyArtifactKey(namespace, name, version string) string {
 	return url.QueryEscape(filename)
 }
 
-// sweepLegacyArtifacts deletes every scanned collection's artifact cached
-// under legacyArtifactKey, reachable or not, since removeUnused purges only
-// what it removes; a dry run reports only candidates that exist.
+// sweepLegacyArtifacts deletes the artifact cached under legacyArtifactKey of
+// every scanned collection this tool installed, reachable or not, since
+// removeUnused purges only what it removes; a dry run reports existing ones.
 func sweepLegacyArtifacts(
 	ctx context.Context,
 	cfg *config.Config,
@@ -46,7 +46,7 @@ func sweepLegacyArtifacts(
 			return
 		}
 		insts := installedByKey[mapKey]
-		if len(insts) == 0 {
+		if !hasTrustedCopy(insts) {
 			continue
 		}
 		// Every on-disk copy of the same key shares the same namespace/name/
@@ -121,8 +121,8 @@ func extractedKeepSet(
 	installedByKey map[string][]installedCollection,
 ) map[string]bool {
 	wouldRemove := make(map[string]bool, len(installedByKey))
-	for key := range installedByKey {
-		if !reachable[key] {
+	for key, insts := range installedByKey {
+		if !reachable[key] && hasTrustedCopy(insts) {
 			wouldRemove[key] = true
 		}
 	}

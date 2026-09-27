@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/greeddj/go-galaxy/internal/galaxy/extractmarker"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/output"
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
@@ -25,7 +26,6 @@ func scanProjectWorkspace(
 	project store.ProjectRecord,
 	index map[string][]installedCollection,
 	byKey map[string][]installedCollection,
-	deps map[string]map[string]string,
 ) error {
 	if project.CollectionsPath == "" {
 		out.Debugf("project %q: no collections path recorded; collections are not scanned", projectPath)
@@ -41,7 +41,7 @@ func scanProjectWorkspace(
 	}
 	defer func() { _ = ws.root.Close() }()
 
-	if err := scanInstalledCollections(out, ws, index, byKey, deps); err != nil {
+	if err := scanInstalledCollections(out, ws, index, byKey); err != nil {
 		return fmt.Errorf("failed to scan %q: %w", ws.path, err)
 	}
 	return nil
@@ -55,7 +55,6 @@ func scanInstalledCollections(
 	ws workspace,
 	index map[string][]installedCollection,
 	byKey map[string][]installedCollection,
-	deps map[string]map[string]string,
 ) error {
 	nsEntries, err := fs.ReadDir(ws.fsys, "ansible_collections")
 	if err != nil {
@@ -68,7 +67,7 @@ func scanInstalledCollections(
 		if !nsEntry.IsDir() {
 			continue
 		}
-		if err := scanNamespaceDir(out, ws, nsEntry.Name(), index, byKey, deps); err != nil {
+		if err := scanNamespaceDir(out, ws, nsEntry.Name(), index, byKey); err != nil {
 			return err
 		}
 	}
@@ -83,7 +82,6 @@ func scanNamespaceDir(
 	ns string,
 	index map[string][]installedCollection,
 	byKey map[string][]installedCollection,
-	deps map[string]map[string]string,
 ) error {
 	nameEntries, err := fs.ReadDir(ws.fsys, path.Join("ansible_collections", ns))
 	if err != nil {
@@ -97,7 +95,7 @@ func scanNamespaceDir(
 		if !nameEntry.IsDir() {
 			continue
 		}
-		if err := scanCollectionDir(out, ws, ns, nameEntry.Name(), index, byKey, deps); err != nil {
+		if err := scanCollectionDir(out, ws, ns, nameEntry.Name(), index, byKey); err != nil {
 			return err
 		}
 	}
@@ -124,7 +122,6 @@ func scanCollectionDir(
 	ns, name string,
 	index map[string][]installedCollection,
 	byKey map[string][]installedCollection,
-	deps map[string]map[string]string,
 ) error {
 	rel := path.Join("ansible_collections", ns, name, helpers.ManifestFileName)
 	manifestPath := filepath.Join(ws.path, filepath.FromSlash(rel))
@@ -169,9 +166,12 @@ func scanCollectionDir(
 	if !ok {
 		return nil
 	}
+	// Indexed either way, so an untrusted copy's dependencies still count;
+	// removal acts on trusted copies alone.
+	record.Trusted = trustedCopy(ws.root, ns, name, record.Version)
+	record.Deps = extractDeps(manifest)
 	index[record.FQDN] = append(index[record.FQDN], record)
 	byKey[key] = append(byKey[key], record)
-	deps[key] = extractDeps(manifest)
 	return nil
 }
 
@@ -224,6 +224,27 @@ func buildInstalledRecord(
 		CollectionsDir: collectionsPath,
 		Parsed:         parsed,
 	}, key, true, nil
+}
+
+// infoDirName is the <namespace>.<name>-<version>.info directory beside an
+// installed collection, holding its GALAXY.yml and this tool's extract marker.
+func infoDirName(namespace, name, version string) string {
+	return fmt.Sprintf("%s.%s-%s.info", namespace, name, version)
+}
+
+// trustedCopy reports whether a collection copy under root is this tool's: an
+// extract marker in its .info directory, or in the collection directory where
+// older releases wrote it, whose tally equals the tree as install counts it.
+func trustedCopy(root *os.Root, ns, name, version string) bool {
+	tree := path.Join("ansible_collections", ns, name)
+	for _, dir := range []string{path.Join("ansible_collections", infoDirName(ns, name, version)), tree} {
+		for _, sha := range extractmarker.SHAs(root, dir) {
+			if extractmarker.Check(root, dir, sha, tree).Matches() {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func extractDeps(manifest types.GalaxyCollectionVersionInfoManifest) map[string]string {

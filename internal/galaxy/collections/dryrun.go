@@ -185,7 +185,7 @@ func installDryRunProbe(cfg *config.Config, st *store.Store, artifacts cacheMana
 		if ok && installRecordMatches(target, col, st) {
 			// installRecordMatches established the entry exists; only its
 			// extract marker still matching is in question.
-			if entry, entryOK := st.GetInstalled(col.key()); entryOK && checkExtractMarker(target, entry.ArtifactSHA256).matches() {
+			if entry, entryOK := st.GetInstalled(col.key()); entryOK && checkExtractMarker(target, entry.ArtifactSHA256).Matches() {
 				return dryRunClassification{settled: true}
 			}
 		}

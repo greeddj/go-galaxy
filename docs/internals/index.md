@@ -17,7 +17,7 @@ flowchart TD
   SRC["gitsource, urlsource,<br/>gitfetch, galaxyv1"]
   FACT["internal/cache<br/>backend factory"]
   BUILD["collectionbuild, rolebuild,<br/>tartree, treearchive"]
-  VERIFY["archive, manifest,<br/>signature, extracted"]
+  VERIFY["archive, manifest, signature,<br/>extracted, extractmarker"]
   IMPL["cache/local,<br/>cache/s3"]
   SEAM["galaxy/cache seam,<br/>store"]
   IO["fetch, gzipstream"]
@@ -36,6 +36,7 @@ flowchart TD
   COLL --> FACT
   COLL --> SEAM
   CLEAN --> FACT
+  CLEAN --> VERIFY
   SRC --> BUILD
   BUILD --> VERIFY
   FACT --> IMPL
@@ -155,6 +156,7 @@ span packages are under [Rules a change must keep](#rules-a-change-must-keep).
 | `internal/galaxy/tartree` | a url role tarball as a `treearchive.Source` | bytes read only through `archive` |
 | [`internal/galaxy/archive`](boundaries.md#archive-extraction) | tar.gz extraction and shape probe | refusal sentinels; the caller contains the destination |
 | [`internal/galaxy/extracted`](cache.md#extracted-store-content-addressed-materialized-by-hardlink) | the content-addressed store, `Materialize` | writes through an `os.Root` at the cache directory |
+| [`internal/galaxy/extractmarker`](install-pipeline.md#the-extract-done-marker) | the extract marker's path, format and tree tally, and `Check`, for install and `cleanup` alike | reads only through the caller's `os.Root` |
 | `internal/galaxy/manifest` | `MANIFEST.json` and `FILES.json` cross-checks | read-only |
 | `internal/galaxy/signature` | detached OpenPGP over `MANIFEST.json` | read-only; persists no verdict |
 | [`internal/galaxy/cache`](cache.md#the-cache-seam) | `Backend`, `ArtifactStore`, decorators, `LockLostError`, `FetchJSONWithCachePolicy` | budgets set above the seam, never in a backend |

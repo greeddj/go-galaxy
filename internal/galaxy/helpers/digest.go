@@ -5,8 +5,8 @@ package helpers
 const SHA256HexLen = 64
 
 // IsSHA256Hex reports whether s is exactly SHA256HexLen lowercase hex digits,
-// the one digest shape this project writes or trusts. markerRel relies on it
-// to keep a sha out of path traversal, so the alphabet must not be widened.
+// the one digest shape this project writes or trusts. extractmarker.Rel relies
+// on it to keep a sha out of path traversal, so the alphabet must not be widened.
 func IsSHA256Hex(s string) bool {
 	if len(s) != SHA256HexLen {
 		return false

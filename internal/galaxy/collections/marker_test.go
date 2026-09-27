@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
+	"github.com/greeddj/go-galaxy/internal/galaxy/extractmarker"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
@@ -51,8 +52,8 @@ func mustMkdirAll(t *testing.T, path string) {
 }
 
 // buildFixedMarkerTree creates a small deterministic tree and returns a flat
-// installTarget at it plus the exact treeTally it must produce.
-func buildFixedMarkerTree(t *testing.T) (installTarget, treeTally) {
+// installTarget at it plus the exact tally it must produce.
+func buildFixedMarkerTree(t *testing.T) (installTarget, extractmarker.Tally) {
 	t.Helper()
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "file0.txt"), []byte("root-file")) // 9 bytes
@@ -63,7 +64,7 @@ func buildFixedMarkerTree(t *testing.T) (installTarget, treeTally) {
 	mustWriteFile(t, filepath.Join(root, "dirB", "nested", "file3.txt"), []byte("abc")) // 3 bytes
 	// entries: file0, file1, file2, file3 = 4; dirs: dirA, dirB, dirB/nested = 3;
 	// bytes: 9 + 5 + 6 + 3 = 23.
-	return newFlatInstallTarget(t, root), treeTally{Entries: 4, Dirs: 3, Bytes: 23}
+	return newFlatInstallTarget(t, root), extractmarker.Tally{Entries: 4, Dirs: 3, Bytes: 23}
 }
 
 // TestExtractMarkerRoundTrip pins the exact on-disk marker bytes as well as the
@@ -244,74 +245,6 @@ func TestExtractMarkerOversizedAndGarbageInvalidate(t *testing.T) {
 	}
 }
 
-// TestExtractMarkerIgnoresSiblingMarkers pins that a top-level file carrying
-// the marker prefix, such as another sha's marker, never changes the tally.
-func TestExtractMarkerIgnoresSiblingMarkers(t *testing.T) {
-	t.Parallel()
-	target, want := buildFixedMarkerTree(t)
-
-	before, err := scanTree(target)
-	if err != nil {
-		t.Fatalf("scanTree before: %v", err)
-	}
-	if before != want {
-		t.Fatalf("scanTree before sibling = %+v, want %+v", before, want)
-	}
-
-	mustWriteFile(t, filepath.Join(target.path, helpers.ExtractMarkerPrefix+"deadbeef"), bytes.Repeat([]byte("x"), 128))
-
-	after, err := scanTree(target)
-	if err != nil {
-		t.Fatalf("scanTree after: %v", err)
-	}
-	if after != want {
-		t.Fatalf("scanTree after sibling marker = %+v, want unchanged %+v", after, want)
-	}
-}
-
-// TestScanTreeDoesNotFollowSymlinks pins that a symlink to an outside
-// directory counts as one entry and is never descended into, so a loop cannot
-// hang the walk and a link cannot inflate the tally.
-func TestScanTreeDoesNotFollowSymlinks(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	mustWriteFile(t, filepath.Join(root, "real.txt"), []byte("data"))
-
-	outside := t.TempDir()
-	mustWriteFile(t, filepath.Join(outside, "a.txt"), []byte("aaaa"))
-	mustWriteFile(t, filepath.Join(outside, "b.txt"), []byte("bbbbb"))
-	mustMkdirAll(t, filepath.Join(outside, "sub"))
-
-	if err := os.Symlink(outside, filepath.Join(root, "link")); err != nil {
-		t.Fatalf("symlink: %v", err)
-	}
-
-	target := newFlatInstallTarget(t, root)
-	got, err := scanTree(target)
-	if err != nil {
-		t.Fatalf("scanTree: %v", err)
-	}
-	// real.txt plus the symlink itself: 2 non-directory entries. The
-	// symlinked directory's own contents (2 files, 1 subdirectory) must
-	// never be descended into or counted.
-	if got.Entries != 2 {
-		t.Fatalf("Entries = %d, want 2 (real.txt + the symlink itself, not its target's contents)", got.Entries)
-	}
-	if got.Dirs != 0 {
-		t.Fatalf("Dirs = %d, want 0 (a symlink to a directory must not be descended into)", got.Dirs)
-	}
-}
-
-// TestExtractMarkerOutcomeZeroValueFailsClosed pins that a zero
-// extractMarkerOutcome never matches, so a path that forgets to set status
-// forces re-extraction.
-func TestExtractMarkerOutcomeZeroValueFailsClosed(t *testing.T) {
-	t.Parallel()
-	if (extractMarkerOutcome{}).matches() {
-		t.Fatal("expected a zero-value extractMarkerOutcome{} to never satisfy matches()")
-	}
-}
-
 // TestCheckExtractMarkerScanFailedAndMissing covers a scan failure and an
 // absent marker: checkExtractMarker leaves the marker alone, while
 // verifyExtractMarker logs at Debugf and removes it.
@@ -333,7 +266,7 @@ func testCheckExtractMarkerScanFailed(t *testing.T) {
 	seedValidExtractMarker(t, target, sha)
 	markerPath := filepath.Join(installPath, helpers.ExtractMarkerPrefix+sha)
 
-	// 0o311 (no read bit) makes scanTree's listing fail while the write bit
+	// 0o311 (no read bit) makes the tally's listing fail while the write bit
 	// still lets the marker be unlinked, so the removal assertion is real.
 	//nolint:gosec // G302: 0o311 is this test's own fixture permission; see comment above.
 	if err := os.Chmod(installPath, 0o311); err != nil {
@@ -354,16 +287,16 @@ func testCheckExtractMarkerScanFailed(t *testing.T) {
 // assertScanFailedOutcome checks checkExtractMarker's own return value for
 // the scan-failed scenario, and that it never touched the marker file - it
 // is a pure read.
-func assertScanFailedOutcome(t *testing.T, outcome extractMarkerOutcome, markerPath string) {
+func assertScanFailedOutcome(t *testing.T, outcome extractmarker.Outcome, markerPath string) {
 	t.Helper()
-	if outcome.status != extractMarkerScanFailed {
-		t.Fatalf("outcome.status = %v, want extractMarkerScanFailed", outcome.status)
+	if outcome.Status != extractmarker.StatusScanFailed {
+		t.Fatalf("outcome.Status = %v, want StatusScanFailed", outcome.Status)
 	}
-	if outcome.scanErr == nil {
-		t.Fatal("expected a non-nil scanErr")
+	if outcome.ScanErr == nil {
+		t.Fatal("expected a non-nil ScanErr")
 	}
-	if outcome.matches() {
-		t.Fatal("expected matches() to be false")
+	if outcome.Matches() {
+		t.Fatal("expected Matches() to be false")
 	}
 	if _, err := os.Stat(markerPath); err != nil {
 		t.Fatalf("expected checkExtractMarker to leave the marker untouched, stat error: %v", err)
@@ -400,11 +333,11 @@ func testCheckExtractMarkerMissing(t *testing.T) {
 	markerPath := filepath.Join(installPath, helpers.ExtractMarkerPrefix+sha)
 
 	outcome := checkExtractMarker(target, sha)
-	if outcome.status != extractMarkerMissing {
-		t.Fatalf("outcome.status = %v, want extractMarkerMissing", outcome.status)
+	if outcome.Status != extractmarker.StatusMissing {
+		t.Fatalf("outcome.Status = %v, want StatusMissing", outcome.Status)
 	}
-	if outcome.matches() {
-		t.Fatal("expected matches() to be false")
+	if outcome.Matches() {
+		t.Fatal("expected Matches() to be false")
 	}
 	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
 		t.Fatalf("checkExtractMarker must never create a marker; stat error = %v", err)
@@ -548,7 +481,7 @@ func TestWriteExtractMarkerRefusesTraversalSHA(t *testing.T) {
 }
 
 // TestCheckExtractMarkerReportsUnsafeSHA pins that checkExtractMarker reports
-// extractMarkerUnsafeSHA for a traversal sha and leaves installPath untouched.
+// extractmarker.StatusUnsafeSHA for a traversal sha and leaves installPath untouched.
 func TestCheckExtractMarkerReportsUnsafeSHA(t *testing.T) {
 	t.Parallel()
 	_, _, installPath := buildTraversalFixture(t)
@@ -561,11 +494,11 @@ func TestCheckExtractMarkerReportsUnsafeSHA(t *testing.T) {
 
 	const traversalSHA = "../../../../../../home/ci/.ssh/authorized_keys"
 	outcome := checkExtractMarker(target, traversalSHA)
-	if outcome.status != extractMarkerUnsafeSHA {
-		t.Fatalf("outcome.status = %v, want extractMarkerUnsafeSHA", outcome.status)
+	if outcome.Status != extractmarker.StatusUnsafeSHA {
+		t.Fatalf("outcome.Status = %v, want StatusUnsafeSHA", outcome.Status)
 	}
-	if outcome.matches() {
-		t.Fatal("expected matches() to be false")
+	if outcome.Matches() {
+		t.Fatal("expected Matches() to be false")
 	}
 
 	after, err := os.ReadDir(installPath)
@@ -612,43 +545,6 @@ func TestMarkerRelRejectsNonDigest(t *testing.T) {
 	want := path.Join(target.rel, helpers.ExtractMarkerPrefix+validMarkerSHA)
 	if got != want {
 		t.Fatalf("markerRel = %q, want %q", got, want)
-	}
-}
-
-// BenchmarkScanTree times one scanTree pass over a collection-sized tree: 500
-// files of about 2000 bytes across 50 subdirectories.
-func BenchmarkScanTree(b *testing.B) {
-	root := b.TempDir()
-	const subdirs = 50
-	const filesPerSubdir = 10
-	const fileSize = 2000
-	content := bytes.Repeat([]byte("x"), fileSize)
-	for i := range subdirs {
-		dir := filepath.Join(root, fmt.Sprintf("sub%d", i))
-		if err := os.MkdirAll(dir, helpers.DirMod); err != nil {
-			b.Fatalf("mkdir %s: %v", dir, err)
-		}
-		for j := range filesPerSubdir {
-			p := filepath.Join(dir, fmt.Sprintf("file%d.dat", j))
-			if err := os.WriteFile(p, content, helpers.FileMod); err != nil {
-				b.Fatalf("write %s: %v", p, err)
-			}
-		}
-	}
-
-	osRoot, err := os.OpenRoot(root)
-	if err != nil {
-		b.Fatalf("os.OpenRoot(%s): %v", root, err)
-	}
-	b.Cleanup(func() {
-		_ = osRoot.Close()
-	})
-	target := installTarget{root: osRoot, rel: ".", path: root}
-
-	for b.Loop() {
-		if _, err := scanTree(target); err != nil {
-			b.Fatalf("scanTree: %v", err)
-		}
 	}
 }
 

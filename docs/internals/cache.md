@@ -53,7 +53,9 @@ prefix, never `type`.
 Releases before server scoping cached a collection under the flat key
 `<namespace>-<name>-<version>.tar.gz`, which no lookup reaches any more.
 `sweepLegacyArtifacts` deletes that key for every collection `cleanup`
-scanned, reachable or not, since `removeUnused` purges only what it removes.
+scanned a trusted copy of, one whose extract marker matches its tree
+([Scan](flow-cleanup.md#scan-every-recorded-projects-installs)), reachable or
+not, since `removeUnused` purges only what it removes.
 It spares a key `helpers.IsScopedArtifactKey` accepts: a namespace directory
 may contain a dot, so `<12 hex digits>.acme` spells a live key. That predicate
 changes with `ArtifactKey`. The flow is in
@@ -73,8 +75,9 @@ that stay and of warms within 30 days, read from the snapshot: a disk scan
 misses an absent workspace, normal on an ephemeral runner. Only `warm` writes
 a warmed entry, or a tree would outlive its install by 30 days.
 
-The marker that proves an installed tree complete lives beside the install,
-not in the cache: [The extract-done marker](install-pipeline.md#the-extract-done-marker).
+The marker that proves an installed tree complete, and that `cleanup` trusts a
+collection copy by, lives beside the install, not in the cache:
+[The extract-done marker](install-pipeline.md#the-extract-done-marker).
 
 ### Snapshot
 

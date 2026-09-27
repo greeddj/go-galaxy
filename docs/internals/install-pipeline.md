@@ -313,12 +313,13 @@ entries' summed sizes.
 
 | Aspect | Rule |
 | :-- | :-- |
-| Name | `.extract-done.<sha256>`, the digest checked by `markerRel` before any join |
-| Place | A collection's version `.info` directory, which `ansible-galaxy collection verify` ignores; a role's own directory |
+| Name | `.extract-done.<sha256>`, the digest checked by `extractmarker.Rel` before any join |
+| Place | A collection's version `.info` directory, which `ansible-galaxy collection verify` ignores; a role's own directory. Older releases wrote a collection's in its own directory, where only `cleanup` still reads it |
 | Content | `go-galaxy-extract-1 entries=<n> dirs=<n> bytes=<n>`, capped at 256 bytes, parsed strictly |
 | Catches | An entry added or removed, a size change; not a same-length edit (`TestExtractMarkerMutationCases`) |
 | On mismatch | Removed and re-extracted, never a failed run |
-| Verified by | Skip checks and extraction (`verifyExtractMarker`); dry-run probes only read (`checkExtractMarker`) |
+| Verified by | Skip checks and extraction (`verifyExtractMarker`); dry-run probes only read (`checkExtractMarker`); `cleanup` reads one of any sha to trust a collection copy ([Scan](flow-cleanup.md#scan-every-recorded-projects-installs)) |
+| Code | `internal/galaxy/extractmarker`: the path, the format, the tally and `Check`, which install and `cleanup` share |
 
 ## Bounded recovery
 

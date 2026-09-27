@@ -85,7 +85,7 @@ func installRoleDryRunProbe(cfg *config.Config, st *store.Store, artifacts cache
 	return func(ctx context.Context, r resolvedRole) dryRunClassification {
 		target, ok := newRoleTarget(root, cfg, r)
 		if ok {
-			if entry, matched := roleRecordMatches(target, r, st); matched && checkExtractMarker(target, entry.ArtifactSHA256).matches() {
+			if entry, matched := roleRecordMatches(target, r, st); matched && checkExtractMarker(target, entry.ArtifactSHA256).Matches() {
 				return dryRunClassification{settled: true}
 			}
 		}

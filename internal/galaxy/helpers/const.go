@@ -18,7 +18,7 @@ const (
 
 	// ExtractMarkerPrefix starts the marker name, suffixed with the artifact
 	// sha256, that a finished extraction writes in a collection's version .info
-	// directory or a role's directory; verifyExtractMarker also checks a tally.
+	// directory or a role's directory; extractmarker.Check also checks a tally.
 	ExtractMarkerPrefix = ".extract-done."
 
 	// RequirementsTOMLName is the file discovery looks for first when no flag

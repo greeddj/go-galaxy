@@ -22,6 +22,7 @@ import (
 	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/extracted"
+	"github.com/greeddj/go-galaxy/internal/galaxy/extractmarker"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
@@ -353,8 +354,9 @@ func openTestWorkspace(t *testing.T, collectionsPath string) workspace {
 	return workspace{root: root, fsys: root.FS(), path: collectionsPath}
 }
 
-// seedInstallTree writes ns.name@1.0.0's MANIFEST.json under
-// <downloadPath>/ansible_collections/ns/name and returns that install dir.
+// seedInstallTree writes ns.name@1.0.0 under <downloadPath>/ansible_collections
+// as this tool installs it, MANIFEST.json and extract marker, and returns the
+// install dir.
 func seedInstallTree(t *testing.T, downloadPath string) string {
 	t.Helper()
 	installDir := filepath.Join(downloadPath, "ansible_collections", "ns", "name")
@@ -365,7 +367,42 @@ func seedInstallTree(t *testing.T, downloadPath string) string {
 	if err := os.WriteFile(manifestPath, []byte(testManifestJSON), helpers.FileMod); err != nil {
 		t.Fatalf("failed to write MANIFEST.json: %v", err)
 	}
+	markCollectionInstalled(t, downloadPath, "ns", "name", "1.0.0")
 	return installDir
+}
+
+// testCollectionMarkerSHA is the digest every seeded collection's extract
+// marker names; cleanup takes any sha-shaped one whose tally matches.
+const testCollectionMarkerSHA = "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+
+// markCollectionInstalled writes the extract marker this tool leaves in
+// ns.name@version's .info directory under root, tallying the tree as it stands
+// then: the evidence cleanup removes by, so it is written once the tree is final.
+func markCollectionInstalled(t *testing.T, root, ns, name, version string) {
+	t.Helper()
+	writeCollectionMarker(t, root, ns, name, filepath.Join("ansible_collections", fmt.Sprintf("%s.%s-%s.info", ns, name, version)))
+}
+
+// writeCollectionMarker writes, in dir under root, the extract marker install
+// would write for ansible_collections/ns/name as it stands now.
+func writeCollectionMarker(t *testing.T, root, ns, name, dir string) {
+	t.Helper()
+	osRoot, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("failed to open %s: %v", root, err)
+	}
+	defer func() { _ = osRoot.Close() }()
+	tally, err := extractmarker.Scan(osRoot, filepath.ToSlash(filepath.Join("ansible_collections", ns, name)))
+	if err != nil {
+		t.Fatalf("failed to tally %s.%s: %v", ns, name, err)
+	}
+	if err := osRoot.MkdirAll(dir, helpers.DirMod); err != nil {
+		t.Fatalf("failed to create %s: %v", dir, err)
+	}
+	marker := filepath.Join(dir, helpers.ExtractMarkerPrefix+testCollectionMarkerSHA)
+	if err := osRoot.WriteFile(marker, []byte(extractmarker.Format(tally)), helpers.FileMod); err != nil {
+		t.Fatalf("failed to write marker of %s.%s: %v", ns, name, err)
+	}
 }
 
 // writeCorruptRegistry writes unparseable bytes directly at the project
@@ -1295,6 +1332,9 @@ func TestScanIgnoresNestedManifest(t *testing.T) {
 	if err := os.WriteFile(nestedManifestPath, []byte(nestedManifest), helpers.FileMod); err != nil {
 		t.Fatalf("failed to write nested manifest: %v", err)
 	}
+	// Marked again so the tally counts the fixture, as an install of a tarball
+	// carrying it would.
+	markCollectionInstalled(t, downloadPath, "ns", "name", "1.0.0")
 
 	reqPath := filepath.Join(t.TempDir(), "requirements.yml")
 	if err := os.WriteFile(reqPath, []byte("collections:\n  - ns.name\n"), helpers.FileMod); err != nil {
@@ -1434,9 +1474,9 @@ func TestReportsCorruptManifest(t *testing.T) {
 	}
 }
 
-// seedManifestAt writes a MANIFEST.json for ns.name@version under
-// <root>/ansible_collections/<ns>/<name>, for tests that need more than one
-// distinct installed collection under the same collections root.
+// seedManifestAt installs ns.name@version under <root>/ansible_collections as
+// seedManifestWithDeps does, for tests that need more than one distinct
+// installed collection under the same collections root.
 func seedManifestAt(t *testing.T, root, ns, name, version string) {
 	t.Helper()
 	seedManifestWithDeps(t, root, ns, name, version, nil)
@@ -1462,8 +1502,8 @@ func manifestJSON(ns, name, version string, deps map[string]string) string {
 }
 
 // seedManifestWithDeps writes a MANIFEST.json for ns.name@version, with an
-// optional declared dependencies map, under
-// <root>/ansible_collections/<ns>/<name>.
+// optional declared dependencies map, under <root>/ansible_collections/<ns>/
+// <name>, and the extract marker that makes it this tool's install.
 func seedManifestWithDeps(t *testing.T, root, ns, name, version string, deps map[string]string) {
 	t.Helper()
 	installDir := filepath.Join(root, "ansible_collections", ns, name)
@@ -1474,6 +1514,7 @@ func seedManifestWithDeps(t *testing.T, root, ns, name, version string, deps map
 	if err := os.WriteFile(filepath.Join(installDir, "MANIFEST.json"), []byte(manifest), helpers.FileMod); err != nil {
 		t.Fatalf("failed to write manifest for %s.%s: %v", ns, name, err)
 	}
+	markCollectionInstalled(t, root, ns, name, version)
 }
 
 // assertManifestPresentAt fails the test unless the MANIFEST.json for
@@ -2165,13 +2206,12 @@ func TestScanInstalledCollectionsMissingRootIsNotAnError(t *testing.T) {
 	defer func() { _ = ws.root.Close() }()
 	index := make(map[string][]installedCollection)
 	byKey := make(map[string][]installedCollection)
-	deps := make(map[string]map[string]string)
 
-	if err := scanInstalledCollections(noopPrinter{}, ws, index, byKey, deps); err != nil {
+	if err := scanInstalledCollections(noopPrinter{}, ws, index, byKey); err != nil {
 		t.Fatalf("expected nil error for a missing ansible_collections root, got %v", err)
 	}
-	if len(index) != 0 || len(byKey) != 0 || len(deps) != 0 {
-		t.Fatalf("expected no entries to be added, got index=%v byKey=%v deps=%v", index, byKey, deps)
+	if len(index) != 0 || len(byKey) != 0 {
+		t.Fatalf("expected no entries to be added, got index=%v byKey=%v", index, byKey)
 	}
 }
 
@@ -2187,13 +2227,12 @@ func TestScanNamespaceDirVanishedIsNotAnError(t *testing.T) {
 	defer func() { _ = ws.root.Close() }()
 	index := make(map[string][]installedCollection)
 	byKey := make(map[string][]installedCollection)
-	deps := make(map[string]map[string]string)
 
-	if err := scanNamespaceDir(noopPrinter{}, ws, "does-not-exist", index, byKey, deps); err != nil {
+	if err := scanNamespaceDir(noopPrinter{}, ws, "does-not-exist", index, byKey); err != nil {
 		t.Fatalf("expected nil error for a vanished namespace dir, got %v", err)
 	}
-	if len(index) != 0 || len(byKey) != 0 || len(deps) != 0 {
-		t.Fatalf("expected no entries to be added, got index=%v byKey=%v deps=%v", index, byKey, deps)
+	if len(index) != 0 || len(byKey) != 0 {
+		t.Fatalf("expected no entries to be added, got index=%v byKey=%v", index, byKey)
 	}
 }
 
@@ -2307,6 +2346,7 @@ func TestStartScansWorkspaceBehindRelativeSymlink(t *testing.T) {
 	if err := os.Symlink("real_ac", acLink); err != nil {
 		t.Skipf("symlinks unavailable on this platform: %v", err)
 	}
+	markCollectionInstalled(t, collectionsPath, "ns", "name", "1.0.0")
 
 	registerCleanupProject(t, cacheDir, collectionsPath)
 
@@ -2483,6 +2523,7 @@ func buildNamespaceSymlinkFixture(t *testing.T, cacheDir string, safe bool) stri
 		}
 		manifestPath = filepath.Join(hiddenNsDir, "name", "MANIFEST.json")
 	}
+	markCollectionInstalled(t, collectionsPath, "ns", "name", "1.0.0")
 
 	registerCleanupProject(t, cacheDir, collectionsPath)
 	return manifestPath
@@ -2559,6 +2600,7 @@ func buildNameSymlinkFixture(t *testing.T, cacheDir string, safe bool) (string, 
 		}
 		manifestPath = filepath.Join(hiddenNameDir, "MANIFEST.json")
 	}
+	markCollectionInstalled(t, collectionsPath, "ns", "name", "1.0.0")
 
 	registerCleanupProject(t, cacheDir, collectionsPath)
 	return manifestPath, namePath
@@ -2811,6 +2853,7 @@ func runNonRegularManifestCase(
 		t.Fatalf("failed to create hostile name dir: %v", err)
 	}
 	manifestPath, targetPath := build(t, hostileCollectionsPath, nameDir)
+	markCollectionInstalled(t, hostileCollectionsPath, "ns", "name", "1.0.0")
 
 	healthyDownloadPath := t.TempDir()
 	healthyInstallDir := seedInstallTree(t, healthyDownloadPath)
@@ -3094,7 +3137,7 @@ func TestDryRunReportsNoExtractedSweepWithNoPersistedSnapshot(t *testing.T) {
 // manifest; and buildReachable's two-phase, sorted-project reachability.
 
 // seedManifestWithIdentity writes, under ansible_collections/<dirNs>/<dirName>,
-// a MANIFEST.json that declares jsonNs.jsonName instead.
+// a MANIFEST.json that declares jsonNs.jsonName instead, marked as installed.
 func seedManifestWithIdentity(t *testing.T, root, dirNs, dirName, jsonNs, jsonName, version string) {
 	t.Helper()
 	installDir := filepath.Join(root, "ansible_collections", dirNs, dirName)
@@ -3105,6 +3148,7 @@ func seedManifestWithIdentity(t *testing.T, root, dirNs, dirName, jsonNs, jsonNa
 	if err := os.WriteFile(filepath.Join(installDir, "MANIFEST.json"), []byte(manifest), helpers.FileMod); err != nil {
 		t.Fatalf("failed to write manifest for %s/%s: %v", dirNs, dirName, err)
 	}
+	markCollectionInstalled(t, root, dirNs, dirName, version)
 }
 
 // TestScanIdentityComesFromWalkedDirectoryNotManifest pins that a manifest
@@ -3178,8 +3222,7 @@ func scanHostileEvilPkgRecord(t *testing.T, downloadPath string) installedCollec
 	defer func() { _ = ws.root.Close() }()
 	index := make(map[string][]installedCollection)
 	byKey := make(map[string][]installedCollection)
-	deps := make(map[string]map[string]string)
-	if err := scanCollectionDir(noopPrinter{}, ws, "evil", "pkg", index, byKey, deps); err != nil {
+	if err := scanCollectionDir(noopPrinter{}, ws, "evil", "pkg", index, byKey); err != nil {
 		t.Fatalf("failed to scan the hostile fixture: %v", err)
 	}
 	insts := byKey["evil.pkg@9.9.9"]
@@ -3908,4 +3951,273 @@ func TestOpenProjectWorkspaceStopsAtAnAbsentRecordedPath(t *testing.T) {
 		t.Fatalf("expected Start to succeed, got %v", err)
 	}
 	assertManifestSurvives(t, installDir)
+}
+
+// seedForeignCollection writes ns.name@version as ansible-galaxy installs it:
+// a MANIFEST.json with deps and a .info/GALAXY.yml, but no extract marker.
+func seedForeignCollection(t *testing.T, root, ns, name, version string, deps map[string]string) {
+	t.Helper()
+	installDir := filepath.Join(root, "ansible_collections", ns, name)
+	infoDir := filepath.Join(root, "ansible_collections", fmt.Sprintf("%s.%s-%s.info", ns, name, version))
+	for _, dir := range []string{installDir, infoDir} {
+		if err := os.MkdirAll(dir, helpers.DirMod); err != nil {
+			t.Fatalf("failed to create %s: %v", dir, err)
+		}
+	}
+	manifest := manifestJSON(ns, name, version, deps)
+	if err := os.WriteFile(filepath.Join(installDir, "MANIFEST.json"), []byte(manifest), helpers.FileMod); err != nil {
+		t.Fatalf("failed to write manifest for %s.%s: %v", ns, name, err)
+	}
+	galaxyYML := fmt.Sprintf("download_url: https://galaxy.example/%s-%s-%s.tar.gz\n", ns, name, version) +
+		fmt.Sprintf("format_version: 1.0.0\nname: %s\nnamespace: %s\nsignatures: []\nversion: %s\n", name, ns, version)
+	if err := os.WriteFile(filepath.Join(infoDir, "GALAXY.yml"), []byte(galaxyYML), helpers.FileMod); err != nil {
+		t.Fatalf("failed to write GALAXY.yml for %s.%s: %v", ns, name, err)
+	}
+}
+
+// seedForeignCacheEntries records ns.foreign@1.0.0 in the snapshot as an
+// earlier install would, with its extracted tree and scoped and legacy
+// artifacts, and returns the two artifact paths.
+func seedForeignCacheEntries(t *testing.T, cfg *config.Config, runtime *infra.Infra) []string {
+	t.Helper()
+	const source = "https://galaxy.example.com/api"
+	seedSnapshotInstalled(t, cfg, runtime, map[string]store.InstalledEntry{
+		"ns.foreign@1.0.0": {Source: source, ArtifactSHA256: testCollectionMarkerSHA},
+	})
+	seedExtractedDir(t, cfg.CacheDir, testCollectionMarkerSHA)
+	artifacts := []string{
+		filepath.Join(cfg.CacheDir, helpers.ArtifactKey(source, helpers.ArtifactFilename("ns", "foreign", "1.0.0"))),
+		filepath.Join(cfg.CacheDir, legacyArtifactKey("ns", "foreign", "1.0.0")),
+	}
+	for _, path := range artifacts {
+		if err := os.WriteFile(path, []byte("artifact-bytes"), helpers.FileMod); err != nil {
+			t.Fatalf("failed to seed artifact %s: %v", path, err)
+		}
+	}
+	return artifacts
+}
+
+// assertForeignCacheEntriesKept fails the test unless ns.foreign's GALAXY.yml,
+// artifacts, extracted tree and snapshot record all survived the run.
+func assertForeignCacheEntriesKept(t *testing.T, cfg *config.Config, runtime *infra.Infra, downloadPath string, artifacts []string) {
+	t.Helper()
+	galaxyYML := filepath.Join(downloadPath, "ansible_collections", "ns.foreign-1.0.0.info", "GALAXY.yml")
+	for _, path := range append([]string{galaxyYML}, artifacts...) {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s of the unmarked ns.foreign to survive: %v", path, err)
+		}
+	}
+	assertExtractedDirsSurvive(t, cfg.CacheDir, testCollectionMarkerSHA)
+	if _, ok := reloadStoreThroughFreshBackend(t, cfg, runtime).GetInstalled("ns.foreign@1.0.0"); !ok {
+		t.Fatal("expected the snapshot to keep its record of the unmarked ns.foreign")
+	}
+}
+
+// TestStartRemovesOnlyCollectionsThisToolInstalled: in one recorded tree an
+// unreached collection with no extract marker stays with its cached artifacts,
+// while a marked one goes; an unmarked copy's dependencies still count.
+func TestStartRemovesOnlyCollectionsThisToolInstalled(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	downloadPath := t.TempDir()
+	seedManifestAt(t, downloadPath, "ns", "stale", "1.0.0")
+	seedManifestAt(t, downloadPath, "ns", "lib", "1.0.0")
+	seedForeignCollection(t, downloadPath, "ns", "app", "1.0.0", map[string]string{"ns.lib": ">=1.0.0"})
+	seedForeignCollection(t, downloadPath, "ns", "foreign", "1.0.0", nil)
+	reqPath := filepath.Join(t.TempDir(), "requirements.yml")
+	if err := os.WriteFile(reqPath, []byte("collections:\n  - name: ns.app\n"), helpers.FileMod); err != nil {
+		t.Fatalf("failed to write requirements file: %v", err)
+	}
+	registerCleanupProjectAt(t, cacheDir, downloadPath, reqPath)
+	printer := &recordingPrinter{}
+	runtime := newTestRuntimeWith(printer)
+	cfg := &config.Config{CacheDir: cacheDir}
+	artifacts := seedForeignCacheEntries(t, cfg, runtime)
+
+	if err := Start(t.Context(), cfg, runtime); err != nil {
+		t.Fatalf("expected Start to succeed, got %v", err)
+	}
+	assertManifestAbsentAt(t, downloadPath, "ns", "stale")
+	for _, name := range []string{"lib", "app", "foreign"} {
+		assertManifestPresentAt(t, downloadPath, "ns", name)
+	}
+	assertForeignCacheEntriesKept(t, cfg, runtime, downloadPath, artifacts)
+	if !printer.hasResultContaining("Removed ns.stale@1.0.0") || printer.hasResultContaining("Removed ns.foreign") {
+		t.Fatalf("expected ns.stale alone reported removed, got %v", printer.results)
+	}
+}
+
+// startOverUnreachedCopies runs Start over one recorded tree no requirement
+// reaches, seeded with ns.control as install leaves it plus what seed writes,
+// and checks that the control goes, so a kept copy is the rule's doing.
+func startOverUnreachedCopies(t *testing.T, seed func(root string)) (*recordingPrinter, string) {
+	t.Helper()
+	cacheDir := t.TempDir()
+	downloadPath := t.TempDir()
+	seedManifestAt(t, downloadPath, "ns", "control", "1.0.0")
+	seed(downloadPath)
+	reqPath := filepath.Join(t.TempDir(), "requirements.yml")
+	if err := os.WriteFile(reqPath, []byte("collections: []\n"), helpers.FileMod); err != nil {
+		t.Fatalf("failed to write requirements file: %v", err)
+	}
+	registerCleanupProjectAt(t, cacheDir, downloadPath, reqPath)
+	printer := &recordingPrinter{}
+	if err := Start(t.Context(), &config.Config{CacheDir: cacheDir}, newTestRuntimeWith(printer)); err != nil {
+		t.Fatalf("expected Start to succeed, got %v", err)
+	}
+	assertManifestAbsentAt(t, downloadPath, "ns", "control")
+	return printer, downloadPath
+}
+
+// TestStartRemovesACopyMarkedInsideItsOwnDirectory: a copy whose only marker
+// sits in the collection directory, where older releases wrote it, and still
+// matches the tree is this tool's, so an unreached one is removed.
+func TestStartRemovesACopyMarkedInsideItsOwnDirectory(t *testing.T) {
+	t.Parallel()
+	printer, downloadPath := startOverUnreachedCopies(t, func(root string) {
+		seedForeignCollection(t, root, "acme", "legacy", "2.0.0", nil)
+		writeCollectionMarker(t, root, "acme", "legacy", filepath.Join("ansible_collections", "acme", "legacy"))
+	})
+	assertManifestAbsentAt(t, downloadPath, "acme", "legacy")
+	if !printer.hasResultContaining("Removed acme.legacy@2.0.0") {
+		t.Fatalf("expected acme.legacy reported removed, got %v", printer.results)
+	}
+}
+
+// TestStartKeepsACopyWhoseMarkerNoLongerMatchesItsTree: a file added under a
+// marked copy, as an ansible-galaxy source install over it leaves the tree
+// beside this tool's .info, makes the copy another tool's, so it stays.
+func TestStartKeepsACopyWhoseMarkerNoLongerMatchesItsTree(t *testing.T) {
+	t.Parallel()
+	printer, downloadPath := startOverUnreachedCopies(t, func(root string) {
+		seedManifestAt(t, root, "ns", "drifted", "1.0.0")
+		filesJSON := filepath.Join(root, "ansible_collections", "ns", "drifted", "FILES.json")
+		if err := os.WriteFile(filesJSON, []byte(`{"files": [], "format": 1}`), helpers.FileMod); err != nil {
+			t.Fatalf("failed to write %s: %v", filesJSON, err)
+		}
+	})
+	assertManifestPresentAt(t, downloadPath, "ns", "drifted")
+	if printer.hasResultContaining("ns.drifted") {
+		t.Fatalf("expected ns.drifted neither removed nor reported, got %v", printer.results)
+	}
+}
+
+// TestStartKeepsACopyWhoseMarkerHoldsNoTally: the first releases wrote "ok"
+// in the collection directory, which proves no tree, so such a copy stays.
+func TestStartKeepsACopyWhoseMarkerHoldsNoTally(t *testing.T) {
+	t.Parallel()
+	printer, downloadPath := startOverUnreachedCopies(t, func(root string) {
+		seedForeignCollection(t, root, "ns", "ancient", "1.0.0", nil)
+		marker := filepath.Join(root, "ansible_collections", "ns", "ancient", helpers.ExtractMarkerPrefix+testCollectionMarkerSHA)
+		if err := os.WriteFile(marker, []byte("ok"), helpers.FileMod); err != nil {
+			t.Fatalf("failed to write %s: %v", marker, err)
+		}
+	})
+	assertManifestPresentAt(t, downloadPath, "ns", "ancient")
+	if printer.hasResultContaining("ns.ancient") {
+		t.Fatalf("expected ns.ancient neither removed nor reported, got %v", printer.results)
+	}
+}
+
+// TestStartKeepsWhatAKeptCopyDependsOn: an unreached copy another tool
+// installed stays, and so does this tool's copy of what its manifest needs,
+// since removing that would leave the kept copy broken.
+func TestStartKeepsWhatAKeptCopyDependsOn(t *testing.T) {
+	t.Parallel()
+	printer, downloadPath := startOverUnreachedCopies(t, func(root string) {
+		seedForeignCollection(t, root, "ns", "consumer", "1.0.0", map[string]string{"ns.dep": ">=1.0.0"})
+		seedManifestAt(t, root, "ns", "dep", "1.0.0")
+	})
+	for _, name := range []string{"consumer", "dep"} {
+		assertManifestPresentAt(t, downloadPath, "ns", name)
+	}
+	if printer.hasResultContaining("ns.dep") || printer.hasResultContaining("ns.consumer") {
+		t.Fatalf("expected ns.consumer and ns.dep neither removed nor reported, got %v", printer.results)
+	}
+}
+
+// startOverTwoProjects runs Start over two recorded projects, "pa" and "pb",
+// each with its own collections tree seeded by its seed func and its own
+// requirements body, and returns the printer and both trees.
+func startOverTwoProjects(t *testing.T, seedA, seedB func(root string), reqA, reqB string) (*recordingPrinter, string, string) {
+	t.Helper()
+	cacheDir := t.TempDir()
+	projects := make(map[string]store.ProjectRecord, 2)
+	roots := make([]string, 0, 2)
+	for i, p := range []struct {
+		seed func(root string)
+		key  string
+		req  string
+	}{{seed: seedA, key: "pa", req: reqA}, {seed: seedB, key: "pb", req: reqB}} {
+		root := t.TempDir()
+		p.seed(root)
+		reqPath := filepath.Join(t.TempDir(), "requirements.yml")
+		if err := os.WriteFile(reqPath, []byte(p.req), helpers.FileMod); err != nil {
+			t.Fatalf("failed to write requirements file %d: %v", i, err)
+		}
+		projects[p.key] = store.ProjectRecord{RequirementsFile: reqPath, CollectionsPath: root, LastRun: time.Now().UTC()}
+		roots = append(roots, root)
+	}
+	writeProjectRegistry(t, cacheDir, &store.ProjectRegistry{Projects: projects})
+	printer := &recordingPrinter{}
+	if err := Start(t.Context(), &config.Config{CacheDir: cacheDir}, newTestRuntimeWith(printer)); err != nil {
+		t.Fatalf("expected Start to succeed, got %v", err)
+	}
+	return printer, roots[0], roots[1]
+}
+
+// TestStartFollowsEveryCopysDependencies: two copies of ns.d@1.0.0 whose
+// manifests differ both count, so a kept copy's transitive dependency ns.e
+// stays even when the copy scanned last lists none.
+func TestStartFollowsEveryCopysDependencies(t *testing.T) {
+	t.Parallel()
+	_, pa, pb := startOverTwoProjects(t, func(root string) {
+		seedForeignCollection(t, root, "ns", "u", "1.0.0", map[string]string{"ns.d": "*"})
+		seedManifestWithDeps(t, root, "ns", "d", "1.0.0", map[string]string{"ns.e": ">=1.0.0"})
+		seedManifestAt(t, root, "ns", "e", "1.0.0")
+		seedManifestAt(t, root, "ns", "stale", "1.0.0")
+	}, func(root string) {
+		seedManifestAt(t, root, "ns", "d", "1.0.0")
+	}, "collections: []\n", "collections: []\n")
+	for _, name := range []string{"u", "d", "e"} {
+		assertManifestPresentAt(t, pa, "ns", name)
+	}
+	assertManifestPresentAt(t, pb, "ns", "d")
+	assertManifestAbsentAt(t, pa, "ns", "stale")
+}
+
+// TestStartKeepsTheDependenciesOfAReachedCopy: a root reaching ns.a@1.0.0
+// keeps what each of its copies depends on, the untrusted copy's as well.
+func TestStartKeepsTheDependenciesOfAReachedCopy(t *testing.T) {
+	t.Parallel()
+	_, pa, pb := startOverTwoProjects(t, func(root string) {
+		seedManifestWithDeps(t, root, "ns", "a", "1.0.0", map[string]string{"ns.x": ">=1.0.0"})
+		seedManifestAt(t, root, "ns", "x", "1.0.0")
+	}, func(root string) {
+		seedForeignCollection(t, root, "ns", "a", "1.0.0", map[string]string{"ns.y": ">=1.0.0"})
+		seedManifestAt(t, root, "ns", "y", "1.0.0")
+	}, "collections:\n  - name: ns.a\n", "collections: []\n")
+	assertManifestPresentAt(t, pa, "ns", "x")
+	assertManifestPresentAt(t, pb, "ns", "y")
+}
+
+// TestStartRemovesATrustedCopyOfAKeptCopysKey: keeping another tool's
+// ns.consumer and its dependency never marks ns.consumer itself, so this
+// tool's unreached copy of the same version elsewhere still goes.
+func TestStartRemovesATrustedCopyOfAKeptCopysKey(t *testing.T) {
+	t.Parallel()
+	printer, pa, pb := startOverTwoProjects(t, func(root string) {
+		seedManifestAt(t, root, "ns", "consumer", "1.0.0")
+		seedManifestAt(t, root, "ns", "stale", "1.0.0")
+	}, func(root string) {
+		seedForeignCollection(t, root, "ns", "consumer", "1.0.0", map[string]string{"ns.dep": ">=1.0.0"})
+		seedManifestAt(t, root, "ns", "dep", "1.0.0")
+	}, "collections: []\n", "collections: []\n")
+	assertManifestAbsentAt(t, pa, "ns", "consumer")
+	assertManifestAbsentAt(t, pa, "ns", "stale")
+	assertManifestPresentAt(t, pb, "ns", "consumer")
+	assertManifestPresentAt(t, pb, "ns", "dep")
+	if !printer.hasResultContaining("Removed ns.consumer@1.0.0") {
+		t.Fatalf("expected the trusted ns.consumer reported removed, got %v", printer.results)
+	}
 }

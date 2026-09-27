@@ -15,11 +15,12 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 )
 
-// installedCollection is an installed collection found on disk. Namespace
-// and Name are the walked ansible_collections/<ns>/<name> directory names,
-// never manifest content, so a MANIFEST.json cannot redirect a removal path.
+// installedCollection is an installed collection found on disk. Namespace and
+// Name are the walked directory names, never manifest content, so no manifest
+// redirects a removal; Trusted is whether trustedCopy took it as this tool's.
 type installedCollection struct {
 	Parsed         *semver.Version
+	Deps           map[string]string
 	Key            string
 	FQDN           string
 	Namespace      string
@@ -27,6 +28,7 @@ type installedCollection struct {
 	Version        string
 	InstallPath    string
 	CollectionsDir string
+	Trusted        bool
 }
 
 type cleanupState struct {

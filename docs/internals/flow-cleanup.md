@@ -58,6 +58,7 @@ means to an operator: [What cleanup keeps](../guides/caching.md#what-cleanup-kee
 | --- | --- | --- |
 | Collections path | the recorded `collections_path` holds `ansible_collections`; no other tree, the project's own `.collections` or `collections` included | none recorded or absent: silent; probe error, such as an escaping symlink: warn, skip |
 | Collection | `ns/name/MANIFEST.json` is a regular file, parses, passes `IsPathElement` | absent or versionless: silent; non-regular, corrupt, unsafe: warn, skip |
+| Collection removable | trusted (`trustedCopy`): a regular `.extract-done.<sha256>` file, any sha, in its `<ns>.<name>-<version>.info` or in the collection directory, where older releases wrote it, whose `go-galaxy-extract-1` tally equals the tree as install counts it now (`extractmarker.Check`; what a tally misses: [The extract-done marker](install-pipeline.md#the-extract-done-marker)) | indexed for reachability only: never removed, and no artifact, snapshot record or legacy key purged on its account. So another tool's install stays, as do a copy since changed by a file added, removed or resized and a marker with no tally, as the first releases wrote. What its manifest depends on is marked reachable (`markKeptCopyDependencies`), so no removal breaks a kept copy |
 | Role | `IsRoleInstallName` directory holding a regular `.extract-done.<sha256>` file | never touched |
 | Role deps | the snapshot's installed-role record for that install path | `meta/main.yml` and `meta/requirements.yml`; artifact kept |
 
@@ -74,7 +75,11 @@ Namespace and name come from the walked directories, never the manifest
 | role | its install name |
 
 `markReachable` and `markReachableRoles` then follow dependencies
-transitively. Every unsure case keeps more, the safe direction for a sweep.
+transitively, `markReachable` through the manifest of every copy of a key,
+since two copies of one version can list different dependencies.
+`markKeptCopyDependencies` then marks what each untrusted copy's own manifest
+depends on, never the copy's own key. Every unsure case keeps more, the safe
+direction for a sweep.
 
 `projectRequirementRoots` reloads every file `ProjectRecord.Files` names, by
 extension, and joins their roots, each file under the same policy, refusing a
@@ -86,7 +91,7 @@ or refused file does: [What cleanup keeps](../guides/caching.md#what-cleanup-kee
 ```mermaid
 flowchart TD
     C{"removeUnused: next<br/>collection key, sorted?"} -->|"key"| CC{"holder context<br/>done?"}
-    CC -->|"no"| CR["if unreachable: removeInstalled<br/>every copy via os.Root"]
+    CC -->|"no"| CR["if unreachable: removeInstalled<br/>every trusted copy via os.Root"]
     CR --> C
     CR -->|"ErrUnsafeRemovalPath"| X5(["exit 5"])
     CR -->|"other I/O error"| X1(["exit 1"])
@@ -94,7 +99,7 @@ flowchart TD
     C -->|"none left"| R["removeUnusedRoles:<br/>the same loop by name"]
     R --> CX{"holder context<br/>done?"}
     CX -->|"yes"| XC
-    CX -->|"no"| LG["sweepLegacyArtifacts,<br/>reachable or not"]
+    CX -->|"no"| LG["sweepLegacyArtifacts: keys with<br/>a trusted copy, reachable or not"]
     LG --> EX["sweepExtractedStore:<br/>drop what the keep set lacks"]
     EX --> FN{"--dry-run set?"}
     FN -->|"yes"| DR(["Dry-run cleanup complete"])

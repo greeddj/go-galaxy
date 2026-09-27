@@ -30,7 +30,7 @@ Start with the task table, then look up the command or option group.
 | `lock` | `l` | Resolves and writes the lockfile | unless `--offline` | yes | `galaxy.lock`, cache |
 | `warm` | `w` | Fills the cache without installing | unless `--offline` | yes | cache |
 | `outdated` | `o` | Compares what runs with the latest upstream | always | no | `--metrics-file` only |
-| `cleanup` | `c` | Removes what no recorded project reaches | S3 only | yes | deletes installs and cache entries |
+| `cleanup` | `c` | Removes what go-galaxy installed and no recorded project reaches | S3 only | yes | deletes installs and cache entries |
 | `hash` | `h` | Prints a CI cache key | no | no | nothing |
 | `tree` | `t` | Prints the locked dependency tree | no | no | nothing |
 | `explain` | `why` | Shows why one entry is locked | no | no | nothing |
@@ -128,9 +128,9 @@ go-galaxy cleanup --dry-run
 
 The count leaves out `Would sweep` lines.
 
-`cleanup` removes what no recorded project reaches, from every project and
-from the cache. What stays, and when `cleanup` warns or stops: [What cleanup
-keeps](../guides/caching.md#what-cleanup-keeps).
+`cleanup` removes what go-galaxy installed and no recorded project reaches,
+from every project and from the cache. What stays, and when `cleanup` warns or
+stops: [What cleanup keeps](../guides/caching.md#what-cleanup-keeps).
 
 `cleanup` takes the global options, `-r` and the [S3](#s3) flags. `-r` names
 the cache to clean, through a `galaxy.toml`'s `cache_dir` and `s3`. It does

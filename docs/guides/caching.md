@@ -127,7 +127,7 @@ fails. `warm` refuses `--no-cache` (exit `2`). The variables are under
 | Tool | Runs | Deletes | Keeps | On a shared cache |
 | :-- | :-- | :-- | :-- | :-- |
 | `--clear-cache` | On `install`, `warm` or `lock`, after taking the cache lock; not under `--dry-run` | Metadata caches, recorded commits and sha256s, artifacts, leftover `go-galaxy-*.db` snapshot files (on S3, all of `artifacts/`) | Install and warm records, last resolution, extracted trees, `go-galaxy.db`, `projects.json`, `.go-galaxy.lock` | Every project refetches |
-| [`cleanup`](../reference/cli.md#cleanup) | When you run it | Collections and roles no recorded project reaches, in every project, with their artifacts and unused extracted trees | What any project reaches, and recently warmed trees | Safe: reads every recorded project first |
+| [`cleanup`](../reference/cli.md#cleanup) | When you run it | The collections and roles go-galaxy installed that no recorded project reaches, in every recorded path, with their artifacts and unused extracted trees | What any project reaches, and recently warmed trees | Safe: reads every recorded project first |
 | Temp sweep | Every `install`, `warm` and `lock`, after taking the cache lock, `--dry-run` too | Download and unpacking temps a killed run left | Everything else | Safe: runs only under the cache lock |
 
 If `--clear-cache` fails partway, that run stops and saves nothing. The next
@@ -150,8 +150,20 @@ under the parent's `.collections` and `.roles`. `lock` and `warm` install
 nothing, so they leave both paths as they were. `cleanup` scans those two paths
 and nothing else: a project no `install` has recorded paths for has nothing
 scanned, and a tree no `install` wrote, such as a vendored `collections/`
-beside the requirements file, is never touched. `cleanup` removes, from every
-recorded project and from the cache, what no recorded project reaches:
+beside the requirements file, is never touched. In the trees it scans it
+removes only what go-galaxy installed, known by the marker each install
+leaves. A role counts when its directory carries that marker. A collection
+counts only while its marker still matches its tree: as many files and
+directories, of the same total size, as go-galaxy installed. So another
+tool's install, such as what `ansible-galaxy` put in a shared
+`~/.ansible/collections`, is never removed, and neither is a go-galaxy copy
+another tool has changed since, unless the change keeps those counts and that
+size, which the next `install` misses too ([Installed files are
+read-only](../get-started/ansible-galaxy-compat.md#installed-files-are-read-only)).
+A kept copy also keeps what its own manifest depends on, reached or not, so
+no removal leaves it broken, and where two copies of one version list
+different dependencies, what either lists is kept. `cleanup` removes, from
+every recorded project and from the cache, what no recorded project reaches:
 
 ```mermaid
 flowchart TD
@@ -166,7 +178,7 @@ flowchart TD
 
 | Item | Kept when | Otherwise |
 | --- | --- | --- |
-| Installed collection | A recorded project's `collections:` reaches it, directly or through dependencies | Removed from every recorded collections path |
+| Installed collection | A recorded project's `collections:` reaches it, directly or through dependencies | Removed from every recorded collections path where its marker matches it |
 | Installed role | A recorded project's `roles:` reaches it | Removed, if go-galaxy installed it under a recorded `roles_path` |
 | Extracted tree | A kept install uses it, or a recent `warm` shields it ([Freshness and retention](#freshness-and-retention)) | Swept |
 | Cached artifact | No removed install uses it | Removed with that install when the cache holds the install's record; otherwise kept until `--clear-cache` |
@@ -174,8 +186,8 @@ flowchart TD
 An artifact no install record names, such as a superseded git commit's, also
 stays until `--clear-cache`. Older releases cached a collection's tarball as
 `<namespace>-<name>-<version>.tar.gz`. No run reads that name any more, so
-`cleanup` deletes it for every collection installed in a recorded project, even
-one still in use.
+`cleanup` deletes it for every collection go-galaxy installed in a recorded
+project, even one still in use.
 
 <details markdown>
 <summary>When cleanup warns, skips or stops</summary>
