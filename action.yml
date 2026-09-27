@@ -140,8 +140,16 @@ runs:
         chmod +x go-galaxy
         rm -f checksums.txt asset.sha256
 
+        reported=
         if [ "$version" = latest ]; then
-          version="$("$bin/go-galaxy" --version | sed -n 's/^v\{0,1\}\([0-9][^ ]*\).*/\1/p')"
+          reported="$("$bin/go-galaxy" --version)"
+          version="$(printf '%s\n' "$reported" | sed -n 's/^v\{0,1\}\([0-9][^ ]*\).*/\1/p')"
+        fi
+        # The release is in the cache key so that no two releases share one
+        # cache: a --version the sed cannot read must not leave it empty.
+        if [ -z "$version" ]; then
+          echo "::error::go-galaxy --version names no release: $reported"
+          exit 1
         fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
         # Last, so a failure above leaves go-galaxy off PATH: the runner applies

@@ -118,7 +118,9 @@ does not load, `2` for a `galaxy.toml` that does not load
 
 With `@v1`, a branch or a commit SHA and no `version` input, the action takes
 the first word of `go-galaxy --version`, minus a leading `v` (for example
-`1.3.0`), as both the `version` output and the key's release.
+`1.3.0`), as both the `version` output and the key's release. A first word
+that is no version, such as `(devel)`, fails the action there rather than
+leave the release out of the key.
 
 </details>
 
