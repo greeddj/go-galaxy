@@ -138,12 +138,15 @@ run keeps what was not deleted and refetches the rest.
 Every `install`, `warm` or `lock` records its project in the cache it uses
 once its requirements file loads, except under `--dry-run`. A run that fails
 on its file, a mistyped `-r` included, leaves the directory's record as it
-was. `cleanup` removes, from every recorded project and from the cache, what
-no recorded project reaches:
+was. A project is the file's directory, and its record remembers every
+requirements file a run there loaded, while the file still exists: after
+`install` and `install -r requirements-dev.yml` in one directory, `cleanup`
+keeps what either file reaches. `cleanup` removes, from every recorded
+project and from the cache, what no recorded project reaches:
 
 ```mermaid
 flowchart TD
-  R[Project registry] --> L[Reload each requirements file]
+  R[Project registry] --> L[Reload each remembered requirements file]
   L --> T[Its collections and roles entries]
   T --> S[What they reach through recorded dependencies]
   S --> U[Remove unreachable installs and artifacts]
@@ -170,8 +173,8 @@ one still in use.
 
 | Situation | What `cleanup` does |
 | --- | --- |
-| A recorded requirements file no longer exists | Warns; that project reaches nothing this run |
-| A recorded requirements file fails to load | Exits `2` before deleting anything, naming the file, its project and the registry file or S3 object. Fix or restore the file, rerun `install` in that directory with a file that loads, or delete the project's entry from the registry |
+| A remembered requirements file no longer exists | Warns; it adds nothing this run, and the project's next record forgets it |
+| A remembered requirements file fails to load | Exits `2` before deleting anything, naming the file, its project and the registry file or S3 object. Fix or restore the file, move it away if no run uses it any more, or delete the project's entry from the registry |
 | Its `roles:` list is refused, such as an `include:` | Warns; keeps the roles under that project's `roles_path` and their dependencies |
 | A git or url requirement whose commit or sha256 the cache never recorded | Keeps every install from that repository or URL |
 | `ansible_collections` escapes its path or loops | Warns; skips scanning that project |

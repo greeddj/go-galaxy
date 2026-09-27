@@ -217,19 +217,37 @@ func gitSubdirWithin(entrySubdir, rootSubdir string) bool {
 	return parent == rootSubdir
 }
 
-// projectRequirementRoots loads a project's roots, even for a workspace the
-// scan skipped. A missing file contributes nothing; any other failure aborts,
-// since unknown roots could protect any project's copies.
+// projectRequirementRoots joins the roots of every file a project remembers,
+// even for a skipped workspace. A missing file adds nothing; any other failure
+// aborts, since unknown roots could protect any project's copies.
 func projectRequirementRoots(
 	out output.Printer, registryLocation, projectPath string, project store.ProjectRecord,
 ) (requirements.File, bool, error) {
-	file, err := requirements.Load(project.RequirementsFile, "")
+	var union requirements.File
+	rolesUnread := false
+	for _, path := range project.Files() {
+		file, unread, err := recordedFileRoots(out, registryLocation, projectPath, path)
+		if err != nil {
+			return requirements.File{}, false, err
+		}
+		union.Collections = append(union.Collections, file.Collections...)
+		union.Roles = append(union.Roles, file.Roles...)
+		rolesUnread = rolesUnread || unread
+	}
+	return union, rolesUnread, nil
+}
+
+// recordedFileRoots loads one remembered file under the per-file policy: its
+// roots, nothing with a warning when it is gone, its collections alone when
+// its roles: list is refused, and ErrProjectRequirementsUnreadable otherwise.
+func recordedFileRoots(out output.Printer, registryLocation, projectPath, path string) (requirements.File, bool, error) {
+	file, err := requirements.Load(path, "")
 	if err == nil {
 		return file, false, nil
 	}
 	if errors.Is(err, fs.ErrNotExist) {
 		out.Warnf("project %q: requirements file %q no longer exists; it contributes no reachability roots this run",
-			projectPath, project.RequirementsFile)
+			projectPath, path)
 		return requirements.File{}, false, nil
 	}
 	// An unreadable roles: list keeps every role under the project's roles
@@ -237,23 +255,23 @@ func projectRequirementRoots(
 	// every cleanup against a shared cache.
 	if rolesErr, ok := errors.AsType[*requirements.RolesError](err); ok {
 		out.Warnf("project %q: the roles list of %q cannot be read (%v); its roles are kept this run",
-			projectPath, project.RequirementsFile, rolesErr.Err)
+			projectPath, path, rolesErr.Err)
 		return file, true, nil
 	}
 	return requirements.File{}, false, fmt.Errorf("%w: %s: %w (%s)",
-		helpers.ErrProjectRequirementsUnreadable, project.RequirementsFile, err,
-		unreadableProjectHint(registryLocation, projectPath, project.RequirementsFile))
+		helpers.ErrProjectRequirementsUnreadable, path, err,
+		unreadableProjectHint(registryLocation, projectPath, path))
 }
 
 // unreadableProjectHint names the three ways out of a recorded file cleanup
-// cannot load: repair the file, record the directory again with a file that
-// loads, or delete the project's entry from the registry the backend read.
+// cannot load: repair it, move it away so it reads as gone and the next record
+// forgets it, or delete the project's entry from the registry the backend read.
 func unreadableProjectHint(registryLocation, projectPath, requirementsFile string) string {
 	registry := "the project registry"
 	if registryLocation != "" {
 		registry = registryLocation
 	}
-	return fmt.Sprintf("fix or restore %s, rerun go-galaxy install in %s with a requirements file that loads, "+
+	return fmt.Sprintf("fix or restore %s, move it away if no run in %s reads it any more, "+
 		"or delete the %q entry from %s", requirementsFile, projectPath, projectPath, registry)
 }
 

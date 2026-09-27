@@ -3786,7 +3786,7 @@ func TestStartUnreadableRequirementsNamesTheWayOut(t *testing.T) {
 	registryPath := filepath.Join(cacheDir, helpers.StoreDBProjects)
 	for _, want := range []string{
 		"fix or restore " + reqPath,
-		"rerun go-galaxy install in proj",
+		"move it away if no run in proj reads it any more",
 		`delete the "proj" entry from ` + registryPath,
 	} {
 		if !strings.Contains(err.Error(), want) {
@@ -3802,9 +3802,83 @@ func TestStartUnreadableRequirementsNamesTheWayOut(t *testing.T) {
 func TestUnreadableProjectHintWithoutALocation(t *testing.T) {
 	t.Parallel()
 	got := unreadableProjectHint("", "/p", "/p/requirements.yml")
-	want := `fix or restore /p/requirements.yml, rerun go-galaxy install in /p with a requirements file that loads, ` +
+	want := `fix or restore /p/requirements.yml, move it away if no run in /p reads it any more, ` +
 		`or delete the "/p" entry from the project registry`
 	if got != want {
 		t.Fatalf("unreadableProjectHint = %q, want %q", got, want)
 	}
+}
+
+// rememberedFilesFixture records one project whose latest file names nothing
+// and whose other remembered file, written by the caller, is the only one
+// naming the seeded ns.name; it returns that other file and the install dir.
+func rememberedFilesFixture(t *testing.T, cacheDir string) (string, string) {
+	t.Helper()
+	downloadPath := t.TempDir()
+	installDir := seedInstallTree(t, downloadPath)
+	projectDir := t.TempDir()
+	latest := filepath.Join(projectDir, "requirements.yml")
+	if err := os.WriteFile(latest, []byte("collections: []\n"), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", latest, err)
+	}
+	other := filepath.Join(projectDir, "requirements-dev.yml")
+	writeProjectRegistry(t, cacheDir, &store.ProjectRegistry{Projects: map[string]store.ProjectRecord{
+		projectDir: {
+			RequirementsFile:  latest,
+			RequirementsFiles: []string{other, latest},
+			CollectionsPath:   downloadPath,
+			LastRun:           time.Now().UTC(),
+		},
+	}})
+	return other, installDir
+}
+
+// TestStartTakesRootsFromEveryRememberedFile pins that a project's roots are
+// the union of every file its record remembers, each under the per-file
+// policy: a gone file warns and adds nothing, a broken one exits 2 naming it.
+func TestStartTakesRootsFromEveryRememberedFile(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the other file keeps what only it reaches", func(t *testing.T) {
+		t.Parallel()
+		cacheDir := t.TempDir()
+		other, installDir := rememberedFilesFixture(t, cacheDir)
+		if err := os.WriteFile(other, []byte("collections:\n  - name: ns.name\n"), helpers.FileMod); err != nil {
+			t.Fatalf("write %s: %v", other, err)
+		}
+		if err := Start(t.Context(), &config.Config{CacheDir: cacheDir}, newTestRuntime()); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		assertManifestSurvives(t, installDir)
+	})
+
+	t.Run("a gone file warns and the install goes", func(t *testing.T) {
+		t.Parallel()
+		cacheDir := t.TempDir()
+		other, installDir := rememberedFilesFixture(t, cacheDir)
+		printer := &recordingPrinter{}
+		if err := Start(t.Context(), &config.Config{CacheDir: cacheDir}, newTestRuntimeWith(printer)); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		if !printer.hasWarningContaining(other + `" no longer exists`) {
+			t.Fatalf("expected a warning naming %s, got %v", other, printer.warnings)
+		}
+		if _, err := os.Stat(filepath.Join(installDir, "MANIFEST.json")); !os.IsNotExist(err) {
+			t.Fatalf("expected ns.name removed once no remembered file reaches it, stat error: %v", err)
+		}
+	})
+
+	t.Run("a broken file stops the run naming it", func(t *testing.T) {
+		t.Parallel()
+		cacheDir := t.TempDir()
+		other, installDir := rememberedFilesFixture(t, cacheDir)
+		if err := os.WriteFile(other, []byte("{invalid"), helpers.FileMod); err != nil {
+			t.Fatalf("write %s: %v", other, err)
+		}
+		err := Start(t.Context(), &config.Config{CacheDir: cacheDir}, newTestRuntime())
+		if !errors.Is(err, helpers.ErrProjectRequirementsUnreadable) || !strings.Contains(err.Error(), "fix or restore "+other) {
+			t.Fatalf("Start error = %v, want ErrProjectRequirementsUnreadable naming %s", err, other)
+		}
+		assertManifestSurvives(t, installDir)
+	})
 }

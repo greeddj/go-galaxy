@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -177,7 +178,8 @@ func TestRecordProjectWritesRolesPath(t *testing.T) {
 }
 
 // TestRecordProjectWithoutRolesPathStaysLegacyShape pins that omitempty keeps a
-// collections-only record byte-identical to the shape older binaries wrote.
+// collections-only record, requirements_files aside, byte-identical to the
+// shape older binaries wrote, which they still decode.
 func TestRecordProjectWithoutRolesPathStaysLegacyShape(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()
@@ -192,14 +194,20 @@ func TestRecordProjectWithoutRolesPathStaysLegacyShape(t *testing.T) {
 		t.Fatalf("RolesPath = %q, want empty", record.RolesPath)
 	}
 
+	if want := []string{reqPath}; !slices.Equal(record.RequirementsFiles, want) {
+		t.Fatalf("RequirementsFiles = %q, want %q", record.RequirementsFiles, want)
+	}
+
 	// legacyRecord is the record's shape before RolesPath existed, tag for
-	// tag; the two encodings must agree byte for byte.
+	// tag; the two encodings must agree byte for byte once the list is set aside.
 	type legacyRecord struct {
 		LastRun          time.Time `json:"last_run"`
 		RequirementsFile string    `json:"requirements_file"`
 		CollectionsPath  string    `json:"collections_path"`
 	}
-	got, err := json.Marshal(record)
+	withoutList := record
+	withoutList.RequirementsFiles = nil
+	got, err := json.Marshal(withoutList)
 	if err != nil {
 		t.Fatalf("marshal record: %v", err)
 	}
@@ -253,13 +261,18 @@ func TestNewProjectRecordKeysGalaxyTOMLByItsDirectory(t *testing.T) {
 
 // TestRecordProjectOneRecordPerDirectory pins that galaxy.toml and
 // requirements.yml in one directory share one registry entry: the later run
-// overwrites the earlier, so a directory is never counted as two projects.
+// names the latest file, and both are remembered while both exist.
 func TestRecordProjectOneRecordPerDirectory(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()
 	projectDir := t.TempDir()
 	tomlPath := filepath.Join(projectDir, "galaxy.toml")
 	yamlPath := filepath.Join(projectDir, "requirements.yml")
+	for _, path := range []string{tomlPath, yamlPath} {
+		if err := os.WriteFile(path, []byte("collections: []\n"), helpers.FileMod); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
 
 	if err := RecordProject(cacheDir, tomlPath, "collections", ""); err != nil {
 		t.Fatalf("RecordProject (galaxy.toml): %v", err)
@@ -279,6 +292,9 @@ func TestRecordProjectOneRecordPerDirectory(t *testing.T) {
 	}
 	if got := registry.Projects[projectDir].RequirementsFile; got != yamlPath {
 		t.Fatalf("RequirementsFile = %q, want the later %q", got, yamlPath)
+	}
+	if got, want := registry.Projects[projectDir].RequirementsFiles, []string{tomlPath, yamlPath}; !slices.Equal(got, want) {
+		t.Fatalf("RequirementsFiles = %q, want both files, sorted: %q", got, want)
 	}
 }
 
@@ -313,5 +329,138 @@ func TestLoadProjectRegistryNamesItsFile(t *testing.T) {
 	}
 	if bytes.Contains(bytes.ToLower(data), []byte("location")) {
 		t.Fatalf("the registry file carries its own location: %s", data)
+	}
+}
+
+// TestRecordKeepsOnlyEarlierFilesThatStillExist pins the merge rule row by
+// row: an earlier regular file is kept, a vanished one or one that is no
+// longer a regular file is dropped, and a repeat of the latest is one entry.
+func TestRecordKeepsOnlyEarlierFilesThatStillExist(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	latest := filepath.Join(projectDir, "requirements.yml")
+	kept := filepath.Join(projectDir, "requirements-dev.yml")
+	for _, path := range []string{latest, kept} {
+		if err := os.WriteFile(path, []byte("collections: []\n"), helpers.FileMod); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	vanished := filepath.Join(projectDir, "requirements-old.yml")
+	directory := filepath.Join(projectDir, "dir.yml")
+	if err := os.Mkdir(directory, helpers.DirMod); err != nil {
+		t.Fatalf("mkdir %s: %v", directory, err)
+	}
+
+	registry := &ProjectRegistry{Projects: map[string]ProjectRecord{
+		projectDir: {RequirementsFile: vanished, RequirementsFiles: []string{directory, kept, latest, vanished}},
+	}}
+	registry.Record(latest, "collections", "")
+
+	want := []string{kept, latest}
+	if got := registry.Projects[projectDir].RequirementsFiles; !slices.Equal(got, want) {
+		t.Fatalf("RequirementsFiles = %q, want %q", got, want)
+	}
+	if got := registry.Projects[projectDir].RequirementsFile; got != latest {
+		t.Fatalf("RequirementsFile = %q, want the latest %q", got, latest)
+	}
+}
+
+// TestRecordKeepsAnEarlierFileStatCannotJudge pins the conservative side of
+// the merge: a file under a directory this process may not search fails Stat
+// with permission denied, not absence, and stays. Root searches it, so skip.
+func TestRecordKeepsAnEarlierFileStatCannotJudge(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root searches a mode-000 directory")
+	}
+	projectDir := t.TempDir()
+	latest := filepath.Join(projectDir, "requirements.yml")
+	sealed := filepath.Join(projectDir, "sealed")
+	if err := os.Mkdir(sealed, helpers.DirMod); err != nil {
+		t.Fatalf("mkdir %s: %v", sealed, err)
+	}
+	hidden := filepath.Join(sealed, "requirements.yml")
+	if err := os.WriteFile(hidden, []byte("collections: []\n"), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", hidden, err)
+	}
+	if err := os.Chmod(sealed, 0o000); err != nil {
+		t.Fatalf("chmod %s: %v", sealed, err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sealed, helpers.DirMod) })
+	if _, err := os.Stat(hidden); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("Stat(%s) = %v, want a permission error for the fixture to mean anything", hidden, err)
+	}
+
+	registry := &ProjectRegistry{Projects: map[string]ProjectRecord{
+		projectDir: {RequirementsFile: latest, RequirementsFiles: []string{hidden, latest}},
+	}}
+	registry.Record(latest, "collections", "")
+
+	if got, want := registry.Projects[projectDir].RequirementsFiles, []string{latest, hidden}; !slices.Equal(got, want) {
+		t.Fatalf("RequirementsFiles = %q, want %q", got, want)
+	}
+}
+
+// TestRecordFoldsALegacyRecordsFile pins that a record written before the list
+// existed contributes its requirements_file to the merge like any listed file,
+// so the first record by this binary forgets nothing an older one knew.
+func TestRecordFoldsALegacyRecordsFile(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	projectDir := t.TempDir()
+	legacy := filepath.Join(projectDir, "galaxy.toml")
+	latest := filepath.Join(projectDir, "requirements.yml")
+	for _, path := range []string{legacy, latest} {
+		if err := os.WriteFile(path, []byte("collections: []\n"), helpers.FileMod); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	data, err := json.Marshal(map[string]any{"projects": map[string]any{projectDir: map[string]any{
+		"requirements_file": legacy, "collections_path": filepath.Join(projectDir, "collections"),
+		"last_run": "2024-01-02T03:04:05Z",
+	}}})
+	if err != nil {
+		t.Fatalf("marshal legacy registry: %v", err)
+	}
+	writeRegistryFile(t, cacheDir, data)
+
+	if err := RecordProject(cacheDir, latest, "collections", ""); err != nil {
+		t.Fatalf("RecordProject: %v", err)
+	}
+	if got, want := mustLoadProjectRecord(t, cacheDir, projectDir).RequirementsFiles, []string{legacy, latest}; !slices.Equal(got, want) {
+		t.Fatalf("RequirementsFiles = %q, want %q", got, want)
+	}
+}
+
+// TestProjectRecordFiles pins how a record reads: the list and the latest file
+// together, sorted and deduplicated, so a record written without the list is
+// its one file and a list out of step with requirements_file loses nothing.
+func TestProjectRecordFiles(t *testing.T) {
+	t.Parallel()
+	rows := []struct {
+		name   string
+		record ProjectRecord
+		want   []string
+	}{
+		{name: "a record written before the list", record: ProjectRecord{RequirementsFile: "/p/a.yml"}, want: []string{"/p/a.yml"}},
+		{
+			name:   "a list holding the latest file",
+			record: ProjectRecord{RequirementsFile: "/p/b.yml", RequirementsFiles: []string{"/p/a.yml", "/p/b.yml"}},
+			want:   []string{"/p/a.yml", "/p/b.yml"},
+		},
+		{
+			name:   "a list missing the latest file",
+			record: ProjectRecord{RequirementsFile: "/p/c.yml", RequirementsFiles: []string{"/p/b.yml", "/p/a.yml"}},
+			want:   []string{"/p/a.yml", "/p/b.yml", "/p/c.yml"},
+		},
+		{name: "an empty record", record: ProjectRecord{}, want: []string{}},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+			if got := row.record.Files(); !slices.Equal(got, row.want) {
+				t.Fatalf("Files() = %q, want %q", got, row.want)
+			}
+		})
 	}
 }

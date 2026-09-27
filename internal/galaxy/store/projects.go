@@ -2,9 +2,12 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
@@ -15,7 +18,7 @@ import (
 // know, so a field's reader must take its absence as the conservative answer.
 type ProjectRecord struct {
 	LastRun time.Time `json:"last_run"`
-	// RequirementsFile is the absolute path of whichever file was read,
+	// RequirementsFile is the absolute path of the file the latest run loaded,
 	// galaxy.toml included; kept in this one field so an older binary's
 	// cleanup fails closed on it instead of reading the record as stale.
 	RequirementsFile string `json:"requirements_file"`
@@ -24,6 +27,22 @@ type ProjectRecord struct {
 	// configured; omitempty keeps a collections-only record unchanged, and
 	// cleanup reads an absent path as "do not scan", never as a guess.
 	RolesPath string `json:"roles_path,omitempty"`
+	// RequirementsFiles is the latest file and each earlier one rememberedFiles
+	// keeps, sorted. Files reads a record without it as its RequirementsFile,
+	// which an older binary recorded before loading, so it may never have loaded.
+	RequirementsFiles []string `json:"requirements_files,omitempty"`
+}
+
+// Files returns every requirements file the record remembers, sorted and
+// deduplicated: RequirementsFiles and RequirementsFile together, so a record
+// without the list, or hand-edited out of step with it, loses no file.
+func (r ProjectRecord) Files() []string {
+	files := slices.Clone(r.RequirementsFiles)
+	if r.RequirementsFile != "" {
+		files = append(files, r.RequirementsFile)
+	}
+	slices.Sort(files)
+	return slices.Compact(files)
 }
 
 // ProjectRegistry stores known projects keyed by path. Location is where the
@@ -39,17 +58,42 @@ func RecordProject(cacheDir, requirementsFile, downloadPath, rolesPath string) e
 	if cacheDir == "" {
 		return nil
 	}
-	projectPath, record := NewProjectRecord(requirementsFile, downloadPath, rolesPath)
-
 	registry, err := LoadProjectRegistry(cacheDir)
 	if err != nil {
 		return err
 	}
-	// LoadProjectRegistry already returns a non-nil map; this keeps the write
-	// safe without resting on that postcondition.
-	registry.Projects = ensureMap(registry.Projects)
-	registry.Projects[projectPath] = record
+	registry.Record(requirementsFile, downloadPath, rolesPath)
 	return saveProjectRegistry(cacheDir, registry)
+}
+
+// Record builds this run's entry with NewProjectRecord and folds in the files
+// the directory's earlier entry remembers; both backends record through it, so
+// their registries keep one shape and one rule for what is remembered.
+func (r *ProjectRegistry) Record(requirementsFile, downloadPath, rolesPath string) {
+	projectPath, record := NewProjectRecord(requirementsFile, downloadPath, rolesPath)
+	r.Projects = ensureMap(r.Projects)
+	if previous, ok := r.Projects[projectPath]; ok {
+		record.RequirementsFiles = rememberedFiles(record.RequirementsFile, previous.Files())
+	}
+	r.Projects[projectPath] = record
+}
+
+// rememberedFiles is latest plus each earlier file still a regular file on
+// this machine, sorted and deduplicated; a Stat failure other than absence
+// keeps the entry, since dropping a file cleanup cannot judge could lose roots.
+func rememberedFiles(latest string, earlier []string) []string {
+	files := []string{latest}
+	for _, path := range earlier {
+		info, err := os.Stat(path)
+		switch {
+		case err == nil && info.Mode().IsRegular():
+			files = append(files, path)
+		case err != nil && !errors.Is(err, fs.ErrNotExist):
+			files = append(files, path)
+		}
+	}
+	slices.Sort(files)
+	return slices.Compact(files)
 }
 
 // NewProjectRecord builds a run's registry entry, keyed by the directory of the
@@ -62,10 +106,11 @@ func NewProjectRecord(requirementsFile, downloadPath, rolesPath string) (string,
 	}
 	projectPath := filepath.Dir(absReq)
 	return projectPath, ProjectRecord{
-		RequirementsFile: absReq,
-		CollectionsPath:  resolveProjectPath(projectPath, downloadPath),
-		RolesPath:        resolveProjectPath(projectPath, rolesPath),
-		LastRun:          time.Now().UTC(),
+		RequirementsFile:  absReq,
+		RequirementsFiles: []string{absReq},
+		CollectionsPath:   resolveProjectPath(projectPath, downloadPath),
+		RolesPath:         resolveProjectPath(projectPath, rolesPath),
+		LastRun:           time.Now().UTC(),
 	}
 }
 

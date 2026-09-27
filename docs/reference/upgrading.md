@@ -80,6 +80,7 @@ Update any CI step that branches on the old code for these cases, and retry
 | `-r /dev/stdin` or `-r <(...)` | `0` from `install`, `warm` and `hash`, and from `outdated` over installed collections, else `6`; `1` or `2` from `lock`; `6` from `tree` and `explain` | `2` |
 | An exported-empty `GO_GALAXY_REQUIREMENTS_FILE` or `ANSIBLE_GALAXY_REQUIREMENTS_FILE` | `0` from `cleanup`. Beside a `galaxy.lock` in the working directory, `0` from `outdated`, `hash` and `explain`. Without one, `6` from `tree` and `explain`, and from `outdated` `0` over installed collections, else `6` | `2` |
 | `-r` naming a named pipe, such as one `mkfifo requirements.yml` made | `0` from `install`, `warm` and `lock`, from `hash` with no `galaxy.lock` beside the pipe and from `tree` beside one, once a writer feeds the pipe. Without a writer, the run blocks | `2` |
+| `cleanup` after an `install` from one requirements file, where an earlier run in the same directory loaded another that still exists but no longer loads, or an older release's run failed on one, such as `-r galaxy.yml` | `0` | `2` |
 
 What to do about a new code:
 
@@ -88,6 +89,12 @@ What to do about a new code:
   variable.
 - `2` for `requirements file is not a regular file`: write what the pipe
   carries to a regular file and name that one.
+- `2` from `cleanup` for `project requirements file is unreadable`: fix the
+  file the message names, or move it away if no run reads it any more. For a
+  file the project needs that holds no requirements, such as the `galaxy.yml`
+  an older `install -r galaxy.yml` recorded, delete the project's entry from
+  `<cache_dir>/projects.json`, or from the `state/projects.json` object on S3,
+  once ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)).
 - `3` for a collection: fix its name, or pin a version its server publishes.
 - `3` from `lock` for a version gone from its server: the run has usually
   replayed the last resolution. Run `go-galaxy lock --refresh` to ask the

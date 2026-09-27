@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -767,5 +769,36 @@ func TestLoadProjectRegistryNamesItsObject(t *testing.T) {
 	}
 	if registry.Location != want {
 		t.Fatalf("Location (written) = %q, want %q", registry.Location, want)
+	}
+}
+
+// TestRecordProjectRemembersEveryFile pins that the S3 registry merges through
+// the same store rule as the local one: two files recorded in one directory
+// are both in the object while both exist, the later one as requirements_file.
+func TestRecordProjectRemembersEveryFile(t *testing.T) {
+	t.Parallel()
+	b := newTestBackend(t)
+	ctx := t.Context()
+	projectDir := t.TempDir()
+	first := filepath.Join(projectDir, "requirements.yml")
+	second := filepath.Join(projectDir, "requirements-dev.yml")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, []byte("collections: []\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		if err := b.RecordProject(ctx, path, "collections", ""); err != nil {
+			t.Fatalf("RecordProject(%s): %v", path, err)
+		}
+	}
+	registry, err := b.LoadProjectRegistry(ctx)
+	if err != nil {
+		t.Fatalf("LoadProjectRegistry: %v", err)
+	}
+	record := registry.Projects[projectDir]
+	if want := []string{second, first}; !slices.Equal(record.RequirementsFiles, want) {
+		t.Fatalf("RequirementsFiles = %q, want %q", record.RequirementsFiles, want)
+	}
+	if record.RequirementsFile != second {
+		t.Fatalf("RequirementsFile = %q, want the later %q", record.RequirementsFile, second)
 	}
 }

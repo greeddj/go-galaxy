@@ -177,3 +177,47 @@ func TestCleanupAfterFailedTypoRunRemovesNothing(t *testing.T) {
 	assertPathAbsent(t, manifestPathFor(f.downloadPath, "app"))
 	assertPathAbsent(t, manifestPathFor(f.downloadPath, "lib"))
 }
+
+// TestCleanupKeepsWhatEveryLoadedFileReaches is the second destructive case:
+// install, then install -r requirements-dev.yml in the same directory, used to
+// leave a record naming only the second file, so cleanup removed acme.app.
+func TestCleanupKeepsWhatEveryLoadedFileReaches(t *testing.T) {
+	t.Parallel()
+	f := newE2EFixture(t)
+	f.server.AddVersion("acme", "dev", testVersion100, nil)
+	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("Start (requirements.yml): %v", err)
+	}
+	dev := *f.cfg
+	dev.RequirementsFile = filepath.Join(filepath.Dir(f.cfg.RequirementsFile), "requirements-dev.yml")
+	writeRequirements(t, dev.RequirementsFile, "acme.dev")
+	if err := collections.Start(context.Background(), &dev, f.runtime); err != nil {
+		t.Fatalf("Start (requirements-dev.yml): %v", err)
+	}
+
+	if err := cleanup.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("cleanup.Start: %v", err)
+	}
+	for _, name := range []string{"app", "lib", "dev"} {
+		assertManifestInstalled(t, f.downloadPath, name)
+	}
+
+	// requirements-dev.yml goes; the next record forgets it, and cleanup then
+	// removes what only it reached, the control for the survival above.
+	if err := os.Remove(dev.RequirementsFile); err != nil {
+		t.Fatalf("remove requirements-dev.yml: %v", err)
+	}
+	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("Start (requirements.yml again): %v", err)
+	}
+	record := loadRegistry(t, f.cfg.CacheDir)[filepath.Dir(f.cfg.RequirementsFile)]
+	if want := []string{f.cfg.RequirementsFile}; !reflect.DeepEqual(record.RequirementsFiles, want) {
+		t.Fatalf("RequirementsFiles = %q, want %q once requirements-dev.yml is gone", record.RequirementsFiles, want)
+	}
+	if err := cleanup.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("cleanup.Start (after removal): %v", err)
+	}
+	assertManifestInstalled(t, f.downloadPath, "app")
+	assertManifestInstalled(t, f.downloadPath, "lib")
+	assertPathAbsent(t, manifestPathFor(f.downloadPath, "dev"))
+}

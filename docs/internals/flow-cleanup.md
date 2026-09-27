@@ -74,7 +74,8 @@ Namespace and name come from the walked directories, never the manifest
 `markReachable` and `markReachableRoles` then follow dependencies
 transitively. Every unsure case keeps more, the safe direction for a sweep.
 
-`projectRequirementRoots` reloads each recorded file by extension, refusing a
+`projectRequirementRoots` reloads every file `ProjectRecord.Files` names, by
+extension, and joins their roots, each file under the same policy, refusing a
 non-regular one first, since a fifo would block under the lock. What a missing
 or refused file does: [What cleanup keeps](../guides/caching.md#what-cleanup-keeps).
 
