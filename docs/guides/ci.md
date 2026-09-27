@@ -84,7 +84,7 @@ Linux and macOS runners, amd64 or arm64.
 | `roles-path` | go-galaxy's (`.roles`) | `--roles-path` |
 | `frozen` | `false` | `--frozen`: [install what `galaxy.lock` pins](lockfile.md#install-from-the-lockfile) |
 | `offline` | `false` | `--offline`, only where the cache is known to be full ([Install from the lockfile](lockfile.md#install-from-the-lockfile)) |
-| `args` | empty | More install arguments, split on whitespace. The cache key never sees them: name the requirements file with `requirements`, and the lockfile with `GO_GALAXY_LOCK_FILE` in `env` |
+| `args` | empty | More install arguments, split on whitespace. The cache key never sees them, so a `-r` given only here leaves the key step on the [discovered](requirements.md#which-file-is-read) file and the `galaxy.lock` beside it, and fails the action where neither exists: name the requirements file with `requirements`, and the lockfile with `GO_GALAXY_LOCK_FILE` in `env` |
 | `install` | `true` | `false` only puts go-galaxy on PATH: no install, no cache |
 | `cache` | `true` | Restores and saves `~/.cache/go-galaxy`. Set `false` when a flag, variable or `cache_dir` key moves the cache |
 | `version` | The release an `@vX.Y.Z` reference names, else the latest (`@v1`, a branch, a commit SHA) | Release to install, `1.1.0` or later |
@@ -110,6 +110,11 @@ step, or `metrics_file` under `[tool.go-galaxy]`. go-galaxy then writes a
 The key is `go-galaxy-<os>-<arch>-<release>-<hash>`, and `restore-keys` falls
 back only within the same release, so the first job after an upgrade runs cold
 ([Pin one release](#pin-one-release)).
+
+A failing `go-galaxy hash` fails the action at the step that computes the
+key, before anything installs, frozen or not: exit `6` for a lockfile that
+does not load, `2` for a `galaxy.toml` that does not load
+([every case](lockfile.md#a-cache-key-for-ci)). `cache: false` skips `hash`.
 
 With `@v1`, a branch or a commit SHA and no `version` input, the action takes
 the first word of `go-galaxy --version`, minus a leading `v` (for example

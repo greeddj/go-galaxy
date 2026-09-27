@@ -53,7 +53,7 @@ go test ./internal/galaxy/solver -fuzz FuzzSolve -fuzztime 60s
 | `ci.yml` | push to `main` (not `**.md` alone), pull request, `workflow_call` | the check commands, pinned golangci-lint, the `-race` suite, a non-failing coverage upload |
 | `docs.yml` | push to `main` touching `**.md` | `go test ./internal/proseaudit/` |
 | `release.yml` | a `v*` tag | `ci.yml` first, then GoReleaser, attestation, the major tag move |
-| `action.yml` | a change to `action.yml` or itself; manual | the composite action against galaxy.ansible.com |
+| `action.yml` | a change to `action.yml` or itself; manual | the composite action against galaxy.ansible.com, and offline over a lockfile that does not load, where it must fail at its cache-key step with go-galaxy on `PATH` and nothing installed |
 
 - `.goreleaser.yml` runs no `before` hooks: the gate job ran the suite, and
   `go mod tidy` would rewrite the reviewed dependency set.

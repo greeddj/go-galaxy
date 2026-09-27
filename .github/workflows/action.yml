@@ -84,3 +84,46 @@ jobs:
           go-galaxy --version
           test ! -e ./collections \
             || { echo "::error::install: false installed something anyway"; exit 1; }
+
+  broken_lockfile:
+    name: Broken lockfile fails the key step
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Write a lockfile that does not load
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p broken-lock
+          printf 'collections: []\n' > broken-lock/requirements.yml
+          printf 'not a lockfile: [\n' > broken-lock/galaxy.lock
+
+      - name: Run the action over it
+        id: action
+        continue-on-error: true
+        uses: ./
+        env:
+          # A release whose default lockfile name differs still reads this one.
+          GO_GALAXY_LOCK_FILE: broken-lock/galaxy.lock
+        with:
+          requirements: broken-lock/requirements.yml
+          offline: 'true'
+          collections-path: ./broken-coll
+
+      - name: Check that the action failed at its key step
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+        run: |
+          set -euo pipefail
+          test "$OUTCOME" = failure \
+            || { echo "::error::the action ended $OUTCOME over a lockfile that does not load"; exit 1; }
+          test -x "$(command -v go-galaxy)" \
+            || { echo "::error::go-galaxy is not on PATH, so the binary step failed"; exit 1; }
+          # A non-frozen install passes over this lockfile and creates the
+          # collections path even for an empty list, so its absence proves the
+          # failure came from the key step.
+          test ! -e ./broken-coll \
+            || { echo "::error::the install step ran after a failing key step"; exit 1; }

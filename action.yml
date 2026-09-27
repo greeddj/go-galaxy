@@ -139,12 +139,14 @@ runs:
         mv "$asset" go-galaxy
         chmod +x go-galaxy
         rm -f checksums.txt asset.sha256
-        echo "$bin" >> "$GITHUB_PATH"
 
         if [ "$version" = latest ]; then
           version="$("$bin/go-galaxy" --version | sed -n 's/^v\{0,1\}\([0-9][^ ]*\).*/\1/p')"
         fi
         echo "version=$version" >> "$GITHUB_OUTPUT"
+        # Last, so a failure above leaves go-galaxy off PATH: the runner applies
+        # GITHUB_PATH from a failed step too.
+        echo "$bin" >> "$GITHUB_PATH"
 
     - name: Compute cache key
       id: cache-key
@@ -154,11 +156,13 @@ runs:
         INPUT_REQUIREMENTS: ${{ inputs.requirements }}
       run: |
         set -euo pipefail
-        # The same -r the install step passes, so the key covers the file that
-        # is installed rather than whatever the workspace holds by default.
+        # The same -r the install step passes, so the key covers the installed
+        # file. Assigned before the echo: inside its argument, a failing hash
+        # would leave echo's status as the step's and key the cache on nothing.
         args=(hash)
         if [ -n "$INPUT_REQUIREMENTS" ]; then args+=(-r "$INPUT_REQUIREMENTS"); fi
-        echo "value=$(go-galaxy "${args[@]}")" >> "$GITHUB_OUTPUT"
+        key="$(go-galaxy "${args[@]}")"
+        echo "value=$key" >> "$GITHUB_OUTPUT"
 
     - name: Restore cache
       id: cache
