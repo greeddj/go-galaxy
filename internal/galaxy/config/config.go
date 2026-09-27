@@ -388,6 +388,11 @@ func parseTimeout(raw string) (time.Duration, error) {
 func loadAnsibleConfigFromCLI(c *cli.Command) (ansibleConfig, string, []string, error) {
 	if c.IsSet("ansible-config") {
 		path := c.String("ansible-config")
+		// Cleaned as text, as $ANSIBLE_CONFIG is, so the file read and the
+		// directory its relative paths resolve under stay one place.
+		if path != "" {
+			path = filepath.Clean(path)
+		}
 		cfg, loadedPath, err := loadAnsibleConfig(path)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
@@ -419,10 +424,14 @@ func loadAnsibleConfigFromCLI(c *cli.Command) (ansibleConfig, string, []string, 
 // cwd, home, and the system-wide path.
 const maxAnsibleConfigCandidates = 4
 
-// cwdAnsibleCfgName is the current-directory candidate, kept relative
-// exactly as ansible's own discovery keeps it: it resolves against the
-// process's working directory at open time rather than at discovery time.
-const cwdAnsibleCfgName = "ansible.cfg"
+// ansibleCfgName is the file name discovery looks for in the working
+// directory, and inside a directory $ANSIBLE_CONFIG names.
+const ansibleCfgName = "ansible.cfg"
+
+// cwdAnsibleCfgName is the current-directory candidate, kept relative so
+// messages name it as ./ansible.cfg; ansibleConfigDir still resolves the
+// relative paths it holds under the absolute form of its directory.
+const cwdAnsibleCfgName = ansibleCfgName
 
 // worldWritablePerm is the permission bit that makes a directory writable by
 // any principal on the machine. A directory carrying it cannot be trusted to
@@ -435,8 +444,10 @@ const worldWritablePerm = 0o002
 func discoverAnsibleConfigPath() (string, []string) {
 	var warnings []string
 	candidates := make([]string, 0, maxAnsibleConfigCandidates)
-	if envPath := os.Getenv("ANSIBLE_CONFIG"); envPath != "" {
-		candidates = append(candidates, envPath)
+	// A value empty before or after expansion stays skipped: ansible would read
+	// ./ansible.cfg for it, even in the world-writable directory cwdCandidate declines.
+	if envPath := helpers.ExpandAnsiblePath(os.Getenv("ANSIBLE_CONFIG")); envPath != "" {
+		candidates = append(candidates, resolveAnsibleConfigEnv(envPath))
 	}
 	cwdPath, cwdWarning := cwdCandidate()
 	if cwdPath != "" {
@@ -497,10 +508,15 @@ func applyAnsibleConfig(cfg *Config, c *cli.Command, ansibleConfig ansibleConfig
 	if ansiblePath != "" {
 		cfg.AnsibleConfigPath = ansiblePath
 	}
+	cfgDir := ansibleConfigDir(ansiblePath)
 	cfg.AnsibleSignatureKeys = ansibleConfig.Galaxy.SignatureKeys
-	cfg.DownloadPath, cfg.AnsibleCollectionsPathUsed = pickConfigValue(c, "download-path", ansibleConfig.Defaults.CollectionsPath)
-	cfg.RolesPath, cfg.AnsibleRolesPathUsed = pickConfigValue(c, "roles-path", ansibleConfig.Defaults.RolesPath)
-	cfg.CacheDir, cfg.AnsibleCacheDirUsed = pickConfigValue(c, "cache-dir", ansibleConfig.Galaxy.CacheDir)
+	collectionsPath, collectionsFromFile := pickConfigValue(c, "download-path", ansibleConfig.Defaults.CollectionsPath)
+	rolesPath, rolesFromFile := pickConfigValue(c, "roles-path", ansibleConfig.Defaults.RolesPath)
+	cacheDir, cacheDirFromFile := pickConfigValue(c, "cache-dir", ansibleConfig.Galaxy.CacheDir)
+	cfg.CacheDir = pathResolver(cacheDirFromFile, cfgDir)(cacheDir)
+	cfg.AnsibleCollectionsPathUsed = collectionsFromFile
+	cfg.AnsibleRolesPathUsed = rolesFromFile
+	cfg.AnsibleCacheDirUsed = cacheDirFromFile
 	serverValue, serverFromEnv := ansibleGalaxyServer(ansibleConfig.Galaxy.Server)
 	cfg.Server, cfg.AnsibleServerUsed = pickConfigValue(c, "server", serverValue)
 	cfg.AnsibleServerEnvUsed = cfg.AnsibleServerUsed && serverFromEnv
@@ -508,27 +524,38 @@ func applyAnsibleConfig(cfg *Config, c *cli.Command, ansibleConfig ansibleConfig
 	// collections_path is a ":"-separated search list in ansible: the first
 	// entry is kept, whichever source resolved it, and a dropped entry warns.
 	var warning string
-	cfg.DownloadPath, warning = firstSearchPathEntry("collections_path", cfg.DownloadPath)
+	cfg.DownloadPath, warning = firstSearchPathEntry("collections_path", collectionsPath, pathResolver(collectionsFromFile, cfgDir))
 	if warning != "" {
 		cfg.Warnings = append(cfg.Warnings, warning)
 	}
 	// roles_path gets the same treatment, its warnings queued on RoleWarnings
 	// so a run without roles never hears them.
-	cfg.RolesPath, warning = firstSearchPathEntry("roles_path", cfg.RolesPath)
+	cfg.RolesPath, warning = firstSearchPathEntry("roles_path", rolesPath, pathResolver(rolesFromFile, cfgDir))
 	if warning != "" {
 		cfg.RoleWarnings = append(cfg.RoleWarnings, warning)
 	}
-	if cfg.RolesPath != "" && filepath.Clean(cfg.RolesPath) == filepath.Clean(cfg.DownloadPath) {
+	if cfg.RolesPath != "" && canonicalPath(cfg.RolesPath) == canonicalPath(cfg.DownloadPath) {
 		cfg.RoleWarnings = append(cfg.RoleWarnings,
 			fmt.Sprintf("roles_path and collections_path are the same directory %q; roles install beside ansible_collections", cfg.RolesPath))
 	}
 }
 
+// pathResolver returns how a path setting's value resolves: one read from
+// ansible.cfg as ansible resolves it under cfgDir, any other as the flag
+// reports it, which an ANSIBLE_* source has already expanded.
+func pathResolver(fromFile bool, cfgDir string) func(string) string {
+	if !fromFile {
+		return func(path string) string { return path }
+	}
+	return func(path string) string { return resolveAnsibleConfigPath(path, cfgDir) }
+}
+
 // firstSearchPathEntry keeps the first entry of a ":"-separated search path,
-// returning a warning naming setting when others were dropped, for the caller
-// to queue on Warnings or RoleWarnings.
-func firstSearchPathEntry(setting, value string) (string, string) {
+// passed through resolve, and returns a warning naming setting when others
+// were dropped, for the caller to queue on Warnings or RoleWarnings.
+func firstSearchPathEntry(setting, value string, resolve func(string) string) (string, string) {
 	first, rest := splitSearchPath(value)
+	first = resolve(first)
 	if len(rest) == 0 {
 		return first, ""
 	}

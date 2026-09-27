@@ -188,3 +188,94 @@ func TestLockFlagsTakeCheckInPlaceOfFrozen(t *testing.T) {
 func hasFlag(flags []cli.Flag, name string) bool {
 	return slices.ContainsFunc(flags, func(f cli.Flag) bool { return slices.Contains(f.Names(), name) })
 }
+
+// findStringFlag returns the *cli.StringFlag flags declares as name, failing
+// the test when there is none.
+func findStringFlag(t *testing.T, flags []cli.Flag, name string) *cli.StringFlag {
+	t.Helper()
+	for _, flag := range flags {
+		if sf, ok := flag.(*cli.StringFlag); ok && sf.Name == name {
+			return sf
+		}
+	}
+	t.Fatalf("no string flag %q declared", name)
+	return nil
+}
+
+// TestAnsiblePathSourcesExpandOnlyTheAnsibleSpelling pins the three path flags'
+// variables in precedence order, the ANSIBLE_ one last and listed in help, and
+// that only it expands ~ and $VAR. Not parallel: t.Setenv.
+func TestAnsiblePathSourcesExpandOnlyTheAnsibleSpelling(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	rows := []struct {
+		flag *cli.StringFlag
+		keys []string
+	}{
+		{flag: findStringFlag(t, CommonFlags(), "cache-dir"), keys: []string{"GO_GALAXY_CACHE_DIR", "ANSIBLE_GALAXY_CACHE_DIR"}},
+		{
+			flag: findStringFlag(t, CollectionFlags(), "download-path"),
+			keys: []string{"GO_GALAXY_COLLECTIONS_PATH", "GO_GALAXY_DOWNLOAD_PATH", "ANSIBLE_COLLECTIONS_PATH"},
+		},
+		{flag: findStringFlag(t, LockFlags(), "roles-path"), keys: []string{"GO_GALAXY_ROLES_PATH", "ANSIBLE_ROLES_PATH"}},
+	}
+	for _, row := range rows {
+		if got := envKeys(t, row.flag.Sources); !slices.Equal(got, row.keys) {
+			t.Errorf("--%s env sources = %v, want %v", row.flag.Name, got, row.keys)
+		}
+		if got := row.flag.Sources.EnvKeys(); !slices.Equal(got, row.keys) {
+			t.Errorf("--%s help lists %v, want %v", row.flag.Name, got, row.keys)
+		}
+		for i, src := range row.flag.Sources.Chain {
+			t.Setenv(row.keys[i], "~/x")
+			want := "~/x"
+			if i == len(row.keys)-1 {
+				want = home + "/x"
+			}
+			if got, ok := src.Lookup(); !ok || got != want {
+				t.Errorf("%s = %q (found %t), want %q", row.keys[i], got, ok, want)
+			}
+		}
+	}
+}
+
+// ansibleSourceLookup sets key to value and returns what the ANSIBLE_ source
+// at the end of flag's chain reports for it.
+func ansibleSourceLookup(t *testing.T, flag *cli.StringFlag, key, value string) string {
+	t.Helper()
+	t.Setenv(key, value)
+	chain := flag.Sources.Chain
+	got, ok := chain[len(chain)-1].Lookup()
+	if !ok {
+		t.Fatalf("%s not found after t.Setenv", key)
+	}
+	return got
+}
+
+// TestAnsiblePathSourcesExpandEachListEntry pins that the two ":" list
+// variables expand and clean entry by entry, so a later "~" expands too, while
+// a variable holding ":" still adds entries. Not parallel: t.Setenv.
+func TestAnsiblePathSourcesExpandEachListEntry(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GG_LIST", "/opt/a:/opt/b")
+	collections := findStringFlag(t, CollectionFlags(), "download-path")
+	roles := findStringFlag(t, LockFlags(), "roles-path")
+	cacheDir := findStringFlag(t, CommonFlags(), "cache-dir")
+
+	rows := []struct {
+		flag             *cli.StringFlag
+		key, value, want string
+	}{
+		{flag: collections, key: "ANSIBLE_COLLECTIONS_PATH", value: "~/a:~/b/../c", want: home + "/a:" + home + "/c"},
+		{flag: roles, key: "ANSIBLE_ROLES_PATH", value: ":./r:", want: ":r:"},
+		{flag: collections, key: "ANSIBLE_COLLECTIONS_PATH", value: "$GG_LIST", want: "/opt/a:/opt/b"},
+		{flag: cacheDir, key: "ANSIBLE_GALAXY_CACHE_DIR", value: "~/x/../cache/", want: home + "/cache"},
+		{flag: cacheDir, key: "ANSIBLE_GALAXY_CACHE_DIR", value: "", want: ""},
+	}
+	for _, row := range rows {
+		if got := ansibleSourceLookup(t, row.flag, row.key, row.value); got != row.want {
+			t.Errorf("%s=%q reads as %q, want %q", row.key, row.value, got, row.want)
+		}
+	}
+}

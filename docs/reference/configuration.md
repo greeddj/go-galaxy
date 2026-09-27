@@ -182,8 +182,8 @@ server_timeout = 60
 
 | Order | File | Notes |
 |:------|:-----|:------|
-| 1 | `--ansible-config`, `GO_GALAXY_ANSIBLE_CONFIG` | Must exist, or the run exits `2`. `cleanup` takes neither: point it with `ANSIBLE_CONFIG`. |
-| 2 | `$ANSIBLE_CONFIG` | Skipped when empty or not found. |
+| 1 | `--ansible-config`, `GO_GALAXY_ANSIBLE_CONFIG` | Taken as written, a `..` resolved as text ([ansible.cfg paths](#ansiblecfg-paths)). Must exist, or the run exits `2`. `cleanup` takes neither: point it with `ANSIBLE_CONFIG`. |
+| 2 | `$ANSIBLE_CONFIG` | Read as ansible reads it: `~` and `$VAR` expand, a relative path resolves from the working directory ([ansible.cfg paths](#ansiblecfg-paths)), and a directory stands for the `ansible.cfg` in it. Skipped when empty, before or after expansion, or not found. |
 | 3 | `./ansible.cfg` | Skipped in a world-writable working directory. |
 | 4 | `~/.ansible.cfg` | |
 | 5 | `/etc/ansible/ansible.cfg` | |
@@ -226,9 +226,8 @@ except in a `[galaxy_server.<id>]` section
 
 `collections_path` and `roles_path` are `:` lists, of which go-galaxy uses
 only the first entry ([Paths and files](cli.md#paths-and-files)). A relative
-path in `ansible.cfg`, `cache_dir` included, resolves from the working
-directory, not from the file's directory as in ansible
-([Paths and timeouts](../get-started/ansible-galaxy-compat.md#paths-and-timeouts)).
+path resolves from the file's directory, as in ansible
+([ansible.cfg paths](#ansiblecfg-paths)).
 
 The file is parsed like Python's `configparser` with `;` as the only inline
 comment marker, so watch for these lines:
@@ -264,6 +263,38 @@ comment marker, so watch for these lines:
 - A discovered file that vanishes before it is opened counts as none found.
 
 </details>
+
+### ansible.cfg paths
+
+go-galaxy resolves `collections_path`, `roles_path` and `[galaxy] cache_dir`
+as ansible does, so both tools use the same directories:
+
+| The path comes from | `~` and `$VAR` | A relative path resolves from |
+|:--------------------|:---------------|:------------------------------|
+| `ansible.cfg` | Expanded | The file's directory |
+| `ANSIBLE_COLLECTIONS_PATH`, `ANSIBLE_ROLES_PATH`, `ANSIBLE_GALAXY_CACHE_DIR` | Expanded | The working directory |
+| A flag or its `GO_GALAXY_*` variables | Taken as written | The working directory |
+
+- `$VAR` and `${VAR}` take the variable's value, an unset name stays in the
+  path as written, and `~user` is that user's home as the system user
+  database lists it, on Linux `/etc/passwd` alone
+  ([Paths and timeouts](../get-started/ansible-galaxy-compat.md#paths-and-timeouts)).
+- The working directory is the physical one, as ansible reads it: from a
+  directory entered through a symlink, `..` climbs from the link's target.
+- In a path from `ansible.cfg`, an `ANSIBLE_*` variable or `--ansible-config`,
+  a `..` is resolved as text, so `/opt/link/../c` is `/opt/c` even where
+  `link` is a symlink.
+- The file's directory is the one its path names: a symlinked `ansible.cfg`
+  resolves from the link's directory, not its target's.
+- `ANSIBLE_COLLECTIONS_PATH` and `ANSIBLE_ROLES_PATH` are split at `:` after
+  their `$VAR`s expand, so a variable holding `:` adds entries
+  ([Paths and timeouts](../get-started/ansible-galaxy-compat.md#paths-and-timeouts)).
+- A variable in an `ansible.cfg` path puts its value into a directory name
+  and into the lines that print that path
+  ([Trust model](../guides/security.md#trust-model)).
+- `{{CWD}}`, which ansible replaces with the working directory in either
+  place, is kept as written
+  ([Paths and timeouts](../get-started/ansible-galaxy-compat.md#paths-and-timeouts)).
 
 ## Environment-only variables
 

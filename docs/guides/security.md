@@ -84,9 +84,10 @@ you clear the attribute. Verify the file as above, then run
 go-galaxy treats repository content (requirements files, `galaxy.toml`, the
 lockfile), Galaxy servers and the cache as untrusted. The one exception is the
 environment: a `galaxy.toml` is trusted with every variable its
-`[tool.go-galaxy]` table names. Text that go-galaxy did not generate has its
-control characters replaced before it reaches your terminal or log. The tables
-below list what this model leaves to you.
+`[tool.go-galaxy]` table names, and an `ansible.cfg`, as in ansible, with
+every variable its install and cache paths name. Text that go-galaxy did not
+generate has its control characters replaced before it reaches your terminal
+or log. The tables below list what this model leaves to you.
 
 ### Secrets and the environment
 
@@ -95,6 +96,7 @@ below list what this model leaves to you.
 | A secret on the command line | Put it in the variable listed below | argv is visible to every local process for the whole run. go-galaxy cannot warn, because a flag and its variable look the same to it |
 | A literal secret in `galaxy.toml` | Write `${VAR}` under `[tool.go-galaxy]` | Anyone who can read the repository can read and use it |
 | A `galaxy.toml` you did not review | Export secrets only to runs whose `galaxy.toml` you trust | Its `[tool.go-galaxy]` table can expand any exported variable into a server `url` or `token`, or an S3 setting, and so send the value to a host the file picks |
+| An `ansible.cfg` you did not review | Check its `collections_path`, `roles_path` and `cache_dir` before a run that exports secrets | Each expands `$VAR`, so the file can write a variable's value into a directory name and into the lines that print that path ([ansible.cfg paths](../reference/configuration.md#ansiblecfg-paths)) |
 | A shared working directory, such as `/tmp` | Name your requirements file with `-r` | Without `-r`, go-galaxy reads a `./galaxy.toml` anyone can plant there in place of your `requirements.yml`, with only a warning. That file's `[tool.go-galaxy]` table then reads your environment |
 
 Each secret flag has a variable:

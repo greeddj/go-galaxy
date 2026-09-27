@@ -32,10 +32,11 @@ func CommonFlags() []cli.Flag {
 			Sources: cli.EnvVars("GO_GALAXY_DRY_RUN"),
 		},
 		&cli.StringFlag{
-			Name:    "cache-dir",
-			Usage:   "Local cache directory",
-			Value:   defaultCacheDir(),
-			Sources: cli.EnvVars("GO_GALAXY_CACHE_DIR", "ANSIBLE_GALAXY_CACHE_DIR"),
+			Name:  "cache-dir",
+			Usage: "Local cache directory",
+			Value: defaultCacheDir(),
+			// ~ and $VAR expand in the ANSIBLE_ spelling alone, as in ansible.
+			Sources: ansibleSources([]string{"GO_GALAXY_CACHE_DIR"}, "ANSIBLE_GALAXY_CACHE_DIR", false),
 		},
 	}
 }
@@ -94,16 +95,16 @@ func collectionPathFlags() []cli.Flag {
 			Usage:   "Path to download collections to",
 			Value:   defaultCollectionsPath,
 			// Source order is precedence, for the reason given on the timeout
-			// flag above.
-			Sources: cli.EnvVars("GO_GALAXY_COLLECTIONS_PATH", "GO_GALAXY_DOWNLOAD_PATH", "ANSIBLE_COLLECTIONS_PATH"),
+			// flag above; ~ and $VAR expand in the ANSIBLE_ spelling alone.
+			Sources: ansibleSources([]string{"GO_GALAXY_COLLECTIONS_PATH", "GO_GALAXY_DOWNLOAD_PATH"}, "ANSIBLE_COLLECTIONS_PATH", true),
 		},
 		&cli.StringFlag{
 			Name:  "roles-path",
 			Usage: "Path to install roles to",
 			Value: defaultRolesPath,
 			// Source order is precedence, for the reason given on the timeout
-			// flag above.
-			Sources: cli.EnvVars("GO_GALAXY_ROLES_PATH", "ANSIBLE_ROLES_PATH"),
+			// flag above; ~ and $VAR expand in the ANSIBLE_ spelling alone.
+			Sources: ansibleSources([]string{"GO_GALAXY_ROLES_PATH"}, "ANSIBLE_ROLES_PATH", true),
 		},
 		RequirementsFileFlag(),
 		&cli.StringFlag{

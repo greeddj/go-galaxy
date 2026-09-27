@@ -1,6 +1,6 @@
 // Package helpers is the module's shared vocabulary: sentinel errors matched
-// with errors.Is across layers, size caps, cache-key builders and predicates
-// over untrusted values. It imports nothing in this module but internal/safeout.
+// with errors.Is across layers, size caps, cache-key builders, predicates over
+// untrusted values and ansible's path expansion. It imports nothing in this module but internal/safeout.
 package helpers
 
 import "errors"

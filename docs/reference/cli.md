@@ -209,9 +209,12 @@ Every other ignored flag is silent.
 | `--metrics-file` | `GO_GALAXY_METRICS_FILE` | `metrics_file` | | Writes a JSON [run report](metrics.md) |
 
 Either install path is read as ansible's `:` list: the first entry wins and
-the rest draw a warning. A roles path equal to the collections path warns too,
-and roles install beside `ansible_collections`. Roles path warnings print only
-when the run has roles.
+the rest draw a warning. A value from the flag or its `GO_GALAXY_*` variables
+is taken as written. One from `ansible.cfg` or the `ANSIBLE_*` variable is
+resolved as ansible resolves it, as for `--cache-dir`
+([ansible.cfg paths](configuration.md#ansiblecfg-paths)). A roles path equal
+to the collections path warns too, and roles install beside
+`ansible_collections`. Roles path warnings print only when the run has roles.
 
 Every command loads a `galaxy.toml`'s
 [`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table) table before it

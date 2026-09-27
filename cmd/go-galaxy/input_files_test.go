@@ -194,6 +194,11 @@ func TestUnusableInputFilesExitUsage(t *testing.T) {
 	}
 
 	// Discovery, the only path cleanup has, since it takes no --ansible-config.
+	// $ANSIBLE_CONFIG naming a directory stands for the ansible.cfg inside it,
+	// so that entry is made a directory too.
+	if err := os.Mkdir(filepath.Join(f.cfgDir, "ansible.cfg"), 0o700); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Join(f.cfgDir, "ansible.cfg"), err)
+	}
 	t.Setenv("ANSIBLE_CONFIG", f.cfgDir)
 	for _, cmd := range []string{"cleanup", "outdated"} {
 		captured := runRootCommand(t, []string{cmd, "--cache-dir", f.cache})

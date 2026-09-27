@@ -133,7 +133,7 @@ span packages are under [Rules a change must keep](#rules-a-change-must-keep).
 | Package | Owns | Keeps |
 | --- | --- | --- |
 | `cmd/go-galaxy` | `newRootCommand`, the signal handler in `run`, the exit decision in `handleResult` | SIGQUIT left to Go's goroutine dump |
-| `cmd/go-galaxy/cliflags` | flag names, aliases, defaults, environment sources | reads no value back |
+| `cmd/go-galaxy/cliflags` | flag names, aliases, defaults, environment sources, the expanding `ANSIBLE_*` path source | reads no value back |
 | [`cmd/go-galaxy/commands`](commands.md) | the command tree, `runCollectionCommand`, `lockfilePath`, the `hash`, `tree` and `explain` printers | - |
 | [`cmd/go-galaxy/exitcode`](http-output-exit-codes.md#exit-code-classes) | sentinel or signal to exit code (`FromError`, `FromSignal`) | a sentinel no `exitClasses` predicate matches exits 1 |
 | `cmd/go-galaxy/buildinfo` | the `--version` string | fills gaps from `debug.ReadBuildInfo`, never the network |
@@ -168,7 +168,7 @@ span packages are under [Rules a change must keep](#rules-a-change-must-keep).
 | [`internal/progress`](http-output-exit-codes.md#operator-output) | the `Printer` implementation | spinner only on a TTY |
 | `internal/safeout` | control-character stripping | imports nothing in the module |
 | `internal/gzipstream` | gzip reads over untrusted bytes | - |
-| `internal/galaxy/helpers` | sentinels, caps, tuning constants, predicates | one rule per value shape |
+| `internal/galaxy/helpers` | sentinels, caps, tuning constants, predicates, ansible's path expansion (`ExpandAnsiblePath`) | one rule per value shape |
 
 <details markdown>
 <summary>Test-only and tooling packages</summary>

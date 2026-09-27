@@ -72,7 +72,13 @@ func TestLoadAnsibleConfigFromCLIUnreadable(t *testing.T) {
 	})
 
 	t.Run("discovered directory", func(t *testing.T) {
-		t.Setenv("ANSIBLE_CONFIG", t.TempDir())
+		// A directory $ANSIBLE_CONFIG names stands for the ansible.cfg inside
+		// it, so that entry is the directory read here.
+		dir := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dir, "ansible.cfg"), 0o700); err != nil {
+			t.Fatalf("os.Mkdir() error = %v, want nil", err)
+		}
+		t.Setenv("ANSIBLE_CONFIG", dir)
 		c := newAnsibleConfigCmd(t, nil)
 		_, _, _, err := loadAnsibleConfigFromCLI(c)
 		assertAnsibleConfigUnreadable(t, err)

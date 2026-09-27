@@ -1,7 +1,8 @@
 # Coming from ansible-galaxy
 
 go-galaxy reads your files and variables as `ansible-galaxy` does, apart from
-the differences below, measured against ansible-core 2.21.2.
+the differences below, measured against ansible-core 2.21.2 (the `~`, `$VAR`,
+`{{CWD}}` and `ANSIBLE_CONFIG` rows against 2.21.3).
 
 | Surface | go-galaxy |
 | --- | --- |
@@ -20,9 +21,6 @@ the differences below, measured against ansible-core 2.21.2.
 >   [`.collections` and `.roles`](#paths-and-timeouts), where
 >   `ansible-playbook` does not look
 >   ([Point ansible at the installs](getting-started.md#point-ansible-at-the-installs))
-> - In an `ansible.cfg` path, `~` and `$VAR` are
->   [not expanded](#paths-and-timeouts): `~/.ansible/collections` installs
->   under a directory named `~`
 > - A [failing server](#servers-and-tokens) stops the run. Only a `404` moves
 >   on to the next server
 > - A token you export or pass is [refused](#servers-and-tokens), exit `2`,
@@ -158,8 +156,11 @@ The rules are in
 | --- | --- | --- | --- |
 | `collections_path`, `roles_path` | Searches every `:` entry | First entry only, the rest warned about | List one path |
 | Default paths | `~/.ansible/collections`, `~/.ansible/roles` | `.collections`, `.roles` in the working directory | [Point ansible at the installs](getting-started.md#point-ansible-at-the-installs) |
-| `~` and `$VAR` | Expanded in every path | Not expanded, except a bare `~` or a leading `~/` in the keyring path. A `galaxy.toml` expands [`${VAR}`](../reference/configuration.md#var-expansion) in `[tool.go-galaxy]` | Write full paths |
-| A relative `collections_path`, `roles_path` or `cache_dir` in `ansible.cfg` | Resolved from the file's directory | Resolved from the working directory | Write absolute paths, or run from the file's directory |
+| `~` and `$VAR` in `-r`, `-p`, `--roles-path` or the keyring path (`--keyring`, `ANSIBLE_GALAXY_GPG_KEYRING`) | Expanded | Taken as written, as are these flags' `GO_GALAXY_*` variables and `ANSIBLE_GALAXY_GPG_KEYRING`, except a bare `~` or a leading `~/` in the keyring path. A `galaxy.toml` expands [`${VAR}`](../reference/configuration.md#var-expansion) in `[tool.go-galaxy]` | Write full paths |
+| A `$VAR` whose value holds `:` in `ANSIBLE_COLLECTIONS_PATH` or `ANSIBLE_ROLES_PATH` | One path, the `:` kept | Split at that `:`, the first part used and the rest warned about | Name one path |
+| `~user`, or `~` with `HOME` unset, in an `ansible.cfg` path or its `ANSIBLE_*` variable, on Linux | The home the system user database lists (`getpwnam` for `~user`, `getpwuid` for `~`) | The home `/etc/passwd` lists. For a user only a directory service such as LDAP knows, the `~` stays as written | Write the home directory out |
+| `{{CWD}}` in an `ansible.cfg` path or its `ANSIBLE_*` variable | The working directory | Kept as written: a directory named `{{CWD}}` ([ansible.cfg paths](../reference/configuration.md#ansiblecfg-paths)) | Write the path relative to the file, or absolute |
+| An `ANSIBLE_CONFIG` empty before or after expansion | Reads `./ansible.cfg`, even in a world-writable directory | Skipped, and a world-writable directory still skips `./ansible.cfg` | Unset it, or name the file |
 | [`--timeout`](../reference/cli.md#timeouts-and-fixed-limits) | `60`, whole seconds only | `30s`, whole seconds or a duration such as `90s` | Raise it for a slow hub. Use whole seconds in a shared file |
 
 ### Installed files are read-only

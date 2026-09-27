@@ -469,3 +469,57 @@ func TestRequirementsFileDiscoveryConfigSurface(t *testing.T) {
 		})
 	}
 }
+
+// TestAnsibleConfigPathsFollowTheFile pins, through install's own flag set,
+// that a run from a sibling of the directory $ANSIBLE_CONFIG names resolves
+// ansible.cfg paths beside the file and ANSIBLE_* ones beside the cwd.
+func TestAnsibleConfigPathsFollowTheFile(t *testing.T) {
+	// Physical, as Python's os.getcwd() reports it: t.TempDir sits under a
+	// symlink on macOS, and the relative $ANSIBLE_CONFIG climbs from it.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("filepath.EvalSymlinks: %v", err)
+	}
+	cfgDir := filepath.Join(root, "config")
+	deploy := filepath.Join(root, "deploy")
+	for _, dir := range []string{cfgDir, deploy} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	writeTestFile(t, filepath.Join(cfgDir, "ansible.cfg"),
+		[]byte("[defaults]\ncollections_path = ./collections\nroles_path = ~/roles\n\n[galaxy]\ncache_dir = ../cache\n"))
+	setup := func(t *testing.T) string {
+		t.Helper()
+		neutralizeAnsibleDiscovery(t)
+		projUnsetEnv(t, "GO_GALAXY_COLLECTIONS_PATH", "GO_GALAXY_DOWNLOAD_PATH", "ANSIBLE_COLLECTIONS_PATH",
+			"GO_GALAXY_ROLES_PATH", "ANSIBLE_ROLES_PATH", "GO_GALAXY_CACHE_DIR", "ANSIBLE_GALAXY_CACHE_DIR")
+		t.Chdir(deploy)
+		t.Setenv("ANSIBLE_CONFIG", "../config/ansible.cfg")
+		return os.Getenv("HOME")
+	}
+
+	t.Run("ansible.cfg paths resolve beside the file", func(t *testing.T) {
+		home := setup(t)
+		cfg := aliasCfg(t)
+		assertConfigField(t, "AnsibleConfigPath", cfg.AnsibleConfigPath, filepath.Join(cfgDir, "ansible.cfg"))
+		assertConfigField(t, "DownloadPath", cfg.DownloadPath, filepath.Join(cfgDir, "collections"))
+		assertConfigField(t, "RolesPath", cfg.RolesPath, filepath.Join(home, "roles"))
+		assertConfigField(t, "CacheDir", cfg.CacheDir, filepath.Join(root, "cache"))
+	})
+
+	t.Run("an ANSIBLE_ variable stays relative to the working directory", func(t *testing.T) {
+		setup(t)
+		t.Setenv("ANSIBLE_COLLECTIONS_PATH", "./collections")
+		assertConfigField(t, "DownloadPath", aliasCfg(t).DownloadPath, "collections")
+	})
+
+	t.Run("a flag is taken as written", func(t *testing.T) {
+		setup(t)
+		cfg, err := buildConfigFor(t, "install", cliflags.CollectionFlags(), []string{"--download-path=~/collections"})
+		if err != nil {
+			t.Fatalf("BuildCollectionConfig() error = %v, want nil", err)
+		}
+		assertConfigField(t, "DownloadPath", cfg.DownloadPath, "~/collections")
+	})
+}

@@ -181,20 +181,20 @@ func TestCollectionsPathSplit(t *testing.T) {
 	t.Run("multiple entries: first wins, rest warned about", func(t *testing.T) {
 		ansCfg := ansibleConfig{Defaults: ansibleDefaultsConfig{CollectionsPath: "a:b:c"}}
 		got := runApplyAnsibleConfig(t, nil, ansCfg)
-		assertCollectionsPathSplit(t, got, "a", 1)
+		assertCollectionsPathSplit(t, got, underTestAnsibleConfigDir(t, "a"), 1)
 		assertWarningMentions(t, got, "[b c]")
 	})
 
 	t.Run("single entry: no split, no warning", func(t *testing.T) {
 		ansCfg := ansibleConfig{Defaults: ansibleDefaultsConfig{CollectionsPath: "a"}}
 		got := runApplyAnsibleConfig(t, nil, ansCfg)
-		assertCollectionsPathSplit(t, got, "a", 0)
+		assertCollectionsPathSplit(t, got, underTestAnsibleConfigDir(t, "a"), 0)
 	})
 
 	t.Run("trailing separator: empty segment filtered, no warning", func(t *testing.T) {
 		ansCfg := ansibleConfig{Defaults: ansibleDefaultsConfig{CollectionsPath: "a:"}}
 		got := runApplyAnsibleConfig(t, nil, ansCfg)
-		assertCollectionsPathSplit(t, got, "a", 0)
+		assertCollectionsPathSplit(t, got, underTestAnsibleConfigDir(t, "a"), 0)
 	})
 
 	t.Run("empty ansible.cfg value: falls back to flag default, no warning", func(t *testing.T) {
@@ -873,13 +873,13 @@ func subtestWorldWritableCwdEnvPathStillRead(t *testing.T) {
 	writeAnsibleCfg(t, filepath.Join(dir, "ansible.cfg"), "https://cwd.example")
 	chmodDir(t, dir, 0o777)
 	t.Chdir(dir)
-	// Relative on purpose: it names the same file without the assertion
-	// depending on a temp path.
+	// Relative on purpose: it names the same file, made absolute against the
+	// physical working directory as ansible makes it.
 	t.Setenv("ANSIBLE_CONFIG", "ansible.cfg")
 
 	c := newAnsibleConfigCmd(t, nil)
 	cfg, gotPath, warnings, err := loadAnsibleConfigFromCLI(c)
-	assertAnsibleConfigLoaded(t, cfg, gotPath, err, "ansible.cfg", "https://cwd.example")
+	assertAnsibleConfigLoaded(t, cfg, gotPath, err, filepath.Join(physicalDir(t, dir), "ansible.cfg"), "https://cwd.example")
 	if !warningMentions(warnings, "world-writable", dir) {
 		t.Fatalf("warnings = %v, want one naming %q as world-writable", warnings, dir)
 	}
