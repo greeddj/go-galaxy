@@ -103,7 +103,9 @@ Every other result is under
 ## Requirements file discovery
 
 `config.RequirementsPath` implements
-[Which file is read](../guides/requirements.md#which-file-is-read) and never fails.
+[Which file is read](../guides/requirements.md#which-file-is-read). It refuses a
+set value that does not end in `.yml`, `.yaml` or `.toml`, any case, with
+`ErrRequirementsFileName`, before any file is read; discovery never fails.
 
 | Caller | Commands | Its warning |
 | --- | --- | --- |
@@ -112,6 +114,9 @@ Every other result is under
 
 - The picked path stays relative and is only a name: a missing file fails
   where the command reads it, exit 2.
+- `requirements.Read` and `projectfile.LoadSettings` pass the same
+  `helpers.CheckRegularRequirementsFile` gate first, so a directory or a fifo
+  is `ErrRequirementsNotRegular`, exit 2, and a fifo never blocks an open.
 - `requirements.Load` picks the parser by `projectfile.IsTOMLPath`, the
   extension alone.
 - A `.toml` path also feeds `projectfile.LoadSettings`: in

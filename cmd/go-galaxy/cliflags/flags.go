@@ -212,8 +212,8 @@ func LockInspectFlags() []cli.Flag {
 }
 
 // RequirementsFileFlag declares the one flag naming the requirements file,
-// requirements.yml or galaxy.toml by extension; unset, config.RequirementsPath
-// discovers galaxy.toml, then requirements.yml, which DefaultText states.
+// .yml, .yaml or .toml by extension, which config.RequirementsPath enforces;
+// unset, it discovers galaxy.toml, then requirements.yml, as DefaultText states.
 func RequirementsFileFlag() cli.Flag {
 	return &cli.StringFlag{
 		Name: "requirements-file",
@@ -221,7 +221,7 @@ func RequirementsFileFlag() cli.Flag {
 		// the install command; one file names both collections and roles
 		// there as it does here.
 		Aliases: []string{"r", "role-file"},
-		Usage: "Path to the requirements file: requirements.yml, or galaxy.toml by its .toml extension; " +
+		Usage: "Path to the requirements file, named *.yml or *.yaml for YAML or *.toml for galaxy.toml; " +
 			"unset, ./galaxy.toml is read when present, else ./requirements.yml",
 		DefaultText: "galaxy.toml if present, else requirements.yml",
 		Sources:     cli.EnvVars("GO_GALAXY_REQUIREMENTS_FILE", envRequirementsFileAnsible),

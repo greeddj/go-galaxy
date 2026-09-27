@@ -493,9 +493,11 @@ func isEnvironmentUsageError(err error) bool {
 
 // isInputFileUsageError reports whether the requirements file or ansible.cfg
 // cannot be used: a missing explicit ansible.cfg, either file unreadable, or
-// requirements not YAML or TOML, not a supported shape, or naming an unset variable.
+// requirements misnamed, not regular, not YAML or TOML, off the schema or naming an unset variable.
 func isInputFileUsageError(err error) bool {
 	return errors.Is(err, helpers.ErrUnsupportedRequirementsFormat) ||
+		errors.Is(err, helpers.ErrRequirementsFileName) ||
+		errors.Is(err, helpers.ErrRequirementsNotRegular) ||
 		errors.Is(err, helpers.ErrRequirementsUnreadable) ||
 		errors.Is(err, helpers.ErrInvalidRequirementsYAML) ||
 		errors.Is(err, helpers.ErrInvalidRequirementsTOML) ||

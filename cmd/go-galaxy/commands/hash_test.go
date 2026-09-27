@@ -217,12 +217,12 @@ func setupRequirementsDirectory(t *testing.T, dir string) (string, string) {
 	return reqPath, filepath.Join(dir, lockfile.DefaultName)
 }
 
-// checkErrRequirementsUnreadable asserts the fallback read's failure carries
+// checkErrRequirementsNotRegular asserts the fallback read's failure carries
 // the usage sentinel the requirements loader uses for the same file.
-func checkErrRequirementsUnreadable(t *testing.T, got string, err error) {
+func checkErrRequirementsNotRegular(t *testing.T, got string, err error) {
 	t.Helper()
-	if !errors.Is(err, helpers.ErrRequirementsUnreadable) {
-		t.Fatalf("computeHash() = %q, error = %v, want errors.Is helpers.ErrRequirementsUnreadable", got, err)
+	if !errors.Is(err, helpers.ErrRequirementsNotRegular) {
+		t.Fatalf("computeHash() = %q, error = %v, want errors.Is helpers.ErrRequirementsNotRegular", got, err)
 	}
 }
 
@@ -236,9 +236,9 @@ func TestComputeHash(t *testing.T) {
 		{name: "lockfile absent, requirements present falls back", setup: setupLockfileAbsent, check: checkLockfileAbsentFallback},
 		{name: "lockfile absent, requirements not YAML still hashed", setup: setupRequirementsNotYAML, check: checkRequirementsNotYAMLHashed},
 		{
-			name:  "lockfile absent, requirements unreadable surfaces ErrRequirementsUnreadable",
+			name:  "lockfile absent, requirements a directory surfaces ErrRequirementsNotRegular",
 			setup: setupRequirementsDirectory,
-			check: checkErrRequirementsUnreadable,
+			check: checkErrRequirementsNotRegular,
 		},
 		{name: "corrupt lockfile surfaces ErrLockfileInvalid", setup: setupCorruptLockfile, check: checkErrLockfileInvalid},
 		{

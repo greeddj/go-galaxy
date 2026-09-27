@@ -76,9 +76,18 @@ Update any CI step that branches on the old code for these cases, and retry
 | An S3 listing or batch-delete reply that does not decode or breaks off, or a `412` to a PUT that sets no precondition | `1` | `4` |
 | An S3 snapshot object that inflates but does not decode | `1` | `9` |
 | A Galaxy `sha256` in `galaxy.lock` that is set but not 64 lowercase hex digits | `7`, at install | `6`, when the file loads |
+| `-r` naming a file with no `.yml`, `.yaml` or `.toml` ending, such as `requirements` | `0` from every command but `cleanup`, which had no `-r`. Without a `galaxy.lock` beside the file, `6` from `tree` and `explain`, and from `outdated` with no collections installed | `2` |
+| `-r /dev/stdin` or `-r <(...)` | `0` from `install`, `warm` and `hash`, and from `outdated` over installed collections, else `6`; `1` or `2` from `lock`; `6` from `tree` and `explain` | `2` |
+| An exported-empty `GO_GALAXY_REQUIREMENTS_FILE` or `ANSIBLE_GALAXY_REQUIREMENTS_FILE` | `0` from `cleanup`. Beside a `galaxy.lock` in the working directory, `0` from `outdated`, `hash` and `explain`. Without one, `6` from `tree` and `explain`, and from `outdated` `0` over installed collections, else `6` | `2` |
+| `-r` naming a named pipe, such as one `mkfifo requirements.yml` made | `0` from `install`, `warm` and `lock`, from `hash` with no `galaxy.lock` beside the pipe and from `tree` beside one, once a writer feeds the pipe. Without a writer, the run blocks | `2` |
 
 What to do about a new code:
 
+- `2` for `requirements file name must end in .yml, .yaml or .toml`: rename
+  the file, write a stream to such a file first, or unset an exported-empty
+  variable.
+- `2` for `requirements file is not a regular file`: write what the pipe
+  carries to a regular file and name that one.
 - `3` for a collection: fix its name, or pin a version its server publishes.
 - `3` from `lock` for a version gone from its server: the run has usually
   replayed the last resolution. Run `go-galaxy lock --refresh` to ask the

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 
@@ -20,10 +21,11 @@ const (
 // runRequirementsPath runs RequirementsPath from the action of a subcommand
 // mounting subFlags under a root carrying cliflags.CommonFlags, the tree
 // main.go builds, and returns what it answered.
-func runRequirementsPath(t *testing.T, subFlags []cli.Flag, args []string) (string, string) {
+func runRequirementsPath(t *testing.T, subFlags []cli.Flag, args []string) (string, string, error) {
 	t.Helper()
 
 	var gotPath, gotWarning string
+	var gotErr error
 	app := &cli.Command{
 		Name:  "go-galaxy",
 		Flags: cliflags.CommonFlags(),
@@ -32,7 +34,7 @@ func runRequirementsPath(t *testing.T, subFlags []cli.Flag, args []string) (stri
 				Name:  "tree",
 				Flags: subFlags,
 				Action: func(_ context.Context, c *cli.Command) error {
-					gotPath, gotWarning = RequirementsPath(c)
+					gotPath, gotWarning, gotErr = RequirementsPath(c)
 					return nil
 				},
 			},
@@ -43,7 +45,7 @@ func runRequirementsPath(t *testing.T, subFlags []cli.Flag, args []string) (stri
 	if err := app.Run(context.Background(), fullArgs); err != nil {
 		t.Fatalf("app.Run() error = %v, want nil", err)
 	}
-	return gotPath, gotWarning
+	return gotPath, gotWarning, gotErr
 }
 
 // clearRequirementsEnv hides both requirements-file variables an ambient
@@ -72,6 +74,7 @@ func writeCwdFile(t *testing.T, name string) {
 // plant, the sources to set, and the path and warning discovery must answer.
 type requirementsPathRow struct {
 	env         map[string]string
+	wantErr     error
 	flags       func() []cli.Flag
 	name        string
 	wantPath    string
@@ -123,9 +126,25 @@ func requirementsPathRows() []requirementsPathRow {
 			wantPath: "/g/galaxy.toml",
 		},
 		{
-			name: "an exported-empty variable counts as set", flags: inspect, files: []string{"galaxy.toml"},
-			env: map[string]string{"GO_GALAXY_REQUIREMENTS_FILE": ""}, wantPath: "",
+			name: "an exported-empty variable counts as set and is refused", flags: inspect, files: []string{"galaxy.toml"},
+			env: map[string]string{"GO_GALAXY_REQUIREMENTS_FILE": ""}, wantErr: helpers.ErrRequirementsFileName,
 		},
+		{
+			name: "an exported-empty ansible variable is refused alike", flags: inspect, files: []string{"requirements.yml"},
+			env: map[string]string{"ANSIBLE_GALAXY_REQUIREMENTS_FILE": ""}, wantErr: helpers.ErrRequirementsFileName,
+		},
+		{name: "-r /dev/stdin is refused by name", flags: inspect, args: []string{"-r", "/dev/stdin"}, wantErr: helpers.ErrRequirementsFileName},
+		{
+			name: "a name with no extension is refused", flags: inspect,
+			args: []string{"-r", "requirements"}, wantErr: helpers.ErrRequirementsFileName,
+		},
+		{name: "another extension is refused", flags: inspect, args: []string{"--role-file=deps.txt"}, wantErr: helpers.ErrRequirementsFileName},
+		{
+			name: "a trailing slash leaves no extension", flags: inspect,
+			args: []string{"-r", "deps.yml/"}, wantErr: helpers.ErrRequirementsFileName,
+		},
+		{name: "a .yaml name is read", flags: inspect, args: []string{"-r", "deps.yaml"}, wantPath: "deps.yaml"},
+		{name: "the extension is matched without regard to case", flags: inspect, args: []string{"-r", "/p/DEPS.YML"}, wantPath: "/p/DEPS.YML"},
 		{name: "a command mounting no requirements flag discovers nothing", flags: cliflags.S3Flags, files: []string{"galaxy.toml"}},
 	}
 }
@@ -150,9 +169,9 @@ func plantRow(t *testing.T, row requirementsPathRow) {
 	}
 }
 
-// TestRequirementsPath pins discovery row by row: a set source wins verbatim,
-// else a regular ./galaxy.toml, else requirements.yml, with the two warning
-// lines spelled exactly; the last row is the control for the unmounted flag.
+// TestRequirementsPath pins discovery row by row: a set source wins when its
+// name ends in .yml, .yaml or .toml and is refused otherwise, else a regular
+// ./galaxy.toml, else requirements.yml; the last row is the unmounted control.
 func TestRequirementsPath(t *testing.T) {
 	for _, row := range requirementsPathRows() {
 		t.Run(row.name, func(t *testing.T) {
@@ -163,7 +182,10 @@ func TestRequirementsPath(t *testing.T) {
 			}
 			plantRow(t, row)
 
-			gotPath, gotWarning := runRequirementsPath(t, row.flags(), row.args)
+			gotPath, gotWarning, gotErr := runRequirementsPath(t, row.flags(), row.args)
+			if !errors.Is(gotErr, row.wantErr) {
+				t.Fatalf("error = %v, want errors.Is %v", gotErr, row.wantErr)
+			}
 			if gotPath != row.wantPath {
 				t.Errorf("path = %q, want %q", gotPath, row.wantPath)
 			}
@@ -182,11 +204,11 @@ func TestRequirementsPathUnmountedFlagIsThePositiveControl(t *testing.T) {
 	clearRequirementsEnv(t)
 	writeCwdFile(t, "galaxy.toml")
 
-	if got, _ := runRequirementsPath(t, cliflags.S3Flags(), nil); got != "" {
-		t.Fatalf("unmounted flag: path = %q, want \"\"", got)
+	if got, _, err := runRequirementsPath(t, cliflags.S3Flags(), nil); got != "" || err != nil {
+		t.Fatalf("unmounted flag: path = %q, error = %v, want \"\" and nil", got, err)
 	}
-	if got, _ := runRequirementsPath(t, cliflags.LockInspectFlags(), nil); got != "galaxy.toml" {
-		t.Fatalf("mounted flag: path = %q, want \"galaxy.toml\"", got)
+	if got, _, err := runRequirementsPath(t, cliflags.LockInspectFlags(), nil); got != "galaxy.toml" || err != nil {
+		t.Fatalf("mounted flag: path = %q, error = %v, want \"galaxy.toml\" and nil", got, err)
 	}
 }
 

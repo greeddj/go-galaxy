@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
@@ -54,10 +56,10 @@ func TestLoadClassifiesFileFailures(t *testing.T) {
 	}
 	cases := []loadFailureCase{
 		{name: "missing", path: filepath.Join(dir, "missing.yml"), want: fs.ErrNotExist, notWant: helpers.ErrRequirementsUnreadable},
-		{name: "a directory", path: dir, want: helpers.ErrRequirementsUnreadable, notWant: helpers.ErrInvalidRequirementsYAML},
+		{name: "a directory", path: dir, want: helpers.ErrRequirementsNotRegular, notWant: helpers.ErrRequirementsUnreadable},
 		{name: "not YAML", path: broken, want: helpers.ErrInvalidRequirementsYAML, notWant: helpers.ErrRequirementsUnreadable},
 		{name: "not TOML", path: brokenTOML, want: helpers.ErrInvalidRequirementsTOML, notWant: helpers.ErrInvalidRequirementsYAML},
-		{name: "a directory named .toml", path: tomlDir, want: helpers.ErrRequirementsUnreadable, notWant: helpers.ErrInvalidRequirementsTOML},
+		{name: "a directory named .toml", path: tomlDir, want: helpers.ErrRequirementsNotRegular, notWant: helpers.ErrInvalidRequirementsTOML},
 		{name: "TOML under a .txt name", path: tomlAsYAML, want: helpers.ErrInvalidCollectionName, notWant: helpers.ErrInvalidRequirementsTOML},
 	}
 	for _, tc := range cases {
@@ -123,5 +125,55 @@ func TestReadLeavesBytesUnparsed(t *testing.T) {
 	}
 	if string(data) != brokenRequirementsYAML {
 		t.Fatalf("Read = %q, want %q", data, brokenRequirementsYAML)
+	}
+}
+
+// fifoLoadBound caps how long a read of a named pipe may take before the test
+// calls the regular-file gate broken: past the gate, open() waits for a writer.
+const fifoLoadBound = 5 * time.Second
+
+// TestLoadRefusesFifoBeforeOpening pins Read's regular-file gate on a named
+// pipe under a .yml name: ErrRequirementsNotRegular, not an open() that blocks
+// with no writer, and not the unreadable class a failed read carries.
+func TestLoadRefusesFifoBeforeOpening(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "requirements.yml")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Skipf("named pipes unavailable on this platform: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := Load(path, "")
+		errCh <- err
+	}()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, helpers.ErrRequirementsNotRegular) || errors.Is(err, helpers.ErrRequirementsUnreadable) {
+			t.Fatalf("Load(fifo) error = %v, want errors.Is helpers.ErrRequirementsNotRegular alone", err)
+		}
+	case <-time.After(fifoLoadBound):
+		t.Fatalf("Load(fifo) did not return within %s: the regular-file gate did not run before open", fifoLoadBound)
+	}
+}
+
+// TestLoadFollowsSymlinkToRegularFile is the gate's control: Stat follows a
+// symlink, so a requirements.yml linked to a regular file loads as that file.
+func TestLoadFollowsSymlinkToRegularFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared.yml")
+	if err := os.WriteFile(target, []byte("collections:\n  - ns.name\n"), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", target, err)
+	}
+	link := filepath.Join(dir, "requirements.yml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink %s: %v", link, err)
+	}
+	f, err := Load(link, "")
+	if err != nil {
+		t.Fatalf("Load(symlink) error = %v, want nil", err)
+	}
+	if len(f.Collections) != 1 || f.Collections[0].Name != "name" {
+		t.Fatalf("Load(symlink) collections = %+v, want the one ns.name entry", f.Collections)
 	}
 }

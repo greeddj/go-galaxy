@@ -2,7 +2,7 @@
 
 go-galaxy reads your files and variables as `ansible-galaxy` does, apart from
 the differences below, measured against ansible-core 2.21.2 (the `~`, `$VAR`,
-`{{CWD}}` and `ANSIBLE_CONFIG` rows against 2.21.3).
+`{{CWD}}` and `ANSIBLE_CONFIG` rows and the `-r` file name against 2.21.3).
 
 | Surface | go-galaxy |
 | --- | --- |
@@ -36,6 +36,8 @@ the differences below, measured against ansible-core 2.21.2 (the `~`, `$VAR`,
 > - [Installed files](#installed-files-are-read-only) are read-only
 > - [Unsupported sources](#sources) and [flags](#command-and-flag-cheat-sheet)
 >   exit `2` before any request
+> - A requirements file not named `*.yml`, `*.yaml` or `*.toml`, such as
+>   `/dev/stdin`, [exits `2`](#command-and-flag-cheat-sheet)
 
 ### Command and flag cheat sheet
 
@@ -44,7 +46,7 @@ or `--force`, exits `2` as an unknown flag.
 
 | ansible-galaxy | go-galaxy |
 | --- | --- |
-| `collection install -r f`, `role install --role-file f` | `go-galaxy install -r f`, or `--role-file f`. Bare `go-galaxy` finds the file. A roles-only list needs its entries under `roles:` |
+| `collection install -r f`, `role install --role-file f` | `go-galaxy install -r f`, or `--role-file f`. Bare `go-galaxy` finds the file. A roles-only list needs its entries under `roles:`. `f` must end in `.yml`, `.yaml` or `.toml`, any case, else exit `2`, where `collection install` reads any name, `/dev/stdin` included, and `install` and `role install` only a lower-case `.yml` or `.yaml` ([Which file is read](../guides/requirements.md#which-file-is-read)) |
 | `collection install ns.name` | Add it to the requirements file. A positional name exits `2` |
 | `-p`, `--collections-path` | `-p`, `--download-path` |
 | `role install -p dir` | `--roles-path dir`: `-p` is the collections path |

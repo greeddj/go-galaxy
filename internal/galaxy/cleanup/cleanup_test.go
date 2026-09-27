@@ -761,7 +761,7 @@ func buildNonRegularRequirementsFixture(
 	return gatedInstallDir, otherInstallDir
 }
 
-// TestStartAbortsOnFifoRequirementsFile pins loadRequirements's regular-file
+// TestStartAbortsOnFifoRequirementsFile pins requirements.Read's regular-file
 // gate: a named pipe aborts with ErrProjectRequirementsUnreadable instead of
 // blocking in open() with the lock held. Start is bounded so a regression fails.
 func TestStartAbortsOnFifoRequirementsFile(t *testing.T) {

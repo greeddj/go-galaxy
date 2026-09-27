@@ -46,6 +46,8 @@ and [What is refused](../guides/requirements.md#what-is-refused).
 
 | Input | Refused when | Where | Sentinel | Exit |
 | :-- | :-- | :-- | :-- | :-- |
+| A `-r` value or its variable | it does not end in `.yml`, `.yaml` or `.toml`, any case; `""` included | `config.RequirementsPath` | `ErrRequirementsFileName` | 2 |
+| A requirements path | `Stat` finds no regular file, such as a directory or fifo; checked before any open | `helpers.CheckRegularRequirementsFile`, from `requirements.Read` and `projectfile.LoadSettings` | `ErrRequirementsNotRegular` | 2 |
 | A requirements `source:` | it carries userinfo | `requirements.checkSourceUserinfo` | `ErrGalaxyServerURLUserinfo` | 2 |
 | A `galaxy.toml` | a syntax error, shown as line and last key; an unknown table or key | `projectfile.Decode` | `ErrInvalidRequirementsTOML`, `ErrUnsupportedRequirementsFormat` | 2 |
 | A `${VAR}` under `[tool.go-galaxy]` | unset; every name reported, sorted, never a value | `projectfile.LoadSettings` | `ErrProjectFileEnvUnset` | 2 |
@@ -384,7 +386,7 @@ blocks at line-start opening lines, one packet ceiling per file.
 | A scanned namespace, name or version | not `helpers.IsPathElement` | `cleanup` scan | skipped, warned |
 | The same at removal | not `IsPathElement`, or the install path outside the collections path | `cleanup.removeInstalled` | `ErrUnsafeRemovalPath`, exit 5 |
 | A role directory | no recorded roles path, not an install name, or no extract marker | `cleanup.scanProjectRoles`, `scannedRole` | never indexed |
-| A recorded requirements file | not a regular file by `Stat` | `cleanup.loadRequirements` | `ErrProjectRequirementsUnreadable`, exit 2 |
+| A recorded requirements file | not a regular file by `Stat` | `requirements.Read`, from `cleanup.projectRequirementRoots` | `ErrProjectRequirementsUnreadable`, exit 2 |
 | `MANIFEST.json`, `GALAXY.yml`, install info | not a regular file by `Lstat` through the root | `manifestIsRegularFile`, `readRegularFile` | skipped |
 | An `outdated` sidecar | a bad name or version, fields not recomposing its `.info` name, or another manifest version | `scanInstalledCollection` | skipped |
 

@@ -26,7 +26,7 @@ code instead of parsing the log.
 | Input | Refused when |
 | --- | --- |
 | Flags and arguments | an unknown flag, a bad value (`GO_GALAXY_WORKERS=abc`), `warm --no-cache`, a stray argument |
-| Requirements file | missing, `requirements file is ...` (unreadable, not YAML or TOML), or an entry [refused as written](../guides/requirements.md#what-is-refused) |
+| Requirements file | named other than `*.yml`, `*.yaml` or `*.toml` ([Which file is read](../guides/requirements.md#which-file-is-read)), missing, `requirements file is ...` (unreadable, not a regular file, not YAML or TOML), or an entry [refused as written](../guides/requirements.md#what-is-refused) |
 | `galaxy.toml` settings | off the schema, or `project file references unset environment variables` |
 | `ansible.cfg` | a missing `--ansible-config` file, or `ansible config file is unreadable` |
 | Servers | a malformed entry, a URL with a credential, two settings for one origin |
@@ -136,6 +136,8 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `another process holds the cache`, `another instance is running` | `8` | Another run holds the lock; wait for it |
 | `cache lock ownership was lost to another holder` | `8` | Another run took the lock mid-run |
 | `corrupt project registry`, `corrupt cache state object`, `corrupt snapshot store`, `cache state object exceeds the maximum allowed size` | `9` | Delete the printed path or S3 key, or `go-galaxy.db` for the [snapshot](../guides/caching.md#what-the-directory-holds); `--clear-cache` keeps them |
+| `requirements file name must end in .yml, .yaml or .toml` | `2` | `-r` or its variable names another file, `/dev/stdin` included, or is exported empty; rename the file ([Which file is read](../guides/requirements.md#which-file-is-read)) |
+| `requirements file is not a regular file` | `2` | A directory or named pipe stands where the file should be; name the file itself |
 | `unsupported snapshot schema version` | `2` | A newer release wrote this cache, which is sound: [run one release](../guides/ci.md#pin-one-release). Deleting the snapshot helps only until the newer release saves again |
 | `collection signature verification failed` | `10` | The signatures do not meet the [required count](../guides/signatures.md#required-count-and-the-vacuous-pass); check the keyring and the count |
 | `collection signature vouches for a different collection` | `10` | The signed `MANIFEST.json` names another collection or version; never retry |

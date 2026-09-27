@@ -220,6 +220,7 @@ sha256:cd042c8bf64fc5315301eb10613e03a61b699c35bac3942d1d50ce5627d823f0
 | A lockfile that fails to load | Exit `6`, never the fallback |
 | No lockfile and no readable requirements file | Exit `2` |
 | A `galaxy.toml` that does not load or names an unset `${VAR}`, without `--lock-file` | Exit `2` |
+| A `-r` or variable value not ending in `.yml`, `.yaml` or `.toml`, an exported-empty one included | Exit `2`, even beside a valid lockfile ([Which file is read](requirements.md#which-file-is-read)) |
 
 Put the go-galaxy release in the key too
 ([Pin one release](ci.md#pin-one-release)). The

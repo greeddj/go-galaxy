@@ -124,9 +124,17 @@ var (
 	// ErrUnsupportedRequirementsFormat indicates the requirements file format is unsupported.
 	ErrUnsupportedRequirementsFormat = errors.New("unsupported requirements file format")
 	// ErrRequirementsUnreadable indicates a requirements file that exists but
-	// cannot be read: permission denied, a directory. Absence stays a bare
+	// cannot be read, such as permission denied. Absence stays a bare
 	// fs.ErrNotExist, which cleanup tells apart from this.
 	ErrRequirementsUnreadable = errors.New("requirements file is unreadable")
+	// ErrRequirementsNotRegular indicates a requirements path that resolves to a
+	// directory, fifo or device. It is refused before any open, since a fifo
+	// would block there, and it is not fs.ErrNotExist, so cleanup aborts on it.
+	ErrRequirementsNotRegular = errors.New("requirements file is not a regular file")
+	// ErrRequirementsFileName indicates a set --requirements-file, or one of its
+	// variables, whose value does not end in .yml, .yaml or .toml, case ignored;
+	// the empty value an exported-empty variable yields is refused alike.
+	ErrRequirementsFileName = errors.New("requirements file name must end in .yml, .yaml or .toml")
 	// ErrInvalidRequirementsYAML indicates a requirements file whose bytes do not
 	// parse as YAML; a document that parses into the wrong shape is
 	// ErrUnsupportedRequirementsFormat or an entry sentinel instead.

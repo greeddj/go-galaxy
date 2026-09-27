@@ -204,7 +204,7 @@ Every other ignored flag is silent.
 | --- | --- | --- | --- | --- |
 | `--download-path`, `-p` | `GO_GALAXY_COLLECTIONS_PATH`, `GO_GALAXY_DOWNLOAD_PATH`, `ANSIBLE_COLLECTIONS_PATH` | `[defaults] collections_path` | `.collections` | Where collections install |
 | `--roles-path` | `GO_GALAXY_ROLES_PATH`, `ANSIBLE_ROLES_PATH` | `[defaults] roles_path` | `.roles` | Where roles install |
-| `--requirements-file`, `-r`, `--role-file` | `GO_GALAXY_REQUIREMENTS_FILE`, `ANSIBLE_GALAXY_REQUIREMENTS_FILE` | | `galaxy.toml`, else `requirements.yml` | The requirements file; a `.toml` name reads as `galaxy.toml` |
+| `--requirements-file`, `-r`, `--role-file` | `GO_GALAXY_REQUIREMENTS_FILE`, `ANSIBLE_GALAXY_REQUIREMENTS_FILE` | | `galaxy.toml`, else `requirements.yml` | The requirements file, named `*.yml`, `*.yaml` or `*.toml`, else exit `2`; a `.toml` name reads as `galaxy.toml` |
 | `--ansible-config` | `GO_GALAXY_ANSIBLE_CONFIG` | | discovered | An `ansible.cfg` that must exist, else exit `2`; a missing [`ANSIBLE_CONFIG`](configuration.md#where-it-is-found) is skipped |
 | `--metrics-file` | `GO_GALAXY_METRICS_FILE` | `metrics_file` | | Writes a JSON [run report](metrics.md) |
 
@@ -220,8 +220,8 @@ Every command loads a `galaxy.toml`'s
 [`[tool.go-galaxy]`](configuration.md#the-toolgo-galaxy-table) table before it
 checks any other setting, and a `galaxy.toml` that fails to load exits `2`.
 The exception is `hash`, `tree` and `explain` under `--lock-file`: they do not
-load the table, so an unset `${VAR}` does not stop them. Discovery: [Which file is
-read](../guides/requirements.md#which-file-is-read).
+load the table, so an unset `${VAR}` does not stop them. The names `-r` takes,
+and discovery: [Which file is read](../guides/requirements.md#which-file-is-read).
 
 ### Servers and network
 

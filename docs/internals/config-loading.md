@@ -14,7 +14,7 @@ ends the run with exit 2, and the finished `Config` goes to
 
 | Order | Step | Refuses |
 | ---: | --- | --- |
-| 1 | `newConfigFromCLI`: flags, `RequirementsPath` | - |
+| 1 | `newConfigFromCLI`: flags, `RequirementsPath` | a set requirements path not ending in `.yml`, `.yaml` or `.toml`, `ErrRequirementsFileName` |
 | 2 | `loadProjectSettings`, through `projectfile.LoadSettings` | a `galaxy.toml` that does not decode, breaks the schema or names an unset `${VAR}` |
 | 3 | `applyTimeout` | `--timeout` not a positive integer or Go duration |
 | 4 | `applyWorkers`, `applyDownloadWorkers` | - |
@@ -31,7 +31,8 @@ ends the run with exit 2, and the finished `Config` goes to
 `--timeout` because every later layer may draw on it, so a broken file is the
 first error a run reports. The order fixes which error a configuration broken
 in several places reports. A new check goes after the existing ones, so theirs
-keep precedence.
+keep precedence. The requirements name is the exception: every later step
+reads the file it names.
 
 Nothing here opens the network, a cache backend or a printer, so a warning is
 queued for whoever prints later:
@@ -48,7 +49,7 @@ queued for whoever prints later:
 | Source | Read by | Rule in the code |
 | --- | --- | --- |
 | Flags and their variables | urfave, from `cliflags` declarations | `c.IsSet` counts an exported-empty variable as set. The `ANSIBLE_*` spelling of `--download-path`, `--roles-path` and `--cache-dir` is an `ansiblePathEnvSource`, last in its chain, which expands and cleans its value through `helpers.ExpandAnsiblePath`, each `:` entry apart for the two list variables; urfave reports no source to config, so the expansion sits in the source that only this spelling reaches |
-| Requirements path | `RequirementsPath` | a set flag verbatim with no `Stat`, else discovery ([Which file is read](../guides/requirements.md#which-file-is-read)) |
+| Requirements path | `RequirementsPath` | a set flag held to its extension with no `Stat`, else discovery ([Which file is read](../guides/requirements.md#which-file-is-read)) |
 | `[tool.go-galaxy]` | `loadProjectSettings`, `projectfile.LoadSettings` | an `IsTOMLPath` path only; expanded once |
 | ansible.cfg | `loadAnsibleConfigFromCLI`, `applyAnsibleConfig` | a file `--ansible-config` names must exist and is cleaned as text, so the file read and `ansibleConfigDir` agree; a discovered one ([Where it is found](../reference/configuration.md#where-it-is-found)) is optional. Discovery expands `$ANSIBLE_CONFIG`, skips an empty result, and resolves the rest through `resolveAnsibleConfigEnv`. A path key goes through `resolveAnsibleConfigPath` under `ansibleConfigDir`, only when `pickConfigValue` took the file's value ([ansible.cfg paths](../reference/configuration.md#ansiblecfg-paths)). Both make a relative path absolute with `physicalAbs`, against the working directory with its symlinks resolved, since `os.Getwd` may return a symlinked `$PWD` where Python's `os.getcwd()` does not. The roles and collections overlap warning compares `canonicalPath` forms, so a spelling through a symlink matches before the directory exists |
 | Galaxy servers | `resolveServers` | see [Servers](#servers) |

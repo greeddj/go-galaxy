@@ -43,7 +43,10 @@ func Explain() *cli.Command {
 		ArgValidator: explainArguments,
 		Action: func(_ context.Context, c *cli.Command) error {
 			target := c.Args().First()
-			reqPath, warning := config.RequirementsPath(c)
+			reqPath, warning, err := config.RequirementsPath(c)
+			if err != nil {
+				return err
+			}
 			if warning != "" {
 				progress.Warnf("%s", warning)
 			}

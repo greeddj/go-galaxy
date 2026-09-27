@@ -291,6 +291,16 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
+		name:     "requirements file named without a known extension",
+		err:      fmt.Errorf("%w: %q", helpers.ErrRequirementsFileName, "/dev/stdin"),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "requirements path not a regular file",
+		err:      fmt.Errorf("failed to load requirements file: %w: dir.yml", helpers.ErrRequirementsNotRegular),
+		wantCode: ExitUsage,
+	},
+	{
 		name:     "requirements not valid YAML",
 		err:      fmt.Errorf("load requirements requirements.yml: %w: %w", helpers.ErrInvalidRequirementsYAML, errTestUnreadableCause),
 		wantCode: ExitUsage,

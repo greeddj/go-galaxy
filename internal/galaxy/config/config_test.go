@@ -561,7 +561,10 @@ func TestDownloadWorkersDefault(t *testing.T) {
 	t.Run("explicit positive value survives unoverridden", func(t *testing.T) {
 		c := newIntFlagCmd(t, "download-workers", "GO_GALAXY_DOWNLOAD_WORKERS",
 			helpers.DefaultDownloadWorkers(runtime.NumCPU()), true, []string{"--download-workers=3"})
-		cfg := newConfigFromCLI(c)
+		cfg, err := newConfigFromCLI(c)
+		if err != nil {
+			t.Fatalf("newConfigFromCLI() error = %v, want nil", err)
+		}
 		if cfg.DownloadWorkers != 3 {
 			t.Fatalf("cfg.DownloadWorkers = %d, want 3", cfg.DownloadWorkers)
 		}
@@ -570,7 +573,10 @@ func TestDownloadWorkersDefault(t *testing.T) {
 	t.Run("zero falls back to the default", func(t *testing.T) {
 		c := newIntFlagCmd(t, "download-workers", "GO_GALAXY_DOWNLOAD_WORKERS",
 			helpers.DefaultDownloadWorkers(runtime.NumCPU()), true, []string{"--download-workers=0"})
-		cfg := newConfigFromCLI(c)
+		cfg, err := newConfigFromCLI(c)
+		if err != nil {
+			t.Fatalf("newConfigFromCLI() error = %v, want nil", err)
+		}
 		want := helpers.DefaultDownloadWorkers(runtime.NumCPU())
 		if cfg.DownloadWorkers != want {
 			t.Fatalf("cfg.DownloadWorkers = %d, want %d (the default)", cfg.DownloadWorkers, want)
@@ -580,7 +586,10 @@ func TestDownloadWorkersDefault(t *testing.T) {
 	t.Run("negative falls back to the default", func(t *testing.T) {
 		c := newIntFlagCmd(t, "download-workers", "GO_GALAXY_DOWNLOAD_WORKERS",
 			helpers.DefaultDownloadWorkers(runtime.NumCPU()), true, []string{"--download-workers=-1"})
-		cfg := newConfigFromCLI(c)
+		cfg, err := newConfigFromCLI(c)
+		if err != nil {
+			t.Fatalf("newConfigFromCLI() error = %v, want nil", err)
+		}
 		want := helpers.DefaultDownloadWorkers(runtime.NumCPU())
 		if cfg.DownloadWorkers != want {
 			t.Fatalf("cfg.DownloadWorkers = %d, want %d (the default)", cfg.DownloadWorkers, want)

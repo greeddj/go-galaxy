@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,7 @@ type inputFileFixture struct {
 	toolKey  string
 	toolEnv  string
 	dir      string
+	dirTOML  string
 	cfg      string
 	cfgDir   string
 	longCfg  string
@@ -39,7 +41,7 @@ type inputFileFixture struct {
 }
 
 // newInputFileFixture writes requirements that are not YAML, a .toml that is
-// not TOML, three galaxy.toml files each breaking one rule, a directory in
+// not TOML, three galaxy.toml files each breaking one rule, two directories in
 // place of a file, two ansible.cfg files and an empty lockfile for tree.
 func newInputFileFixture(t *testing.T) inputFileFixture {
 	t.Helper()
@@ -50,7 +52,8 @@ func newInputFileFixture(t *testing.T) inputFileFixture {
 		badTOML:  filepath.Join(root, "unknown-key", "galaxy.toml"),
 		toolKey:  filepath.Join(root, "unknown-tool-key", "galaxy.toml"),
 		toolEnv:  filepath.Join(root, "unset-variable", "galaxy.toml"),
-		dir:      filepath.Join(root, "dir"),
+		dir:      filepath.Join(root, "dir.yml"),
+		dirTOML:  filepath.Join(root, "dir.toml"),
 		cfg:      filepath.Join(root, "empty.cfg"),
 		cfgDir:   filepath.Join(root, "cfgdir"),
 		longCfg:  filepath.Join(root, "long.cfg"),
@@ -76,7 +79,7 @@ func newInputFileFixture(t *testing.T) inputFileFixture {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
-	for _, path := range []string{f.dir, f.cfgDir} {
+	for _, path := range []string{f.dir, f.dirTOML, f.cfgDir} {
 		if err := os.Mkdir(path, 0o700); err != nil {
 			t.Fatalf("mkdir %s: %v", path, err)
 		}
@@ -99,9 +102,9 @@ func inputFileCases(f inputFileFixture) []inputFileCase {
 	}
 	return []inputFileCase{
 		{name: "install, requirements not YAML", args: collection("install", f.notYAML), want: helpers.ErrInvalidRequirementsYAML},
-		{name: "install, requirements unreadable", args: collection("install", f.dir), want: helpers.ErrRequirementsUnreadable},
+		{name: "install, requirements a directory", args: collection("install", f.dir), want: helpers.ErrRequirementsNotRegular},
 		{name: "warm, requirements not YAML", args: collection("warm", f.notYAML), want: helpers.ErrInvalidRequirementsYAML},
-		{name: "lock, requirements unreadable", args: collection("lock", f.dir), want: helpers.ErrRequirementsUnreadable},
+		{name: "lock, requirements a directory", args: collection("lock", f.dir), want: helpers.ErrRequirementsNotRegular},
 		{name: "install, .toml requirements not TOML", args: collection("install", f.notTOML), want: helpers.ErrInvalidRequirementsTOML},
 		{name: "warm, .toml requirements not TOML", args: collection("warm", f.notTOML), want: helpers.ErrInvalidRequirementsTOML},
 		{name: "lock, .toml requirements not TOML", args: collection("lock", f.notTOML), want: helpers.ErrInvalidRequirementsTOML},
@@ -121,40 +124,58 @@ func inputFileCases(f inputFileFixture) []inputFileCase {
 			want: helpers.ErrInvalidRequirementsTOML,
 		},
 		{
-			name: "tree, requirements unreadable",
+			name: "tree, requirements a directory",
 			args: []string{"tree", "-r", f.dir, "--lock-file", f.lockPath},
-			want: helpers.ErrRequirementsUnreadable,
+			want: helpers.ErrRequirementsNotRegular,
 		},
 		{
-			name: "hash, requirements unreadable with no lockfile",
+			name: "hash, requirements a directory with no lockfile",
 			args: []string{"hash", "-r", f.dir, "--lock-file", f.lockPath + ".absent"},
-			want: helpers.ErrRequirementsUnreadable,
+			want: helpers.ErrRequirementsNotRegular,
 		},
 		{name: "install, named ansible.cfg is a directory", args: withCfg(f.cfgDir), want: helpers.ErrAnsibleConfigUnreadable},
 		{name: "install, named ansible.cfg line too long", args: withCfg(f.longCfg), want: helpers.ErrAnsibleConfigUnreadable},
 	}
 }
 
-// projectSettingsCases covers every command that reads a galaxy.toml with one
-// whose [tool.go-galaxy] table breaks the schema or names an unset variable.
-// hash, tree and explain carry no --lock-file, so the table names their lockfile.
-func projectSettingsCases(f inputFileFixture) []inputFileCase {
-	argsFor := func(cmd, req string) []string {
-		switch cmd {
-		case "tree", "hash":
-			return []string{cmd, "-r", req}
-		case "explain":
-			return []string{cmd, "-r", req, "acme.widgets"}
-		case "cleanup":
-			return []string{cmd, "--quiet", "--cache-dir", f.cache, "-r", req}
-		default:
-			return []string{cmd, "--quiet", "--offline", "--cache-dir", f.cache, "--ansible-config", f.cfg, "-r", req}
-		}
+// requirementsFlagCommands lists every command that mounts --requirements-file.
+func requirementsFlagCommands() []string {
+	return []string{"install", "warm", "lock", "outdated", "tree", "hash", "explain", "cleanup"}
+}
+
+// commandArgs is cmd's command line carrying fileArgs, such as -r and a path;
+// hash, tree and explain carry no --lock-file, so a galaxy.toml's table names
+// their lockfile.
+func commandArgs(f inputFileFixture, cmd string, fileArgs ...string) []string {
+	var args []string
+	switch cmd {
+	case "tree", "hash", "explain":
+		args = []string{cmd}
+	case "cleanup":
+		args = []string{cmd, "--quiet", "--cache-dir", f.cache}
+	default:
+		args = []string{cmd, "--quiet", "--offline", "--cache-dir", f.cache, "--ansible-config", f.cfg}
 	}
-	commands := []string{"install", "warm", "lock", "outdated", "tree", "hash", "explain", "cleanup"}
-	cases := make([]inputFileCase, 0, 2*len(commands))
-	for _, cmd := range commands {
+	args = append(args, fileArgs...)
+	if cmd == "explain" {
+		args = append(args, "acme.widgets")
+	}
+	return args
+}
+
+// projectSettingsCases covers every command that reads a galaxy.toml with one
+// whose [tool.go-galaxy] table breaks the schema or names an unset variable,
+// and with a directory in place of the file.
+func projectSettingsCases(f inputFileFixture) []inputFileCase {
+	argsFor := func(cmd, req string) []string { return commandArgs(f, cmd, "-r", req) }
+	cases := make([]inputFileCase, 0, 3*len(requirementsFlagCommands()))
+	for _, cmd := range requirementsFlagCommands() {
 		cases = append(cases,
+			inputFileCase{
+				name: cmd + ", galaxy.toml a directory",
+				args: argsFor(cmd, f.dirTOML),
+				want: helpers.ErrRequirementsNotRegular,
+			},
 			inputFileCase{
 				name:     cmd + ", galaxy.toml with an unknown [tool.go-galaxy] key",
 				args:     argsFor(cmd, f.toolKey),
@@ -216,5 +237,44 @@ func assertExitsUsageWith(t *testing.T, name string, captured, want error) {
 	}
 	if code := exitcode.FromError(captured); code != exitcode.ExitUsage {
 		t.Errorf("%s: exit code = %d, want %d (%v)", name, code, exitcode.ExitUsage, captured)
+	}
+}
+
+// TestRequirementsFileNameRefusedByEveryCommand pins that each command mounting
+// -r refuses a value not ending in .yml, .yaml or .toml before it reads any
+// file, whether -r or an exported-empty variable supplies it. Not parallel.
+func TestRequirementsFileNameRefusedByEveryCommand(t *testing.T) {
+	f := newInputFileFixture(t)
+	t.Setenv("ANSIBLE_CONFIG", filepath.Join(t.TempDir(), "absent.cfg"))
+	t.Setenv("HOME", t.TempDir())
+	for _, key := range []string{"GO_GALAXY_REQUIREMENTS_FILE", "ANSIBLE_GALAXY_REQUIREMENTS_FILE"} {
+		t.Setenv(key, "")
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("os.Unsetenv(%q) error = %v, want nil", key, err)
+		}
+	}
+	cwd := t.TempDir()
+	// Valid YAML under a name with no extension, so the name alone refuses it.
+	bare := filepath.Join(cwd, "requirements")
+	if err := os.WriteFile(bare, []byte("collections: []\n"), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", bare, err)
+	}
+	t.Chdir(cwd)
+
+	for _, cmd := range requirementsFlagCommands() {
+		for _, req := range []string{"/dev/stdin", "/dev/fd/63", bare, "deps.txt", ""} {
+			captured := runRootCommand(t, commandArgs(f, cmd, "-r", req))
+			assertExitsUsageWith(t, fmt.Sprintf("%s -r %q", cmd, req), captured, helpers.ErrRequirementsFileName)
+		}
+	}
+	for _, key := range []string{"GO_GALAXY_REQUIREMENTS_FILE", "ANSIBLE_GALAXY_REQUIREMENTS_FILE"} {
+		t.Setenv(key, "")
+		for _, cmd := range requirementsFlagCommands() {
+			captured := runRootCommand(t, commandArgs(f, cmd))
+			assertExitsUsageWith(t, fmt.Sprintf("%s with %s exported empty", cmd, key), captured, helpers.ErrRequirementsFileName)
+		}
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("os.Unsetenv(%q) error = %v, want nil", key, err)
+		}
 	}
 }

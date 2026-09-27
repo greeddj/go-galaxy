@@ -108,7 +108,7 @@ func wantRequirementsFileFlag() wantStringFlag {
 		name:        "requirements-file",
 		aliases:     []string{"r", "role-file"},
 		defaultText: "galaxy.toml if present, else requirements.yml",
-		usage: "Path to the requirements file: requirements.yml, or galaxy.toml by its .toml extension; " +
+		usage: "Path to the requirements file, named *.yml or *.yaml for YAML or *.toml for galaxy.toml; " +
 			"unset, ./galaxy.toml is read when present, else ./requirements.yml",
 		envKeys: []string{"GO_GALAXY_REQUIREMENTS_FILE", "ANSIBLE_GALAXY_REQUIREMENTS_FILE"},
 	}

@@ -448,9 +448,10 @@ Every value is a string, except that `signatures` may be an array of strings.
 
 ```mermaid
 flowchart LR
-  A{"-r or a variable set?"} -->|yes| B{"Path ends in .toml?"}
-  B -->|yes| T["Read as galaxy.toml"]
-  B -->|no| Y["Read as requirements.yml"]
+  A{"-r or a variable set?"} -->|yes| B{"Path ends in?"}
+  B -->|".toml"| T["Read as galaxy.toml"]
+  B -->|".yml or .yaml"| Y["Read as requirements.yml"]
+  B -->|"anything else"| X["Exit 2"]
   A -->|no| C{"./galaxy.toml a regular file?"}
   C -->|yes| T
   C -->|no| D["Read ./requirements.yml"]
@@ -459,10 +460,23 @@ flowchart LR
 The flag is `-r`, also spelled `--requirements-file` or ansible's
 `--role-file` ([Paths and files](../reference/cli.md#paths-and-files)). Its
 variables are `GO_GALAXY_REQUIREMENTS_FILE` and
-`ANSIBLE_GALAXY_REQUIREMENTS_FILE`. An empty export counts as set and names no
-file: `install`, `warm` and `lock` then exit `2`, and `hash`, `explain` and
-`outdated` read only a `galaxy.lock` in the working directory. The extension alone decides, `.TOML` too: a `galaxy.txt`
-reads as YAML.
+`ANSIBLE_GALAXY_REQUIREMENTS_FILE`. The value must end in `.yml`, `.yaml` or
+`.toml`, in any case, so `.TOML` reads as `galaxy.toml`. Any other value exits
+`2` before a file is read, whatever the command: a `galaxy.txt`, a name with no
+extension, `/dev/stdin` and `<(...)`. So does an empty export, which counts as
+set and names no file.
+
+A requirements file that exists but is not a regular file, such as a
+directory or a named pipe, exits `2` before it is opened wherever it is
+read: from `install`, `warm`, `lock` and `tree`, from `hash` with no
+`galaxy.lock` beside it, and from every command given such a `galaxy.toml`,
+whose settings each one reads. `outdated` never reads a `requirements.yml`,
+and `cleanup` never reads the one `-r` names: it reloads, through the same
+check, the files its project records name
+([What cleanup keeps](caching.md#what-cleanup-keeps)). `explain` takes no
+roots from a `requirements.yml` it cannot load
+([explain](../internals/flow-hash-tree-explain.md#explain)). A symlink to a
+regular file is read as that file.
 
 When discovery finds both files, go-galaxy warns:
 

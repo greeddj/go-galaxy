@@ -24,7 +24,10 @@ func Hash() *cli.Command {
 		Usage:   "Print a deterministic cache key for CI (sha256 of lockfile or requirements)",
 		Flags:   cliflags.LockInspectFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
-			req, warning := config.RequirementsPath(c)
+			req, warning, err := config.RequirementsPath(c)
+			if err != nil {
+				return err
+			}
 			if warning != "" {
 				progress.Warnf("%s", warning)
 			}
@@ -61,7 +64,7 @@ func computeHash(requirementsFile, lockPath string) (string, error) {
 	}
 
 	// Read, not Load: the key covers the bytes as they are, so a file that is
-	// not YAML still hashes, and only a missing or unreadable one fails.
+	// not YAML still hashes, and only a missing, unreadable or non-regular one fails.
 	data, err := requirements.Read(requirementsFile)
 	if err != nil {
 		return "", err

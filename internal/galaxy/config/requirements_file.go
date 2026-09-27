@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/urfave/cli/v3"
@@ -14,18 +16,31 @@ import (
 const requirementsFileFlagName = "requirements-file"
 
 // RequirementsPath picks the run's requirements file: a set flag or variable
-// verbatim, else ./galaxy.toml when it is a regular file, else the relative
-// name requirements.yml without a Stat; the warning is "" or a printable line.
-func RequirementsPath(c *cli.Command) (string, string) {
+// whose name ends in .yml, .yaml or .toml, else discovery; the warning is ""
+// or a printable line, and a set value is never Stat'ed here.
+func RequirementsPath(c *cli.Command) (string, string, error) {
 	if !flagMounted(c, requirementsFileFlagName) {
-		return "", ""
+		return "", "", nil
 	}
-	// An exported-empty variable counts as set and yields "", exactly as the
-	// flag did before discovery existed; discovery never outranks a source.
+	// An exported-empty variable counts as set, so its "" is refused here
+	// rather than handed on as a path; discovery never outranks a source.
 	if c.IsSet(requirementsFileFlagName) {
-		return c.String(requirementsFileFlagName), ""
+		path := c.String(requirementsFileFlagName)
+		if !hasRequirementsFileExtension(path) {
+			return "", "", fmt.Errorf("%w: %q", helpers.ErrRequirementsFileName, path)
+		}
+		return path, "", nil
 	}
-	return discoverRequirementsPath()
+	path, warning := discoverRequirementsPath()
+	return path, warning, nil
+}
+
+// hasRequirementsFileExtension reports whether path ends in .yml, .yaml or
+// .toml, case ignored as projectfile.IsTOMLPath ignores it, so /dev/stdin, a
+// <(...) descriptor and "" fail.
+func hasRequirementsFileExtension(path string) bool {
+	ext := filepath.Ext(path)
+	return strings.EqualFold(ext, ".yml") || strings.EqualFold(ext, ".yaml") || strings.EqualFold(ext, ".toml")
 }
 
 // discoverRequirementsPath applies the unset-flag rule: a candidate stays

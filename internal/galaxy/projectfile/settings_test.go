@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
@@ -504,7 +506,7 @@ func TestLoadSettingsResolvesPaths(t *testing.T) {
 }
 
 // TestLoadSettingsFileOutcomes pins the three outcomes before any schema: an
-// absent file is zero settings and no error, a directory is unreadable, and
+// absent file is zero settings and no error, a directory is no regular file, and
 // bytes that are not TOML carry the requirements sentinel.
 func TestLoadSettingsFileOutcomes(t *testing.T) {
 	t.Parallel()
@@ -521,11 +523,11 @@ func TestLoadSettingsFileOutcomes(t *testing.T) {
 		}
 	})
 
-	t.Run("a directory is unreadable", func(t *testing.T) {
+	t.Run("a directory is not a regular file", func(t *testing.T) {
 		t.Parallel()
 
-		if _, err := LoadSettings(t.TempDir()); !errors.Is(err, helpers.ErrRequirementsUnreadable) {
-			t.Fatalf("LoadSettings = %v, want %v", err, helpers.ErrRequirementsUnreadable)
+		if _, err := LoadSettings(t.TempDir()); !errors.Is(err, helpers.ErrRequirementsNotRegular) {
+			t.Fatalf("LoadSettings = %v, want %v", err, helpers.ErrRequirementsNotRegular)
 		}
 	})
 
@@ -586,5 +588,33 @@ func unsetEnv(t *testing.T, name string) {
 	t.Setenv(name, "")
 	if err := os.Unsetenv(name); err != nil {
 		t.Fatalf("os.Unsetenv(%q) error = %v, want nil", name, err)
+	}
+}
+
+// settingsFifoBound caps how long LoadSettings may take on a named pipe before
+// the test calls the regular-file gate broken: past it, open() would wait.
+const settingsFifoBound = 5 * time.Second
+
+// TestLoadSettingsRefusesFifoBeforeOpening pins that the settings reader shares
+// requirements.Read's gate: a named pipe under a .toml name is refused as
+// helpers.ErrRequirementsNotRegular instead of blocking in open() with no writer.
+func TestLoadSettingsRefusesFifoBeforeOpening(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "galaxy.toml")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Skipf("named pipes unavailable on this platform: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := LoadSettings(path)
+		errCh <- err
+	}()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, helpers.ErrRequirementsNotRegular) {
+			t.Fatalf("LoadSettings(fifo) error = %v, want errors.Is helpers.ErrRequirementsNotRegular", err)
+		}
+	case <-time.After(settingsFifoBound):
+		t.Fatalf("LoadSettings(fifo) did not return within %s: the regular-file gate did not run before open", settingsFifoBound)
 	}
 }

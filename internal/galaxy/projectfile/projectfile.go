@@ -128,12 +128,12 @@ func Decode(data []byte) (Document, error) {
 // and each relative path resolved against the file's directory. An absent
 // file is empty settings; every other failure keeps the requirements sentinels.
 func LoadSettings(path string) (Settings, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path is the operator's own project file.
+	data, err := readProjectFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return Settings{}, nil
 		}
-		return Settings{}, fmt.Errorf("%w: %w", helpers.ErrRequirementsUnreadable, err)
+		return Settings{}, err
 	}
 	doc, err := Decode(data)
 	if err != nil {
@@ -152,6 +152,20 @@ func LoadSettings(path string) (Settings, error) {
 	settings.CacheDir = resolvePath(dir, settings.CacheDir)
 	settings.MetricsFile = resolvePath(dir, settings.MetricsFile)
 	return settings, nil
+}
+
+// readProjectFile opens path only past helpers.CheckRegularRequirementsFile,
+// the gate requirements.Read applies too; absence stays a bare fs.ErrNotExist,
+// and any other read failure wraps helpers.ErrRequirementsUnreadable.
+func readProjectFile(path string) ([]byte, error) {
+	if err := helpers.CheckRegularRequirementsFile(path); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // path is the operator's own project file.
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%w: %w", helpers.ErrRequirementsUnreadable, err)
+	}
+	return data, err
 }
 
 // resolvePath joins a relative p under dir; "" stays "" so an unset key

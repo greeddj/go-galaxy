@@ -299,12 +299,13 @@ func checkHashMissingRequirementsYAML(t *testing.T, stdout, stderr string, err e
 }
 
 // checkHashEmptyFlagExitsUsage pins that an exported-empty variable is a set
-// flag naming "", which discovery never overrides, so the read fails as usage
+// flag naming "", which discovery never overrides, so it is refused by name
 // even with a galaxy.toml in the working directory.
 func checkHashEmptyFlagExitsUsage(t *testing.T, stdout, _ string, err error) {
 	t.Helper()
-	if err == nil {
-		t.Fatalf("hash with an empty GO_GALAXY_REQUIREMENTS_FILE succeeded with stdout %q", stdout)
+	if !errors.Is(err, helpers.ErrRequirementsFileName) {
+		t.Fatalf("hash with an empty GO_GALAXY_REQUIREMENTS_FILE: err = %v, stdout %q, want errors.Is %v",
+			err, stdout, helpers.ErrRequirementsFileName)
 	}
 	if got := exitcode.FromError(err); got != exitcode.ExitUsage {
 		t.Errorf("exitcode.FromError(err) = %d, want ExitUsage (%d); err = %v", got, exitcode.ExitUsage, err)

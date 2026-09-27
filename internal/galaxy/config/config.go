@@ -177,7 +177,10 @@ func BuildCollectionConfig(c *cli.Command) (*Config, error) {
 // a file that does not decode, breaks the schema or names an unset variable
 // fails before any other source is read, since every layer may draw on it.
 func newConfigWithProject(c *cli.Command) (*Config, projectSettings, error) {
-	cfg := newConfigFromCLI(c)
+	cfg, err := newConfigFromCLI(c)
+	if err != nil {
+		return nil, projectSettings{}, err
+	}
 	project, err := loadProjectSettings(cfg.RequirementsFile)
 	if err != nil {
 		return nil, projectSettings{}, err
@@ -190,7 +193,9 @@ func newConfigWithProject(c *cli.Command) (*Config, projectSettings, error) {
 	return cfg, project, nil
 }
 
-func newConfigFromCLI(c *cli.Command) *Config {
+// newConfigFromCLI reads the flags into a Config; its one refusal is a set
+// requirements path RequirementsPath rejects by name, before any file is read.
+func newConfigFromCLI(c *cli.Command) (*Config, error) {
 	cfg := &Config{
 		DownloadWorkers: c.Int("download-workers"),
 		LockFile:        c.String("lock-file"),
@@ -208,7 +213,10 @@ func newConfigFromCLI(c *cli.Command) *Config {
 	}
 	// Discovery may decline ./galaxy.toml with a warning; queued first, ahead
 	// of every later warning, because picking the file is the run's first event.
-	requirementsPath, requirementsWarning := RequirementsPath(c)
+	requirementsPath, requirementsWarning, err := RequirementsPath(c)
+	if err != nil {
+		return nil, err
+	}
 	cfg.RequirementsFile = requirementsPath
 	if requirementsWarning != "" {
 		cfg.Warnings = append(cfg.Warnings, requirementsWarning)
@@ -222,7 +230,7 @@ func newConfigFromCLI(c *cli.Command) *Config {
 	}
 	cfg.Verbose = c.Bool("verbose")
 	cfg.Quiet = !cfg.Verbose && c.Bool("quiet")
-	return cfg
+	return cfg, nil
 }
 
 // applyTimeout parses --timeout before ansible.cfg is loaded, so a bad flag is

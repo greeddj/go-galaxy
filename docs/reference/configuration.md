@@ -311,4 +311,6 @@ as ansible does, so both tools use the same directories:
 
 `ANSIBLE_GALAXY_REQUIREMENTS_FILE` looks like an ansible variable but is
 go-galaxy's own: a source of [`--requirements-file`](cli.md#paths-and-files)
-that `ansible-galaxy` ignores.
+that `ansible-galaxy` ignores. Exported empty, it and
+`GO_GALAXY_REQUIREMENTS_FILE` name no file and exit `2`
+([Which file is read](../guides/requirements.md#which-file-is-read)).

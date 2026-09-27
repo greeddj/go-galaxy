@@ -29,7 +29,10 @@ func Tree() *cli.Command {
 		Usage:   "Print the resolved dependency tree from the lockfile",
 		Flags:   cliflags.LockInspectFlags(),
 		Action: func(_ context.Context, c *cli.Command) error {
-			reqPath, warning := config.RequirementsPath(c)
+			reqPath, warning, err := config.RequirementsPath(c)
+			if err != nil {
+				return err
+			}
 			if warning != "" {
 				progress.Warnf("%s", warning)
 			}

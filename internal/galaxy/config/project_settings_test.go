@@ -571,17 +571,17 @@ func psCheckSchemaViolationNamesTheKey(t *testing.T) {
 	}
 }
 
-// psCheckDirectoryIsUnreadable pins that a galaxy.toml that exists but cannot
-// be read as a file is helpers.ErrRequirementsUnreadable, not an absent file.
-func psCheckDirectoryIsUnreadable(t *testing.T) {
+// psCheckDirectoryIsNotRegular pins that a galaxy.toml that exists but is no
+// regular file is helpers.ErrRequirementsNotRegular, not an absent file.
+func psCheckDirectoryIsNotRegular(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "galaxy.toml")
 	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatalf("os.Mkdir(%q) error = %v, want nil", path, err)
 	}
 
 	_, err := loadProjectSettings(path)
-	if !errors.Is(err, helpers.ErrRequirementsUnreadable) {
-		t.Fatalf("loadProjectSettings(%q) error = %v, want errors.Is helpers.ErrRequirementsUnreadable", path, err)
+	if !errors.Is(err, helpers.ErrRequirementsNotRegular) {
+		t.Fatalf("loadProjectSettings(%q) error = %v, want errors.Is helpers.ErrRequirementsNotRegular", path, err)
 	}
 	if !strings.HasPrefix(err.Error(), path+": ") {
 		t.Fatalf("error = %q, want it to lead with %q", err, path)
@@ -600,7 +600,7 @@ func TestLoadProjectSettings(t *testing.T) {
 	t.Run("an unset ${VAR} is refused by name", psCheckUnsetVariableIsRefused)
 	t.Run("broken TOML leads with the path", psCheckBrokenTOMLNamesThePath)
 	t.Run("a schema violation names the key behind the path", psCheckSchemaViolationNamesTheKey)
-	t.Run("a directory is unreadable", psCheckDirectoryIsUnreadable)
+	t.Run("a directory is not a regular file", psCheckDirectoryIsNotRegular)
 }
 
 // psS3Settings is a projectSettings whose [tool.go-galaxy.s3] carries every

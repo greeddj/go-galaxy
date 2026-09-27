@@ -74,8 +74,12 @@ func Load(path, defaultSource string) (File, error) {
 }
 
 // Read returns a requirements file's bytes unparsed. Absence stays a bare
-// fs.ErrNotExist; any other failure wraps helpers.ErrRequirementsUnreadable.
+// fs.ErrNotExist, a path that is no regular file is refused before any open,
+// and any other failure wraps helpers.ErrRequirementsUnreadable.
 func Read(path string) ([]byte, error) {
+	if err := helpers.CheckRegularRequirementsFile(path); err != nil {
+		return nil, err
+	}
 	//nolint:gosec // path is user-provided requirements file.
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

@@ -223,7 +223,7 @@ func gitSubdirWithin(entrySubdir, rootSubdir string) bool {
 func projectRequirementRoots(
 	out output.Printer, projectPath string, project store.ProjectRecord,
 ) (requirements.File, bool, error) {
-	file, err := loadRequirements(project.RequirementsFile, "")
+	file, err := requirements.Load(project.RequirementsFile, "")
 	if err == nil {
 		return file, false, nil
 	}
