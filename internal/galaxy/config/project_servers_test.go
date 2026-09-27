@@ -17,12 +17,12 @@ import (
 // The galaxy.toml fixtures every case here resolves against. The three tokens
 // are plaintext that no refusal, warning or dump of the Config may ever show.
 const (
-	psrvTOMLPath      = "galaxy.toml"
-	psrvHubID         = "hub"
-	psrvHubURL        = "https://hub.example"
-	psrvHubOrigin     = "https://hub.example:443"
-	psrvPubID         = "pub"
-	psrvPubURL        = "https://galaxy.ansible.com"
+	psrvTOMLPath     = "galaxy.toml"
+	psrvHubID        = "hub"
+	psrvHubURL       = "https://hub.example"
+	psrvHubOrigin    = "https://hub.example:443"
+	psrvPubID        = "pub"
+	psrvPubURL       = "https://galaxy.ansible.com"
 	psrvLiteralToken = "s3cr3t-toml-token"
 	psrvFlagToken    = "flag-secret-token"
 	psrvEnvToken     = "env-secret-token"
