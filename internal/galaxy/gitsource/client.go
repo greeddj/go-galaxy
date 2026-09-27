@@ -99,7 +99,7 @@ type RoleResult struct {
 
 // Client is the seam between the install pipeline and a git remote: Advertise
 // resolves a ref with no pack transfer, Acquire and AcquireRole build artifacts;
-// every error wraps a helpers git sentinel and all three honor ctx.
+// every error wraps a helpers sentinel and all three honor ctx.
 type Client interface {
 	Advertise(ctx context.Context, u URL, ref Ref, auth Credential) (commit, refName string, err error)
 	Acquire(ctx context.Context, req Request) (Result, error)

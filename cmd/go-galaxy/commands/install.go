@@ -9,6 +9,7 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/collections"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/fetch"
+	"github.com/greeddj/go-galaxy/internal/galaxy/gitfetch"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/urfave/cli/v3"
@@ -39,6 +40,16 @@ func newHTTPClient(cfg *config.Config) *http.Client {
 		return fetch.NewOffline(cfg.Timeout)
 	}
 	return fetch.New(cfg.Timeout, serverAuths(cfg.Servers))
+}
+
+// newGitClient builds the git client, offline-aware like newHTTPClient. An
+// offline HTTP client alone would not do: ssh never passes through one, so
+// --offline gets gitsource.Offline, which refuses before any transport.
+func newGitClient(cfg *config.Config, tempDir func() string) gitsource.Client {
+	if cfg != nil && cfg.Offline {
+		return gitsource.Offline{}
+	}
+	return gitfetch.New(fetch.NewGit(cfg.Timeout), tempDir)
 }
 
 // serverAuths converts cfg.Servers into fetch.ServerAuth. It is the only Reveal

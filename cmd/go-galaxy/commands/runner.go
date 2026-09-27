@@ -7,7 +7,6 @@ import (
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/fetch"
-	"github.com/greeddj/go-galaxy/internal/galaxy/gitfetch"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
 	"github.com/greeddj/go-galaxy/internal/progress"
 	"github.com/urfave/cli/v3"
@@ -32,10 +31,10 @@ func runCollectionCommand(ctx context.Context, c *cli.Command, action collection
 	}
 	defer p.Close()
 	runtime := infra.New(p, newHTTPClient(cfg))
-	// The git client is wired for every command: it holds no connection until
-	// a git requirement is met, and its own HTTP client (fetch.NewGit) keeps
-	// any Galaxy token and relaxed TLS policy away from a repository.
-	runtime.Git = gitfetch.New(fetch.NewGit(cfg.Timeout), runtime.TempDir)
+	// The git client is wired for every command, under --offline one that
+	// refuses every call; it opens nothing until a git requirement is met, and
+	// fetch.NewGit keeps any Galaxy token and relaxed TLS away from a repository.
+	runtime.Git = newGitClient(cfg, runtime.TempDir)
 	runtime.GitCredentials = gitCredentials(cfg)
 	// The url client is wired the same way, and fetch.NewURLDownload keeps
 	// any Galaxy token and relaxed TLS policy away from an artifact host.

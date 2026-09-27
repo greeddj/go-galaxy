@@ -38,9 +38,10 @@ func startPrefetcher(ctx context.Context, deps prefetchDeps, collections map[str
 		done:       make(map[string]chan struct{}),
 		prefetched: make(map[string]downloadResult),
 	}
-	// The prefetcher is disabled here rather than in prefetchOne: a dry run must
-	// not download ahead. presence stays nil, so every worker probes the store.
-	if cfg == nil || cfg.NoCache || cfg.DryRun || artifacts == nil {
+	// Disabled here rather than in prefetchOne: a dry run must not download
+	// ahead, and --offline has no origin to fetch a miss from. presence stays
+	// nil, so every worker probes the store itself.
+	if cfg == nil || cfg.NoCache || cfg.DryRun || cfg.Offline || artifacts == nil {
 		return p
 	}
 

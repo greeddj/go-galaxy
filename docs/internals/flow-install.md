@@ -57,7 +57,7 @@ flowchart TD
   P7 --> P8
   P8 -->|"unsafe name, inexact<br/>version, duplicate key"| PX2B(["exit 2"])
   P8 -->|"root unresolved,<br/>cycle"| PX3(["exit 3"])
-  P8 --> P9{"--no-cache or<br/>--dry-run?"}
+  P8 --> P9{"--no-cache, --dry-run<br/>or --offline?"}
   P9 -->|"no"| P10["startPrefetcher on<br/>--download-workers"]
   P9 -->|"yes: no prefetcher"| P11(["plan ready"])
   P10 --> P11
@@ -225,7 +225,7 @@ failure would. The snapshot saves only if one already existed. Details:
 | --- | --- | --- |
 | `--frozen` | Planning | lockfile replaces discovery and solver; sha256 pins checked before extraction |
 | `--dry-run` | Overview, Planning | no roots created, no prefetcher, builds discarded; preview, metrics skipped |
-| `--offline` | Source discovery, Collection install | pins and cache only; a miss exits 4 or fails the item |
+| `--offline` | Source discovery, Planning, Collection install | pins and cache only, no prefetcher; a miss exits 4 or fails the item |
 | `--refresh` | Collection resolution, Source discovery | vetoes replay, re-advertises refs, re-asks v1, re-downloads url sources |
 | `--no-cache` | Collection resolution, Source discovery, Planning | no artifact cache, extracted store or prefetcher; builds go straight to install |
 | `--no-deps` | Collection resolution, Roles | part of the signature; solver and role walk stop at the roots |

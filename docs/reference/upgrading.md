@@ -65,6 +65,7 @@ Update any CI step that branches on the old code for these cases, and retry
 | An exact pin no server has, or a versions page or version document that answers `404` | `1` | `3` |
 | A role whose versions answer `404` on the first server that lists it | `2`, `3`, or `0` with the role taken from a later server | `3` |
 | Under `--offline`, a url role whose `version:` was changed, added or removed since the cache recorded the role. Without `--offline`, the role is now downloaded again and installs | `2` | `4` |
+| Under `--offline` (`install` or `warm`, with or without `--frozen`), a git collection whose commit the cache recorded, or `galaxy.lock` pins under `--frozen`, but whose artifact is not cached. A commit the cache never recorded still exits `4` without `--frozen` | `0`, the artifact fetched from its repository | `5`, with no request to the repository |
 | `lock`: a collection or version the resolve chose is gone from its server | `1` | `3` |
 | `--no-deps` with several servers: an exact pin no server has, or a server failing while the pin is looked up | `5` from `install` and `warm`, `0` from a dry run | `3`, or `4` for the failing server |
 | `warm` over a dependency cycle, which `install` already refused | `0`, or `5` under `--offline` with a collection uncached | `3` |
@@ -86,6 +87,11 @@ What to do about a new code:
   ([Roles and the v1 role API](../guides/servers-and-auth.md#roles-and-the-v1-role-api)).
 - `4` for a url role under `--offline`: run once without `--offline`, so the
   cache records its new `version:`.
+- `5` for a git collection under `--offline`: fill the cache without
+  `--offline` first. Before a `--frozen` run, use
+  [`go-galaxy warm --frozen`](cli.md#warm): a plain `warm` does not read
+  `galaxy.lock`, so it can cache another commit than the one the file pins.
+  Before any other run, use `go-galaxy warm`.
 - `6` for a malformed `sha256`: `lock` never writes one, so the file was edited
   by hand. Run `go-galaxy lock` to rewrite it.
 - `9` for an S3 snapshot: delete the S3 key the message names.

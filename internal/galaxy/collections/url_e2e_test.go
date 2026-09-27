@@ -513,3 +513,27 @@ func TestURLUppercaseManifestIdentityInstalls(t *testing.T) {
 		t.Fatalf("uppercase url lock entry = %+v", locked)
 	}
 }
+
+// TestURLOfflineMissSendsNoTarballRequest pins that --offline with the pin
+// recorded but the artifact evicted sends the origin nothing, even over a
+// live url client, and prints no prefetch warning.
+func TestURLOfflineMissSendsNoTarballRequest(t *testing.T) {
+	t.Parallel()
+	f := newURLFixture(t)
+	f.writeRequirements(t, "collections:\n  - "+f.tarballURL+"\n")
+	f.mustInstall(t)
+	f.evictURLArtifactAndTree(t)
+	f.cfg.Offline = true
+	f.runtime.HTTP = fetch.NewOffline(e2eTimeout)
+
+	err := f.install(t)
+	if !errors.Is(err, helpers.ErrOfflineMode) || !errors.Is(err, helpers.ErrInstallationFailed) {
+		t.Fatalf("offline miss: %v, want ErrOfflineMode behind ErrInstallationFailed", err)
+	}
+	if got := f.galaxy.Count(fakegalaxy.EndpointTarball); got != 1 {
+		t.Fatalf("offline miss reached the origin: downloads = %d, want still 1", got)
+	}
+	if f.printer.hasWarnContaining("Prefetch failed") {
+		t.Fatalf("offline run prefetched: %v", f.printer.warns)
+	}
+}

@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/greeddj/go-galaxy/cmd/go-galaxy/exitcode"
 	"github.com/greeddj/go-galaxy/internal/galaxy/collections"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
+	"github.com/greeddj/go-galaxy/internal/galaxy/fetch"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
@@ -415,4 +417,109 @@ func TestGitExplicitNameDoesNotPinSiblings(t *testing.T) {
 	if gitsource.IsLocator(entry.Source) {
 		t.Fatalf("acme.two recorded with a git source: %q", entry.Source)
 	}
+}
+
+// goOffline switches the fixture to what an --offline run is wired with: the
+// Galaxy transport hard-disabled, the counting git double left live so a
+// call that should never happen is counted rather than refused.
+func (f *gitFixture) goOffline() {
+	f.cfg.Offline = true
+	f.runtime.HTTP = fetch.NewOffline(e2eTimeout)
+	f.git.resetCounts()
+}
+
+// evictAppArtifactAndTree removes acme.app's cached git artifact and the
+// installed tree while the recorded pin stays, the state an offline miss meets.
+func (f *gitFixture) evictAppArtifactAndTree(t *testing.T) {
+	t.Helper()
+	locator := gitsource.Locator{URL: gitAppURL, Commit: fakeCommit("app-1")}.String()
+	key := helpers.ArtifactKey(locator, acmeArtifactFilename("app", "1.2.3"))
+	if err := os.Remove(filepath.Join(f.cacheDir, key)); err != nil {
+		t.Fatalf("evict cached artifact: %v", err)
+	}
+	if err := os.RemoveAll(f.downloadPath); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertOfflineGitMiss pins what an offline git miss must look like: exit 5
+// with ErrOfflineMode behind ErrInstallationFailed, no call on the git double
+// and no prefetch warning, since nothing may be fetched ahead offline.
+func assertOfflineGitMiss(t *testing.T, f *gitFixture, err error) {
+	t.Helper()
+	if !errors.Is(err, helpers.ErrOfflineMode) || !errors.Is(err, helpers.ErrInstallationFailed) {
+		t.Fatalf("offline miss: %v, want ErrOfflineMode behind ErrInstallationFailed", err)
+	}
+	if got := exitcode.FromError(err); got != exitcode.ExitInstall {
+		t.Fatalf("offline miss exit = %d, want %d", got, exitcode.ExitInstall)
+	}
+	adv, acq := f.git.counts()
+	if roles := f.git.roleAcquireCount(); adv != 0 || acq != 0 || roles != 0 {
+		t.Fatalf("offline run reached the remote: advertises=%d acquires=%d roleAcquires=%d", adv, acq, roles)
+	}
+	if f.printer.hasWarnContaining("Prefetch failed") {
+		t.Fatalf("offline run prefetched: %v", f.printer.warns)
+	}
+}
+
+// TestGitOfflineMissNeverReachesTheRemote pins that --offline with the pin
+// recorded but the artifact evicted fails without contacting the repository,
+// and that --dry-run --offline predicts the same exit code.
+func TestGitOfflineMissNeverReachesTheRemote(t *testing.T) {
+	t.Parallel()
+	f := newGitFixture(t)
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",main\n")
+	f.mustInstall(t)
+	f.evictAppArtifactAndTree(t)
+	f.goOffline()
+
+	f.cfg.DryRun = true
+	dryErr := f.install(t)
+	f.cfg.DryRun = false
+	err := f.install(t)
+	assertOfflineGitMiss(t, f, err)
+	if dryCode, runCode := exitcode.FromError(dryErr), exitcode.FromError(err); dryCode != runCode {
+		t.Fatalf("--dry-run --offline exit = %d, --offline exit = %d, want equal; dryErr=%v", dryCode, runCode, dryErr)
+	}
+	assertPathAbsent(t, installPathFor(f.downloadPath, "app"))
+}
+
+// TestGitFrozenOfflineColdCacheNeverReachesTheRemote pins that --frozen
+// --offline from a lockfile on a cache that never saw the repository fails
+// without a git call, for a monorepo pinned by commit and subdir.
+func TestGitFrozenOfflineColdCacheNeverReachesTheRemote(t *testing.T) {
+	t.Parallel()
+	body := "collections:\n  - " + gitMonoURL + "#collections\n"
+	f := newGitFixture(t)
+	f.writeRequirements(t, body)
+	f.lockfile(t)
+	lock, err := os.ReadFile(lockfile.ResolveDefaultPath(f.reqPath, ""))
+	if err != nil {
+		t.Fatalf("read lockfile: %v", err)
+	}
+
+	cold := newGitFixture(t)
+	cold.writeRequirements(t, body)
+	lockPath := lockfile.ResolveDefaultPath(cold.reqPath, "")
+	if err := os.WriteFile(lockPath, lock, 0o600); err != nil { //nolint:gosec // path is this test's own temp dir.
+		t.Fatalf("copy lockfile: %v", err)
+	}
+	cold.cfg.Frozen = true
+	cold.goOffline()
+	assertOfflineGitMiss(t, cold, cold.install(t))
+	assertPathAbsent(t, installPathFor(cold.downloadPath, "one"))
+}
+
+// TestGitWarmOfflineMissNeverReachesTheRemote pins that warm --offline with
+// the git artifact evicted fails the way install does, with no git call.
+func TestGitWarmOfflineMissNeverReachesTheRemote(t *testing.T) {
+	t.Parallel()
+	f := newGitFixture(t)
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",main\n")
+	if err := collections.Warm(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("first Warm (populate the cache online): %v", err)
+	}
+	f.evictAppArtifactAndTree(t)
+	f.goOffline()
+	assertOfflineGitMiss(t, f, collections.Warm(context.Background(), f.cfg, f.runtime))
 }

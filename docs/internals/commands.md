@@ -151,8 +151,9 @@ flowchart TD
 `runCollectionCommand` builds everything before the command's own work.
 `BuildCollectionConfig` refuses in a fixed order, each refusal exit 2, listed
 under [Order of construction](config-loading.md#order-of-construction).
-`--offline` swaps the Galaxy client for `fetch.NewOffline` and makes the url
-client refuse every request. The extracted store is nil under `--no-cache`.
+`--offline` swaps the Galaxy client for `fetch.NewOffline`, makes the url
+client refuse every request and wires `gitsource.Offline` as the git client,
+which refuses every call. The extracted store is nil under `--no-cache`.
 
 ### Backend open and lock
 

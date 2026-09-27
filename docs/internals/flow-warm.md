@@ -65,7 +65,7 @@ and discarded.
 
 ```mermaid
 flowchart TD
-    P["startPrefetcher: probe,<br/>prefetch cache misses"] --> L{"next collection,<br/>run not canceled?"}
+    P["startPrefetcher: probe, prefetch<br/>misses; off under --offline"] --> L{"next collection,<br/>run not canceled?"}
     L -->|"yes"| W["warmOne on the<br/>--workers pool"]
     W -->|"ok"| OK1["print Cached"]
     W -->|"error"| F1["print Failed,<br/>record cause"]
@@ -78,7 +78,8 @@ flowchart TD
 ```
 
 The prefetcher probes the cache and downloads the misses in background; it
-is install's with a nil root and nil levels
+is install's with a nil root and nil levels, and off under `--offline`, where
+each miss fails in `warmOne` instead
 ([Prefetch and handoff](install-pipeline.md#prefetch-and-handoff)). Roles
 follow only when every collection warmed:
 
@@ -163,7 +164,7 @@ still fetched during resolution and its build discarded
 | `--no-cache` | [Shared setup](commands.md#shared-setup) | exit 2 before any backend opens |
 | `--frozen` | Plan | lockfile instead of solver and role discovery |
 | `--dry-run` | Overview | preview replaces warming; no `--clear-cache`, registry record or metrics |
-| `--offline` | Plan, Warming collections and roles, One collection, The dry-run preview | resolves as install does; a cache miss fails the item; no eviction |
+| `--offline` | Plan, Warming collections and roles, One collection, The dry-run preview | resolves as install does; no prefetcher, a cache miss fails the item; no eviction |
 | `--refresh`, `--no-deps` | Plan | as for install, on [install flow](flow-install.md#flags-that-change-the-flow) |
 | `--clear-cache` | [Shared setup](commands.md#shared-setup) | forgets metadata and pins, deletes artifacts, keeps the recorded resolve; skipped under `--dry-run` |
 | `--keyring` | Plan, One collection | verification on: signatures checked before `Ensure` |

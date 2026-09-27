@@ -14,7 +14,7 @@ so their settings cannot drift.
 | --- | --- | --- | --- |
 | Galaxy | `fetch.New` | a server's token and relaxed TLS, on its exact origin only | Galaxy API, downloads |
 | S3 | `newClient`, run by `Backend.Open`: a shallow copy of the Galaxy client `s3.New` was handed, same transport, `CheckRedirect` set to `refuseRedirect` | the SigV4 headers it signs per request | the S3 cache |
-| Offline | `fetch.NewOffline` | nothing: fails every request with `ErrOfflineMode` | Galaxy under `--offline`. The signature and url clients take the same transport then |
+| Offline | `fetch.NewOffline` | nothing: fails every request with `ErrOfflineMode` | Galaxy under `--offline`. The signature and url clients take the same transport then, and git gets `gitsource.Offline` (below) |
 | Signature | `fetch.NewUnauthenticated` | nothing | `signatures:` sources |
 | Git | `fetch.NewGit` | only the `GO_GALAXY_GIT_*` credential go-git adds; a non-2xx body capped at 64 KiB | `gitfetch` |
 | url | `fetch.NewURLDownload` | a `GO_GALAXY_URL_*` Bearer token, judged per hop | `Infra.URLHTTP` |
@@ -45,9 +45,11 @@ flowchart TD
 - The S3 backend rides the shared client, so config refuses `--offline` beside
   it (`ErrS3CacheOffline`) before any client is built.
 - `fetch.NewGit` takes no offline flag, and an ssh remote uses no HTTP client
-  at all. So the transport never refuses git traffic under `--offline`: each
-  git path must check `cfg.Offline` and refuse with `ErrOfflineMode` before it
-  reaches `gitfetch`.
+  at all, so no transport could refuse git traffic under `--offline`. The run
+  gets `gitsource.Offline` in place of `gitfetch` instead: every `Advertise`,
+  `Acquire` and `AcquireRole` refuses with `ErrOfflineMode` naming the
+  repository. Each git path still checks `cfg.Offline` before the call, since
+  that check names what the cache lacks.
 
 Redirect limits, per-hop credentials and the S3 copy's refusal of every hop:
 [Redirects](boundaries.md#redirects). Where each secret is revealed:

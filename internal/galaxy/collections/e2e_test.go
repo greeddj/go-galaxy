@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -407,18 +408,24 @@ func TestFrozenInstallRejectsWildcardLockfilePin(t *testing.T) {
 
 // warnCapturingPrinter is a no-op output.Printer that records Warnf lines;
 // the internal package's capturingPrinter is unreachable from this package.
+// The mutex is there because install and warm workers warn concurrently.
 type warnCapturingPrinter struct {
 	noopPrinter
 
 	warns []string
+	mu    sync.Mutex
 }
 
 func (p *warnCapturingPrinter) Warnf(format string, args ...any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.warns = append(p.warns, fmt.Sprintf(format, args...))
 }
 
 // hasWarnContaining reports whether any recorded Warnf line contains substr.
 func (p *warnCapturingPrinter) hasWarnContaining(substr string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for _, line := range p.warns {
 		if strings.Contains(line, substr) {
 			return true
@@ -1005,5 +1012,42 @@ func assertInstalledProvenance(t *testing.T, downloadPath, name, version, server
 	provenance, err := os.ReadFile(filepath.Join(infoDir, "go-galaxy.yml")) //nolint:gosec // path is built from this test's own temp dirs.
 	if err != nil || string(provenance) != provenanceLine+"\n" {
 		t.Fatalf("go-galaxy.yml = %q (%v), want %q", provenance, err, provenanceLine+"\n")
+	}
+}
+
+// TestOfflineGalaxyMissPrintsNoPrefetchWarning pins that --offline with a
+// Galaxy artifact evicted fails on the install worker's own refusal, exit 5,
+// with nothing fetched ahead and so no "Prefetch failed" warning.
+func TestOfflineGalaxyMissPrintsNoPrefetchWarning(t *testing.T) {
+	t.Parallel()
+	f := newE2EFixture(t)
+	printer := &warnCapturingPrinter{}
+	f.runtime = infra.New(printer, f.server.Client())
+	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("first Start (populate the cache online): %v", err)
+	}
+	artifact := filepath.Join(f.cfg.CacheDir, helpers.ArtifactKey(f.cfg.Server, acmeArtifactFilename("app", testVersion100)))
+	if err := os.Remove(artifact); err != nil {
+		t.Fatalf("evict cached artifact: %v", err)
+	}
+	if err := os.RemoveAll(f.downloadPath); err != nil {
+		t.Fatal(err)
+	}
+	f.server.ResetCounts()
+	f.cfg.Offline = true
+	f.runtime.HTTP = fetch.NewOffline(f.cfg.Timeout)
+
+	err := collections.Start(context.Background(), f.cfg, f.runtime)
+	if !errors.Is(err, helpers.ErrOfflineMode) || !errors.Is(err, helpers.ErrInstallationFailed) {
+		t.Fatalf("offline miss: %v, want ErrOfflineMode behind ErrInstallationFailed", err)
+	}
+	if got := exitcode.FromError(err); got != exitcode.ExitInstall {
+		t.Fatalf("offline miss exit = %d, want %d", got, exitcode.ExitInstall)
+	}
+	if printer.hasWarnContaining("Prefetch failed") {
+		t.Fatalf("offline run prefetched: %v", printer.warns)
+	}
+	if got := f.server.Total(); got != 0 {
+		t.Fatalf("Total() = %d, want 0 (the offline transport never dials)", got)
 	}
 }

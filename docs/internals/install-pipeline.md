@@ -83,7 +83,8 @@ commit, not just the ref ([Resolution replay](cache.md#resolution-replay)).
 | `--refresh`, branch or tag pinned | One `Advertise`; an unchanged commit with its artifacts cached keeps the pin |
 | Otherwise | `acquireGitRoot`: fetch, build, commit, record the pin |
 
-A fetch goes through `gitsource.Client`, which `gitfetch` implements.
+A fetch goes through `gitsource.Client`, which `gitfetch` implements; under
+`--offline` the client is `gitsource.Offline`, which refuses every call.
 `collectionbuild` builds each collection through `treearchive` and
 self-checks it with `manifest.VerifyChain` ([Packages](index.md#packages)).
 
@@ -172,7 +173,9 @@ sequenceDiagram
 
 A prefetch failure is a warning; the worker then acquires the artifact itself.
 Roles are never prefetched. The prefetcher is off under `--dry-run`,
-`--no-cache` or with no artifact store, and `warm` queues in key order.
+`--no-cache`, `--offline` or with no artifact store, and `warm` queues in key
+order. Offline, each miss then fails on the worker's own `ErrOfflineMode`
+check below, before any client is asked.
 
 The metrics report is written before the deferred `Close` joins the pool. On a
 failed install, a worker still downloading an undispatched level counts after

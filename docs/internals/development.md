@@ -165,7 +165,7 @@ tests, three more rules keep an import or a call in one place:
 
 | Trap | Why it passes vacuously | Do instead |
 | --- | --- | --- |
-| Offline | `cfg.Offline` over a live client or a warm API cache never reaches the refusal | run over `fetch.NewOffline` after `Store.ClearCaches` |
+| Offline | `cfg.Offline` over a live client or a warm API cache never reaches the refusal; a live git double serves a fetch that should have been refused | run over `fetch.NewOffline` after `Store.ClearCaches`; for git, assert zero calls on the counting double or wire `gitsource.Offline` |
 | Secrets in JSON | `encoding/json` escapes `&`, `<`, `>`, so a needle spanning `&` never matches | search one parameter, with a positive control |
 | Hand-assembled tar | without the two zero trailer blocks a short read fails on its own | end the fixture with both trailer blocks |
 | Config | `/etc/ansible/ansible.cfg` stays reachable past `neutralizeAnsibleDiscovery` | assert only flag or env values unlike the defaults; no `:` in paths |
