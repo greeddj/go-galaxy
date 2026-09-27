@@ -301,8 +301,8 @@ func (a *advertisement) tips() []plumbing.Hash {
 }
 
 // resolve maps ref onto its advertised commit and full ref name; an unqualified
-// name takes the branch over a same-named tag with a warning, as git checkout
-// does, and a tag resolves to its peeled commit when one is advertised.
+// name takes the branch over a same-named tag, as git clone --branch does, and
+// warns; a tag resolves to its peeled commit when one is advertised.
 func resolve(adv *advertisement, ref gitsource.Ref, display string) (plumbing.Hash, string, []string, error) {
 	switch ref.Kind {
 	case gitsource.RefHEAD:

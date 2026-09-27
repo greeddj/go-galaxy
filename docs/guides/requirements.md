@@ -315,7 +315,7 @@ line about prereleases matters only if you meant to allow them
 | Source | Detected by | `version:` | Default install name |
 | --- | --- | --- | --- |
 | Galaxy | `owner.role`, each half `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` | A tag; absent or `*` means the highest | `owner.role` |
-| git | `git+`, `git@`, `scm: git` or a `github.com` URL | A ref; absent means `HEAD` | Repository name minus `.git` |
+| git | `git+`, `git@`, `scm: git` or a `github.com` URL | A ref, read as for a [git collection](#collections); absent means `HEAD` | Repository name minus `.git` |
 | url | An http(s) URL ending `.tar.gz` | A label; absent means the sha256's first 12 hex digits | File name minus `.tar.gz` |
 
 An install name matches `^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$` and is never

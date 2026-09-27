@@ -128,9 +128,12 @@ are not read, and an ssh URL must name its user (`ssh://git@host/...`). Set
 credentials and `known_hosts` per
 [Git sources and credentials](../guides/servers-and-auth.md#git-sources-and-credentials).
 
-A ref that names both a branch and a tag means the branch, with a warning.
-ansible takes the tag, unless the name is the repository's default branch.
-Spell `refs/tags/<name>` for the tag
+A ref that names both a branch and a tag means the branch, with a warning,
+for a collection and a role alike. ansible builds a collection from a clone
+checked out at the ref, so it takes the tag unless the name is the
+repository's default branch. For a role it then runs `git archive` at the
+ref, which always takes the tag, unless `--keep-scm-meta` packs the checkout
+instead. Spell `refs/tags/<name>` for the tag
 ([Collections](../guides/requirements.md#collections)).
 
 <details markdown>
@@ -230,6 +233,8 @@ neither tool installed
   the last dot.
 - Without `scm: git`, an http(s) `src:` is a git role only when its host is
   exactly `github.com`, where ansible matches the text anywhere.
+- An abbreviated commit as a git role's ref exits `2`, where ansible checks it
+  out. Spell the full 40-hex commit.
 - A role carrying both `meta/main.yml` and `meta/main.yaml` is refused, where
   ansible reads `meta/main.yml`.
 - Files marked `export-ignore` in `.gitattributes` are installed, where

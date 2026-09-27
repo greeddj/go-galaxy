@@ -613,3 +613,76 @@ func TestAnnotatedTagIsWantedAsTheTagObject(t *testing.T) {
 	}
 	assertResolved(t, res, "refs/tags/v1.0.0", app.first, "1.2.3")
 }
+
+// TestAmbiguousNameTakesTheBranchWhateverHEADNames pins that a name both a
+// branch and a tag resolves to the branch for a collection and a role alike,
+// whether HEAD names another branch or that one: the default branch decides nothing.
+func TestAmbiguousNameTakesTheBranchWhateverHEADNames(t *testing.T) {
+	t.Parallel()
+	for _, head := range []string{"main", "release"} {
+		t.Run("collection with HEAD at "+head, func(t *testing.T) {
+			t.Parallel()
+			app := newAppRepo(t)
+			app.repo.Branch("release", app.first)
+			app.repo.Tag("release", app.dev)
+			app.repo.SetHEAD(head)
+			srv := fakegit.New(t)
+			srv.Add("app", app.repo)
+			f := newFetcher(t)
+			u := mustURL(t, srv.RepoURL("app"))
+			assertAdvertisedHEAD(t, f, u, head)
+
+			res, err := acquire(t, f, gitsource.Request{URL: u, Ref: mustRef(t, "release")})
+			if err != nil {
+				t.Fatalf("Acquire(release): %v", err)
+			}
+			assertResolved(t, res, "refs/heads/release", app.first, "1.2.3")
+			assertAmbiguityWarning(t, res.Warnings)
+		})
+		t.Run("role with HEAD at "+head, func(t *testing.T) {
+			t.Parallel()
+			role := newRoleRepo(t)
+			role.repo.Branch("release", role.first)
+			role.repo.Tag("release", role.dev)
+			role.repo.SetHEAD(head)
+			srv := fakegit.New(t)
+			srv.Add("role", role.repo)
+			f := newFetcher(t)
+			u := mustURL(t, srv.RepoURL("role"))
+			assertAdvertisedHEAD(t, f, u, head)
+
+			res, err := acquireRole(t, f, gitsource.RoleRequest{URL: u, Ref: mustRef(t, "release")})
+			if err != nil {
+				t.Fatalf("AcquireRole(release): %v", err)
+			}
+			if res.RefName != "refs/heads/release" || res.Commit != role.first.String() {
+				t.Fatalf("resolved to (%s, %s), want (refs/heads/release, %s)", res.RefName, res.Commit, role.first)
+			}
+			// The dev commit behind the tag drops the role name, so this is the
+			// branch's tree, not only its commit hash reported.
+			if res.GalaxyRoleName != "app" {
+				t.Fatalf("GalaxyRoleName = %q, want the branch commit's %q", res.GalaxyRoleName, "app")
+			}
+			assertRoleArtifact(t, res)
+			assertAmbiguityWarning(t, res.Warnings)
+		})
+	}
+}
+
+// assertAdvertisedHEAD is the positive control that the remote's HEAD names the
+// branch the fixture set, so a run with HEAD at the ambiguous name tests that.
+func assertAdvertisedHEAD(t *testing.T, f *Fetcher, u gitsource.URL, branch string) {
+	t.Helper()
+	_, refName, err := f.Advertise(t.Context(), u, mustRef(t, ""), gitsource.Credential{})
+	if err != nil || refName != "refs/heads/"+branch {
+		t.Fatalf("Advertise(HEAD) = (%s, %v), want refs/heads/%s", refName, err, branch)
+	}
+}
+
+// assertAmbiguityWarning checks the resolution named the ambiguity it settled.
+func assertAmbiguityWarning(t *testing.T, warnings []string) {
+	t.Helper()
+	if joined := strings.Join(warnings, "\n"); !strings.Contains(joined, "names both a branch and a tag") {
+		t.Fatalf("no ambiguity warning: %q", joined)
+	}
+}
