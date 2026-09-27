@@ -25,8 +25,8 @@ flowchart TD
 
 No `--offline` is mounted, so `checkS3CacheOffline` never fires.
 `initCleanup` is the backend half of [Shared setup](commands.md#shared-setup)
-without the dry-run banner, temp sweep, `--clear-cache` or `RecordProject`,
-plus `LoadProjectRegistry`.
+without the dry-run banner, temp sweep or `--clear-cache`, plus
+`LoadProjectRegistry`. Neither records a project; cleanup never does.
 
 ## Scan: every recorded project's installs
 
@@ -120,7 +120,7 @@ What bounds the cache sweeps:
 | --- | --- | --- |
 | 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, backend open, lock, snapshot or registry load |
 | 1 | scan | I/O error walking a workspace or listing a roles path |
-| 2 | `projectRequirementRoots` | `ErrProjectRequirementsUnreadable` |
+| 2 | `projectRequirementRoots` | `ErrProjectRequirementsUnreadable`, with a hint naming the file, the project and the registry's `Location` |
 | 5 | `removeInstalled`, `removeRole` | `ErrUnsafeRemovalPath` |
 | 1 | `removeInstalled`, `removeRole` | any other removal error |
 | 2, 4 | `finalizeCleanup` | `SaveStore` failed |

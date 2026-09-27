@@ -148,12 +148,15 @@ flowchart TD
   C11 -->|"failed"| XP
   C11 --> C12["--clear-cache unless --dry-run:<br/>ClearCaches, ClearFiles"]
   C12 -->|"ClearFiles failed"| XP
-  C12 --> C13["RecordProject unless<br/>--dry-run, failure warns"]
-  C13 --> XI(["command work under<br/>the holder context"])
+  C12 --> XI(["command work under<br/>the holder context"])
   C10 --> XCL(["cleanup work"])
 ```
 
 `runCollectionCommand` builds everything before the command's own work.
+Setup records no project: install (after opening its collections root), warm
+and lock call `loadRootsAndRecordProject` before any source is fetched, which
+records only once the requirements file loads, except under `--dry-run`, and
+warns if the record fails.
 `BuildCollectionConfig` refuses in a fixed order, each refusal exit 2, listed
 under [Order of construction](config-loading.md#order-of-construction).
 `--offline` swaps the Galaxy client for `fetch.NewOffline`, makes the url

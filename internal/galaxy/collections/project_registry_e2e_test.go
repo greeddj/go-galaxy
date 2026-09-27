@@ -1,0 +1,179 @@
+package collections_test
+
+// These e2e tests pin when install, warm and lock record their project in the
+// cleanup registry: only once the requirements file loads, so a run failing on
+// its file leaves the directory's last good record, and so cleanup, as it was.
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+
+	"github.com/greeddj/go-galaxy/internal/galaxy/cleanup"
+	"github.com/greeddj/go-galaxy/internal/galaxy/collections"
+	"github.com/greeddj/go-galaxy/internal/galaxy/config"
+	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
+	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
+	"github.com/greeddj/go-galaxy/internal/galaxy/store"
+	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
+)
+
+// registryCommand is one of the three commands that record a project.
+type registryCommand struct {
+	run  func(ctx context.Context, cfg *config.Config, runtime *infra.Infra) error
+	name string
+}
+
+// registryCommands lists install, warm and lock, each recording through the
+// same helper once its requirements file loads.
+func registryCommands() []registryCommand {
+	return []registryCommand{
+		{name: "install", run: collections.Start},
+		{name: "warm", run: collections.Warm},
+		{name: "lock", run: collections.Lock},
+	}
+}
+
+// failingRequirementsFile is one requirements path that fails to load, and the
+// sentinel the failure carries.
+type failingRequirementsFile struct {
+	want error
+	name string
+	path string
+}
+
+// plantFailingRequirements lays out in dir every shape of requirements file
+// that fails to load: a typo'd name never written, a directory, bytes that are
+// not YAML, and a galaxy.toml whose constraint semver cannot parse.
+func plantFailingRequirements(t *testing.T, dir string) []failingRequirementsFile {
+	t.Helper()
+	if err := os.MkdirAll(dir, helpers.DirMod); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	directory := filepath.Join(dir, "dir.yml")
+	if err := os.Mkdir(directory, helpers.DirMod); err != nil {
+		t.Fatalf("mkdir %s: %v", directory, err)
+	}
+	notYAML := filepath.Join(dir, "broken.yml")
+	if err := os.WriteFile(notYAML, []byte("collections:\n  - name: [unclosed\n"), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", notYAML, err)
+	}
+	badTOML := filepath.Join(dir, helpers.RequirementsTOMLName)
+	if err := os.WriteFile(badTOML, []byte("[project]\ncollections = [\"acme.app >= 0..20\"]\n"), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", badTOML, err)
+	}
+	return []failingRequirementsFile{
+		{name: "a missing file", path: filepath.Join(dir, "requirement.yml"), want: os.ErrNotExist},
+		{name: "a directory", path: directory, want: helpers.ErrRequirementsNotRegular},
+		{name: "bytes that are not YAML", path: notYAML, want: helpers.ErrInvalidRequirementsYAML},
+		{name: "a galaxy.toml constraint semver cannot parse", path: badTOML, want: helpers.ErrInvalidCollectionConstraint},
+	}
+}
+
+// loadRegistry reads the local registry under cacheDir, failing the test on
+// any error.
+func loadRegistry(t *testing.T, cacheDir string) map[string]store.ProjectRecord {
+	t.Helper()
+	registry, err := store.LoadProjectRegistry(cacheDir)
+	if err != nil {
+		t.Fatalf("LoadProjectRegistry: %v", err)
+	}
+	return registry.Projects
+}
+
+// TestFailedLoadKeepsProjectRecord runs install, warm and lock over every
+// failing requirements shape, beside the installed project and in a directory
+// never recorded: each fails on its file, and the registry stays deep-equal.
+func TestFailedLoadKeepsProjectRecord(t *testing.T) {
+	t.Parallel()
+	f := newE2EFixture(t)
+	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("Start (good install): %v", err)
+	}
+	projectDir := filepath.Dir(f.cfg.RequirementsFile)
+	want := loadRegistry(t, f.cfg.CacheDir)
+	if record, ok := want[projectDir]; !ok || record.RequirementsFile != f.cfg.RequirementsFile {
+		t.Fatalf("good install recorded %#v, want %q under %q", want, f.cfg.RequirementsFile, projectDir)
+	}
+
+	otherDir := filepath.Join(t.TempDir(), "other")
+	shapes := append(plantFailingRequirements(t, filepath.Join(projectDir, "failing")),
+		plantFailingRequirements(t, otherDir)...)
+	// The typo'd file sits beside the recorded one too, the shape a mistyped -r takes.
+	shapes = append(shapes, failingRequirementsFile{
+		name: "a typo beside the recorded file", path: filepath.Join(projectDir, "requirement.yml"), want: os.ErrNotExist,
+	})
+	for _, cmd := range registryCommands() {
+		for _, shape := range shapes {
+			cfg := *f.cfg
+			cfg.RequirementsFile = shape.path
+			err := cmd.run(context.Background(), &cfg, f.runtime)
+			if !errors.Is(err, shape.want) {
+				t.Fatalf("%s over %s (%s): error = %v, want errors.Is %v", cmd.name, shape.name, shape.path, err, shape.want)
+			}
+			if got := loadRegistry(t, f.cfg.CacheDir); !reflect.DeepEqual(got, want) {
+				t.Fatalf("%s over %s (%s) changed the registry:\n got %#v\nwant %#v", cmd.name, shape.name, shape.path, got, want)
+			}
+		}
+	}
+}
+
+// TestNetworkFailureAfterLoadStillRecords pins the other side: a file that
+// loads is recorded even when the run then fails against its server, since
+// what the run did install or cache is that file's to keep.
+func TestNetworkFailureAfterLoadStillRecords(t *testing.T) {
+	t.Parallel()
+	for _, cmd := range registryCommands() {
+		t.Run(cmd.name, func(t *testing.T) {
+			t.Parallel()
+			f := newE2EFixture(t)
+			f.server.Fail(fakegalaxy.EndpointRootMetadata, "", "", fakegalaxy.Fault{Status: http.StatusServiceUnavailable, Count: -1})
+			f.server.Fail(fakegalaxy.EndpointVersionsList, "", "", fakegalaxy.Fault{Status: http.StatusServiceUnavailable, Count: -1})
+
+			if err := cmd.run(context.Background(), f.cfg, f.runtime); err == nil {
+				t.Fatalf("%s against a failing server succeeded, want an error", cmd.name)
+			}
+			record, ok := loadRegistry(t, f.cfg.CacheDir)[filepath.Dir(f.cfg.RequirementsFile)]
+			if !ok || record.RequirementsFile != f.cfg.RequirementsFile {
+				t.Fatalf("%s: registry record = %#v (present %v), want %q recorded", cmd.name, record, ok, f.cfg.RequirementsFile)
+			}
+		})
+	}
+}
+
+// TestCleanupAfterFailedTypoRunRemovesNothing is the destructive case: a
+// mistyped -r used to replace the record with a file that does not exist, and
+// cleanup then deleted every install the project's real file reaches.
+func TestCleanupAfterFailedTypoRunRemovesNothing(t *testing.T) {
+	t.Parallel()
+	f := newE2EFixture(t)
+	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("Start (good install): %v", err)
+	}
+	typo := *f.cfg
+	typo.RequirementsFile = filepath.Join(filepath.Dir(f.cfg.RequirementsFile), "requirement.yml")
+	if err := collections.Start(context.Background(), &typo, f.runtime); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Start (typo): error = %v, want errors.Is os.ErrNotExist", err)
+	}
+
+	if err := cleanup.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("cleanup.Start: %v", err)
+	}
+	assertManifestInstalled(t, f.downloadPath, "app")
+	assertManifestInstalled(t, f.downloadPath, "lib")
+
+	// Control: once the recorded file itself names nothing, the same cleanup
+	// removes both, so the survival above is the record's doing.
+	if err := os.WriteFile(f.cfg.RequirementsFile, []byte("collections: []\n"), helpers.FileMod); err != nil {
+		t.Fatalf("rewrite requirements: %v", err)
+	}
+	if err := cleanup.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("cleanup.Start (control): %v", err)
+	}
+	assertPathAbsent(t, manifestPathFor(f.downloadPath, "app"))
+	assertPathAbsent(t, manifestPathFor(f.downloadPath, "lib"))
+}

@@ -740,3 +740,32 @@ func TestRecordProjectRoundTripsRolesPath(t *testing.T) {
 		t.Fatalf("a record without a roles path carries roles_path: %s", data)
 	}
 }
+
+// TestLoadProjectRegistryNamesItsObject pins Location for the S3 registry, the
+// s3:// URL of the object cleanup's hint names, under the configured prefix,
+// both before any record exists and once one does.
+func TestLoadProjectRegistryNamesItsObject(t *testing.T) {
+	t.Parallel()
+	b := newTestBackend(t)
+	b.prefix = "ci/cache"
+	ctx := t.Context()
+	want := "s3://test/ci/cache/state/projects.json"
+
+	registry, err := b.LoadProjectRegistry(ctx)
+	if err != nil {
+		t.Fatalf("LoadProjectRegistry (absent): %v", err)
+	}
+	if registry.Location != want {
+		t.Fatalf("Location (absent) = %q, want %q", registry.Location, want)
+	}
+	if err := b.RecordProject(ctx, filepath.Join(t.TempDir(), "requirements.yml"), "collections", ""); err != nil {
+		t.Fatalf("RecordProject: %v", err)
+	}
+	registry, err = b.LoadProjectRegistry(ctx)
+	if err != nil {
+		t.Fatalf("LoadProjectRegistry (written): %v", err)
+	}
+	if registry.Location != want {
+		t.Fatalf("Location (written) = %q, want %q", registry.Location, want)
+	}
+}

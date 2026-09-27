@@ -216,10 +216,11 @@ func (b *Backend) LoadProjectRegistry(ctx context.Context) (*store.ProjectRegist
 		return nil, err
 	}
 	key := b.key(statePrefix, projectsObject)
+	location := "s3://" + b.cfg.Bucket + "/" + key
 	data, err := b.readObject(ctx, key)
 	if err != nil {
 		if errors.Is(err, errS3NotFound) {
-			return &store.ProjectRegistry{Projects: make(map[string]store.ProjectRecord)}, nil
+			return &store.ProjectRegistry{Projects: make(map[string]store.ProjectRecord), Location: location}, nil
 		}
 		return nil, err
 	}
@@ -231,6 +232,7 @@ func (b *Backend) LoadProjectRegistry(ctx context.Context) (*store.ProjectRegist
 	if registry.Projects == nil {
 		registry.Projects = make(map[string]store.ProjectRecord)
 	}
+	registry.Location = location
 	return &registry, nil
 }
 

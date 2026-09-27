@@ -135,14 +135,16 @@ server without having asked it.
 
 `projects.json` maps a project directory to its requirements file,
 collections path and roles path, built by `store.NewProjectRecord` on both
-backends.
+backends. Each backend's `LoadProjectRegistry` sets `Location`, the file or
+`s3://` object it read, never written, for cleanup's hint.
 
 | Rule | Why |
 | :-- | :-- |
 | Missing is empty; undecodable is `ErrCorruptProjectRegistry` | Read as empty, nothing is reachable and `cleanup` deletes everything |
 | No schema version: fields are only added, and absence reads conservatively, as no `roles_path` means "do not scan" | An older binary re-recording a project drops fields it does not know, so a missing field must read as the safe case |
 | A galaxy.toml path goes in `requirements_file` | An older binary reads it as YAML, so its `cleanup` fails closed |
-| `--dry-run` records nothing (`recordProjectUnlessDryRun`) | A previewed broken file would abort every cleanup |
+| Recorded only once the requirements file loads (`loadRootsAndRecordProject`), before any source is fetched or anything installed | A run failing on its file, such as a mistyped `-r`, would replace the directory's good record, and `cleanup` would then delete what that record reaches |
+| `--dry-run` records nothing (`recordProjectUnlessDryRun`) | A preview enrolls nothing the destructive `cleanup` acts on |
 
 ## The cache seam
 

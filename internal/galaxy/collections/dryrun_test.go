@@ -606,42 +606,62 @@ func TestInitInstallDryRunSkipsClearCache(t *testing.T) {
 	}
 }
 
-// TestInitInstallDryRunSkipsRecordProject pins that a dry run never records
-// the project in the registry, which feeds the destructive cleanup command.
-func TestInitInstallDryRunSkipsRecordProject(t *testing.T) {
+// TestLoadRootsAndRecordProjectSkipsDryRun pins that initInstall records
+// nothing, and that a dry run whose file loads records nothing either, since
+// the registry feeds the destructive cleanup; the real run is the control.
+func TestLoadRootsAndRecordProjectSkipsDryRun(t *testing.T) {
 	t.Parallel()
-	root := t.TempDir()
-	cacheDir := filepath.Join(root, "cache")
-	reqPath := filepath.Join(root, "requirements.yml")
-	mustWriteFile(t, reqPath, []byte("collections: []\n"))
+	for _, dryRun := range []bool{true, false} {
+		t.Run(fmt.Sprintf("dry run %v", dryRun), func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			cacheDir := filepath.Join(root, "cache")
+			reqPath := filepath.Join(root, "requirements.yml")
+			mustWriteFile(t, reqPath, []byte("collections: []\n"))
 
-	cfg := &config.Config{
-		CacheDir:         cacheDir,
-		RequirementsFile: reqPath,
-		DownloadPath:     filepath.Join(root, "install"),
-		DryRun:           true,
-		Workers:          1,
+			cfg := &config.Config{
+				CacheDir:         cacheDir,
+				RequirementsFile: reqPath,
+				DownloadPath:     filepath.Join(root, "install"),
+				DryRun:           dryRun,
+				Workers:          1,
+			}
+			runtime := infra.New(noopPrinter{}, http.DefaultClient)
+
+			lockCtx, state, err := initInstall(context.Background(), cfg, runtime)
+			if err != nil {
+				t.Fatalf("initInstall: %v", err)
+			}
+			t.Cleanup(func() {
+				if state.release != nil {
+					_ = state.release()
+				}
+				_ = state.backend.Close(context.Background())
+			})
+			if got := mustLoadRegistryProjects(t, cacheDir); len(got) != 0 {
+				t.Fatalf("initInstall recorded %+v before any file loaded, want nothing", got)
+			}
+
+			if _, _, err := loadRootsAndRecordProject(lockCtx, cfg, runtime, state.backend); err != nil {
+				t.Fatalf("loadRootsAndRecordProject: %v", err)
+			}
+			_, recorded := mustLoadRegistryProjects(t, cacheDir)[root]
+			if recorded == dryRun {
+				t.Fatalf("dry run %v: project recorded = %v, want %v", dryRun, recorded, !dryRun)
+			}
+		})
 	}
-	runtime := infra.New(noopPrinter{}, http.DefaultClient)
+}
 
-	_, state, err := initInstall(context.Background(), cfg, runtime)
-	if err != nil {
-		t.Fatalf("initInstall: %v", err)
-	}
-	t.Cleanup(func() {
-		if state.release != nil {
-			_ = state.release()
-		}
-		_ = state.backend.Close(context.Background())
-	})
-
+// mustLoadRegistryProjects reloads the local registry under cacheDir and
+// returns its projects, failing the test on any error.
+func mustLoadRegistryProjects(t *testing.T, cacheDir string) map[string]store.ProjectRecord {
+	t.Helper()
 	registry, err := store.LoadProjectRegistry(cacheDir)
 	if err != nil {
 		t.Fatalf("store.LoadProjectRegistry: %v", err)
 	}
-	if len(registry.Projects) != 0 {
-		t.Errorf("expected an empty project registry after a dry run, got %d entries: %+v", len(registry.Projects), registry.Projects)
-	}
+	return registry.Projects
 }
 
 // TestWriteRunMetricsDryRunSkipsAndWarns pins writeRunMetrics' own dry-run

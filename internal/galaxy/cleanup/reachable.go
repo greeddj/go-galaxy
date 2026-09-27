@@ -53,7 +53,7 @@ func buildReachable(
 
 	// Phase 2: every recorded project's roots, against the complete index.
 	for _, projectPath := range projectPaths {
-		file, rolesUnread, err := projectRequirementRoots(runtime.Output, projectPath, registry.Projects[projectPath])
+		file, rolesUnread, err := projectRequirementRoots(runtime.Output, registry.Location, projectPath, registry.Projects[projectPath])
 		if err != nil {
 			return nil, nil, roleReachability{}, err
 		}
@@ -221,7 +221,7 @@ func gitSubdirWithin(entrySubdir, rootSubdir string) bool {
 // scan skipped. A missing file contributes nothing; any other failure aborts,
 // since unknown roots could protect any project's copies.
 func projectRequirementRoots(
-	out output.Printer, projectPath string, project store.ProjectRecord,
+	out output.Printer, registryLocation, projectPath string, project store.ProjectRecord,
 ) (requirements.File, bool, error) {
 	file, err := requirements.Load(project.RequirementsFile, "")
 	if err == nil {
@@ -240,7 +240,21 @@ func projectRequirementRoots(
 			projectPath, project.RequirementsFile, rolesErr.Err)
 		return file, true, nil
 	}
-	return requirements.File{}, false, fmt.Errorf("%w: %s: %w", helpers.ErrProjectRequirementsUnreadable, project.RequirementsFile, err)
+	return requirements.File{}, false, fmt.Errorf("%w: %s: %w (%s)",
+		helpers.ErrProjectRequirementsUnreadable, project.RequirementsFile, err,
+		unreadableProjectHint(registryLocation, projectPath, project.RequirementsFile))
+}
+
+// unreadableProjectHint names the three ways out of a recorded file cleanup
+// cannot load: repair the file, record the directory again with a file that
+// loads, or delete the project's entry from the registry the backend read.
+func unreadableProjectHint(registryLocation, projectPath, requirementsFile string) string {
+	registry := "the project registry"
+	if registryLocation != "" {
+		registry = registryLocation
+	}
+	return fmt.Sprintf("fix or restore %s, rerun go-galaxy install in %s with a requirements file that loads, "+
+		"or delete the %q entry from %s", requirementsFile, projectPath, projectPath, registry)
 }
 
 // keepProjectRoles lists every role installed under the project's roles path,

@@ -28,15 +28,17 @@ flowchart TD
 `runWarm` refuses `--no-cache` (`ErrWarmCacheDisabled`, exit 2) before
 `internal/cache.New`, so no backend opens and no lock is taken. Everything else
 runs inside `withBackend`, whose startup is
-[Shared setup](commands.md#shared-setup): the dead-run temp sweep,
-`--clear-cache` and `RecordProject` happen there.
+[Shared setup](commands.md#shared-setup): the dead-run temp sweep and
+`--clear-cache` happen there. `RecordProject` waits for the requirements file
+to load, as in install.
 
 ## Plan
 
 ```mermaid
 flowchart TD
     L["loadRoots: requirements file"] -->|"fails"| X2(["exit 2"])
-    L --> V["newVerifyContext"]
+    L --> RP["RecordProject unless<br/>--dry-run, failure warns"]
+    RP --> V["newVerifyContext"]
     V -->|"fails"| X2
     V --> F{"--frozen set?"}
     F -->|"yes"| RL["resolveFromLockfile"]

@@ -26,9 +26,12 @@ type ProjectRecord struct {
 	RolesPath string `json:"roles_path,omitempty"`
 }
 
-// ProjectRegistry stores known projects keyed by path.
+// ProjectRegistry stores known projects keyed by path. Location is where the
+// backend read it from, for a message that tells the operator which file or
+// object to edit; it is never written.
 type ProjectRegistry struct {
 	Projects map[string]ProjectRecord `json:"projects"`
+	Location string                   `json:"-"`
 }
 
 // RecordProject records or updates a project entry in the registry.
@@ -75,7 +78,7 @@ func LoadProjectRegistry(cacheDir string) (*ProjectRegistry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &ProjectRegistry{Projects: make(map[string]ProjectRecord)}, nil
+			return &ProjectRegistry{Projects: make(map[string]ProjectRecord), Location: path}, nil
 		}
 		return nil, err
 	}
@@ -85,6 +88,7 @@ func LoadProjectRegistry(cacheDir string) (*ProjectRegistry, error) {
 			helpers.ErrCorruptProjectRegistry, path, err)
 	}
 	registry.Projects = ensureMap(registry.Projects)
+	registry.Location = path
 	return &registry, nil
 }
 

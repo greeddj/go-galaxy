@@ -12,7 +12,8 @@ file itself: [Lockfile format](lockfile-format.md).
 flowchart TD
   L1(["Shared setup: lock held,<br/>snapshot loaded"]) --> L2["loadRoots"]
   L2 -->|"refused"| X2(["exit 2"])
-  L2 --> L3["resolveCollectionsInternal,<br/>as install resolves"]
+  L2 --> L2R["RecordProject unless<br/>--dry-run, failure warns"]
+  L2R --> L3["resolveCollectionsInternal,<br/>as install resolves"]
   L3 -->|"failed"| XR(["exit 1, 2, 3, 4,<br/>5 or 7 by cause"])
   L3 --> L4["resolveRoles,<br/>as install resolves"]
   L4 -->|"failed"| XR
@@ -27,7 +28,8 @@ banner `Resolving for lockfile`. Resolution and source discovery are install's,
 drawn on [install flow](flow-install.md): the same
 `resolveCollectionsInternal` and `resolveRoles`, without `newVerifyContext` or
 `planCollections`. It installs nothing but saves the snapshot, so later runs
-replay the resolve.
+replay the resolve. It records its project once the file loads, as install
+does, `--check` included.
 
 ## Building the lockfile
 

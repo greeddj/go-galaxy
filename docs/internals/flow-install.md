@@ -42,7 +42,8 @@ deferred there, so every prefetch worker joins before the lock is released.
 ```mermaid
 flowchart TD
   P1["loadRoots: read and<br/>parse the requirements"] -->|"missing, unreadable,<br/>invalid"| PX2(["exit 2"])
-  P1 --> P2["newVerifyContext: keyring,<br/>policy, signatures: blocks"]
+  P1 --> P1R["RecordProject unless<br/>--dry-run, failure warns"]
+  P1R --> P2["newVerifyContext: keyring,<br/>policy, signatures: blocks"]
   P2 -->|"refused, or signatures:<br/>without a keyring"| PX2
   P2 --> P3{"--frozen?"}
   P3 -->|"yes"| P4["LoadRequired lockfile,<br/>resolveFromLockfile"]
@@ -64,6 +65,9 @@ flowchart TD
 ```
 
 Why this order: [Plan construction](install-pipeline.md#plan-construction).
+`loadRootsAndRecordProject` records the project only after the file loads, so
+a run that fails on its file leaves the directory's record as it was, and
+before any source is fetched or anything installed.
 
 ## Collection resolution
 

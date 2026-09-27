@@ -147,7 +147,6 @@ func initInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) 
 	if err := clearCacheIfRequested(lockCtx, cfg, runtime, backend, st); err != nil {
 		return lockCtx, nil, err
 	}
-	recordProjectUnlessDryRun(lockCtx, cfg, runtime, backend)
 
 	committed = true
 	return lockCtx, &installState{
@@ -192,9 +191,23 @@ func clearCacheIfRequested(
 	return backend.ClearFiles(ctx)
 }
 
+// loadRootsAndRecordProject is loadRoots followed, only on success, by the
+// registry record, under the holder ctx and before any discovery commit, so a
+// file that fails to load never replaces the directory's last good record.
+func loadRootsAndRecordProject(
+	ctx context.Context, cfg *config.Config, runtime *infra.Infra, backend cacheManager.Backend,
+) ([]collection, []requirements.RoleRequirement, error) {
+	roots, roleRoots, err := loadRoots(cfg, runtime)
+	if err != nil {
+		return nil, nil, err
+	}
+	recordProjectUnlessDryRun(ctx, cfg, runtime, backend)
+	return roots, roleRoots, nil
+}
+
 // recordProjectUnlessDryRun records this project in the registry except
-// under --dry-run: a previewed broken requirements file enrolled there would
-// abort every cleanup sharing this cache.
+// under --dry-run, which previews and so enrolls nothing for the destructive
+// cleanup to act on; a failed record only warns.
 func recordProjectUnlessDryRun(ctx context.Context, cfg *config.Config, runtime *infra.Infra, backend cacheManager.Backend) {
 	if cfg.DryRun {
 		return
@@ -228,7 +241,7 @@ func sweepDeadRunTemps(ctx context.Context, runtime *infra.Infra, backend cacheM
 func prepareInstallPlan(
 	ctx context.Context, cfg *config.Config, runtime *infra.Infra, state *installState, root *os.Root,
 ) (*installPlan, error) {
-	roots, roleRoots, err := loadRoots(cfg, runtime)
+	roots, roleRoots, err := loadRootsAndRecordProject(ctx, cfg, runtime, state.backend)
 	if err != nil {
 		return nil, err
 	}

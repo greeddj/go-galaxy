@@ -3764,3 +3764,47 @@ func TestOpenProjectWorkspacePrefersRecordedCollectionsPathOverFallback(t *testi
 		t.Fatalf("expected the .collections sibling to survive untouched, stat error: %v", statErr)
 	}
 }
+
+// TestStartUnreadableRequirementsNamesTheWayOut pins the hint behind
+// ErrProjectRequirementsUnreadable: the recorded file, the project key and the
+// registry file the local backend read, so the operator knows what to edit.
+func TestStartUnreadableRequirementsNamesTheWayOut(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	downloadPath := t.TempDir()
+	installDir := seedInstallTree(t, downloadPath)
+	reqPath := filepath.Join(t.TempDir(), "requirements.yml")
+	if err := os.WriteFile(reqPath, []byte("{invalid"), helpers.FileMod); err != nil {
+		t.Fatalf("failed to write corrupt requirements file: %v", err)
+	}
+	registerCleanupProjectAt(t, cacheDir, downloadPath, reqPath)
+
+	err := Start(t.Context(), &config.Config{CacheDir: cacheDir}, newTestRuntime())
+	if !errors.Is(err, helpers.ErrProjectRequirementsUnreadable) {
+		t.Fatalf("expected ErrProjectRequirementsUnreadable, got %v", err)
+	}
+	registryPath := filepath.Join(cacheDir, helpers.StoreDBProjects)
+	for _, want := range []string{
+		"fix or restore " + reqPath,
+		"rerun go-galaxy install in proj",
+		`delete the "proj" entry from ` + registryPath,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to carry %q", err, want)
+		}
+	}
+	assertManifestSurvives(t, installDir)
+}
+
+// TestUnreadableProjectHintWithoutALocation pins the wording for a registry a
+// backend did not place, such as a test double's: the hint still names the
+// file and the key, and calls the registry by its role.
+func TestUnreadableProjectHintWithoutALocation(t *testing.T) {
+	t.Parallel()
+	got := unreadableProjectHint("", "/p", "/p/requirements.yml")
+	want := `fix or restore /p/requirements.yml, rerun go-galaxy install in /p with a requirements file that loads, ` +
+		`or delete the "/p" entry from the project registry`
+	if got != want {
+		t.Fatalf("unreadableProjectHint = %q, want %q", got, want)
+	}
+}

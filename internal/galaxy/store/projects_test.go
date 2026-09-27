@@ -281,3 +281,37 @@ func TestRecordProjectOneRecordPerDirectory(t *testing.T) {
 		t.Fatalf("RequirementsFile = %q, want the later %q", got, yamlPath)
 	}
 }
+
+// TestLoadProjectRegistryNamesItsFile pins Location, which cleanup's hints
+// name: the registry path under cacheDir whether or not the file exists yet,
+// and never a key in the bytes RecordProject writes.
+func TestLoadProjectRegistryNamesItsFile(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	want := filepath.Join(cacheDir, helpers.StoreDBProjects)
+
+	registry, err := LoadProjectRegistry(cacheDir)
+	if err != nil {
+		t.Fatalf("LoadProjectRegistry (absent): %v", err)
+	}
+	if registry.Location != want {
+		t.Fatalf("Location (absent) = %q, want %q", registry.Location, want)
+	}
+	if err := RecordProject(cacheDir, filepath.Join(t.TempDir(), "requirements.yml"), "collections", ""); err != nil {
+		t.Fatalf("RecordProject: %v", err)
+	}
+	registry, err = LoadProjectRegistry(cacheDir)
+	if err != nil {
+		t.Fatalf("LoadProjectRegistry (written): %v", err)
+	}
+	if registry.Location != want {
+		t.Fatalf("Location (written) = %q, want %q", registry.Location, want)
+	}
+	data, err := os.ReadFile(want) // #nosec G304 -- want is built from this test's own t.TempDir
+	if err != nil {
+		t.Fatalf("read registry: %v", err)
+	}
+	if bytes.Contains(bytes.ToLower(data), []byte("location")) {
+		t.Fatalf("the registry file carries its own location: %s", data)
+	}
+}
