@@ -37,8 +37,8 @@ and a warm cache.
 | warm | 100 | 290.971 | 0.989 | 294.3x |
 
 The chart and this table come from one
-[go-galaxy-benchmark](#go-galaxy-benchmark) report; the chart rounds ratios to
-two decimals, the table to one.
+[go-galaxy-benchmark](#go-galaxy-benchmark) report. The chart rounds each
+ratio to two decimals, and the table rounds it to one.
 
 ### What each tool caches
 
@@ -49,21 +49,9 @@ two decimals, the table to one.
 | API metadata | Yes, one `api.json` response cache | Yes, plus the last resolution |
 | Installed files | Unpacked from each tarball | Hardlinked from the extracted tree |
 
-A warm `ansible-galaxy` run still downloads every tarball; a warm go-galaxy run
-sends no request. The warm rows compare two [cache
+A warm `ansible-galaxy` run still downloads every tarball. A warm go-galaxy
+run sends no request. The warm rows compare two [cache
 designs](../guides/caching.md#what-the-directory-holds), not one design done faster.
-
-## Why your numbers will differ
-
-| Rows | Bound by | On the test host |
-| :-- | :-- | :-- |
-| warm | Storage metadata work | 100 collections add over 66,000 files, symlinks and directories |
-| cold | The network and Galaxy that day | 10 collections: `ansible-galaxy` runs spanned 36.7 s to 143.7 s |
-
-> [!TIP]
-> Keep the cache and install directory on one filesystem, or files are copied,
-> not hardlinked. Tune [`--workers`](cli.md#concurrency) only where metadata
-> work contends.
 
 ## What was measured
 
@@ -84,17 +72,30 @@ extract, not two resolvers. Each tool has its own cache, on one filesystem.
 | Guest | libvirt, Oracle Linux Server 10.1, kernel `6.12.0-203.76.7.5.el10uek.x86_64` |
 | CPU and memory | 4 vCPU, 8 GB |
 | Storage | SSD RAID6 passed through as a block device, formatted xfs |
-| Tools | `ansible-galaxy [core 2.21.3]`, go-galaxy `v1.1.0-pre` (commit `2d12b2c`, go1.27.0) |
+| Tools | `ansible-galaxy [core 2.21.3]`, go-galaxy `v1.1.0-pre` built with go1.27.0 from the source of commit `9e3b117` |
+| Commit in the sample output | `2d12b2c`, the same source before a rebase that changed only CI workflow files |
 | The 66,000 objects | An earlier `testing/bench.sh` run, commit `826c765`, go1.26.7 |
 
 </details>
+
+## Why your numbers will differ
+
+| Rows | Bound by | On the test host |
+| :-- | :-- | :-- |
+| warm | Storage metadata work | 100 collections add over 66,000 files, symlinks and directories |
+| cold | The network and Galaxy that day | 10 collections: `ansible-galaxy` runs spanned 36.7 s to 143.7 s |
+
+> [!TIP]
+> Keep the cache and install directory on one filesystem, or files are copied,
+> not hardlinked ([The local cache](../guides/caching.md#the-local-cache)). Tune
+> [`--workers`](cli.md#concurrency) only where metadata work contends.
 
 ## Reproduce
 
 | Harness | Needs | Measures |
 | :-- | :-- | :-- |
 | [go-galaxy-benchmark](#go-galaxy-benchmark) | The two binaries | Collections, `cold` and `warm` |
-| [`testing/bench.sh`](#testingbenchsh) | `hyperfine`, `python3`, MinIO for S3 | Also `frozen` (go-galaxy only, `--frozen --offline`), S3, roles, peak RSS, bytes downloaded |
+| [`testing/bench.sh`](#testingbenchsh) | `hyperfine`, `python3`, MinIO for S3 | Also roles, peak RSS and bytes downloaded, plus go-galaxy alone under `--frozen --offline` and on S3 |
 
 Both run from a checkout:
 
@@ -102,6 +103,11 @@ Both run from a checkout:
 python3 -m venv .venv && .venv/bin/pip install ansible-core
 go build -o dist/ ./cmd/go-galaxy ./cmd/go-galaxy-benchmark
 ```
+
+> [!WARNING]
+> Both harnesses pass your environment through to the tools they time, so
+> unset `GO_GALAXY_*` and `ANSIBLE_*` variables first. An exported
+> `GO_GALAXY_S3_BUCKET`, for example, turns the go-galaxy runs into S3 runs.
 
 > [!TIP]
 > Keep `--work-dir` and `$TMPDIR` on real disk: a `tmpfs` measures RAM.
@@ -118,7 +124,7 @@ dist/go-galaxy-benchmark show --report /var/tmp/gg-bench/report.json \
 1.  About 80 minutes on the test host.
 
 `run` times both tools over collections in `cold` and `warm`, prints a table,
-and saves each successful run's wall clock to `report.json`; a failed run only
+and saves each successful run's wall clock to `report.json`. A failed run only
 adds to `FAILED`. `show` redraws a report as that table or the chart above,
 offline.
 
@@ -192,11 +198,12 @@ testing/bench.sh # (2)!
 SIZES=10 SCENARIOS="cold warm" testing/bench.sh # (3)!
 ```
 
-1.  Only for the S3 scenarios; without MinIO they are skipped with a warning.
+1.  Only for the S3 scenarios. Without MinIO they are skipped with a warning.
 2.  Every size and scenario: about three hours.
-3.  Or one size, two scenarios. See
-    [every knob and output file](../internals/development.md#the-benchmark-harness).
+3.  Or one size, two scenarios. The internals section
+    [The benchmark harness](../internals/development.md#the-benchmark-harness)
+    lists every knob and output file.
 
-Role figures are not published; `SCENARIOS="roles-cold roles-warm"
+Role figures are not published. `SCENARIOS="roles-cold roles-warm"
 testing/bench.sh` measures them. `ansible-galaxy` keeps no role cache, so its
 warm role runs download every role again.

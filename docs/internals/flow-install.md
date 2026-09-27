@@ -63,9 +63,7 @@ flowchart TD
   P10 --> P11
 ```
 
-`prepareInstallPlan` checks signatures, resolves roles and orders levels before
-`startPrefetcher`, so a keyring error, a missing role or a cycle fails before
-any background download is scheduled.
+Why this order: [Plan construction](install-pipeline.md#plan-construction).
 
 ## Collection resolution
 
@@ -86,37 +84,22 @@ flowchart TD
   R7 -->|"merged graph valid"| R10
   R3 -->|"yes"| R8
   R8 --> R9["solveCollections over<br/>the server list"]
-  R9 -->|"conflict, cycle, no<br/>candidate or a 404"| RX3(["exit 3"])
-  R9 -->|"a status but 404, bad<br/>document, unreachable, offline miss"| RX4(["exit 4"])
+  R9 -->|"conflict, no candidate<br/>or a 404"| RX3(["exit 3"])
+  R9 -->|"any status but 404, bad<br/>document, unreachable, offline miss"| RX4(["exit 4"])
   R9 -->|"metadata URL<br/>with userinfo"| RX5(["exit 5"])
   R9 --> R10["record the resolution<br/>in the snapshot"]
   R10 --> R11(["resolved set and graph"])
 ```
 
-`resolveCollectionsInternal` is shared by install, warm and lock; mechanism on
-[Version solver](solver.md) and [Cache and storage](cache.md). Roots expand
-first so the signature covers pinned locators: over unexpanded roots, a
-`--clear-cache` run would replay the old graph. The prewarm sits below the
-replay, which must issue no metadata request.
+`resolveCollectionsInternal` is shared by install, warm and lock. A cycle is
+refused later, in `planCollections`, which `lock` never runs. Why roots
+expand before the signature: [Resolution replay](cache.md#resolution-replay).
+Why the prewarm sits below the replay: [The Provider seam](solver.md#the-provider-seam).
 
 ## Source discovery
 
-A Galaxy role first maps to a repository and tag, from its pin or from the
-servers' v1 role API:
-
-```mermaid
-flowchart TD
-  G1{"Galaxy pin readable?"} -->|"yes"| G3(["repository and tag,<br/>then the git path"])
-  G1 -->|"no, --offline"| GX4(["exit 4"])
-  G1 -->|"no"| G2["ask each server's<br/>v1 role API in order"]
-  G2 -->|"no server<br/>serves v1"| GX2(["exit 2"])
-  G2 -->|"role or version<br/>unknown"| GX3(["exit 3"])
-  G2 -->|"request failed"| GXF(["exit 2, 3, 4,<br/>5 or 7 by cause"])
-  G2 --> G3
-```
-
-A git or url source, root or role, and a mapped Galaxy role then take one path
-to an exact pin:
+Each git or url source, root or role, and each Galaxy role once mapped, takes
+one path to an exact pin:
 
 ```mermaid
 flowchart TD
@@ -146,6 +129,20 @@ A pin is readable when `cache.PolicyForConstraint` allows: always under
 `--offline`, never under `--no-cache`, and under `--refresh` only for a git
 commit. `--dry-run` discards the build instead of committing it.
 
+A Galaxy role first maps to a repository and tag, from its pin or from the
+servers' v1 role API, then takes the path above:
+
+```mermaid
+flowchart TD
+  G1{"Galaxy pin readable?"} -->|"yes"| G3(["repository and tag,<br/>then the git path"])
+  G1 -->|"no, --offline"| GX4(["exit 4"])
+  G1 -->|"no"| G2["ask each server's<br/>v1 role API in order"]
+  G2 -->|"no server<br/>serves v1"| GX2(["exit 2"])
+  G2 -->|"role or version<br/>unknown"| GX3(["exit 3"])
+  G2 -->|"request failed"| GXF(["exit 2, 3, 4,<br/>5 or 7 by cause"])
+  G2 --> G3
+```
+
 ## Collection install
 
 ```mermaid
@@ -161,29 +158,20 @@ Each collection of the level, on its own worker:
 
 ```mermaid
 flowchart TD
-  C2{"identity safe as<br/>path elements?"} -->|"no"| CF1(["record the failure,<br/>print Failed"])
-  C2 -->|"yes"| C3{"record, marker, tally<br/>and GALAXY.yml match?"}
-  C3 -->|"no"| C5["acquire: prefetched,<br/>cached or fetched"]
-  C3 -->|"yes"| C4(["skip, repair GALAXY.yml,<br/>count as unverified"])
-  C5 -->|"failed"| CF2(["record the failure,<br/>print Failed"])
-  C5 --> C6{"sha256 pin<br/>matches?"}
-  C5 -->|"S3 read sha256 mismatch,<br/>first try, online"| C11["evict, force<br/>a download"]
-  C11 --> C5
-  C6 -->|"yes"| C7["verify signatures<br/>when verifying"]
-  C6 -->|"no"| CR{"online first-try cache<br/>hit, refetch could help?"}
-  C7 --> C8["extract through<br/>the extracted store"]
-  C7 -->|"failed"| CR
-  C8 --> C9(["write GALAXY.yml,<br/>record the install"])
-  C8 -->|"failed"| CR
-  CR -->|"no"| CF(["record the failure,<br/>print Failed"])
-  CR -->|"yes"| C10["evict unless a locked<br/>URL, force a download"]
-  C10 --> C5
+  C2{"identity safe as<br/>path elements?"} -->|"no"| CF(["record the failure,<br/>print Failed"])
+  C2 -->|"yes"| C3{"install record, extract marker<br/>and GALAXY.yml identity agree?"}
+  C3 -->|"yes"| C4(["skip; rewrite a drifted GALAXY.yml,<br/>count as unverified"])
+  C3 -->|"no"| C5["prepareWithRecovery: acquire,<br/>pin, signatures, extract; one refetch"]
+  C5 -->|"failed"| CF
+  C5 --> C9(["write GALAXY.yml,<br/>record the install"])
 ```
 
-Acquisition is [Acquiring an artifact](install-pipeline.md#acquiring-an-artifact),
-the refetch bound [Bounded recovery](install-pipeline.md#bounded-recovery). On
-cancellation `runInstallLevel` stops dispatching and returns nil, so the
-snapshot still saves and `main` sets the signal code.
+Mechanism: [Acquiring an artifact](install-pipeline.md#acquiring-an-artifact),
+[Bounded recovery](install-pipeline.md#bounded-recovery) for the one refetch,
+and [The extract-done marker](install-pipeline.md#the-extract-done-marker) for
+the marker and its tally. On cancellation `runInstallLevel` stops
+dispatching and returns nil, so the snapshot still saves and `main` sets the
+signal code.
 
 ## Roles
 
@@ -194,6 +182,9 @@ snapshot still saves and `main` sets the signal code.
 | Cap the graph | `helpers.RoleGraphMaxRoles` | `ErrInvalidRoleEntry`, exit 2 |
 | Queue meta dependencies | `roleDependencies` | unparseable entry, exit 2; a local role is skipped, a collection's role warns |
 | Install, `--workers` at a time | `installRoles` | foreign directory, fetch or extract failure: joined as a Failed item |
+
+Mechanism: [Role resolution](install-pipeline.md#role-resolution) and
+[Installing roles](install-pipeline.md#installing-roles).
 
 ## Dry run
 
@@ -206,14 +197,26 @@ failure would. The snapshot saves only if one already existed. Details:
 
 | Exit | Decided in | Cause |
 | --- | --- | --- |
-| 1 | `openCollectionsRoot`, `openRolesRoot`; solver | empty path, OS error; an unparseable `requirements.yml` constraint |
-| 2 | `loadRoots`, `newVerifyContext`, `planCollections`, discovery | requirements, keyring or signature config; unsafe resolved name, inexact version, duplicate key; two roots for one collection; invalid pin; git `name:` absent; no v1 API |
-| 3 | solver, `planCollections`, discovery | conflict, no candidate (any `404` the solver meets included), cycle, root unresolved, bad dependency key; unknown ref, role or version, a found role's versions `404`; url version mismatch |
-| 4 | resolution, discovery | a Galaxy status but `404` (auth or unavailable), an unreachable server, a document not JSON or of the wrong shape (a bad timestamp included), `--offline` miss, git or url transport |
-| 5 | `openCollectionsRoot`; solver; discovery | symlinked `ansible_collections`; a metadata URL with userinfo; a git tree or url tarball that is no artifact |
-| 7 | discovery | a git remote that did not ship the advertised commit intact |
-| 5, 7, 10 | `installError` | failed items behind `ErrInstallationFailed`; 7 or 10 when a cause is one |
+| 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, backend open, lock or snapshot load |
+| 5 | `openCollectionsRoot` | a symlinked `ansible_collections` |
+| 1 | `openCollectionsRoot` | an empty path or another OS error |
+| 2 | `loadRoots` | requirements file missing, unreadable or invalid |
+| 2 | `newVerifyContext` | keyring or signature config |
 | 6 | `--frozen` planning | lockfile missing, invalid, not covering a root, `download_url` off its server |
+| 2 | discovery | two roots for one collection; an invalid pin; a git repository that lacks the `name:` asked for, holds no collection or one declared twice, or has a `galaxy.yml` that is invalid or names an inexact version; no v1 API, or a v1 record refused |
+| 3 | discovery | unknown ref, role or version; a found role's versions `404`; url version mismatch |
+| 4 | discovery | git or url transport, any v1 API status but `404`, an `--offline` miss |
+| 5 | discovery | a git tree or url tarball that is no artifact |
+| 7 | discovery | a git remote that did not ship the advertised commit intact |
+| 1 | solver | an unparseable `requirements.yml` constraint |
+| 3 | solver | conflict, no candidate (any `404` the solver meets included), bad dependency key |
+| 4 | solver | any Galaxy status but `404` (auth or unavailable), an unreachable server, a document not JSON or of the wrong shape (a bad timestamp included), an `--offline` miss |
+| 5 | solver | a metadata URL with userinfo |
+| 2 | `planCollections` | unsafe resolved name, inexact version, duplicate key |
+| 3 | `planCollections` | root unresolved, cycle |
+| 1 | `openRolesRoot` | an empty path or another OS error |
+| 2 | `installLevels` | the plan names a missing key (`ErrMissingCollection`) |
+| 5, 7, 10 | `installError` | failed items behind `ErrInstallationFailed`; 7 or 10 when a cause is one |
 | 2, 4 | `finalizeInstall` | the snapshot save failed alone; otherwise appended to the item failure |
 
 ## Flags that change the flow
@@ -227,9 +230,12 @@ failure would. The snapshot saves only if one already existed. Details:
 | `--no-cache` | Collection resolution, Source discovery, Planning | no artifact cache, extracted store or prefetcher; builds go straight to install |
 | `--no-deps` | Collection resolution, Roles | part of the signature; solver and role walk stop at the roots |
 | `--keyring` | Planning, Collection install | verifies before extraction; a cache hit still loads metadata; skips count unverified |
+| `--clear-cache` | [Shared setup](commands.md#shared-setup) | forgets metadata and pins, deletes artifacts, keeps the recorded resolve; skipped under `--dry-run` |
+| `--s3-bucket` | [Shared setup](commands.md#shared-setup) | S3 backend, so a lock lost mid-run is possible |
 | `--metrics-file` | Overview | JSON report after a real run |
 
-`--disable-gpg-verify` turns `--keyring` off. `--clear-cache` and
-`--s3-bucket` act in [Shared setup](commands.md#shared-setup). The rest supply
-values without branching: paths, pools, servers, `--lock-file` and the other
-S3 settings.
+`--disable-gpg-verify` turns `--keyring` off. The other options supply values
+without changing the flow: the pool sizes `--workers` and
+`--download-workers`, `--cache-dir`, the other paths and files,
+`--lock-file`, the server and output options, and the other signature and
+`--s3-*` flags.

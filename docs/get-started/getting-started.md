@@ -1,4 +1,4 @@
-# Get started
+# Quick start
 
 Install go-galaxy, install a project's collections and roles, pin their
 versions, and run the same install in CI.
@@ -11,9 +11,10 @@ versions, and run the same install in CI.
     brew install --cask greeddj/tap/go-galaxy
     ```
 
-    Works on macOS and Linux. On macOS it clears the quarantine flag of these
-    unnotarized builds, skipping Gatekeeper;
-    [verify the release](../guides/security.md#verifying-a-release) yourself.
+    Works on macOS and Linux. The builds are not notarized by Apple, so on
+    macOS the cask clears their quarantine attribute and Gatekeeper does not
+    check them. To check the download yourself, follow
+    [Verifying a release](../guides/security.md#verifying-a-release).
 
 === "go install"
 
@@ -21,56 +22,58 @@ versions, and run the same install in CI.
     go install github.com/greeddj/go-galaxy/cmd/go-galaxy@latest
     ```
 
-    It installs into `$(go env GOPATH)/bin`; put that on `PATH`.
+    It installs into `$(go env GOPATH)/bin`. Put that directory on `PATH`.
 
 === "Binary"
 
     ```bash
-    sudo curl -sSLf --create-dirs -o /usr/local/bin/go-galaxy \
-      https://github.com/greeddj/go-galaxy/releases/latest/download/go-galaxy-linux-amd64
-    sudo chmod +x /usr/local/bin/go-galaxy
+    base=https://github.com/greeddj/go-galaxy/releases/latest/download
+    curl -sSLf -O "$base/go-galaxy-linux-amd64" -O "$base/checksums.txt"
+    sha256sum --ignore-missing -c checksums.txt   # macOS: shasum -a 256 --ignore-missing -c checksums.txt
+    sudo mkdir -p /usr/local/bin
+    sudo install -m 755 go-galaxy-linux-amd64 /usr/local/bin/go-galaxy
     ```
 
-    Swap in `linux-arm64`, `darwin-amd64` or `darwin-arm64`; darwin needs
-    macOS 13 or later. [Verify it](../guides/security.md#verifying-a-release) before use.
+    Swap in `linux-arm64`, `darwin-amd64` or `darwin-arm64` for `linux-amd64`.
+    The darwin builds need macOS 13 or later.
+    [Verifying a release](../guides/security.md#verifying-a-release) adds the
+    signature check of `checksums.txt`.
 
 === "Container"
 
     ```bash
-    docker run --rm ghcr.io/greeddj/go-galaxy --version
+    alias go-galaxy='docker run --rm -u "$(id -u):$(id -g)" -e HOME=/work -v "$PWD":/work -w /work ghcr.io/greeddj/go-galaxy'
     ```
+
+    With this alias, the steps below work as written. The image runs go-galaxy
+    as the unprivileged user `65532`. `-u` runs it as you instead, so it can
+    write into your project. `HOME` puts its cache in `.cache` there, so add
+    `.cache/` to `.gitignore`.
 
     | Tag | Base | Use |
     | :-- | :-- | :-- |
-    | `latest`, `<version>`, `<version>-distroless` | distroless, no shell | `docker run`, or [baking into a CI image](../guides/ci.md#container-image-bake) |
+    | `latest` (never a prerelease), `<version>`, `<version>-distroless` | distroless, no shell | the alias above, or [baking into a CI image](../guides/ci.md#container-image-bake) |
     | `<version>-alpine` | Alpine, with a shell | a CI job that runs go-galaxy from its script, as in [GitLab CI](../guides/ci.md#gitlab-ci) |
-
-    Both run go-galaxy as their entrypoint, as the unprivileged user `65532`;
-    a prerelease gets no `latest`. The steps below need a local binary.
 
 === "GitHub Actions"
 
     ```yaml
-    - uses: greeddj/go-galaxy@v1
+    - uses: greeddj/go-galaxy@v1.3.0
     ```
 
     The job is under [Run it in CI](#run-it-in-ci).
 
 === "GitLab CI"
 
-    ```yaml
-    image:
-      name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine
-      entrypoint: [""]
-    ```
-
-    The Alpine image, with a shell for the job's script. The job is under
-    [Run it in CI](#run-it-in-ci).
+    The job runs the `<version>-alpine` image, which has a shell for its
+    script. The job is under [Run it in CI](#run-it-in-ci).
 
 > [!NOTE]
-> Already using ansible-galaxy? Your `requirements.yml`, and the `ansible.cfg`
-> keys and `ANSIBLE_*` variables for paths and servers, carry over;
-> [Coming from ansible-galaxy](ansible-galaxy-compat.md) lists what differs.
+> Already using ansible-galaxy? Your `requirements.yml`, `ansible.cfg` and
+> `ANSIBLE_*` variables mostly carry over. Some differences break a pipeline
+> that worked under `ansible-galaxy`, so read
+> [Differences a migration runs into](ansible-galaxy-compat.md#differences-a-migration-runs-into)
+> before you switch.
 
 ## Your first install
 
@@ -130,11 +133,17 @@ present, else `./requirements.yml`. It installs dependencies too, such as
 artifact in `~/.cache/go-galaxy`. Add `.collections/` and `.roles/` to
 `.gitignore`.
 
-> [!TIP]
-> ansible-playbook does not look in `.collections` or `.roles` by default.
-> Set `ANSIBLE_COLLECTIONS_PATH=.collections` and `ANSIBLE_ROLES_PATH=.roles`
-> (in CI, at job level), or `collections_path` and `roles_path` under
-> `[defaults]` in `ansible.cfg`; go-galaxy reads them too.
+### Point ansible at the installs
+
+ansible-playbook does not look in `.collections` or `.roles` by default.
+Point it there in one of two ways:
+
+- Export `ANSIBLE_COLLECTIONS_PATH=.collections` and
+  `ANSIBLE_ROLES_PATH=.roles`. In CI, set them on the job.
+- Set `collections_path = .collections` and `roles_path = .roles` under
+  `[defaults]` in `ansible.cfg`.
+
+go-galaxy installs where these point, so one setting serves both tools.
 
 ## Pin the versions
 
@@ -149,8 +158,9 @@ go-galaxy install --frozen   # (3)!
 2.  Commit it, and rerun `go-galaxy lock` whenever you edit the requirements.
 3.  Installs exactly what the lockfile pins, without resolving. A missing
     lockfile, or one that no longer covers the requirements, fails with exit
-    [`6`](../reference/exit-codes.md); [`lock --check`](../guides/lockfile.md#catch-drift) catches
-    other drift.
+    [`6`](../reference/exit-codes.md). Entries the requirements no longer need
+    still install. [`lock --check`](../guides/lockfile.md#catch-drift) catches
+    those.
 
 ```text
 $ go-galaxy lock
@@ -158,7 +168,7 @@ $ go-galaxy lock
 ```
 
 The [lockfile](../guides/lockfile.md#what-each-entry-is-pinned-by) pins each collection
-to a version and sha256, and the role to a git commit.
+to its version, download URL and sha256, and the role to a git commit.
 
 ## Run it in CI
 
@@ -171,10 +181,13 @@ to a version and sha256, and the role to a git commit.
         runs-on: ubuntu-latest
         steps:
           - uses: actions/checkout@v7
-          - uses: greeddj/go-galaxy@v1
+          - uses: greeddj/go-galaxy@v1.3.0 # (1)!
             with:
               frozen: true
     ```
+
+    1.  Pin the release that writes your `galaxy.lock`, and bump it when you
+        relock with a newer one ([Pin one release](../guides/ci.md#pin-one-release)).
 
     On Linux and macOS runners, the action installs a checksum-verified
     binary, caches `~/.cache/go-galaxy` under a key that includes
@@ -189,7 +202,7 @@ to a version and sha256, and the role to a git commit.
 
     install:
       image:
-        name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine
+        name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine # (1)!
         entrypoint: [""]
       cache:
         key:
@@ -200,9 +213,13 @@ to a version and sha256, and the role to a git commit.
         - go-galaxy install --frozen
     ```
 
+    1.  Pin the release that writes your `galaxy.lock`, here and in the cache
+        `prefix`. Bump both when you relock with a newer one
+        ([Pin one release](../guides/ci.md#pin-one-release)).
+
     The job keeps its cache inside the project directory, the only place
     GitLab caches, under a key built from `galaxy.lock` and the release. A
-    playbook job does not see its files:
+    later playbook job does not see the installed `.collections` and `.roles`.
     [GitLab CI](../guides/ci.md#gitlab-ci) shows how to hand them on.
 
 [CI pipelines](../guides/ci.md) has the rest.
@@ -213,7 +230,8 @@ to a version and sha256, and the role to a git commit.
 | :-- | :-- | :-- |
 | `2` | A missing or invalid requirements file, flag or setting | [Requirements files](../guides/requirements.md), [Configuration](../reference/configuration.md) |
 | `3` | No version fits the constraints, or a collection, role, version or ref does not exist | [When no version fits](../guides/requirements.md#when-no-version-fits) |
-| `4` | A server is unavailable, times out, answers an error, or rejects the credentials | [Servers and credentials](../guides/servers-and-auth.md) |
+| `4` | While resolving, a server is unavailable, times out, answers an error, or rejects the credentials | [Servers and credentials](../guides/servers-and-auth.md) |
+| `5` | A collection or role failed to download or install. Its `Failed:` line says why | [When several things fail](../reference/exit-codes.md#when-several-things-fail) |
 | `6` | `galaxy.lock` is missing, invalid, or does not cover a requirement | [Lockfile](../guides/lockfile.md) |
 | Any other | See the full table | [Exit codes](../reference/exit-codes.md) |
 

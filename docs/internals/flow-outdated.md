@@ -10,9 +10,7 @@ collections tree, with what each source offers now. Options:
 
 ```mermaid
 flowchart TD
-    S(["go-galaxy outdated"]) --> CF["runCollectionCommand:<br/>config and clients"]
-    CF -->|"refused"| X2(["exit 2"])
-    CF --> OF{"--offline set?"}
+    CF(["runCollectionCommand:<br/>config and clients built"]) --> OF{"--offline set?"}
     OF -->|"yes"| X4(["exit 4"])
     OF -->|"no"| WU["warnUnhonoredFlags"]
     WU --> LF{"lockfile.Load at<br/>ResolveDefaultPath"}
@@ -31,9 +29,10 @@ flowchart TD
 ```
 
 `Outdated` opens no cache backend and takes no lock, so every answer is live
-and no lost-lock exit exists. Configuration still runs in full: a bucket from
-any source needs both S3 keys (`ErrS3EmptyCreds`), and `--offline` beside a
-bucket fails there (`ErrS3CacheOffline`) before its own refusal, both exit 2.
+and no lost-lock exit exists. Configuration still runs in full
+([Shared setup](commands.md#shared-setup)): a bucket from any source needs
+both S3 keys (`ErrS3EmptyCreds`), and `--offline` beside a bucket fails there
+(`ErrS3CacheOffline`) before its own refusal, both exit 2.
 `--offline` alone is refused with `ErrOfflineMode` before
 `warnUnhonoredFlags`.
 
@@ -97,25 +96,27 @@ flowchart TD
     TN -->|"no"| UP2(["up to date"])
 ```
 
-A url entry and a full-commit ref make no request, and role tags compare by
-name, not semver. A Galaxy entry asks its recorded source, else `cfg.Server`;
-a source matching no configured server warns once per source. Collections
-run on one `--workers` pool, then roles on a second.
+A Galaxy entry asks its recorded source, else `cfg.Server`. A source that
+matches no configured server warns once per source. Collections run on one
+`--workers` pool, then roles on a second.
 
 ## Report, metrics and exit
 
-`reportOutdated` prints every result sorted by name, collections and roles
-together: `Lookup failed:` on stderr, `Outdated:` always, `Up to date:` only
-under `--verbose`, then a summary that survives `--quiet`. `writeRunMetrics`
-runs on this path only, failed lookups or not; the early exits write no
-report. Failures join behind `ErrLatestVersionLookupFailed` in
-`outdatedError`.
+`reportOutdated` prints the report
+[Find newer versions](../guides/lockfile.md#find-newer-versions) describes,
+collections and roles sorted together by name. Its `Outdated:` lines and the
+summary are result-tier lines, so they print under `--quiet`
+([Operator output](http-output-exit-codes.md#operator-output)).
+`writeRunMetrics` runs on this path only, failed lookups or not. The early
+exits write no metrics report. `outdatedError` joins the failures behind
+`ErrLatestVersionLookupFailed`
+([When several things fail](../reference/exit-codes.md#when-several-things-fail)).
 
 ## Exits
 
 | Exit | Decided in | Cause |
 | --- | --- | --- |
-| 2 | `BuildCollectionConfig` | configuration refused, including the S3 checks above |
+| 2 | [Shared setup](commands.md#shared-setup) | configuration refused, including the S3 checks above |
 | 4 | `Outdated` | `--offline` (`ErrOfflineMode`) |
 | 6 | `outdatedInput` | lockfile exists but invalid, or neither lockfile nor tree |
 | 1 | `scanInstalledTree` | any other error opening or listing the tree |

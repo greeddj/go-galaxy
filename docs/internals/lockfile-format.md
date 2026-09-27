@@ -42,7 +42,8 @@ Every entry also has a `name`, a `version` and optional `deps`.
 - A Galaxy role's `ref` is `refs/tags/<tag>` for a listed tag, else
   `refs/heads/<name>`, so a same-named branch is never fetched instead.
 - The file-level `server` is provenance: a source-less entry takes the run's
-  server. `Hash` covers it, so a `server_list` reorder is drift.
+  server. `Hash` covers it, so a `server_list` change that moves the default
+  (first) server is drift.
 
 ## Loading
 
@@ -59,8 +60,8 @@ version with `helpers.IsExactVersion` and keys entries by fqdn.
 | Outcome | Error | Callers |
 | --- | --- | --- |
 | Absent | Bare `fs.ErrNotExist` (`IsNotExist`) | `hash` and `outdated` fall back; `lock --dry-run` diffs against nothing |
-| Any other failure | Wraps `helpers.ErrLockfileInvalid`, exit 6 | Fatal; `lock --dry-run` warns, the metrics report omits the hash |
 | Absent, required | `LoadRequired` returns `ErrLockfileMissing` naming the path, exit 6 | `--frozen`, `lock --check`, `tree`, `explain` |
+| Any other failure | Wraps `helpers.ErrLockfileInvalid`, exit 6 | Fatal; `lock --dry-run` warns, the metrics report omits the hash |
 
 A new failure arm in `Load` must wrap `ErrLockfileInvalid`, never
 `fs.ErrNotExist`: callers read that as absence, and a bare one reaching the
@@ -87,23 +88,12 @@ it keys by, plus `server`, with deps as a multiset.
 
 ## download_url and frozen installs
 
-A frozen install resolves nothing and asks no Galaxy API.
-`resolveFromLockfile` holds each root to its entry (`verifyRootsAgainstLockfile`,
-`ErrLockfileMismatch`) and builds the graph from the file. On a cache miss,
-`versionMetadata` hands over the locked `download_url` and `sha256` without a
-request.
-
-A verifying run passes `lockedURLs` false and fetches version metadata, which
-its signatures ride on. Behavior:
+A Galaxy entry's `download_url` lets a frozen install fetch a cache miss
+without a metadata request, unless the run verifies signatures
+([Plan construction](install-pipeline.md#plan-construction)). Behavior:
 [Install from the lockfile](../guides/lockfile.md#install-from-the-lockfile).
 
-| `lock` refuses a download URL that | Sentinel | Exit | Because |
-| --- | --- | --- | --- |
-| Carries a query | `ErrDownloadURLQuery` | 5 | A presigned capability would be committed, then expire |
-| Leaves its server's origin, or whose path does not end in `/<ns>-<name>-<version>.tar.gz` | `ErrDownloadURLNotServerArtifact` | 5 | Its bytes fill the [cache slot](cache.md#artifact-cache-scoped-by-server-not-by-content) every later install of that version reads |
-
-A fragment is dropped, since no request carries it. `--frozen` re-checks origin
-and path in `checkLockedDownloadURLs` before any request, as
-`ErrLockfileInvalid`, exit 6; `Load` cannot, because a `server_list` id
-resolves only from the run's configuration. The full boundary:
-[Loading requirements.yml and the lockfile](boundaries.md#loading-requirementsyml-and-the-lockfile).
+`lock` refuses a `download_url` that carries a query or is not its server's
+own artifact, and `--frozen` re-checks origin and path before any request.
+`lock` drops a fragment, since no request carries it. Rules, sentinels and
+exits: [Loading the lockfile](boundaries.md#loading-the-lockfile).

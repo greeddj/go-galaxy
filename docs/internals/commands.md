@@ -6,10 +6,12 @@ meanings on [Exit codes](../reference/exit-codes.md).
 
 ## How to read the diagrams
 
-A rectangle is a step, a diamond a decision with its answers on the arrows,
-and a rounded node an end: an exit code, or a hand-over to another diagram. An
+A rectangle is a step, and a diamond a decision with its answers on the
+arrows. A rounded node is where a diagram starts or stops: the step it
+continues from, an exit code, one item's outcome, or a hand-over to another
+diagram. A dotted arrow follows a signal, which can arrive at any point. An
 exit marked "by cause" takes the class of the error that ended the run, in the
-order of [Exit code classes](http-output-exit-codes.md#exit-code-classes); the
+order of [Exit code classes](http-output-exit-codes.md#exit-code-classes). The
 page's Exits table resolves it.
 
 Two outcomes hold for every command and are not drawn again. A caught SIGHUP,
@@ -45,9 +47,9 @@ flowchart TD
   M8 -->|"bare: a refused flag"| X3(["exit 2, printed<br/>unless urfave did"])
 ```
 
-SIGQUIT stays uncaught, so Go's goroutine dump still works. How
-`handleResult` and `errRecorder` decide is under
-[Exit code classes](http-output-exit-codes.md#exit-code-classes).
+SIGQUIT stays uncaught, so Go's goroutine dump still works.
+[Exit code classes](http-output-exit-codes.md#exit-code-classes) covers how
+`FromError` classes a captured error and what `errRecorder` records.
 
 ## Command dispatch
 
@@ -76,16 +78,25 @@ flowchart TD
 `DefaultCommand`: without it, a mistyped command word would run install and
 the word would be dropped silently.
 
+A flag a command does not mount is undefined after its command word (exit 2).
+Which command takes which option group is under
+[Options](../reference/cli.md#options). Why a command must mount every flag
+whose `Config` field it reads is under
+[Flags a command does not mount](config-loading.md#flags-a-command-does-not-mount).
+
 <details markdown>
 <summary>Help, version and argument edge cases</summary>
 
-| Case | Decided by | Result |
-| --- | --- | --- |
-| `--help` parsed before a bad root flag | urfave | root help, exit 0 |
-| `-h <word>` | urfave's help lookup | that command's help, exit 0; `No help topic`, exit 2 |
-| `--version` after a command word | urfave: an undefined flag | exit 2 |
-| `-v` after a command word | `UseShortOptionHandling` finds the root flag | ignored, the command runs |
-| `explain` with no name or two | `explainArguments` | exit 2 |
+| Case | Decided by |
+| --- | --- |
+| `--help` before a root flag with a bad or missing value | urfave, which prints the root help and exits 0 |
+| `-h <word>`, an undefined flag after `--help` included | urfave's help lookup |
+| `--version` after a command word | urfave: an undefined flag |
+| `-v` after a command word | `UseShortOptionHandling` finds the root flag |
+| `explain` with no name or two | `explainArguments` |
+
+Every other result is under
+[How arguments are dispatched](../reference/cli.md#commands).
 
 </details>
 
@@ -113,7 +124,7 @@ the word would be dropped silently.
 
 ```mermaid
 flowchart TD
-  C1["BuildCollectionConfig, see<br/>Configuration resolution"] -->|"refused"| XC(["exit 2"])
+  C1["BuildCollectionConfig, see<br/>Configuration loading"] -->|"refused"| XC(["exit 2"])
   C1 --> C2["printer, Galaxy client,<br/>infra.New, git and url clients"]
   C2 --> C3["DebugConfigSources,<br/>WarnConfig"]
   C3 --> C4{"which command?"}
@@ -122,7 +133,7 @@ flowchart TD
   C4 -->|"cleanup"| C5["initCleanup"]
   C4 -->|"install, warm, lock"| C6["withBackend: banner,<br/>then initInstall"]
   C6 --> C7["dry-run banner; warn when<br/>--refresh meets --offline"]
-  C7 --> C8["cache.New, Open, Lock, see<br/>Backend open and lock"]
+  C7 --> C8["internal/cache.New, Open, Lock,<br/>see Backend open and lock"]
   C5 --> C8
   C8 -->|"refused"| XB(["exit 1, 2, 4<br/>or 8 by cause"])
   C8 --> C9{"which command?"}
@@ -138,27 +149,10 @@ flowchart TD
 ```
 
 `runCollectionCommand` builds everything before the command's own work.
+`BuildCollectionConfig` refuses in a fixed order, each refusal exit 2, listed
+under [Order of construction](config-loading.md#order-of-construction).
 `--offline` swaps the Galaxy client for `fetch.NewOffline` and makes the url
-client refuse every request; the extracted store is nil under `--no-cache`.
-
-### Configuration resolution
-
-`BuildCollectionConfig` refuses in this order, each refusal exit 2, so a
-configuration broken in several places always reports the same one first.
-Construction and precedence are on [Configuration loading](config-loading.md)
-and [Where a setting comes from](../reference/configuration.md#where-a-setting-comes-from).
-
-| Order | Step | Refuses |
-| ---: | --- | --- |
-| 1 | `loadProjectSettings` | a `galaxy.toml` that does not decode, breaks the schema or names an unset `${VAR}` |
-| 2 | `applyTimeout` | `--timeout` not a positive integer or Go duration |
-| 3 | `loadAnsibleConfigFromCLI` | a missing `--ansible-config`; any ansible.cfg that cannot be read to the end |
-| 4 | `resolveServers` | a malformed server, `ErrAmbiguousGalaxyToken`, `ErrInsecureTokenTransport`, a refused token pairing |
-| 5 | `loadGitCredentials`, `loadURLCredentials` | a malformed `GO_GALAXY_GIT_*` or `GO_GALAXY_URL_*` binding |
-| 6 | `loadS3CacheConfig` | a bucket without both keys, `ErrS3EmptyCreds` |
-| 7 | `applySignatureConfig` | a refused keyring, count, status code or `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` |
-| 8 | `applyAnsibleTimeout` | a bad `[galaxy] server_timeout`, read when no `--timeout` source is set |
-| 9 | `checkS3CacheOffline` | an S3 bucket beside `--offline`, `ErrS3CacheOffline` |
+client refuse every request. The extracted store is nil under `--no-cache`.
 
 ### Backend open and lock
 
@@ -179,9 +173,10 @@ flowchart TD
 ```
 
 Every failure after `Open` unwinds through `unwindBackend`: release, then
-Close. On the work path the deferred cleanup removes unclaimed `--no-cache`
-builds, closes, then releases, a release failure only printed. Only the S3
-lock can be lost mid-run ([Cache and storage](cache.md)).
+Close. On the work path the deferred calls remove unclaimed `--no-cache`
+builds, close the backend, then release the lock. A failed release is printed,
+not returned. Only the S3 lock can be lost mid-run
+([Cache and storage](cache.md)).
 
 ### Exits
 
@@ -196,20 +191,3 @@ lock can be lost mid-run ([Cache and storage](cache.md)).
 
 The local backend's `classifyCacheFailure` maps a permission error to unusable
 and anything else to unavailable, so both backends exit alike.
-
-## Which command mounts which flags
-
-| Flags | install, warm | lock | outdated | cleanup | hash, tree, explain |
-| --- | :---: | :---: | :---: | :---: | :---: |
-| Root: `--verbose`, `-q`, `--dry-run`, `--cache-dir` | yes | yes | yes | yes | accepted, unread |
-| `-r` (`--requirements-file`, `--role-file`) | yes | yes | yes | yes | yes |
-| `--lock-file` | yes | yes | yes | - | yes |
-| Paths, servers, pools, cache behavior, `--offline`, `--metrics-file` | yes | yes | yes | - | - |
-| `--frozen` | yes | - | yes | - | - |
-| `--check` | - | yes | - | - | - |
-| Signature flags | yes | - | - | - | - |
-| `--s3-*` | yes | yes | yes | yes | - |
-
-A flag a command does not mount is undefined after its command word (exit 2).
-`BuildCollectionConfig` reads it as its zero value and ignores its variable,
-so a command must mount every flag whose `Config` field it reads.

@@ -6,6 +6,11 @@ These three commands read files only: no `BuildCollectionConfig`, no
 print: [Inspect what is locked](../guides/lockfile.md#inspect-what-is-locked) and
 [A cache key for CI](../guides/lockfile.md#a-cache-key-for-ci).
 
+Flag, help and argument checks run before the action, as drawn under
+[Command dispatch](commands.md#command-dispatch): a bad flag or a stray word
+exits 2, `--help` exits 0. The global options change nothing; only an unparseable
+`GO_GALAXY_VERBOSE`, `GO_GALAXY_QUIET` or `GO_GALAXY_DRY_RUN` exits 2.
+
 ## The lockfile path
 
 ```mermaid
@@ -24,11 +29,6 @@ All three call `lockfilePath` with the path `config.RequirementsPath` picked
 and print its both-files warning. The whole `[tool.go-galaxy]` table is held
 to its schema and expanded, so an unset `${VAR}` anywhere in it fails even
 `hash`, although only `lock_file` is read.
-
-Flag, help and argument checks run before the action, as drawn on
-[Command flows](commands.md): a bad flag or a stray word exits 2, `--help`
-exits 0. The global options change nothing; only an unparseable
-`GO_GALAXY_VERBOSE`, `GO_GALAXY_QUIET` or `GO_GALAXY_DRY_RUN` exits 2.
 
 ## hash
 
@@ -54,17 +54,14 @@ is not TOML exits 2 in `lockfilePath` unless `--lock-file` is set.
 The action ignores its context, so a caught signal can still print the key
 while the exit reports the interrupt.
 
+Where `hash` exits:
+
 | Exit | Decided in | Cause |
 | --- | --- | --- |
 | 2 | `lockfilePath` | `galaxy.toml` settings refused |
-| 2 | `requirements.Read` | fallback file missing, or `ErrRequirementsUnreadable` |
 | 6 | `lockfile.Load` | lockfile exists but is unreadable or invalid |
+| 2 | `requirements.Read` | fallback file missing, or `ErrRequirementsUnreadable` |
 | 1 | `File.Hash` | encoder error, unreachable in practice |
-
-| Flag | Diagram | Effect |
-| --- | --- | --- |
-| `-r` | The lockfile path, hash | the file hashed without a lockfile; the default lockfile's directory |
-| `--lock-file` | The lockfile path, hash | a path that does not exist falls back to hashing `-r` |
 
 ## tree
 
@@ -99,15 +96,13 @@ lockfile lacks prints `(missing in lockfile)`. `gitOrigin` and `roleOrigin`
 append provenance; output goes through `safeout.NewWriter`, since a lockfile
 may be hand-edited.
 
+Where `tree` exits:
+
 | Exit | Decided in | Cause |
 | --- | --- | --- |
-| 2 | `lockfilePath`, `loadRootFQDNs` | `galaxy.toml` settings, or a requirements file missing, unreadable or refused |
+| 2 | `lockfilePath` | `galaxy.toml` settings refused |
 | 6 | `lockfile.LoadRequired` | `ErrLockfileMissing`, or invalid |
-
-| Flag | Diagram | Effect |
-| --- | --- | --- |
-| `-r` | The lockfile path, tree | the file the roots come from |
-| `--lock-file` | The lockfile path, tree | the lockfile drawn |
+| 2 | `loadRootFQDNs` | a requirements file missing, unreadable or refused |
 
 ## explain
 
@@ -136,6 +131,8 @@ flowchart TD
   `type` and `source`.
 - The `(root)` line names `filepath.Base` of the requirements path.
 
+Where `explain` exits:
+
 | Exit | Decided in | Cause |
 | --- | --- | --- |
 | 2 | `explainArguments` | `ErrMissingArgument`, or `ErrUnexpectedArguments` |
@@ -143,7 +140,9 @@ flowchart TD
 | 6 | `lockfile.LoadRequired` | lockfile missing or invalid |
 | 1 | `printExplain` | `errExplainNotFound`, which wraps no sentinel |
 
+## Flags that change the flow
+
 | Flag | Diagram | Effect |
 | --- | --- | --- |
-| `-r` | The lockfile path, explain | the roots and the `(root)` label |
-| `--lock-file` | The lockfile path, explain | the lockfile searched |
+| `-r` | The lockfile path, hash, tree, explain | the default lockfile's directory; `hash`: the file hashed without a lockfile; `tree`: the roots; `explain`: the roots and the `(root)` label |
+| `--lock-file` | The lockfile path, hash, tree, explain | the lockfile read; `hash`: a path that does not exist falls back to hashing `-r` |

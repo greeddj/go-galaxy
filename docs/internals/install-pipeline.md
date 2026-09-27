@@ -1,8 +1,11 @@
 # Install pipeline
 
 How `install` and `warm` take a requirements file to installed or cached
-trees, all in `internal/galaxy/collections`. It runs inside `withBackend`,
-under the cache lock's holder context ([Cache and storage](cache.md)).
+trees, and why each step sits where it does. All of it is in
+`internal/galaxy/collections` and runs inside `withBackend`, under the cache
+lock's holder context ([The cache seam](cache.md#the-cache-seam)). Control
+flow and exit codes: [install flow](flow-install.md) and
+[warm flow](flow-warm.md).
 
 ```mermaid
 flowchart TD
@@ -24,7 +27,54 @@ flowchart TD
   IR --> SA
 ```
 
+The diagram is `install`'s order. `warm` runs `planCollections` before it
+resolves roles, then warms instead of installing
+([warm flow](flow-warm.md#plan)).
+
+## Plan construction
+
+| Function | Why here |
+| --- | --- |
+| `newVerifyContext` | A bad keyring fails before any background download |
+| `resolveOrLoadLockfile` | `--frozen` asks no API; the locked `download_url` stands in for metadata unless verifying |
+| `resolveOrLoadRoles` | A missing role fails before any background download |
+| `buildCollectionsMap` | The only gate on a version replayed from the `resolved` bucket |
+| `verifyRootsResolved` | Catches a solve that dropped a root |
+| `buildInstallLevels` | A cycle fails before any prefetch worker; levels order the queue |
+
+Under `--frozen`, `resolveFromLockfile` holds each root to its entry
+(`verifyRootsAgainstLockfile`, `ErrLockfileMismatch`) and builds the graph
+from the file. On a cache miss, `versionMetadata` then hands over the locked
+`download_url` and `sha256` without a request. A verifying run passes
+`lockedURLs` false and fetches the version metadata, since a server's
+signatures ride on it.
+
+`planCollections` bundles the last three rows. A replay of the `resolved`
+bucket refuses only an empty version (`collectionFromResolvedEntry`), so
+skipping the fold lets a poisoned `*` reach a worker.
+
+## Two pools, two resources
+
+| Flag | Bounds | Sized by |
+| --- | --- | --- |
+| `--workers` | Install, warm and role workers, dry-run probes, metadata prewarm, `outdated` | Memory: a 4 x 1 MiB pgzip reader each |
+| `--download-workers` | Prefetch, presence scan, discovery, version pages | Network; the probe holds one 64 KiB block |
+
+Defaults and accepted values: [Concurrency](../reference/cli.md#concurrency).
+
+- Both defaults derive from `runtime.GOMAXPROCS(0)`, never
+  `runtime.NumCPU()`, which ignores a CFS quota. No test pins it: narrowing
+  it races parallel tests.
+- `MaxAcceptedInstallWorkers` bounds `--workers` only. The default must lie
+  inside it: urfave marks an exported empty `GO_GALAXY_WORKERS=` as set
+  without parsing it, so the range check sees the default.
+
 ## Git discovery
+
+`resolveCollectionsInternal` first runs `expandSourceRoots`: git roots, then
+url roots, each on the download pool and merged in input order. The
+requirements signature is taken after this expansion, so it covers the
+commit, not just the ref ([Resolution replay](cache.md#resolution-replay)).
 
 | Case | `expandGitRoot` does |
 | --- | --- |
@@ -33,24 +83,20 @@ flowchart TD
 | `--refresh`, branch or tag pinned | One `Advertise`; an unchanged commit with its artifacts cached keeps the pin |
 | Otherwise | `acquireGitRoot`: fetch, build, commit, record the pin |
 
-`expandSourceRoots` runs first in `resolveCollectionsInternal` (download pool,
-input order); the requirements signature is computed over its output, so it
-covers the commit, not just the ref.
-
-| Package | Owns |
-| --- | --- |
-| `gitsource` | Grammar (URL, ref, subdir, locator, pin key, credentials) and the `Client` interface; no go-git |
-| `gitfetch` | The only production go-git importer: advertise once, fetch by hash into a byte-capped store, read the tree without checkout |
-| `treearchive` | The only production tar writer: two-pass walk under the archive caps, symlink policy, deterministic tar.gz |
-| `collectionbuild` | Ansible's discovery and ignore rules, `MANIFEST.json` and `FILES.json`, identity from `galaxy.yml`, a `manifest.VerifyChain` self-check |
+A fetch goes through `gitsource.Client`, which `gitfetch` implements.
+`collectionbuild` builds each collection through `treearchive` and
+self-checks it with `manifest.VerifyChain` ([Packages](index.md#packages)).
 
 - A built collection becomes an exact-pin root, locator
   `git+<url>#<subdir>@<commit>`, which the [solver](solver.md) answers from
   `gitDiscoveryMemo`, never from a Galaxy server.
-- `recordSelected` narrows to the entry's `name:` before the memo, because a
-  memo entry owns its fqdn against every Galaxy root and dependency.
+- When the entry names a collection, `recordSelected` keeps only that one
+  before it enters `gitDiscoveryMemo`, because a memo entry answers its fqdn
+  for the whole run, over any Galaxy root or dependency.
 - Under `--no-cache` the build rides the pin as `prebuilt`, taken once;
   `withBackend` deletes untaken ones.
+
+Behavior: [What a git repository must hold](../guides/requirements.md#what-a-git-repository-must-hold).
 
 ## URL discovery
 
@@ -72,11 +118,11 @@ A `version:` is asserted against the manifest on both paths
 (`ErrURLCollectionVersionMismatch`), and a replayed pin passes the same
 predicates as a fresh manifest.
 
-## Roles
+## Role resolution
 
 | Source | Resolved by | Pin key in `role_pins` | Locator |
 | --- | --- | --- | --- |
-| git | `resolveGitRole`: `Git.AcquireRole`, then `rolebuild` | `url\nref\n` | `git+<url>#@<commit>` |
+| git | `resolveGitRole`: `Git.AcquireRole`, which fetches and builds with `rolebuild` | `url\nref\n` | `git+<url>#@<commit>` |
 | Galaxy | `resolveGalaxyRole`: `galaxyv1` names repository and tag, then the git path | `galaxy\nname\nrequested`, plus the git pin | `git+<github-url>#@<commit>` |
 | url | `resolveURLRole`: download, `tartree.Load`, `rolebuild.Build` | `url\n<url>` | `url+<url>#sha256:<hex>` |
 
@@ -92,54 +138,9 @@ first-wins follows declaration order (`dedupeRoleLevel`). Past
   versions from the v1 root that listed it and reads a `404` there as
   `ErrRoleVersionNotFound`, never as a server without v1.
 - The repository's commit wins over the one Galaxy recorded.
-- A url role's version label defaults to its sha256's first 12 hex digits
-  and is not in the pin key, so another `version:` re-downloads.
-
-`installRoles` runs after every collection level succeeded, on `--workers`,
-flat, writing through an `os.Root` at the roles path. `installRole` steps:
-
-1. `canSkipRoleInstall`: record, marker, install info and tally agree.
-2. `checkRoleDirectoryOwned`, before any fetch: a directory without this tool's
-   marker or ansible's install info is `ErrRoleDirectoryForeign`, exit 5.
-3. `fetchRoleArtifact`: prebuilt, cache hit, or a refetch refusing another
-   commit or other bytes, exit 7.
-4. `extractTree`, writing `meta/.galaxy_install_info` before the marker, over
-   a kept tree too, so the tally counts it and a new version reaches it.
-5. `recordRoleInstall` with an absolute path: cleanup matches a record by the
-   path it scans.
-
-The install info and the marker are removed before they are written: either
-can be a hard link into the [extracted store](cache.md#extracted-store-content-addressed-materialized-by-hardlink).
-Lockfile entries: [Lockfile format](lockfile-format.md); cleanup:
-[its scan](flow-cleanup.md#scan-every-recorded-projects-installs).
-
-## Plan construction
-
-| Function | Why here |
-| --- | --- |
-| `newVerifyContext` | A bad keyring fails before any background download |
-| `resolveOrLoadLockfile` | `--frozen` asks no API; the locked `download_url` stands in for metadata unless verifying |
-| `resolveOrLoadRoles` | A missing role fails before any background download |
-| `buildCollectionsMap` | The only gate on a version replayed from the `resolved` bucket |
-| `verifyRootsResolved` | Catches a solve that dropped a root |
-| `buildInstallLevels` | A cycle fails before any prefetch worker; levels order the queue |
-
-`planCollections` bundles the last three; `warm` calls it too, before its
-roles. A replay of the `resolved` bucket refuses only an empty version
-(`collectionFromResolvedEntry`), so skipping the fold lets a poisoned `*`
-reach a worker.
-
-### Two pools, two resources
-
-| Flag | Bounds | Default | Sized by |
-| --- | --- | --- | --- |
-| `--workers` | Install, warm and role workers, dry-run probes, metadata prewarm, `outdated` | procs clamped to 2..16 | Memory: a 4 x 1 MiB pgzip reader each |
-| `--download-workers` | Prefetch, presence scan, discovery, version pages | 4 x procs clamped to 8..32 | Network; the probe holds one 64 KiB block |
-
-- Procs is `runtime.GOMAXPROCS(0)`, never `runtime.NumCPU()`, which ignores a
-  CFS quota. No test pins it: narrowing it races parallel tests.
-- `MaxAcceptedInstallWorkers` bounds `--workers` only, and the default must
-  lie inside it: an empty `GO_GALAXY_WORKERS=` is checked carrying the default.
+- A url role's version label is not in the pin key, so another `version:`
+  re-downloads. The label's default is under
+  [Roles](../guides/requirements.md#roles).
 
 ## Prefetch and handoff
 
@@ -198,10 +199,10 @@ flowchart TD
 ```
 
 A verifying run gives up the metadata-free path (`servableFromCacheAlone`),
-since a server's signatures ride on the version metadata. A cache hit whose
-metadata load fails raises `ErrMetadataUnavailable`, the one metadata failure
-`prepareInstall` tolerates, so nothing else may raise it: an unbuildable URL
-has `ErrMetadataRequestBuildFailed`.
+since a server's signatures ride on the version metadata. `prepareInstall`
+tolerates one metadata failure, `ErrMetadataUnavailable`, raised only for a
+cache hit whose metadata failed to load. Nothing else may raise it: an
+unbuildable metadata URL raises `ErrMetadataRequestBuildFailed`.
 
 `resolveArtifactSHA` trusts, in order: this process's own hash; under a pin, a
 fresh hash of the file; then the server's digest or the cache sidecar, each
@@ -219,7 +220,8 @@ shape-checked (`ErrMalformedArtifactSHA256`, exit 7).
 | `Infra.GitDeadline` | One git acquisition | The same sentinel |
 
 Of up to four attempts, `downloadRetryable` retries a stall, a retryable
-status or no response at all, unlike an API GET; offline, the deadline,
+status or a transport failure with no response. An API GET
+(`fetchRetryable`) does not retry that last case. Offline, the deadline,
 cancellation and bad bytes are terminal. `artifactDeadlineError` relabels only
 when the budget itself expired, rendering the cause with `%v` so it cannot
 claim exit 130. A git refetch building another identity fails with
@@ -263,16 +265,18 @@ The pin proves the lockfile's bytes, the signature who published them, both
 before any write a playbook could find. The manifest chain is checked only
 once a signature verified ([boundaries](boundaries.md#reading-a-manifest)).
 
-- `resetExtractionTarget` recreates the tree through `os.Root`, then untars
-  into a plain path: nothing can be pre-planted in a directory just made.
+- `extractTree` serves collections and roles alike. `resetExtractionTarget`
+  recreates the tree through `os.Root`, then `unpack` fills it by its plain
+  path: nothing can be pre-planted in a directory just made. What the
+  extractor refuses: [Archive extraction](boundaries.md#archive-extraction).
 - `os.Root` guards the ancestors; a symlink escape is
   `ErrCollectionsPathEscape`, exit 5
   ([boundaries](boundaries.md#the-collections-tree-and-the-cache-directory)).
 - `extracted.Ensure` unpacks once per sha256 and `Materialize` hardlinks the
   tree ([extracted store](cache.md#extracted-store-content-addressed-materialized-by-hardlink));
   under `--no-cache`, `archive.ExtractTarGz` unpacks in place.
-- `resetCollectionInfo` drops every version's `.info`, so no stale marker
-  outlives its tree.
+- `resetCollectionInfo` drops every version's `.info`, so no stale
+  [extract marker](#the-extract-done-marker) outlives its tree.
 - `writeInfoFile` removes each name before writing it. `GALAXY.yml` keeps
   ansible-core's exact schema or ansible discards it; git and url provenance
   goes to `go-galaxy.yml`.
@@ -297,6 +301,21 @@ only copy.
 | `signature.parseRequirementSource` is the one source grammar | Load validation, the `--offline` check and the fetch cannot disagree |
 
 </details>
+
+### The extract-done marker
+
+The marker proves an installed tree complete. Its content is the tree's
+tally: the count of non-directory entries, the count of directories and the
+entries' summed sizes.
+
+| Aspect | Rule |
+| :-- | :-- |
+| Name | `.extract-done.<sha256>`, the digest checked by `markerRel` before any join |
+| Place | A collection's version `.info` directory, which `ansible-galaxy collection verify` ignores; a role's own directory |
+| Content | `go-galaxy-extract-1 entries=<n> dirs=<n> bytes=<n>`, capped at 256 bytes, parsed strictly |
+| Catches | An entry added or removed, a size change; not a same-length edit (`TestExtractMarkerMutationCases`) |
+| On mismatch | Removed and re-extracted, never a failed run |
+| Verified by | Skip checks and extraction (`verifyExtractMarker`); dry-run probes only read (`checkExtractMarker`) |
 
 ## Bounded recovery
 
@@ -339,6 +358,28 @@ delete per collection per run; the cost is a swapped cached artifact failing
 closed until `--clear-cache`. The extracted store is never evicted, and a
 corrupt cached role is not refetched.
 
+## Installing roles
+
+`installRoles` runs after every collection level succeeded, on `--workers`,
+flat, writing through an `os.Root` at the roles path. `installRole` steps:
+
+1. `canSkipRoleInstall`: record, marker, install info and tally agree.
+2. `checkRoleDirectoryOwned`, before any fetch: a directory without this tool's
+   marker or ansible's install info is `ErrRoleDirectoryForeign`, exit 5
+   ([An existing role directory](../guides/requirements.md#an-existing-role-directory)).
+3. `fetchRoleArtifact`: prebuilt, cache hit, or a refetch refusing another
+   commit or other bytes, exit 7.
+4. `extractTree` writes `meta/.galaxy_install_info` before the marker, even
+   over a kept tree. The tally then includes the file, and the file names the
+   version this run installs.
+5. `recordRoleInstall` with an absolute path: cleanup matches a record by the
+   path it scans.
+
+The install info and the marker are removed before they are written: either
+can be a hard link into the [extracted store](cache.md#extracted-store-content-addressed-materialized-by-hardlink).
+Lockfile entries: [Entry kinds](lockfile-format.md#entry-kinds). The cleanup
+side: [Scan: every recorded project's installs](flow-cleanup.md#scan-every-recorded-projects-installs).
+
 ## Dry run
 
 Discovery still fetches a git, url or role source with no usable pin, since the
@@ -351,14 +392,14 @@ probe failure, cached, would download.
 | | `installDryRunProbe` | `warmDryRunProbe` |
 | --- | --- | --- |
 | Settled when | Install record and the pure `checkExtractMarker` | Artifact cached and its tree `Ready` under the pin or warmed sha |
-| Then checks | Pin verdict, then `dryRunNamespaceProbe` | Pin verdict, before `Ready` |
+| Also checks | Unless settled: pin verdict, then `dryRunNamespaceProbe` | Pin verdict, before `Ready` |
 | Never | Calls `canSkipInstall`, which deletes a drifted marker | Fetches to learn a sha: on S3 a full download |
 
 - Cached mirrors `isCacheHit`, from one `ArtifactStore.Meta` per collection
   and no `Has`; every backend's `Meta` must agree with `Has`.
-- `dryRunPinVerdict` refuses a recorded digest contradicting the pin, only
-  under `--offline` (exit 7). A real local run re-hashes and may pass; S3
-  fails alike.
+- `dryRunPinVerdict` refuses a recorded digest that contradicts the pin, and
+  only under `--offline` (exit 7). A real offline run on the local backend
+  re-hashes the bytes and may pass; on S3 it fails the same way.
 - The extracted store is local even over S3, so a fresh runner over a warm
   bucket previews `Would warm`.
 - A dry run saves only an existing snapshot (`saveDryRunSnapshotIfPersisted`):

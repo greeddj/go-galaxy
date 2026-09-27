@@ -1,4 +1,4 @@
-# Galaxy servers and authentication
+# Servers and credentials
 
 Install from private Galaxy servers, git repositories and tarball URLs, and
 see where each credential may go.
@@ -6,8 +6,8 @@ see where each credential may go.
 | I need to...                                       | Go to                                                                  |
 |:---------------------------------------------------|:-----------------------------------------------------------------------|
 | Use a private hub with a token, then public Galaxy | [A private hub, then public Galaxy](#a-private-hub-then-public-galaxy) |
-| Fix a refused token                                | [`--token`](#--token)                                                  |
-| Trust a hub signed by a private CA                 | [TLS: validate_certs](#tls-validate_certs)                             |
+| Pass a token, or fix one that is refused           | [Where a token may go](#where-a-token-may-go)                          |
+| Trust a hub signed by a private CA                 | [TLS and a private CA](#tls-and-a-private-ca)                          |
 | Install Galaxy roles                               | [Roles and the v1 role API](#roles-and-the-v1-role-api)                |
 | Fetch a private git repository                     | [Git sources and credentials](#git-sources-and-credentials)            |
 | Download a private release tarball                 | [URL sources and credentials](#url-sources-and-credentials)            |
@@ -30,11 +30,11 @@ see where each credential may go.
     url = "https://galaxy.ansible.com"
     ```
 
-    1.  Expanded when the file loads; an unset `HUB_TOKEN` exits
+    1.  Expanded when the file loads. An unset `HUB_TOKEN` exits
         [`2`](../reference/exit-codes.md)
         ([`${VAR}` expansion](../reference/configuration.md#var-expansion)). The token is
         the file's own, as a literal one is, so the address needs no export
-        ([`--token`](#--token)).
+        ([Where a token may go](#where-a-token-may-go)).
 
 === "ansible.cfg"
 
@@ -55,8 +55,8 @@ see where each credential may go.
     go-galaxy install
     ```
 
-    1.  The file's address again: a token you supply goes only to an
-        address you supplied ([`--token`](#--token)).
+    1.  The file's address again. A token you supply goes only to an
+        address you supplied ([Where a token may go](#where-a-token-may-go)).
 
 === "Environment"
 
@@ -71,65 +71,66 @@ see where each credential may go.
 Each collection comes from the first server that has it: private ones from
 `hub`, the rest from public Galaxy.
 
+`lock` exits `5` when the hub names a `download_url` that carries a query
+string, leaves the hub's origin, or does not end in
+`<namespace>-<name>-<version>.tar.gz`. Such a hub works only without a
+lockfile ([Create the lockfile](lockfile.md#create-the-lockfile)).
+
 ## Which servers a run uses
 
-```mermaid
-flowchart TD
-    A{"--server or GO_GALAXY_SERVER set?"} -->|yes| B{"Value matches a list id?"}
-    B -->|yes| C["That entry, its token and TLS"]
-    B -->|no| D["That URL, no list settings"]
-    A -->|no| E{"ANSIBLE_GALAXY_SERVER_LIST exported?"}
-    E -->|"yes, non-empty"| L["Those servers, in order"]
-    E -->|no| F{"galaxy.toml has servers entries?"}
-    F -->|yes| L
-    F -->|no| G{"[galaxy] server_list set?"}
-    G -->|yes| L
-    G -->|no| H{"ANSIBLE_GALAXY_SERVER exported?"}
-    E -->|"yes, empty"| H
-    H -->|"yes, non-empty"| I["That one server"]
-    H -->|no| J{"[galaxy] server set?"}
-    J -->|yes| I
-    J -->|no| K["https://galaxy.ansible.com"]
-    H -->|"yes, empty"| K
-```
+The first source that is set decides:
 
-Other settings follow
+1. `--server` or `GO_GALAXY_SERVER`. A value equal to an id in the list that
+   steps 2 to 4 would pick selects that entry, with its token and TLS
+   setting. Any other value is a URL, used with no entry's settings.
+2. `ANSIBLE_GALAXY_SERVER_LIST`, those servers in order.
+3. The `[[tool.go-galaxy.servers]]` entries of `galaxy.toml`, in order.
+4. `[galaxy] server_list` in `ansible.cfg`, in order.
+5. `ANSIBLE_GALAXY_SERVER`, one server.
+6. `[galaxy] server` in `ansible.cfg`, one server.
+7. `https://galaxy.ansible.com`.
+
+An exported empty `ANSIBLE_GALAXY_SERVER_LIST` skips steps 3 and 4. An
+exported empty `ANSIBLE_GALAXY_SERVER` skips step 6. A list entry brings its
+own token and TLS setting ([Server settings](#server-settings)). Every other
+setting follows
 [Where a setting comes from](../reference/configuration.md#where-a-setting-comes-from).
 
 ## How a collection picks its server
 
-```mermaid
-flowchart TD
-    A["Next server in the list"] --> B{"Its answer"}
-    B -->|200| C["Install from this server"]
-    B -->|"404 on every API root"| D{"Any server left?"}
-    D -->|yes| A
-    D -->|no| E["Not found, exit 3"]
-    B -->|"anything else"| F["Stop the run, no fallback"]
-```
+go-galaxy asks each server in list order. On each server it tries the API
+roots: paths under the server URL, such as `/api/v3` or `/v3`
+([API roots and URL normalization](#api-roots-and-url-normalization)).
 
-Any other answer exits [`4`](../reference/exit-codes.md): a 401 or 403, any other status
-(a 429, 500, 502, 503 or 504 only after the retries), a document of the wrong
-shape, or a refused connection, DNS or TLS failure. A web page at an API root,
-as galaxy.ansible.com serves under `/v3`, is passed over, but a server with web
-pages at every API root, like a single sign-on front, stops the run too. A
-configuration mistake exits `2` before any request: fix it.
+| The server answers                                                        | Result                                                      |
+|:--------------------------------------------------------------------------|:------------------------------------------------------------|
+| `200`                                                                     | The collection comes from this server                       |
+| `404` at every API root                                                   | The next server is asked. With none left, the run exits `3` |
+| A web page at one API root, as galaxy.ansible.com serves under `/v3`      | That root is skipped                                        |
+| Web pages at every API root, like a single sign-on front                  | The run stops with exit `4`                                 |
+| `401` or `403`                                                            | The run stops with exit [`4`](../reference/exit-codes.md)   |
+| Any other status (`429`, `500`, `502`, `503` and `504` after the retries) | The run stops with exit `4`                                 |
+| A document of the wrong shape, a refused connection, a DNS or TLS failure | The run stops with exit `4`                                 |
 
-While resolving or locking, every later request to the server that owns a
-collection (a versions page, a version document) fails the same way, except
-that a `404` there exits `3`: the server lacks the version or list asked for.
-At install, such a failure is [one item's](../reference/exit-codes.md#when-several-things-fail)
-and exits `5`.
+The server that answers owns the collection for the rest of the run. While
+`install` or `lock` resolves, a failed later answer from it, for a versions
+page or a version document, stops the run as the table shows. A `404` there
+exits `3` instead: the server lacks the version or version list asked for.
+After the resolve, while `install` installs, such a failure fails only that
+collection and exits `5`
+([When several things fail](../reference/exit-codes.md#when-several-things-fail)).
 
-A [`source:`](requirements.md#collections) pins one collection to one server:
-an id, or a URL on a server's origin (scheme, host and port), with that
-server's token and TLS. One matching no server is still requested, with a
-warning and no token. The lockfile records the server's URL for an id, the
-`source:` URL for an origin match.
+A [`source:`](requirements.md#collections) binds one collection to one
+server. It names a server id, or a URL on a server's origin (scheme, host and
+port), and the collection gets that server's token and TLS setting. A
+`source:` that matches no server is still requested, with a warning and no
+token. `galaxy.lock` records the server's URL for an id and the `source:` URL
+for an origin match.
 
 > [!NOTE]
-> `source:` pins only that collection, not its dependencies: they walk the
-> whole list. Pin a dependency as a root of its own, or put the hub first.
+> `source:` binds only that collection, not its dependencies: they walk the
+> whole list. Give a dependency its own entry with `source:`, or put the hub
+> first.
 >
 > === "galaxy.toml"
 >
@@ -151,7 +152,21 @@ warning and no token. The lockfile records the server's URL for an id, the
 >         source: hub
 >     ```
 
-## `--token`
+## Where a token may go
+
+With one server, export `GO_GALAXY_TOKEN` or pass `--token`. An empty value
+runs anonymously. With several servers, `--token` or `GO_GALAXY_TOKEN` exits
+`2`, even when empty. Give each server its own token instead, as
+[A private hub, then public Galaxy](#a-private-hub-then-public-galaxy) shows.
+
+A `401` or `403` comes from the server and exits `4`: the server turned the
+token down, or needed one and got none. Check the token's value and which
+server it is set for
+([How a collection picks its server](#how-a-collection-picks-its-server)).
+
+A token you supply goes only to an address you supplied. go-galaxy refuses it
+for a server whose address, or disabled certificate check, is set in
+`ansible.cfg` or `galaxy.toml`:
 
 | Token supplied by                                                                   | URL, or `validate_certs = false`, from a file | Neither from a file |
 |:------------------------------------------------------------------------------------|:----------------------------------------------|:--------------------|
@@ -159,12 +174,13 @@ warning and no token. The lockfile records the server's URL for an id, the
 | The file: a `token` in the same section or entry, a `galaxy.toml` `${VAR}` included | Sent                                          | Sent                |
 
 An address is yours when it comes from `--server=<url>`, `GO_GALAXY_SERVER`,
-`ANSIBLE_GALAXY_SERVER`, `ANSIBLE_GALAXY_SERVER_<ID>_URL` or the default;
+`ANSIBLE_GALAXY_SERVER`, `ANSIBLE_GALAXY_SERVER_<ID>_URL` or the default.
 `--server=<id>` and `url = "${VAR}"` leave it the file's. The rule stops a
 checked-out repository from choosing where your secret goes
-([why](../internals/boundaries.md#credentials-and-the-token-pairing-rule)). A
-`galaxy.toml` that names a variable is trusted with its value, as with every
-[`${VAR}`](../reference/configuration.md#var-expansion).
+([Security boundaries](../internals/boundaries.md#credentials-and-the-token-pairing-rule)
+gives the reasoning). A `galaxy.toml` is trusted with every variable its
+`[tool.go-galaxy]` table names, so export secrets only to runs whose
+`galaxy.toml` you trust ([Trust model](security.md#trust-model)).
 
 ```text
 ✗ galaxy server token destination came from a configuration file: server "hub" (https://hub.example.internal:443) in ansible.cfg
@@ -177,14 +193,15 @@ checked-out repository from choosing where your secret goes
 | `galaxy server certificate verification was disabled by a configuration file for a token it did not supply` | Export `ANSIBLE_GALAXY_SERVER_<ID>_VALIDATE_CERTS` with the identical value         |
 | `--token is ambiguous with a multi-entry server_list`                                                       | Give each server its own token, such as `ANSIBLE_GALAXY_SERVER_<ID>_TOKEN`          |
 
-When the file supplies both the `url` and `validate_certs = false`, export
-both; the run reports the address first. With several servers in effect,
-setting `--token` or `GO_GALAXY_TOKEN`, even empty, exits `2`. With one
-server, either replaces its token, and an empty value forces an anonymous run.
+A `galaxy.toml` entry has a second fix: write the token into it, as
+`token = "${HUB_TOKEN}"`, and stop supplying a token of your own. When the
+file supplies both the `url` and `validate_certs = false`, export both. The
+run reports the address first.
 
-> [!TIP]
-> Prefer `GO_GALAXY_TOKEN` to `--token`: other local users can read a flag's
-> value with `ps` while the run lasts.
+> [!CAUTION]
+> Pass the token as `GO_GALAXY_TOKEN`, not `--token`: other local users can
+> read a flag's value with `ps` while the run lasts
+> ([Trust model](security.md#trust-model)).
 
 <details markdown>
 <summary>My server id contains a hyphen</summary>
@@ -200,7 +217,9 @@ env 'ANSIBLE_GALAXY_SERVER_MY-HUB_URL=https://hub.example.internal/api/galaxy' g
 
 </details>
 
-## TLS: validate_certs
+## TLS and a private CA
+
+Trust the hub's CA and leave `validate_certs` unset:
 
 ```bash
 cat /etc/ssl/certs/ca-certificates.crt hub-ca.pem > hub-bundle.pem # (1)!
@@ -210,10 +229,10 @@ go-galaxy install
 
 1.  The public roots on Debian and Ubuntu; on macOS, `/etc/ssl/cert.pem`.
 
-Trust the hub's CA and leave `validate_certs` unset. This also covers git, url
-and signature fetches, which never honor `validate_certs`, and it never trips
-the token rule. `SSL_CERT_DIR` names a directory of certificates, as well or
-instead.
+This also covers git, url and signature fetches, which never honor
+`validate_certs`. Trusting the CA never gets a token of yours refused
+([Where a token may go](#where-a-token-may-go)). `SSL_CERT_DIR` names a directory of
+certificates, as well or instead.
 
 > [!WARNING]
 > On macOS and Windows, setting `SSL_CERT_FILE` or `SSL_CERT_DIR` replaces the
@@ -223,9 +242,9 @@ instead.
 > certificate directories.
 
 `validate_certs = false` turns verification off for that server's origin only
-and warns on every run, even under `--quiet`. A second warning follows when a
-token crosses it, and a token of yours is refused there unless you exported
-that `validate_certs` yourself ([`--token`](#--token)).
+and warns on every run, even under `--quiet`. A second warning follows when
+that server also has a token. A token of yours is refused there unless you
+exported that `validate_certs` yourself ([Where a token may go](#where-a-token-may-go)).
 
 ```text
 ! TLS certificate verification is DISABLED for Galaxy server "hub" (https://hub.example.internal:443); this run cannot detect a man-in-the-middle on that host
@@ -243,34 +262,18 @@ that `validate_certs` yourself ([`--token`](#--token)).
 | `username`, `password`, `auth_url`, `client_id` | Refused: configure an API token instead             | Refused                         | -                                           |
 | Any other key                                   | Warned about and ignored                            | Refused                         | -                                           |
 
-Refused means exit `2` when the configuration loads. Also refused: an id
-outside `^[A-Za-z0-9_-]+$`, two ids equal ignoring case, a `url` with a user or
-password, a token for plain `http` off loopback (`localhost` or a loopback IP
-literal, no DNS lookup), and two servers on one origin with different tokens
-or `validate_certs`.
+Refused means exit `2` when the configuration loads. These are refused too:
+
+- an id outside `^[A-Za-z0-9_-]+$`, or two ids equal ignoring case
+- a `url` with a user or password
+- a token for plain `http` to a host other than `localhost` or a loopback
+  IP literal: a name is never looked up in DNS
+- two servers on one origin with different tokens or `validate_certs`
 
 An exported variable always wins: an empty `_TOKEN` clears the token, an empty
 `_VALIDATE_CERTS` restores verification, and an empty `_URL` exits `2`. An id
-with no section is built from its variables alone, and `galaxy.toml` entries
-replace the sections outright, never merged.
-
-<details markdown>
-<summary>API root discovery and URL normalization</summary>
-
-| `url` ends in                        | Appended to `url`, in order                |
-|:-------------------------------------|:-------------------------------------------|
-| `/api/v3`, `/api/v2`, `/v3` or `/v2` | Nothing: the `url` as written              |
-| `/api`                               | `/v3`, `/v2`, then nothing                 |
-| Anything else                        | `/api/v3`, `/v3`, `/api/v2`, `/v2`, `/api` |
-
-Each root is tried with and without a trailing slash, the next only after a
-404, and a root that answered is reused for that server. A server whose walk
-ended in `404` for a collection is not asked for it again in the same resolve
-or `lock`, even where an earlier run cached an answer from it. A server URL is
-trimmed, loses one pair of double quotes and its trailing slashes, and must
-then be absolute.
-
-</details>
+with no section is built from its variables alone. `galaxy.toml` entries
+replace the sections outright and are never merged with them.
 
 <details markdown>
 <summary>Exact error messages for server entries</summary>
@@ -284,7 +287,6 @@ then be absolute.
 ✗ galaxy.toml: unsupported requirements file format: [[tool.go-galaxy.servers]] entry 2 repeats id "hub"
 ✗ galaxy.toml: unsupported requirements file format: [[tool.go-galaxy.servers]] is not an array of tables
 ✗ galaxy.toml: unsupported requirements file format: [[tool.go-galaxy.servers]] entry 1 is not a table
-✗ galaxy.toml: project file references unset environment variables: HUB_TOKEN
 ```
 
 Most other refusals open with one of these:
@@ -303,6 +305,26 @@ conflicting validate_certs for the same galaxy server origin
 ```
 
 </details>
+
+### API roots and URL normalization
+
+A server URL is trimmed, loses one pair of surrounding double quotes and its
+trailing slashes, and must then be absolute. go-galaxy then tries these API
+roots under it:
+
+| `url` ends in                        | Appended to `url`, in order                |
+|:-------------------------------------|:-------------------------------------------|
+| `/api/v3`, `/api/v2`, `/v3` or `/v2` | Nothing: the `url` as written              |
+| `/api`                               | `/v3`, `/v2`, then nothing                 |
+| Anything else                        | `/api/v3`, `/v3`, `/api/v2`, `/v2`, `/api` |
+
+Each root is tried with and without a trailing slash. A `404` or a web page
+moves on to the next root
+([How a collection picks its server](#how-a-collection-picks-its-server)).
+Once a root answers, go-galaxy asks only that root on that server. A server
+that answered `404` at every root for a collection is not asked for it again
+in the same resolve or `lock`, even where an earlier run cached an answer
+from it.
 
 ## Roles and the v1 role API
 
@@ -326,15 +348,22 @@ sequenceDiagram
     H-->>G: Commit, which galaxy.lock pins
 ```
 
-A Galaxy role walks the server list like a collection, skipping a server that
-has no v1 or does not list the role. No v1 on any server exits `2` (add
-galaxy.ansible.com); a role no v1 server knows exits `3`. The first server that
-lists the role owns it: a `404` for its versions exits `3`, an unusable record
-or page link `2`, any other failed answer `4`.
+A Galaxy role walks the server list like a collection. A server that has no
+v1 or does not list the role is skipped. The first server that lists the role
+owns it.
 
-A role takes no `source:` ([spelling](requirements.md#roles)), and a git role
+| Case                                                      | Exit                                    |
+|:----------------------------------------------------------|:----------------------------------------|
+| No server in the list serves v1                           | `2`: add galaxy.ansible.com to the list |
+| No v1 server lists the role                               | `3`                                     |
+| The owning server answers `404` for the role's versions   | `3`                                     |
+| The owning server returns an unusable record or page link | `2`                                     |
+| Any other failed answer                                   | `4`                                     |
+
+A role takes no `source:` ([Roles](requirements.md#roles)), and a git role
 never asks a Galaxy server. A `GO_GALAXY_GIT_<ID>_URL` binding for
-`https://github.com` applies to the fetch.
+`https://github.com` applies to the fetch
+([Git sources and credentials](#git-sources-and-credentials)).
 
 ## Git sources and credentials
 
@@ -388,37 +417,24 @@ never asks a Galaxy server. A `GO_GALAXY_GIT_<ID>_URL` binding for
 | `SSH_KNOWN_HOSTS`                             | Host keys, else `~/.ssh/known_hosts` and `/etc/ssh/ssh_known_hosts`                            | No                             |
 | `ALL_PROXY`, `NO_PROXY`                       | A `socks5://` or `socks5h://` proxy for ssh, and its exceptions; other values connect directly | No                             |
 
-A binding applies when scheme, host and port match exactly and the path starts
-with its prefix; the longest prefix wins. No `git` binary runs, so no
-credential helper, `~/.netrc`, `~/.ssh/config` or git config is read, and a
-repository URL carrying a credential is refused.
+A binding applies when scheme, host and port match exactly and the
+repository path equals the binding's path or lies beneath it: `/platform`
+covers `/platform/app`, not `/platform-tools`. The longest matching path
+wins. Ids and values are read as in
+[How git and url bindings are read](#how-git-and-url-bindings-are-read).
 
+No `git` binary runs, so no credential helper, `~/.netrc`, `~/.ssh/config` or
+git config is read. A repository URL carrying a credential is refused.
+Certificates are always verified
+([TLS and a private CA](#tls-and-a-private-ca)), and cross-origin redirects are
+refused. No secret is printed or stored, and no flag takes one
+([Security boundaries: git and url sources](../internals/boundaries.md#git-and-url-sources)).
 Entries are spelled under [Collections](requirements.md#collections) and
-[Roles](requirements.md#roles). Certificates are always verified
-([TLS](#tls-validate_certs)) and cross-origin redirects refused. No secret is
-printed or stored, and no flag takes one
-([the full boundary](../internals/boundaries.md#git-and-url-sources)).
+[Roles](requirements.md#roles).
 
 > [!NOTE]
 > An unknown or changed ssh host key exits `4`: there is no trust on first
 > use. Record the key with `ssh-keyscan` and check its fingerprint first.
-
-<details markdown>
-<summary>How bindings are read, for git and url alike</summary>
-
-- An id matches `^[A-Za-z0-9_-]+$`, no two ids differ only in case, and
-  `<ID>` is the id upper-cased.
-- A variable exported empty counts as unset. An unknown variable under a
-  listed id is warned about and ignored.
-- `_URL`, `_USERNAME` and `_SSH_KEY_FILE` are trimmed; passwords, keys,
-  passphrases and tokens are taken verbatim.
-- Two ids whose `_URL` agree once scheme and host are lower-cased, a default
-  port dropped and trailing slashes cut are refused.
-- The first problem stops the load: the id list, then each id in order with
-  `_URL` first, then collisions; git before url.
-- A refusal names the variable, never the secret.
-
-</details>
 
 ## URL sources and credentials
 
@@ -433,9 +449,11 @@ export GO_GALAXY_URL_ARTIFACTS_TOKEN="${ARTIFACTS_TOKEN}"
 1.  Every id to read: the variables of an unlisted id are ignored.
 
 `_URL` names an `https` origin (`http` only for loopback) and an optional path
-prefix; the longest matching prefix wins. `_TOKEN` is sent as
-`Authorization: Bearer <token>`. Behind a caching proxy
-(`https://front/<upstream-url>`), bind the front host.
+prefix. The path matches by whole segments, as for git, and the longest prefix
+wins. `_URL` and `_TOKEN` are both required, or the run exits `2`. `_TOKEN` is
+sent as `Authorization: Bearer <token>`. Behind a caching proxy
+(`https://front/<upstream-url>`), bind the front host. Ids and values are read
+as in [How git and url bindings are read](#how-git-and-url-bindings-are-read).
 
 | Redirect hop                                                      | `Authorization` sent?       |
 |:------------------------------------------------------------------|:----------------------------|
@@ -444,7 +462,22 @@ prefix; the longest matching prefix wins. `_TOKEN` is sent as
 | From `https` to `http`                                            | Refused: the download fails |
 
 A url source never gets the Galaxy token or a relaxed TLS setting, even on a
-configured server's origin: bind the same token under `GO_GALAXY_URL_*` when
+configured server's origin. Bind the same token under `GO_GALAXY_URL_*` when
 that host accepts it. Spell the entry as
 [Collections](requirements.md#collections) or [Roles](requirements.md#roles)
-shows; a query in its URL is allowed and cut from every printed line.
+shows.
+
+## How git and url bindings are read
+
+- An id matches `^[A-Za-z0-9_-]+$`, no two ids differ only in case, and
+  `<ID>` is the id upper-cased.
+- A variable exported empty counts as unset. An unknown variable under a
+  listed id is warned about and ignored.
+- `_URL`, `_USERNAME` and `_SSH_KEY_FILE` are trimmed. Passwords, keys,
+  passphrases and tokens are taken verbatim.
+- Two ids are refused when their `_URL` values agree once scheme and host
+  are lower-cased, a default port is dropped and trailing slashes are cut.
+- The first problem stops the load. The id list is checked, then each id in
+  order, its `_URL` before its other variables, then collisions between ids.
+  Git bindings are checked before url ones.
+- A refusal names the variable, never the secret.

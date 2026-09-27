@@ -4,7 +4,15 @@
 constraint, or proves that none exists. It is PubGrub-style and pure: no
 goroutines, clock or I/O, with all metadata behind the `Provider` seam.
 
-## Units
+The algorithm and its vocabulary (incompatibility, satisfier, decision level,
+almost satisfied, backjump) follow the
+[PubGrub algorithm description](https://github.com/dart-lang/pub/blob/master/doc/solver.md)
+in pub's repository. This page covers what go-galaxy adds or changes. `root`
+is a synthetic package at version `0.0.0` whose dependencies are the run's
+requirements. Below, `P(s)` is a positive term over the version set `s`, and
+`N(s)` a negative one.
+
+## Terms and incompatibilities
 
 | Unit | What it is | Note |
 | --- | --- | --- |
@@ -24,38 +32,6 @@ that a negative term never entails a positive one.
 - No stored incompatibility holds the tautology `N({})`, so every satisfied one
   has a satisfier. An empty-set dependency is stored as `{parent@version}`.
 
-## Version sets
-
-| Subline | Ordered by | Half-open runs bounded by |
-| --- | --- | --- |
-| Release | `(major, minor, patch)` | Triples |
-| Prerelease | Full semver precedence | Versions without build metadata |
-
-Each subline keeps its runs sorted, nonempty, disjoint and non-abutting, and
-build metadata is invisible to both. Two sublines exist because Masterminds
-gates prereleases per AND group: "every release from 1.2.0" has no interval
-on one order, but is one release run and no prerelease run.
-
-`writeCanonical` is injective, which lets `hashIncompat` prefilter the store's
-dedup. Equality ignores two carriers: `single`, a singleton's registry
-spelling that exact pins and decisions read, and `display`, a proof label no
-logic may branch on.
-
-## Where prereleases are admitted
-
-| Rule | When |
-| --- | --- |
-| Parse authority | `semver.NewConstraint` alone decides what parses; `versetbuild.go` mirrors it to build the set |
-| All versions | `""` or `*` is `fullVerSet`, prereleases included |
-| No prerelease | An AND group with no prerelease operand, whatever its runs admit (`buildGroup`) |
-| Prereleases too | Any prerelease operand opens its whole group: `>=1.0.0-0` admits `2.0.0-rc1` |
-| Refused | `!=` with a patch x-range and a prerelease operand (`errNonIntervalConstraint`) |
-
-The mirror replicates vendored Masterminds v3.5.0
-(`TestVerSetDifferentialAgainstCheck`); refusing accepted input is a solver
-bug. The refused shape is an infinite comb that would break closure under
-complement. User rule: [Prereleases](../get-started/ansible-galaxy-compat.md#prereleases).
-
 ## The loop
 
 ```mermaid
@@ -71,7 +47,7 @@ flowchart TD
   TERM -->|"no"| BJ{"Satisfier a decision<br/>or levels differ?"}
   BJ -->|"no"| MERGE["Merge with the<br/>satisfier's cause"]
   MERGE --> TERM
-  BJ -->|"yes"| BACK["Backjump and replay<br/>surviving assignments"]
+  BJ -->|"yes"| BACK["Backjump, rebuild state<br/>from surviving assignments"]
   BACK --> UP
   SAT -->|"no"| PICK{"Undecided positive<br/>package left?"}
   PICK -->|"no"| RES(["Extract result"])
@@ -81,8 +57,9 @@ flowchart TD
 
 Propagation scans each changed package's incompatibilities newest first,
 since conflict resolution learns the general ones late. It relates terms only
-to `accum`, so propagation and conflict resolution make no provider call. A
-replay costs microseconds, so no per-level snapshot is kept.
+to `accum`, so propagation and conflict resolution make no provider call.
+Rebuilding each package's state after a backjump costs microseconds, so no
+per-level copy is kept.
 
 | Decision step | Rule |
 | --- | --- |
@@ -93,9 +70,9 @@ replay costs microseconds, so no per-level snapshot is kept.
 | Commit | Declined when a new dependency incompatibility is already satisfied (`decideVersion`) |
 
 Every path still asks `Dependencies`, once per package and version
-(`depsAdded`). An empty pool finishes the solve, since a decided parent's
-requirement is always positive; `extractResult` fails closed on an undecided
-package reachable from root.
+(`depsAdded`). An empty candidate pool (`candidatePackages`) finishes the
+solve, since a decided parent's requirement is always positive.
+`extractResult` fails closed on an undecided package reachable from root.
 
 ## The Provider seam
 
@@ -137,9 +114,43 @@ misclassified.
 | `--refresh` warms exact pins only | Only their policy still reads back |
 | Skips git and url roots; under `--no-deps` warms only an exact pin's server binding | As with dependencies: the solve then reuses the documents and the 404s the warm met |
 | An error stops dispatch, logged under `--verbose` | The solve reports it once, on the caller's own context |
-| Runs below the snapshot-replay return | A replay makes no metadata request |
+| Runs only after the [Resolution replay](cache.md#resolution-replay) check falls through | A replay makes no metadata request |
 
 </details>
+
+## Version sets
+
+| Subline | Ordered by | Half-open runs bounded by |
+| --- | --- | --- |
+| Release | `(major, minor, patch)` | Triples |
+| Prerelease | Full semver precedence | Versions without build metadata |
+
+Each subline keeps its runs sorted, nonempty, disjoint and non-abutting, and
+build metadata is invisible to both. Two sublines exist because Masterminds
+gates prereleases per AND group: "every release from 1.2.0" has no interval
+on one order, but is one release run and no prerelease run.
+
+`writeCanonical` is injective, which lets `hashIncompat` prefilter the store's
+dedup. Equality ignores two carriers: `single`, a singleton's registry
+spelling that exact pins and decisions read, and `display`, a proof label no
+logic may branch on.
+
+## Where prereleases are admitted
+
+| Rule | When |
+| --- | --- |
+| All versions | `""` or `*` is `fullVerSet`, prereleases included |
+| No prerelease | An AND group with no prerelease operand, whatever its runs admit (`buildGroup`) |
+| Prereleases too | Any prerelease operand opens its whole group: `>=1.0.0-0` admits `2.0.0-rc1` |
+| Refused | `!=` with a patch x-range and a prerelease operand (`errNonIntervalConstraint`) |
+
+`semver.NewConstraint` alone decides what parses. `versetbuild.go` mirrors
+vendored Masterminds v3.5.0 to build the set, and
+`TestVerSetDifferentialAgainstCheck` holds the two together. The mirror
+refusing input Masterminds accepts is a solver bug, with one deliberate
+exception: the refused shape above, an infinite comb that would break closure
+under complement. User rule:
+[Prereleases](../get-started/ansible-galaxy-compat.md#prereleases).
 
 ## Determinism
 
@@ -159,12 +170,14 @@ in both directions.
 | No version fits | `*ConflictError`, whose `Is` matches `helpers.ErrNoVersionSatisfiesConstraints` | [`3`](../reference/exit-codes.md) |
 | Canceled | Bare `ctx.Err()` from the per-iteration check | [By cause](../reference/exit-codes.md#signals) |
 | Provider failure | Wrapped, never modeled as an incompatibility | By its sentinel |
+| The refused `!=` comb | Wraps `errNonIntervalConstraint`, not `errSolverBug` | `1` |
 | Broken invariant | Wraps the unexported `errSolverBug`, no panic | `1` |
 
-The only panic is `mustNewVersion` on the init-time root version; a new
-invariant check joins the `errSolverBug` family. Conflict resolution stops
-after 10,000 steps, and a root cause that is not almost satisfied ends as a
-`*ConflictError`, not a bug.
+The only panic is `mustNewVersion` on the init-time root version. A new
+invariant check joins the `errSolverBug` family. Two defensive dead ends
+return a `*ConflictError` (exit 3), not `errSolverBug`: conflict resolution
+past 10,000 steps, which correct input never nears, and a root cause left not
+almost satisfied after resolution (`TestNonConvergingConflictIsCleanFailure`).
 
 <details markdown>
 <summary>What wraps errSolverBug</summary>
@@ -174,7 +187,8 @@ after 10,000 steps, and a root cause that is not almost satisfied ends as a
 - No satisfier for a satisfied incompatibility.
 - A decision term without a singleton version (`decisionVersionOf`).
 - `extractResult` reaching an undecided package.
-- The mirror parser refusing input `semver.NewConstraint` accepted.
+- The mirror parser refusing input `semver.NewConstraint` accepted, the
+  refused comb aside.
 - The proof walk reaching a non-derived incompatibility, reported instead of
   the incomplete proof.
 

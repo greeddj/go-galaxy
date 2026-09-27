@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# bench.sh - measure ansible-galaxy vs go-galaxy over testing/requirements-*.yml
-# in the cold, warm, frozen, s3-* and roles-* scenarios. Knobs, outputs and
-# prerequisites: docs/internals/development.md, "The benchmark harness".
+# bench.sh - time go-galaxy over testing/requirements-*.yml, beside ansible-galaxy
+# in cold, warm and roles-*. Setup: docs/reference/benchmarks.md, "Reproduce".
+# Knobs and outputs: docs/internals/development.md, "The benchmark harness".
 
 set -euo pipefail
 

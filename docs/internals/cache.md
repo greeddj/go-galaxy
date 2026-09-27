@@ -2,7 +2,7 @@
 
 How the persistent cache is built: keys, stores, the snapshot and the seam two
 backends implement. Its layout, freshness and flags are on
-[Caching](../guides/caching.md).
+[Caching and S3](../guides/caching.md).
 
 ```mermaid
 flowchart TD
@@ -47,8 +47,17 @@ prefix, never `type`.
   the same commit, whose namespace has no dot.
 - A persisted locator parses one way (`gitsource.ParseLocator`): `Locator.String`
   always writes the `#`, a canonical URL holds no `#`, a subdir no `@`.
-- `helpers.IsScopedArtifactKey` changes with `ArtifactKey`: the legacy-key
-  sweep uses it to spare a live key.
+
+### Legacy flat-key artifacts
+
+Releases before server scoping cached a collection under the flat key
+`<namespace>-<name>-<version>.tar.gz`, which no lookup reaches any more.
+`sweepLegacyArtifacts` deletes that key for every collection `cleanup`
+scanned, reachable or not, since `removeUnused` purges only what it removes.
+It spares a key `helpers.IsScopedArtifactKey` accepts: a namespace directory
+may contain a dot, so `<12 hex digits>.acme` spells a live key. That predicate
+changes with `ArtifactKey`. The flow is in
+[Removal, sweeps and save](flow-cleanup.md#removal-sweeps-and-save).
 
 ### Extracted store: content-addressed, materialized by hardlink
 
@@ -64,6 +73,9 @@ that stay and of warms within 30 days, read from the snapshot: a disk scan
 misses an absent workspace, normal on an ephemeral runner. Only `warm` writes
 a warmed entry, or a tree would outlive its install by 30 days.
 
+The marker that proves an installed tree complete lives beside the install,
+not in the cache: [The extract-done marker](install-pipeline.md#the-extract-done-marker).
+
 ### Snapshot
 
 | Bucket | Key | Holds |
@@ -74,8 +86,8 @@ a warmed entry, or a tree would outlive its install by 30 days.
 | `requirements`, `resolved`, `graph` | fqdn, fqdn, fqdn@version | The last resolution: root spec, picks, edges |
 | `installed`, `warmed` | fqdn@version; a warmed role `role:<name>@<version>` | Install record; warmed sha256 and time |
 | `git_pins`, `url_pins` | `gitsource.PinKey`, the URL | Commit or sha256, with identities and deps |
-| `installed_roles`, `role_pins` | Install name, requirement line | Role record; what the line resolved to |
-| `meta` | Fixed keys | Schema version, save stamps, requirements hash |
+| `installed_roles`, `role_pins` | Install name; one key per [role source](install-pipeline.md#role-resolution) | Role record; the repository and commit, or URL and sha256, a role resolved to, with its version and dependencies |
+| `meta` | Fixed keys | Schema version, `last_snapshot`, `content_recorded`, requirements hash |
 
 A local save writes every bucket in one bbolt transaction (`store.Save`), S3
 one gzipped JSON object (`MarshalSnapshot`), both through `snapshotData`, the
@@ -84,36 +96,32 @@ one copy path, which applies retention and cuts signature queries.
 - `helpers.StoreSnapshotSchemaVersion` is bumped for any change, additive
   included: `ValidateSchema` drops an older snapshot and refuses a newer one.
 - A new bucket joins `jsonBuckets` (appended), `New`, `ensureMaps`,
-  `snapshotData`, `MarshalSnapshot`, and `hasContentEntries` if it records
-  on-disk content.
+  `snapshotData` and `MarshalSnapshot`. It also joins `hasContentEntries` if
+  it records on-disk content, and `ClearCaches` if `--clear-cache` must drop
+  it.
 - Every write-locked `*Store` method sets the dirty flag
   (`TestEveryWriteLockedStoreMethodMarksDirty`); a clean run skips the save.
 - A skipped save skips eviction, so a read of mutable data checks age
   itself (`WarmedArtifactSHAByKey`).
 
+Every save stamps `last_snapshot`, so a set stamp marks a persisted snapshot
+(`WasPersisted`). `cleanup` and a `--dry-run` save only over a persisted one:
+a fresh empty store saved would read as "nothing installed". A save carrying
+installed, warmed or installed-role records stamps `content_recorded`, which
+stays set afterwards (`HasRecordedContent`). It gates `cleanup`'s
+extracted-store sweep, because `lock` saves a snapshot whose empty content
+maps prove nothing.
+
 ### Resolution replay
 
-```mermaid
-flowchart TD
-    roots["Roots, git and url expanded"] --> veto{"snapshotReuseVetoed?"}
-    veto -->|"yes"| full["Full solve over every root"]
-    veto -->|"no"| same{"Signature equal and<br/>every root satisfied?"}
-    same -->|"yes"| replay["Whole replay, no request"]
-    same -->|"no"| prev{"Stored spec re-signed<br/>under this run matches?"}
-    prev -->|"no"| full
-    prev -->|"yes"| split{"Some roots unchanged,<br/>some changed?"}
-    split -->|"no"| full
-    split -->|"yes"| nested["Keep unchanged subgraphs,<br/>nested solve of changed"]
-    nested --> merge{"Merge agrees and validates?"}
-    merge -->|"no"| full
-    merge -->|"yes"| rec["Record merged resolution"]
-    full --> rec2["Record resolution"]
-```
+[Collection resolution](flow-install.md#collection-resolution) draws the
+replay decision branch by branch.
 
 `requirementsSignatureFromSpec` hashes `no-deps=false` or `no-deps=bound`,
 `servers=<serversSignature>`, then sorted `fqdn|constraint|source|type|signatures`
-lines. `bound` replaced `true` so no older `--no-deps` resolution replays: it
-may hold an exact pin on the first server, never asked.
+lines. `--no-deps` is spelled `bound`, not `true`, so a `--no-deps` resolution
+an older binary recorded never replays: that one may pin a root to the first
+server without having asked it.
 
 | Input | Rule | Why |
 | :-- | :-- | :-- |
@@ -132,46 +140,32 @@ backends.
 | Rule | Why |
 | :-- | :-- |
 | Missing is empty; undecodable is `ErrCorruptProjectRegistry` | Read as empty, nothing is reachable and `cleanup` deletes everything |
-| No schema version: fields are only added, and absence reads conservatively, as no `roles_path` means "do not scan" | An older binary drops unknown fields when it re-records |
+| No schema version: fields are only added, and absence reads conservatively, as no `roles_path` means "do not scan" | An older binary re-recording a project drops fields it does not know, so a missing field must read as the safe case |
 | A galaxy.toml path goes in `requirements_file` | An older binary reads it as YAML, so its `cleanup` fails closed |
 | `--dry-run` records nothing (`recordProjectUnlessDryRun`) | A previewed broken file would abort every cleanup |
-
-### The extract-done marker
-
-| Aspect | Rule |
-| :-- | :-- |
-| Name | `.extract-done.<sha256>`, the digest checked by `markerRel` before any join |
-| Place | A collection's version `.info` directory, which `ansible-galaxy collection verify` ignores; a role's own directory |
-| Content | `go-galaxy-extract-1 entries=<n> dirs=<n> bytes=<n>`, capped at 256 bytes, parsed strictly |
-| Catches | An entry added or removed, a size change; not a same-length edit (`TestExtractMarkerMutationCases`) |
-| On mismatch | Removed and re-extracted, never a failed run |
-| Verified by | Skip checks and extraction (`verifyExtractMarker`); dry-run probes only read (`checkExtractMarker`) |
-
-`resetCollectionInfo` removes other versions' `.info` directories, so no stale
-marker leaves the tally as a reinstall's only check.
 
 ## The cache seam
 
 | Interface | Concurrency | A backend must |
 | :-- | :-- | :-- |
-| `Backend` | Unsafe: the caller serializes every call, `SweepTemp` only under the lock | Return a holder context from `Lock`, the caller's own if unlosable; build `Artifacts` in `Open` |
+| `Backend` | Unsafe: the caller serializes every call, calls `Artifacts` only after a successful `Open` (S3 builds its store there), and `SweepTemp` only under the lock | Return a holder context from `Lock`, the caller's own if unlosable |
 | `ArtifactStore` | Safe across distinct keys | Set `ArtifactFile.SHA` only over bytes it produced; keep `Meta` tri-state like `Has` |
 
 `internal/cache.New` alone names a concrete backend. `collections.withBackend`
 and `cleanup` open, lock, run under the holder context and judge with
 `LockLostError`; `internal/lockaudit` gates it ([Development](development.md)).
 
-| Wrapper | Does | Why |
+| Helper | Does | Why |
 | :-- | :-- | :-- |
 | `WithCleanSaveSkip`, outermost | Skips `SaveStore` for a clean non-nil store | A nil store passes, so the local refusal survives |
 | `WithStateDeadline` | Bounds the four state calls (`ErrStateObjectDeadline`) | Not `Lock`, whose holder spans the run, nor `ClearFiles`, which grows with the cache |
 | `LockLostError` | Reports `ErrCacheLockLost` (exit 8) once the holder lost the lock | The run's error stays `%v`, so none of its sentinels outranks 8 |
 | `FetchJSONWithCachePolicy` | The one Galaxy metadata path, v3 and v1 | Decodes before storing: no undecodable page is cached |
 
-Both decorators spell out every method, so a new `Backend` method fails the
-build there. Local `Commit` renames the temp into its slot; S3 `Commit` hands
-the uploaded temp back with a `Cleanup`, so a prefetched artifact needs no
-second GET. Callers run `Cleanup` once.
+`WithCleanSaveSkip` and `WithStateDeadline` spell out every method, so a new
+`Backend` method fails the build there. Local `Commit` renames the temp into
+its slot; S3 `Commit` hands the uploaded temp back with a `Cleanup`, so a
+prefetched artifact needs no second GET. Callers run `Cleanup` once.
 
 <details markdown>
 <summary>Contract details a new backend must match</summary>
@@ -199,10 +193,15 @@ once (`ErrAnotherInstanceIsRunning`) rather than waiting on bbolt.
 > The lock file is opened with `O_NOFOLLOW` and never unlinked: deleting it
 > under a holder lets another process lock a new inode at the same path.
 
+`openBolt` reports only bbolt's `ErrInvalid` (truncation included),
+`ErrVersionMismatch` and `ErrChecksum` as `ErrCorruptSnapshotStore`, exit 9.
+`ErrVersionMismatch` is bbolt's file format, not the snapshot schema: a
+`go.etcd.io/bbolt` bump that changes it makes every local snapshot exit 9.
+
 `classifyCacheFailure` maps a permission failure to unusable (exit 2), any
-other to unavailable (exit 4). A new store sentinel must join
-`alreadyClassified`, or it exits 4: the network class precedes busy, corrupt
-and usage.
+other, an mmap failure included, to unavailable (exit 4). A new store sentinel
+must join `alreadyClassified`, or it exits 4: the network class precedes busy,
+corrupt and usage.
 
 ### The S3 client
 
@@ -215,16 +214,24 @@ and usage.
 - State objects are read through `internal/gzipstream` under both
   `StateObjectMax*Size` caps.
 
+An idempotent request (GET, HEAD, DELETE, a listing, an unconditional PUT)
+gets up to four attempts (`s3RetryMaxAttempts`), 200 ms-5 s full-jitter
+backoff apart. `s3Retryable` retries a stalled read, a `429`, `500`, `502`,
+`503` or `504`, and a transport failure while the run's context is live. It
+judges a transport failure by the context, not by the error's shape. Dial and
+response-header timeouts also look like deadlines, so a shape test would stop
+retrying the two commonest outages. A conditional PUT and bucket creation are
+sent once.
+
 | Class | Exit | Raised for |
 | :-- | :-- | :-- |
 | Unavailable | 4 | Any non-2xx except `404` and a conditional `412`; a broken listing body; a transport failure; a `409` |
 | Unusable | 2 | A failed conditional-write probe, a lock `HEAD` without ETag, a hostless endpoint, any redirect |
 | Busy | 8 | A lock wait that observed a holder |
 
-A class follows where a failure was found, not how permanent it looks;
-`sentinelClassCases` pins each sentinel to at most one. Retries are on
-[S3 cache](../guides/caching.md#s3-cache-optional), the endpoint boundary on
-[Security boundaries](boundaries.md).
+A class follows where a failure was found, not how permanent it looks.
+`sentinelClassCases` pins each sentinel to at most one. The endpoint boundary
+is on [Security boundaries](boundaries.md#the-s3-endpoint).
 
 ### The S3 distributed lock
 
@@ -256,7 +263,7 @@ sequenceDiagram
 | :-- | :-- | :-- |
 | `lockTTL` | 10 min | The written deadline: how long a crashed holder blocks |
 | `heartbeatInterval` | 3 min | Refresh period |
-| `heartbeatOpTimeout`, `lockReleaseTimeout` | 30 s | One tick; a release on a fresh context |
+| `heartbeatOpTimeout`, `lockReleaseTimeout` | 30 s | One tick's HEAD and PUT together; a release on a fresh context |
 | `lockWaitCeiling` | 5 min | A whole acquisition |
 | `lockBackoffBase`, `lockBackoffCap` | 250 ms, 5 s | Full-jitter backoff |
 
@@ -270,6 +277,16 @@ sequenceDiagram
 | Release joins the heartbeat before canceling the holder | Keeps a tick's loss cause (`TestReleaseRacingTheTickKeepsTheLossCause`) |
 
 No test reaches the abandons after a failed PUT: the fake cannot lose a reply.
+
+The lock's `x-amz-meta-*` headers are its authority, and its JSON body only
+mirrors them for a human. The body still matters: S3's single-part ETag is the
+body's MD5, so two runs reclaiming one expired lock with `If-Match` differ only
+by the token each writes there.
+
+A run makes at most three state operations under the lock, each bounded to
+60 seconds (`helpers.StateObjectDeadline`). One fits in the 3-minute heartbeat
+interval, which fits in the 10-minute `lockTTL`, and three fit in a waiter's
+5-minute ceiling (`TestStateObjectDeadlineFitsInsideTheLockTimings`).
 
 <details markdown>
 <summary>Lock edge cases</summary>

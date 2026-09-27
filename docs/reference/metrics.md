@@ -30,11 +30,10 @@ go-galaxy can write a JSON report of each `install`, `warm`, `lock` and
     go-galaxy install
     ```
 
-Missing directories are created, and the file is
-[replaced atomically](../internals/boundaries.md#the-collections-tree-and-the-cache-directory).
-A flag or variable [outranks](configuration.md#where-a-setting-comes-from)
-`metrics_file`, and an exported empty `GO_GALAXY_METRICS_FILE` turns the report
-off.
+Missing directories are created, and the file is replaced atomically, so a
+reader never sees half a report. A flag or variable
+[outranks](configuration.md#where-a-setting-comes-from) `metrics_file`, and an
+exported empty `GO_GALAXY_METRICS_FILE` turns the report off.
 
 ## Fields
 
@@ -65,13 +64,17 @@ A cold `install --frozen` of three collections and one Galaxy role:
 | `command` | `install`, `warm`, `lock` or `outdated` |
 | `server` | URL of the first configured server only |
 | `lockfile` | Resolved lockfile path, even when none exists |
-| `lockfile_hash` | [`go-galaxy hash`](../guides/lockfile.md#a-cache-key-for-ci) minus `sha256:`; absent without a loadable lockfile |
+| `lockfile_hash` | [`go-galaxy hash`](../guides/lockfile.md#a-cache-key-for-ci) of the lockfile on disk when the report is written, minus `sha256:`; absent when none loads |
 | `duration_ns` | Run time in nanoseconds |
 | `cache_hits` | [Artifact hits](#how-the-counters-count) |
 | `cache_misses` | [Artifact misses](#how-the-counters-count) |
 | `bytes_downloaded` | [Bytes fetched from origins](#how-the-counters-count) |
 | `frozen` | `true` when `install` or `warm` ran with `--frozen`, else absent |
 | `offline` | `true` under `--offline`, else absent |
+
+A plain `install` or `warm` does not read the lockfile, and `lock --check`
+leaves a drifted one as it was. For those runs `lockfile_hash` need not match
+what the run installed or resolved.
 
 `collections`, `roles` and `failures` depend on the command:
 
@@ -80,8 +83,6 @@ A cold `install --frozen` of three collections and one Galaxy role:
 | `install`, `warm` | Planned entries, dependencies and already-installed ones included | Failed collections plus failed roles |
 | `lock` | Entries in the fresh resolve | Always `0` |
 | `outdated` | [Entries compared](../guides/lockfile.md#find-newer-versions) | Failed lookups |
-
-Nothing in a `lock` report tells a `--check` run from a write.
 
 ## When a report is written
 
@@ -102,12 +103,22 @@ cannot load.
 
 > [!WARNING]
 > Gate on the [exit code](exit-codes.md#using-exit-codes-in-ci), never on the
-> report: `lock` reports `failures: 0` even when `--check` exits `6`. A failed
-> report write prints a warning and leaves the exit code unchanged.
+> report. A `lock` report cannot tell a `--check` run from a write, and shows
+> `failures: 0` even when `--check` exits `6`. A failed report write prints a
+> warning and leaves the exit code unchanged.
 
 ## How the counters count
 
-| One git and one Galaxy collection | `cache_misses` | `cache_hits` | `bytes_downloaded` |
+A hit is an artifact served from the cache, local or S3, and adds no bytes. A
+miss is an artifact fetched from its origin. A Galaxy collection counts once.
+A git or url collection, and every role, counts a miss when the resolve stores
+it and a hit when `install` or `warm` reads it back. Under `--frozen` nothing
+resolves, so one fetched from its origin counts only the miss. Under
+`--no-cache` such an artifact counts neither.
+
+One git and one Galaxy collection:
+
+| Run | `cache_misses` | `cache_hits` | `bytes_downloaded` |
 | :-- | :-- | :-- | :-- |
 | Cold cache | `2` | `1` | Git pack + Galaxy tarball |
 | `--frozen`, cold cache | `2` | `0` | Git pack + Galaxy tarball |
@@ -115,14 +126,9 @@ cannot load.
 | Both already installed | `0` | `0` | `0` |
 | `--no-cache` | `1` | `0` | Git pack + Galaxy tarball |
 
-A hit is an artifact served from the cache, local or S3, and adds no bytes; a
-miss is fetched from its origin. A git or url collection, and every role,
-counts a miss when the resolve stores it and a hit when install or warm reads
-it back: `--frozen` keeps only the miss, `--no-cache` neither.
-
-The [Fields](#fields) report is a `--frozen` run: three Galaxy tarballs and the
-role make `4` misses. `lock` counts only git, url and role fetches; `outdated`
-counts nothing.
+The [Fields](#fields) report is a `--frozen` run, so its three Galaxy tarballs
+and one role make `4` misses. `lock` counts only git, url and role fetches.
+`outdated` counts nothing.
 
 <details markdown>
 <summary>Counting rules in detail</summary>

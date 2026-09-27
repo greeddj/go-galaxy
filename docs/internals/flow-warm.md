@@ -9,14 +9,8 @@ tree. Options: [`warm`](../reference/cli.md#warm); code meanings:
 
 ```mermaid
 flowchart TD
-    S(["go-galaxy warm"]) --> CF["BuildCollectionConfig,<br/>clients"]
-    CF -->|"refused"| X2(["exit 2"])
-    CF --> NC{"--no-cache set?"}
-    NC -->|"yes"| X2
-    NC -->|"no"| SU["shared setup: open, lock,<br/>load snapshot, record project"]
-    SU -->|"fails"| XS(["exit 1, 2, 4, 8<br/>or 9 by cause"])
-    SU --> PL["plan: roots, verification,<br/>collections, then roles"]
-    PL -->|"fails"| XP(["exit 2, 3, 4, 5,<br/>6 or 7 by cause"])
+    SU(["Shared setup: lock held,<br/>snapshot loaded"]) --> PL["plan: roots, verification,<br/>collections, then roles"]
+    PL -->|"fails"| XP(["exit 1, 2, 3, 4, 5,<br/>6 or 7 by cause"])
     PL --> D{"--dry-run set?"}
     D -->|"yes"| PV["preview: probe, report,<br/>save a persisted snapshot"]
     PV --> XD(["exit 0, 5 or 7,<br/>or the save error's code"])
@@ -27,12 +21,12 @@ flowchart TD
     WR --> SV["SaveStore, then writeRunMetrics"]
     SV --> F{"any item failed?"}
     F -->|"yes"| XF(["exit 5, 7 or 10<br/>by cause"])
-    F -->|"no, save failed"| XSV(["exit 2, 4 or 8<br/>by cause"])
+    F -->|"no, save failed"| XSV(["exit 2 or 4<br/>by cause"])
     F -->|"no"| X0(["exit 0"])
 ```
 
-`runWarm` refuses `--no-cache` (`ErrWarmCacheDisabled`) before
-`cacheBackend.New`, so no backend opens and no lock is taken. Everything else
+`runWarm` refuses `--no-cache` (`ErrWarmCacheDisabled`, exit 2) before
+`internal/cache.New`, so no backend opens and no lock is taken. Everything else
 runs inside `withBackend`, whose startup is
 [Shared setup](commands.md#shared-setup): the dead-run temp sweep,
 `--clear-cache` and `RecordProject` happen there.
@@ -50,7 +44,7 @@ flowchart TD
     RL -->|"fails"| X6(["exit 6"])
     RL --> PC["planCollections: map,<br/>roots present, levels"]
     RS --> PC
-    RS -->|"fails"| XR(["exit 2, 3, 4,<br/>5 or 7 by cause"])
+    RS -->|"fails"| XR(["exit 1, 2, 3, 4,<br/>5 or 7 by cause"])
     PC -->|"fails"| XP(["exit 2 or 3<br/>by cause"])
     PC --> F2{"--frozen set?"}
     F2 -->|"yes"| RR["resolveRolesFromLockfile"]
@@ -100,36 +94,27 @@ flowchart TD
     R -->|"no"| S(["back to SaveStore"])
 ```
 
-A per-item failure never stops the others; the causes join behind the
-`ErrInstallationFailed` headline built by `warmError`.
+A per-item failure never stops the others. `warmError` joins the causes
+behind `ErrInstallationFailed`
+([When several things fail](../reference/exit-codes.md#when-several-things-fail)).
 
 ## One collection
 
 ```mermaid
 flowchart TD
-    H["prefetch.Wait: take the handoff,<br/>warn if the prefetch failed"] --> P["prepareInstall: prefetched<br/>bytes, cache hit or download"]
-    P -->|"error"| E1{"canRetryCacheHit,<br/>sha256 mismatch?"}
-    P --> V["verifyPinnedSHA, then<br/>verifyCollectionSignatures"]
-    V --> EN["extractStore.Ensure<br/>under the sha256"]
-    EN --> REC["recordWarmed: SetWarmed<br/>ns.name@version, stamped now"]
+    H["prefetch.Wait: take the handoff,<br/>warn if the prefetch failed"] --> P["prepareWithRecovery: acquire, then<br/>pin, signatures, Ensure; one refetch"]
+    P -->|"error"| FL(["Failed, cause recorded"])
+    P --> REC["recordWarmed: SetWarmed<br/>ns.name@version, stamped now"]
     REC --> OK(["Cached"])
-    V -->|"error"| E2{"canRetryCacheHit,<br/>repairable by a refetch?"}
-    EN -->|"error"| E2
-    E1 -->|"yes: evict"| EV["force one refetch"]
-    E2 -->|"yes: evict unless a<br/>locked download_url"| EV
-    EV --> P
-    E1 -->|"no"| FL(["Failed, cause recorded"])
-    E2 -->|"no"| FL
 ```
 
-`canRetryCacheHit` holds for a cache hit on the first try, not under
-`--offline`, and both decisions need it. `warmOne` is `prepareWithRecovery`
-with `warmVerifyAndEnsure` as its action, so acquisition and the refetch-once
-rule are install's:
-[Acquiring an artifact](install-pipeline.md#acquiring-an-artifact) and
-[Bounded recovery](install-pipeline.md#bounded-recovery). `recordWarmed` stamps
-cache hits too, which is what keeps a tree through `cleanup` for 30 days
-(`WarmedEntryMaxAge`); install must never call it.
+`warmOne` is `prepareWithRecovery` with `warmVerifyAndEnsure` as its action:
+`verifyPinnedSHA`, then `verifyCollectionSignatures`, then
+`extractStore.Ensure` under the sha256. Acquisition and the refetch-once rule
+are install's: [Acquiring an artifact](install-pipeline.md#acquiring-an-artifact)
+and [Bounded recovery](install-pipeline.md#bounded-recovery). `recordWarmed`
+stamps cache hits too, which is what keeps a tree through `cleanup` for 30
+days (`WarmedEntryMaxAge`); install must never call it.
 
 ## The dry-run preview
 
@@ -160,32 +145,34 @@ still fetched during resolution and its build discarded
 
 | Exit | Decided in | Cause |
 | --- | --- | --- |
-| 2 | `runWarm` | `--no-cache`, before any backend |
-| 1, 2, 4, 8, 9 | `BuildCollectionConfig`, `initInstall` | [Shared setup](commands.md#shared-setup) |
-| 2 | `loadRoots`, `newVerifyContext`, `buildCollectionsMap` | requirements unreadable or invalid, keyring or signature config, unsafe resolved name, inexact version or duplicate key |
-| 3 | solver, `planCollections` | conflict, no candidate, dropped root, cycle |
-| 6 | `resolveFromLockfile`, `resolveRolesFromLockfile` | `--frozen`: lockfile missing, invalid, not covering the roots |
-| 1, 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md) |
+| 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, `--no-cache` (`ErrWarmCacheDisabled`), backend open, lock or snapshot load |
+| 2 | `loadRoots`, `newVerifyContext` | requirements file missing, unreadable or invalid; keyring or signature config |
+| 6 | `resolveFromLockfile`, `resolveRolesFromLockfile` | `--frozen`: lockfile missing, invalid, not covering the roots, `download_url` off its server |
+| 1, 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md#exits) |
+| 2 | `planCollections` | unsafe resolved name, inexact version, duplicate key |
+| 3 | `planCollections` | root unresolved, cycle |
 | 7 | `warmError` | a cause is a sha256, commit or identity mismatch |
 | 10 | `warmError` | a cause is a signature verdict |
 | 5 | `warmError` | any other item failure, a network cause included |
-| 2, 4, 8 | `SaveStore` | save failed and no item did |
+| 2, 4 | `SaveStore` | save failed and no item did |
 
 ## Flags that change the flow
 
 | Flag | Diagram | Effect |
 | --- | --- | --- |
-| `--no-cache` | Overview | exit 2 before open |
+| `--no-cache` | [Shared setup](commands.md#shared-setup) | exit 2 before any backend opens |
 | `--frozen` | Plan | lockfile instead of solver and role discovery |
 | `--dry-run` | Overview | preview replaces warming; no `--clear-cache`, registry record or metrics |
 | `--offline` | Plan, Warming collections and roles, One collection, The dry-run preview | resolves as install does; a cache miss fails the item; no eviction |
-| `--refresh`, `--no-deps` | Plan | as for install |
-| `--clear-cache` | [Shared setup](commands.md#shared-setup) | drops caches and artifact files before planning |
-| `--keyring`, `--disable-gpg-verify` | Plan, One collection | verification on: signatures checked before `Ensure` |
+| `--refresh`, `--no-deps` | Plan | as for install, on [install flow](flow-install.md#flags-that-change-the-flow) |
+| `--clear-cache` | [Shared setup](commands.md#shared-setup) | forgets metadata and pins, deletes artifacts, keeps the recorded resolve; skipped under `--dry-run` |
+| `--keyring` | Plan, One collection | verification on: signatures checked before `Ensure` |
 | `--s3-bucket` | [Shared setup](commands.md#shared-setup) | S3 backend, so a lock lost mid-run is possible |
 | `--metrics-file` | Overview | report after the save |
 
-Accepted without changing the flow: `--workers` and `--download-workers` (pool
-sizes), `--download-path` and `--roles-path` (only recorded in the registry),
-`--lock-file`, the other signature and `--s3-*` flags, and the output and
-server options.
+`--disable-gpg-verify` turns `--keyring` off. The other options supply values
+without changing the flow: the pool sizes `--workers` and
+`--download-workers`, `--cache-dir`, `--download-path` and `--roles-path`
+(only recorded in the project registry), the other paths and files,
+`--lock-file`, the server and output options, and the other signature and
+`--s3-*` flags.

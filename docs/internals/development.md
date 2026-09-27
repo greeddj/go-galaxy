@@ -1,11 +1,14 @@
 # Development
 
 Everything here runs from a checkout with Go, `git` and
-[just](https://github.com/casey/just); `just lint` also needs golangci-lint at
-the pinned release. The test suite needs no network, container runtime or
-Python: only the benchmark harness and the documentation site do.
+[just](https://github.com/casey/just). `just lint` also needs golangci-lint at
+the pinned release, and `just docs` and `just docs_build` need
+[uv](https://docs.astral.sh/uv/), whose `uvx` fetches Zensical. The test suite
+needs no network, container runtime or Python. Both benchmark harnesses need
+Python, and `testing/bench.sh` also needs `hyperfine` and, for its S3
+scenarios, a container runtime.
 
-## Running the tests
+## Recipes
 
 | Recipe | Runs |
 | --- | --- |
@@ -15,12 +18,14 @@ Python: only the benchmark harness and the documentation site do.
 | `just fix` | `go fix` and `fieldalignment -fix` |
 | `just deps` | `go mod tidy && go mod vendor`, after any dependency change |
 | `just build` | check, lint and test, then `dist/go-galaxy` and `dist/go-galaxy-benchmark` |
+| `just oci` | a local linux/amd64 image from `Dockerfile` alone, not `Dockerfile.alpine`, built by podman unless you name another tool (`just oci docker`) |
 | `just docs`, `just docs_build` | the [documentation site](#the-documentation-site) |
+
+## Running the tests
 
 ```bash
 # what CI runs
-go vet ./... && go tool staticcheck ./... && go tool govulncheck ./... && go tool fieldalignment ./...
-go tool actionlint -shellcheck= -pyflakes=
+just check && just lint
 go test -v -race -coverprofile=coverage.txt ./...
 
 # one package, one test, benchmarks, a fuzz target past its seeds
@@ -31,10 +36,10 @@ go test ./internal/galaxy/solver -fuzz FuzzSolve -fuzztime 60s
 
 - Run with `-race` before calling concurrency work done.
 - The `go tool` binaries come from the `tool` directive in `go.mod`.
-- `go.yaml.in/yaml/v4` stays at `v4.0.0-rc.3`, which actionlint v1.7.12
-  compiles against; `go get -u tool` can move it past that.
-- actionlint's shellcheck and pyflakes stay off in both spellings, so no check
-  fires only on CI's runner.
+- `just check` and `ci.yml` both pass `-shellcheck= -pyflakes=`. actionlint
+  otherwise runs those tools whenever it finds them on `PATH`, so a check
+  could fail on a machine that has them, such as GitHub's runner with
+  shellcheck, and pass on one that does not.
 - The four fuzz targets run only their seed corpora under `go test`.
 
 > [!WARNING]
@@ -52,16 +57,17 @@ go test ./internal/galaxy/solver -fuzz FuzzSolve -fuzztime 60s
 
 - `.goreleaser.yml` runs no `before` hooks: the gate job ran the suite, and
   `go mod tidy` would rewrite the reviewed dependency set.
-- A tag with `-` is a prerelease: no Homebrew cask, no `latest` image, no
-  major tag move.
+- A tag with `-` is a prerelease.
+  [Cutting a release](https://github.com/greeddj/go-galaxy/blob/main/CONTRIBUTING.md#cutting-a-release)
+  lists what it skips.
 - One binary, two images: `Dockerfile` builds the distroless one
   (`<version>`, `<version>-distroless`, `latest`) and `Dockerfile.alpine` the
   Alpine one (`<version>-alpine`); both run go-galaxy as uid 65532.
 - The major tag (`v1`) is the one tag that does not fix a state, hence
   `--match` in the Justfile's `git describe`.
 
-Release notes come from [commit subjects](https://github.com/greeddj/go-galaxy/blob/main/CONTRIBUTING.md#commit-subjects);
-checking a release is [Verifying a release](../guides/security.md#verifying-a-release).
+Release notes come from [commit subjects](https://github.com/greeddj/go-galaxy/blob/main/CONTRIBUTING.md#commit-subjects).
+[Verifying a release](../guides/security.md#verifying-a-release) shows how to check one.
 
 ## The repository audits itself
 
@@ -74,7 +80,7 @@ comment-length gates skip when `git` cannot list the tree.
 | --- | --- | --- |
 | `proseaudit`: dashes | no U+2014 or U+2013 in a tracked file | type `-`; a test spells one as bytes or `\uXXXX` |
 | `proseaudit`: line citations | `foo_test.go:NNN` only on a failure-reportable line; no production line | renumber after inserting lines, or cite an identifier |
-| `proseaudit`: comment length | no comment block over three lines in Go, `.sh`, YAML, `Justfile`, `Dockerfile`, `Dockerfile.*`, `.gitignore` | move reasoning to `docs/`; never split one comment into blocks |
+| `proseaudit`: comment length | no comment block over three lines in Go, `.sh`, YAML, `Justfile`, `Dockerfile`, `Dockerfile.*`, `.gitignore` | move reasoning to [How it works](index.md) and its sibling pages, or to [Security boundaries](boundaries.md); never split one comment into blocks |
 | `lockaudit` | a lock-taking command works under the holder context, judged by `LockLostError` | add a new or renamed command to `holderCases` or `delegateCases` |
 | `ciaudit` | CI's golangci-lint `version` is exact and equals `GOLANGCI_LINT_VERSION` | bump both in one commit |
 | `store`: dirty flag | every write-locked `*Store` method in `snapshot.go` sets `dirty`, bar `UnmarshalJSON` | a mutator elsewhere needs a `TestEveryMutatorMarksDirty` row |
@@ -103,38 +109,42 @@ context, one work call taking it first, inside the lock-loss verdict, and
 every later return a bare `nil` or that verdict. It proves composition, not
 behavior; `LockLostError` has its own tests.
 
-**Probe budget.** `helpers.ArchiveProbeMaxBytes` (5 MiB) sits above
-4,196,352 bytes, the most `archive/tar` reads before its first header.
-`TestArchiveProbeMaxBytesClearsTheMetaHeaderCeiling` bounds it and
-`TestMetaHeaderCeilingIsWhatArchiveTarReads` measures it; re-derive the figure
-if the second fails.
+**Probe budget.** `helpers.ArchiveProbeMaxBytes` (5 MiB) sits above the
+meta-header ceiling, 4,196,352 bytes: the most `archive/tar` reads before its
+first header. `TestArchiveProbeMaxBytesClearsTheMetaHeaderCeiling` bounds it
+and `TestMetaHeaderCeilingIsWhatArchiveTarReads` measures it. Re-derive the
+ceiling if the second fails.
 
 </details>
 
 The rest of a new snapshot bucket (`ensureMaps`, `jsonBuckets`, the schema
-version) is in [Cache and storage](cache.md). A new sentinel's exit-code rules
-are in [HTTP, output and exit codes](http-output-exit-codes.md).
+version) is in [Snapshot](cache.md#snapshot). A new sentinel's exit-code rules
+are in [Adding a sentinel](http-output-exit-codes.md#adding-a-sentinel).
 
 ## Lint
 
 `.golangci.yml` runs `default: all` with a short disable list and no test-file
 exclusions, so expect linters most projects leave off, in tests too.
 
-- depguard allows only the standard library, `go/ast`, `go/parser`,
-  `go/token`, this module and the direct dependencies; any other import fails.
-- Three monopolies are lint rules outside tests: depguard's `go-git` list
-  keeps go-git and go-billy in `gitfetch` (and `fakegit`), its
-  `cache-backends` list keeps `internal/cache/local` and `internal/cache/s3`
-  to `internal/cache/cache.go`, and a forbidigo pattern keeps
-  `tar.NewWriter` in `treearchive` (and `internal/testing`). forbidigo's
-  default `fmt.Print` pattern is spelled out beside it, since a `forbid`
-  list replaces the default.
-- `fieldalignment` fails a padded struct layout, test structs included; `just
+depguard allows only the standard library, `go/ast`, `go/parser`, `go/token`,
+this module and the direct dependencies, so any other import fails. Outside
+tests, three more rules keep an import or a call in one place:
+
+| Kept in one place | Allowed in | Rule |
+| --- | --- | --- |
+| go-git and go-billy | `gitfetch` and `fakegit` | depguard's `go-git` list |
+| `internal/cache/local` and `internal/cache/s3` | `internal/cache/cache.go` | depguard's `cache-backends` list |
+| `tar.NewWriter` | `treearchive` and `internal/testing` | a forbidigo pattern |
+
+- forbidigo's default `fmt.Print` pattern is spelled out beside that pattern,
+  since a `forbid` list replaces the default.
+- `fieldalignment` fails a padded struct layout, test structs included. `just
   fix` reorders it in place.
-- Never respell a dependency's anonymous struct type locally: `just fix`
-  reorders the copy only. Append an inferred zero element, as fakegalaxy's
-  `appendRow` does.
-- A `//nolint` carries its reason by convention; `nolintlint` does not require
+- Never spell a dependency's anonymous struct type out locally: `just fix`
+  reorders your copy's fields, and the copy stops being the dependency's type.
+  Grow such a slice through a generic helper that appends a zero element, as
+  fakegalaxy's `appendRow` does.
+- A `//nolint` carries its reason by convention. `nolintlint` does not require
   one.
 
 ## Test conventions
@@ -195,10 +205,14 @@ packet-bearing fixture needs a `gatedFixtures` row and restated
 
 - `docs/` builds with [Zensical](https://zensical.org) through `uvx`, pinned
   as `ZENSICAL_VERSION` because it is pre-1.0.
-- `just docs` serves `http://localhost:8000/go-galaxy/`, rebuilt on save;
-  `just docs_build` fails on a dead link or anchor.
+- `just docs` serves `http://localhost:8000/go-galaxy/`, rebuilt on save.
+  `just docs_build` fails on a dead link or anchor. No workflow runs it, so
+  run it after a change under `docs/`.
 - Anchors slug the way GitHub slugs them (`toc.slugify`), so
-  `servers-and-auth.md#--token` resolves on both.
+  `benchmarks.md#testingbenchsh` resolves on both. Rewording a heading
+  changes its anchor: update every link to it. The strict build catches those
+  under `docs/`; grep `README.md`, `CONTRIBUTING.md`, `.goreleaser.yml` and Go
+  comments for the rest.
 - A link out of `docs/` is absolute (`https://github.com/greeddj/go-galaxy/blob/main/...`):
   the strict build refuses a relative one that leaves it.
 - A new page needs a `nav` entry in `zensical.toml`, or it renders without
@@ -208,27 +222,45 @@ packet-bearing fixture needs a `gatedFixtures` row and restated
   A page in one section links another as `../<section>/page.md`.
 - A release archive ships the binary and `LICENSE` only, so no page or image
   under `docs/` has to be listed in `.goreleaser.yml`.
-- `docs/index.md` repeats `README.md`'s opening paragraph: change both. The
-  build writes `site/` and `.cache/`, both git-ignored.
+- The build writes `site/` and `.cache/`, both git-ignored.
+
+The pages follow a few rules:
+
+- Each rule has one home page. Every other page gives it a clause and a link.
+- An example given in both formats leads with `galaxy.toml`: the first tab,
+  or the left column of a side-by-side comparison whose lines are short
+  enough not to scroll.
+- `README.md` is a landing page, and the reference lives under `docs/`.
+  `README.md` uses only syntax GitHub renders. Site pages may use
+  admonitions, tabs, cards and code annotations.
+- Pages under `internals/` stay short and link the user pages for behavior.
+- Release history goes to [Upgrading](../reference/upgrading.md) alone, by the
+  [house rules](https://github.com/greeddj/go-galaxy/blob/main/CONTRIBUTING.md#house-rules).
+- A behavior change lands with the page that describes it.
+
+`README.md` repeats parts of the site so that it reads on its own on GitHub.
+Change both sides in one commit:
+
+| `README.md` | Repeats |
+| --- | --- |
+| The tagline, opening paragraph, benchmark chart and caption, and the "Why go-galaxy" list | `docs/index.md` |
+| The binary snippet and the container alias | The Binary and Container tabs under Quick start's [Install](../get-started/getting-started.md#install) |
+| Its Quick start section | The example files and commands of [Quick start](../get-started/getting-started.md) |
 
 ## The benchmark harness
+
+Setup and a first run of either harness are on
+[Reproduce](../reference/benchmarks.md#reproduce).
 
 ### testing/bench.sh
 
 It times `ansible-galaxy` against `go-galaxy` over
 `testing/requirements-{1,10,100}.yml` and `requirements-roles.yml`, every
-command with `--no-deps`, so it compares fetch plus extract.
+command with `--no-deps`, so it compares fetch plus extract. `frozen` and the
+`s3-*` scenarios time go-galaxy alone, since ansible-galaxy has no lockfile or
+S3 cache to match.
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install ansible-core
-go build -o ./dist/go-galaxy ./cmd/go-galaxy
-docker compose -f testing/docker-compose.yaml up -d minio-svc   # for the s3-* scenarios
-testing/bench.sh
-```
-
-It needs `hyperfine` and `python3` on `PATH`, plus the binary and `.venv`
-above; without MinIO the S3 scenarios are dropped with a warning. Caches live
-under `$TMPDIR`: not in `$HOME`, so a wipe spares yours, nor in the
+Caches live under `$TMPDIR`: not in `$HOME`, so a wipe spares yours, nor in the
 repository, where extracted Go files would reach a linter.
 
 | Knob | Default |
@@ -252,8 +284,9 @@ repository, where extracted Go files would reach a linter.
 `warm`: `run` measures and writes `report.json`, `show` re-renders it as a
 table or SVG. Flags and a sample run: [Benchmarks](../reference/benchmarks.md#go-galaxy-benchmark).
 
-- It overrides only `GO_GALAXY_CACHE_DIR` and `TMPDIR`, so an exported
-  `GO_GALAXY_S3_BUCKET` turns the run into an S3 run.
+- It passes the caller's environment through and overrides only each tool's
+  cache, temporary and install paths.
+  [Reproduce](../reference/benchmarks.md#reproduce) warns what that lets in.
 - Every measured command gets a closed stdin, so a prompting tool exits
   instead of looking hung.
 - A failed run counts in `failed` with its `last_error`, outside `samples_ms`;
@@ -272,19 +305,15 @@ first can only agree with itself.
 | Bump | Can fail | Then |
 | --- | --- | --- |
 | Go toolchain | `collectionbuild`'s `TestBuildGoldenDigest` (`compress/flate` bytes are not promised) | if `TestBuildStructure` and `rolebuild`'s `TestBuildArtifactShape` pass, take the new digest |
-| Go toolchain | `TestMetaHeaderCeilingIsWhatArchiveTarReads` | re-derive the probe floor |
+| Go toolchain | `TestMetaHeaderCeilingIsWhatArchiveTarReads` | re-derive the meta-header ceiling, as under Probe budget above |
 | Masterminds/semver | `TestVerSetDifferentialAgainstCheck`, `TestVerSetGroundTruthRows` | fix the mirrored grammar in `versetbuild.go`; `Check` stays the authority |
 | ProtonMail/go-crypto | `framing_test.go` measurements | a gate premise changed: investigate before moving a ceiling |
+| `go get -u tool` | `go tool actionlint` stops building: actionlint v1.7.12 compiles against `go.yaml.in/yaml/v4` `v4.0.0-rc.3` | pin `go.yaml.in/yaml/v4` back to `v4.0.0-rc.3` |
 
 Never build with `-tags v5`: go-crypto's `!v5` constraint is what refuses v5
 signatures and keys before a length is read (`TestV5ParsingStaysDisabled`).
 
 ## Conventions
 
-- A comment is at most three lines. How a package works belongs in
-  [How it works](index.md) and its sibling pages, the boundary it enforces in
-  [Security boundaries](boundaries.md); keep both true after a change.
-- Comments state constraints and reasons, not narration.
-- Only hyphen-minus, everywhere, enforced by test.
-- `README.md` is a landing page and reference lives in `docs/`: a behavior
-  change lands with the page that describes it.
+Comments state constraints and reasons, not narration. Keep them, and the
+pages they point to, true after a change.

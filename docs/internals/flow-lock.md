@@ -53,7 +53,7 @@ A Galaxy entry, in `galaxyLockfileEntry`:
 
 ```mermaid
 flowchart TD
-  B7["loadCollectionMetadata"] -->|"a status but 404,<br/>unreachable, bad document"| X4(["exit 4"])
+  B7["loadCollectionMetadata"] -->|"any status but 404,<br/>unreachable, bad document"| X4(["exit 4"])
   B7 -->|"404: gone<br/>from its server"| X3(["exit 3"])
   B7 --> B8{"sha256 empty or<br/>64 lowercase hex?"}
   B7 -->|"metadata URL<br/>with userinfo"| X5(["exit 5"])
@@ -69,7 +69,7 @@ flowchart TD
 The version check runs before any metadata request, so a lenient snapshot
 entry such as `*` buys no request and never reaches `--frozen`. A Galaxy entry
 costs a metadata fetch, never a tarball. Why each `download_url` refusal
-exists: [download_url and frozen installs](lockfile-format.md).
+exists: [Loading the lockfile](boundaries.md#loading-the-lockfile).
 
 ## Write, preview or gate
 
@@ -106,14 +106,19 @@ save: the file stays valid if the save fails.
 
 | Exit | Decided in | Cause |
 | --- | --- | --- |
-| 1 | `lockfile.Save`; solver | a filesystem error, no snapshot or metrics written; an unparseable `requirements.yml` constraint |
-| 2 | `loadRoots`, `buildLockfile` | requirements refused; inexact version; unpinned git, url or role locator |
-| 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md) |
+| 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, backend open, lock or snapshot load |
+| 2 | `loadRoots` | requirements file missing, unreadable or invalid |
+| 1, 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md#exits) |
+| 2 | `buildLockfile` | inexact version; unpinned git, url or role locator |
 | 3 | `galaxyLockfileEntry` | a `404` for a collection or version the resolve named, often a replayed one: `ErrNoSemverCandidates` |
-| 4 | `galaxyLockfileEntry` | a status but `404` (`ErrGalaxyAuthFailed`, `ErrGalaxyServerUnavailable`), an unreachable server, a document not JSON or of the wrong shape, a bad timestamp included; `download_url` missing or not absolute http(s) |
-| 5 | `lockableDownloadURL`, `checkServerArtifactURL`, `normalizeVersionsURL` | userinfo, a query, or not its server's artifact; a metadata URL with userinfo |
-| 6 | `lockCheck` | file missing or invalid; drift |
+| 4 | `galaxyLockfileEntry` | any status but `404` (`ErrGalaxyAuthFailed`, `ErrGalaxyServerUnavailable`), an unreachable server, a document not JSON or of the wrong shape, a bad timestamp included |
+| 5 | `normalizeVersionsURL` | a metadata URL with userinfo |
 | 7 | `galaxyLockfileEntry` | a malformed sha256, `ErrMalformedArtifactSHA256` |
+| 4 | `lockableDownloadURL` | `download_url` missing or not absolute http(s) |
+| 5 | `lockableDownloadURL` | `download_url` with userinfo or a query |
+| 5 | `checkServerArtifactURL` | `download_url` not its server's artifact |
+| 1 | `lockfile.Save` | a filesystem error; no snapshot or metrics written |
+| 6 | `lockCheck` | file missing or invalid; drift |
 | 2, 4 | `SaveStore` | the save failed alone; appended to drift otherwise |
 
 ## Flags that change the flow
@@ -122,15 +127,16 @@ save: the file stays valid if the save fails.
 | --- | --- | --- |
 | `--check` | Write, preview or gate | compare with the file instead of writing; any difference exits 6 |
 | `--dry-run` | Write, preview or gate | diff against the file, write nothing; discovery discards its builds |
-| `--refresh` | resolution | vetoes replay, re-advertises git refs, skips url and Galaxy role pins |
-| `--offline` | resolution | pins and recorded resolve only, a miss exits 4; no pin or metadata recorded |
-| `--no-cache` | resolution | no pin or recorded resolve read; builds kept for the run only |
-| `--no-deps` | resolution | solver and role walk stop at the roots; part of the signature |
-| `--clear-cache` | Shared setup | forgets metadata and pins, deletes artifacts, keeps the recorded resolve |
+| `--refresh`, `--no-deps` | Overview | as for install, on [install flow](flow-install.md#flags-that-change-the-flow) |
+| `--offline` | Overview | pins and recorded resolve only, a miss exits 4; no pin or metadata recorded |
+| `--no-cache` | Overview | no pin or recorded resolve read; builds kept for the run only |
+| `--clear-cache` | [Shared setup](commands.md#shared-setup) | forgets metadata and pins, deletes artifacts, keeps the recorded resolve; skipped under `--dry-run` |
+| `--s3-bucket` | [Shared setup](commands.md#shared-setup) | S3 backend, so a lock lost mid-run is possible |
 | `--metrics-file` | Write, preview or gate | JSON report once the save step is reached |
 
-`--check` still runs the full resolve, `--refresh` included: `initInstall`
-never reads it. `lock` mounts no `--frozen`, so the flag is undefined (exit 2) and
-`GO_GALAXY_FROZEN` never reaches it; it mounts no signature flag either.
-`--s3-bucket` acts in Shared setup. The rest supply values without branching:
-paths, pools, servers, `--lock-file` and the other S3 settings.
+`--check` still runs the full resolve and honors `--refresh`: `initInstall`
+never reads `--check`. The other options supply values without changing the
+flow: the pool sizes `--workers` and `--download-workers`, `--cache-dir`,
+`--download-path` and `--roles-path` (only recorded in the project
+registry), the other paths and files, `--lock-file`, the server and output
+options, and the other `--s3-*` flags.

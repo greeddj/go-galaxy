@@ -2,18 +2,14 @@
 
 `cleanup` computes, across every project in the cache registry, what some
 project's requirements still reach, then removes the rest from disk and from
-the cache. Options: [`cleanup` options](../reference/cli.md#cleanup-options); code
+the cache. Options: [`cleanup`](../reference/cli.md#cleanup); code
 meanings: [Exit codes](../reference/exit-codes.md).
 
 ## Overview
 
 ```mermaid
 flowchart TD
-    S(["go-galaxy cleanup"]) --> CF["BuildCollectionConfig:<br/>galaxy.toml names the cache"]
-    CF -->|"refused"| X2(["exit 2"])
-    CF --> IN["initCleanup: open, lock,<br/>LoadStore, LoadProjectRegistry"]
-    IN -->|"fails"| XI(["exit 1, 2, 4, 8<br/>or 9 by cause"])
-    IN --> P{"any project recorded?"}
+    IN(["initCleanup: store and<br/>registry loaded"]) --> P{"any project recorded?"}
     P -->|"no"| X0(["exit 0"])
     P -->|"yes"| SC["scan every project's<br/>collections and roles"]
     SC -->|"read error"| X1(["exit 1"])
@@ -23,7 +19,7 @@ flowchart TD
     RM -->|"unsafe path or<br/>I/O error"| XR(["exit 5 or 1"])
     RM --> SW["sweep legacy keys<br/>and the extracted store"]
     SW --> FN["finalizeCleanup: save if persisted,<br/>print the summary"]
-    FN -->|"save failed"| XS(["exit 2, 4 or 8<br/>by cause"])
+    FN -->|"save failed"| XS(["exit 2 or 4<br/>by cause"])
     FN --> X0F(["exit 0"])
 ```
 
@@ -53,7 +49,8 @@ flowchart TD
 
 Every project is scanned before any root resolves, so a root keeps a copy
 any project installed. A missing path never fails the run; only an I/O error
-while walking or listing stops it (exit 1).
+while walking or listing stops it (exit 1). What each warning, skip and stop
+means to an operator: [What cleanup keeps](../guides/caching.md#what-cleanup-keeps).
 
 | Item | Indexed when | Otherwise |
 | --- | --- | --- |
@@ -62,8 +59,8 @@ while walking or listing stops it (exit 1).
 | Role | `IsRoleInstallName` directory holding a regular `.extract-done.<sha256>` file | never touched |
 | Role deps | the snapshot's installed-role record for that install path | `meta/main.yml` and `meta/requirements.yml`; artifact kept |
 
-Namespace and name come from the walked directories, never the manifest, so
-no `MANIFEST.json` can retarget a removal.
+Namespace and name come from the walked directories, never the manifest
+([Reading an installed tree: cleanup and outdated](boundaries.md#reading-an-installed-tree-cleanup-and-outdated)).
 
 ## Reachability
 
@@ -78,9 +75,8 @@ no `MANIFEST.json` can retarget a removal.
 transitively. Every unsure case keeps more, the safe direction for a sweep.
 
 `projectRequirementRoots` reloads each recorded file by extension, refusing a
-non-regular one first, since a fifo would block under the lock. A missing file
-warns and adds no roots; a refused `roles:` list keeps that roles path's roles.
-Any other failure exits 2 before anything is removed.
+non-regular one first, since a fifo would block under the lock. What a missing
+or refused file does: [What cleanup keeps](../guides/caching.md#what-cleanup-keeps).
 
 ## Removal, sweeps and save
 
@@ -100,42 +96,43 @@ flowchart TD
     EX --> FN{"--dry-run set?"}
     FN -->|"yes"| DR(["Dry-run cleanup complete"])
     FN -->|"no"| SV["SaveStore if WasPersisted"]
-    SV -->|"failed"| XS(["exit 2, 4 or 8<br/>by cause"])
+    SV -->|"failed"| XS(["exit 2 or 4<br/>by cause"])
     SV --> DN(["Cleanup complete"])
 ```
 
 - An artifact is deleted only when the snapshot record names its source, since
   the key is server-scoped.
 - The legacy sweep skips any key shaped like a scoped one
-  (`IsScopedArtifactKey`).
+  ([Legacy flat-key artifacts](cache.md#legacy-flat-key-artifacts)).
 - The keep set is every kept install's sha plus entries warmed within 30
   days; no cache dir or recorded content skips the sweep.
 - A failed extracted sweep only prints.
 - A never-persisted snapshot is never saved, so no empty one is fabricated.
 
-Removal bounds are in
-[the collections tree and the cache directory](boundaries.md#the-collections-tree-and-the-cache-directory).
+What bounds a removal from a project:
+[Reading an installed tree: cleanup and outdated](boundaries.md#reading-an-installed-tree-cleanup-and-outdated).
+What bounds the cache sweeps:
+[The collections tree and the cache directory](boundaries.md#the-collections-tree-and-the-cache-directory).
 
 ## Exits
 
 | Exit | Decided in | Cause |
 | --- | --- | --- |
-| 2 | `BuildCollectionConfig` | `galaxy.toml`, S3 keys (`ErrS3EmptyCreds`) or `ansible.cfg` refused |
-| 1, 2, 4, 8, 9 | `initCleanup` | open, lock, snapshot or registry load ([Shared setup](commands.md#shared-setup)) |
-| 2 | `projectRequirementRoots` | `ErrProjectRequirementsUnreadable` |
+| 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, backend open, lock, snapshot or registry load |
 | 1 | scan | I/O error walking a workspace or listing a roles path |
+| 2 | `projectRequirementRoots` | `ErrProjectRequirementsUnreadable` |
 | 5 | `removeInstalled`, `removeRole` | `ErrUnsafeRemovalPath` |
 | 1 | `removeInstalled`, `removeRole` | any other removal error |
-| 2, 4, 8 | `finalizeCleanup` | `SaveStore` failed |
+| 2, 4 | `finalizeCleanup` | `SaveStore` failed |
 
 ## Flags that change the flow
 
 | Flag | Diagram | Effect |
 | --- | --- | --- |
-| `-r` | Overview | the `galaxy.toml` whose settings name the cache; never roots |
+| `-r` | [Shared setup](commands.md#shared-setup) | the `galaxy.toml` whose settings name the cache; never roots |
 | `--dry-run` | Removal, sweeps and save | prints `Would remove` and `Would sweep` lines; nothing removed or saved |
-| `--cache-dir` | Overview; Removal, sweeps and save | local backend and the swept extracted store; empty: exit 2 locally, no sweep on S3 |
-| `--s3-bucket` | Overview | S3 backend, so a lock lost mid-run is possible |
+| `--cache-dir` | [Shared setup](commands.md#shared-setup); Removal, sweeps and save | local backend and the swept extracted store; empty: exit 2 locally, no sweep on S3 |
+| `--s3-bucket` | [Shared setup](commands.md#shared-setup) | S3 backend, so a lock lost mid-run is possible |
 
 Accepted without changing the flow: `--verbose`, `--quiet` and the other
 `--s3-*` flags.

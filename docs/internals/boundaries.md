@@ -33,12 +33,94 @@ flowchart TD
   Print --> Log
 ```
 
-Every arrow from a zone but the operator's crosses a boundary below. Exits are
-each sentinel's own class; joined behind the install headline, a per-collection
+Every arrow from a zone but the operator's crosses a boundary below, and the
+sections follow the flow. The Exit column is each sentinel's own class: the
+code when it ends the run alone. Behind `ErrInstallationFailed`, an item's
 failure exits 5 unless its class is 6, 7 or 10
-([classes](http-output-exit-codes.md#exit-code-classes)).
+([Exit code classes](http-output-exit-codes.md#exit-code-classes)).
+
+## Loading requirements.yml and galaxy.toml
+
+Behavior: [Which file is read](../guides/requirements.md#which-file-is-read)
+and [What is refused](../guides/requirements.md#what-is-refused).
+
+| Input | Refused when | Where | Sentinel | Exit |
+| :-- | :-- | :-- | :-- | :-- |
+| A requirements `source:` | it carries userinfo | `requirements.checkSourceUserinfo` | `ErrGalaxyServerURLUserinfo` | 2 |
+| A `galaxy.toml` | a syntax error, shown as line and last key; an unknown table or key | `projectfile.Decode` | `ErrInvalidRequirementsTOML`, `ErrUnsupportedRequirementsFormat` | 2 |
+| A `${VAR}` under `[tool.go-galaxy]` | unset; every name reported, sorted, never a value | `projectfile.LoadSettings` | `ErrProjectFileEnvUnset` | 2 |
+
+- Validation order is part of the boundary: `checkSourceUserinfo` and
+  `checkSignatureSources` run before the no-name refusal that echoes the
+  entry, in both formats.
+- A server base or `source:` carrying a query never names an API root:
+  `apiRootCandidates` concatenates strings, so `/api/v3` lands inside the
+  query and every candidate misses. Built with `net/url`, such a base would
+  work, and its query, perhaps a capability, would reach the snapshot, the
+  lockfile and a warning uncut.
+- A world-writable directory does not stop discovery, as it does for
+  `./ansible.cfg`. The discovered file is read as the checkout's own,
+  `[tool.go-galaxy]` included. In a shared directory such as `/tmp`, a planted
+  `./galaxy.toml` outranks the `requirements.yml` beside it with only a warning.
+- A `${VAR}` reads any exported variable into any string of the table, server
+  `url` and S3 `endpoint` included: the file is trusted with the environment.
+  The operator's side of both rules is in
+  [Trust model](../guides/security.md#trust-model).
+
+<details markdown>
+<summary>What else galaxy.toml may and may not decide</summary>
+
+- Discovery `Stat`s for a regular file: the open runs under the cache lock,
+  where a fifo would block every runner.
+- `requirements.ParseTOML` only reshapes the decoded tree for `parseRaw`,
+  refusing unknown inline-table keys (`ErrInvalidCollectionEntry`,
+  `ErrInvalidRoleEntry`), so no rule above has a second implementation.
+- `[tool.go-galaxy]` holds paths, worker counts, S3 and servers, never the
+  signature policy, a git or url credential, `--offline`, `--frozen` or `--no-cache`.
+- A file-chosen S3 `endpoint` with operator keys passes, unlike a file-chosen
+  server with an operator token: SigV4 never sends the secret key. The access
+  key id and any session token do reach that endpoint, and neither signs a
+  request without the secret.
+- `cleanup` re-reads a recorded file through `Decode`, which expands nothing,
+  so its roots never depend on the cleaning process's environment.
+
+</details>
+
+## Loading the lockfile
+
+Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-lockfile).
+
+| Input | Refused when | Where | Sentinel | Exit |
+| :-- | :-- | :-- | :-- | :-- |
+| A lockfile `source` or `name` | userinfo, never printed; a name outside its alphabet | `lockfile.File.validate` | `ErrLockfileInvalid` | 6 |
+| A Galaxy entry's `download_url` | not canonical `http(s)`, or with userinfo, query or fragment | `lockfile.downloadURLProblem` | `ErrLockfileInvalid` | 6 |
+| A Galaxy entry's `download_url`, under `--frozen` | off its server's origin, or not ending `/<ns>-<name>-<version>.tar.gz` | `checkLockedDownloadURLs` | `ErrLockfileInvalid` | 6 |
+| A Galaxy entry's `sha256` | neither empty nor 64 lowercase hex digits | `lockfile.validateGalaxyEntry` | `ErrLockfileInvalid` | 6 |
+
+- `lock` and `--frozen` hold `download_url` to its server's own artifact,
+  because its bytes fill the
+  [cache slot](cache.md#artifact-cache-scoped-by-server-not-by-content) every
+  later install of that version reads. A refetch of a locked `download_url`
+  after a pin failure keeps the cached copy (`refetchCachedArtifact`), so no
+  wrong pin empties that slot.
+- `Load` cannot judge origin and path, since an entry's server may be a
+  `server_list` id that resolves only from the run's configuration. So
+  `--frozen` checks them before any request.
+- `lock` also refuses a query: a presigned capability would be committed, then
+  expire. Both `lock` refusals exit 5 and are listed under
+  [URLs a Galaxy server supplies](#urls-a-galaxy-server-supplies).
 
 ## Credentials and the token pairing rule
+
+Whoever chose a destination may not spend a secret that is not theirs. An
+operator's token, from a flag or variable, is refused beside a server URL or a
+disabled certificate check that `ansible.cfg` or `galaxy.toml` chose. A file's
+own token is exempt, a `galaxy.toml` `${VAR}` token included: the file named
+the variable, and a `${VAR}` url could carry its value anyway
+([Loading requirements.yml and galaxy.toml](#loading-requirementsyml-and-galaxytoml)).
+A `${VAR}` url still counts as the file's. Provenance:
+[Configuration loading](config-loading.md). Behavior:
+[Where a token may go](../guides/servers-and-auth.md#where-a-token-may-go).
 
 | Input | Refused when | Where | Sentinel | Exit |
 | :-- | :-- | :-- | :-- | :-- |
@@ -48,17 +130,22 @@ failure exits 5 unless its class is 6, 7 or 10
 | Two servers on one origin | their tokens or TLS policies differ | `checkOriginConflicts` | `ErrConflictingServerToken`, `ErrConflictingServerTLSPolicy` | 2 |
 | A server URL | it carries userinfo | `config.resolveServerURL`, `buildImplicitServer` | `ErrGalaxyServerURLUserinfo` | 2 |
 
-Each plaintext is revealed once, straight into its client: `serverAuths`,
-`gitCredentials` and `urlBindings` in `cmd/go-galaxy/commands`, and the S3
-client; elsewhere it is a redacting `config.Secret`. A token is attached only on
-a byte-equal origin (`helpers.Origin`, `urlsource.Prefix.Origin` for a url
-binding), so changing one renderer alone silently drops it.
+A secret is a redacting `config.Secret` everywhere but these sites:
 
-Whoever chose a destination may not spend a secret that is not theirs: a
-file's own token is exempt, a `galaxy.toml` `${VAR}` one included, since the
-file named the variable and a `${VAR}` url could carry it anyway
-([below](#loading-requirementsyml-and-the-lockfile)); a `${VAR}` url stays the
-file's. Provenance: [Configuration loading](config-loading.md).
+- `serverAuths` and `urlBindings` in `cmd/go-galaxy/commands` hand a token
+  straight to a transport.
+- `gitCredentials` fills `Infra.GitCredentials` for the whole run.
+  `gitsource.MatchCredential` reads it per repository, and it must never be
+  printed, logged or persisted.
+- The S3 client reveals the session token into each request's header, and
+  the secret key only to derive the signing key.
+
+A token is attached only on a byte-equal origin (`helpers.Origin`,
+`urlsource.Prefix.Origin` for a url binding), so changing one renderer alone
+silently drops it.
+
+A proxy URL with userinfo (`HTTP_PROXY`, `HTTPS_PROXY`) gets
+`Proxy-Authorization` from every client, credential-free ones included.
 
 <details markdown>
 <summary>Accepted cost and an ansible.cfg parsing rule</summary>
@@ -81,11 +168,24 @@ file's. Provenance: [Configuration loading](config-loading.md).
 net/http runs each hop through the transport again, so every credential
 decision is remade per hop: another origin gets no Galaxy token, and a url
 token follows its binding in and out. `checkRedirect` deletes the `Referer`
-net/http composes, whose query would hand a presigned signature onward.
+net/http composes, whose query would hand a presigned signature onward. The
+S3 client refuses every hop ([The S3 endpoint](#the-s3-endpoint)).
 
-A proxy URL with userinfo (`HTTP_PROXY`, `HTTPS_PROXY`) gets
-`Proxy-Authorization` from every client, credential-free ones included. The S3
-client refuses every hop ([The S3 endpoint](#the-s3-endpoint)).
+## The S3 endpoint
+
+Behavior: [S3 cache (optional)](../guides/caching.md#s3-cache-optional).
+
+| Input | Refused when | Where | Sentinel | Exit |
+| :-- | :-- | :-- | :-- | :-- |
+| A redirect | always, a same-host upgrade to `https` included | `s3.refuseRedirect` | `ErrCacheBackendUnusable` | 2 |
+| A snapshot or registry object | past a `StateObjectMax*Size` cap, or an empty gzip member | `s3.Backend.readObject` | `ErrStateObjectTooLarge`, `ErrCorruptStateObject` | 9 |
+| A listing page or delete result | past `S3ListMaxSize` | `s3.Client` | `ErrResponseTooLarge` | 4 |
+| A batch delete | a per-key `<Error>` inside a `200` | `deleteObjectsBatch` | `ErrCacheBackendUnavailable` | 4 |
+
+- A redirected SigV4 request cannot verify. Following it would forward the
+  `X-Amz-*` headers and replay a PUT body to a party no configuration named.
+- The refusal sits on the S3 client's own copy of the shared client. Listed
+  keys are untrusted, so the delete body goes through `encoding/xml`.
 
 ## URLs a Galaxy server supplies
 
@@ -93,25 +193,35 @@ client refuses every hop ([The S3 endpoint](#the-s3-endpoint)).
 | :-- | :-- | :-- | :-- | :-- |
 | A download URL | not absolute `http(s)` with a host | `collections.checkDownloadURL` | `ErrUnsupportedDownloadURLScheme` | 4 |
 | A download URL | it carries userinfo | `checkDownloadURL` | `ErrDownloadURLUserinfo` | 5 |
+| A download URL at `lock` | a query, or not its server's own artifact | `lockableDownloadURL`, `checkServerArtifactURL` | `ErrDownloadURLQuery`, `ErrDownloadURLNotServerArtifact` | 5 |
 | `versions_url`, `highest_version.href` | the resolved URL carries userinfo | `normalizeVersionsURL` | `ErrMetadataURLUserinfo` | 5 |
 | A v1 role record or page link | a GitHub name outside its alphabet, a bad branch, or a link off the server's origin | `galaxyv1.validateRole`, `nextPage` | `ErrGalaxyRoleInvalid` | 2 |
 | A replayed Galaxy role pin | its repository is not `https://github.com/<user>/<repo>` | `galaxyv1.ValidateRepository` | `ErrGalaxyRoleInvalid` | 2 |
 
 - Userinfo becomes a Basic `Authorization` header the token transport never
   overwrites, so it would displace your token.
+- A download URL taken from server metadata may leave the server's origin,
+  since a separate content host is legitimate. `warnIfOffServerDownloadHost`
+  only warns, even under `--quiet`. A verifying `--frozen` run downloads the
+  URL that fresh metadata names, so the same warning applies there. Only a URL
+  in a lockfile is held to the server's own artifact. `lock` checks it before
+  it writes the file, and `--frozen` before any request
+  ([Loading the lockfile](#loading-the-lockfile)).
 - `normalizeVersionsURL` refuses after the server walk: inside it, a 404 would
   try the next server and a 401 would blame a credential.
-- A v1 record's GitHub URL is composed, never copied, and `download_url` is
-  never read; paging past `RoleVersionsMaxPages` exits 4.
-- A query on a server base survives only because `apiRootCandidates`
-  concatenates strings; building roots with `net/url` would persist the query.
+- A v1 record's GitHub URL is composed, never copied, and its `download_url` is
+  never read. Paging past `RoleVersionsMaxPages` exits 4.
 
 ## Git and url sources
+
+Behavior: [What is refused](../guides/requirements.md#what-is-refused),
+[Git sources and credentials](../guides/servers-and-auth.md#git-sources-and-credentials)
+and [URL sources and credentials](../guides/servers-and-auth.md#url-sources-and-credentials).
 
 | Input | Refused when | Where | Sentinel | Exit |
 | :-- | :-- | :-- | :-- | :-- |
 | A git or url source | it carries a credential | `gitsource.ParseURL`, `urlsource.ParseURL` | `ErrGitURLUserinfo`, `ErrURLRequirementUserinfo` | 2 |
-| Its path | a rune outside the alphabet, an empty or dot segment; git: a leading `-`, a query; both: a fragment | `ParseURL` in each | `ErrInvalidGitURL`, `ErrInvalidURLRequirement` | 2 |
+| Its URL | both: a rune outside the alphabet, an empty or dot segment, a fragment; git also: a path opening with `-`, or a query | `ParseURL` in each | `ErrInvalidGitURL`, `ErrInvalidURLRequirement` | 2 |
 | A persisted locator | not canonical: the URL must round-trip, the pin be lowercase hex | `ParseLocator` in each | `ErrInvalidGitLocator`, `ErrInvalidURLLocator` | 2 |
 | A Galaxy entry's `source:` | a git pointer, or a git or url locator, which consumers would dispatch unjudged | `requirements.checkGalaxySourceShape` | `ErrUnsupportedCollectionSource` | 2 |
 | An ssh host key | not in known_hosts | `gitfetch.sshAuthFor`, `classifyTransportError` | `ErrGitAuthFailed` | 4 |
@@ -143,47 +253,6 @@ check and extractor a download does; no signature can vouch for it.
 
 </details>
 
-## Loading requirements.yml and the lockfile
-
-| Input | Refused when | Where | Sentinel | Exit |
-| :-- | :-- | :-- | :-- | :-- |
-| A requirements `source:` | it carries userinfo | `requirements.checkSourceUserinfo` | `ErrGalaxyServerURLUserinfo` | 2 |
-| A lockfile `source` or `name` | userinfo, never printed; a name outside its alphabet | `lockfile.validate` | `ErrLockfileInvalid` | 6 |
-| A Galaxy entry's `download_url` | not canonical `http(s)`, or with userinfo, query or fragment | `lockfile.downloadURLProblem` | `ErrLockfileInvalid` | 6 |
-| A Galaxy entry's `sha256` | neither empty nor 64 lowercase hex digits | `lockfile.validateGalaxyEntry` | `ErrLockfileInvalid` | 6 |
-| The same under `--frozen` | off its server's origin, or not ending `/<ns>-<name>-<version>.tar.gz` | `checkLockedDownloadURLs` | `ErrLockfileInvalid` | 6 |
-| A download URL at `lock` | a query, or not its server's own artifact | `lockableDownloadURL`, `checkServerArtifactURL` | `ErrDownloadURLQuery`, `ErrDownloadURLNotServerArtifact` | 5 |
-| A `galaxy.toml` | a syntax error, shown as line and last key; an unknown table or key | `projectfile.Decode` | `ErrInvalidRequirementsTOML`, `ErrUnsupportedRequirementsFormat` | 2 |
-| A `${VAR}` under `[tool.go-galaxy]` | unset; every name reported, sorted, never a value | `projectfile.LoadSettings` | `ErrProjectFileEnvUnset` | 2 |
-
-- `--frozen` fetches `download_url` into the cache slot later installs read,
-  so it is held to the server's own artifact; a refetch after a pin failure
-  keeps the cached copy (`refetchCachedArtifact`), so no wrong pin empties it.
-- `lock` refuses a query: a presigned capability would be committed and expire.
-- A world-writable directory does not stop discovery, as it does for
-  `./ansible.cfg`: this file is what gets installed, not a setting.
-- A `${VAR}` reads any exported variable into any string of the table, server
-  `url` and S3 `endpoint` included: the file is trusted with the environment.
-
-<details markdown>
-<summary>What else galaxy.toml may and may not decide</summary>
-
-- Discovery `Stat`s for a regular file: the open runs under the cache lock,
-  where a fifo would block every runner.
-- `requirements.ParseTOML` only reshapes the decoded tree for `parseRaw`,
-  refusing unknown inline-table keys (`ErrInvalidCollectionEntry`,
-  `ErrInvalidRoleEntry`), so no rule above has a second implementation.
-- Validation order is part of the boundary: `checkSourceUserinfo` and
-  `checkSignatureSources` run before the no-name refusal that echoes the entry.
-- `[tool.go-galaxy]` holds paths, worker counts, S3 and servers, never the
-  signature policy, a git or url credential, `--offline`, `--frozen` or `--no-cache`.
-- A file-chosen S3 `endpoint` with operator keys passes, unlike a file-chosen
-  server with an operator token: SigV4 signs with the secret, never sends it.
-- `cleanup` re-reads a recorded file through `Decode`, which expands nothing,
-  so its roots never depend on the cleaning process's environment.
-
-</details>
-
 ## Archive extraction
 
 | Input | Refused when | Where | Sentinel | Exit |
@@ -200,7 +269,7 @@ check and extractor a download does; no signature can vouch for it.
 - The decompressed cap is the guarantee: sparse entries and meta headers read
   bytes no declared size accounts for. Skipped entry types are still charged.
 - `archive` resolves no path through `os.Root`; its caller hands it a contained
-  destination ([Install pipeline](install-pipeline.md)).
+  destination ([Verify, extract, record](install-pipeline.md#verify-extract-record)).
 
 <details markdown>
 <summary>Reader properties a change must keep</summary>
@@ -213,6 +282,12 @@ check and extractor a download does; no signature can vouch for it.
   manifest's `limitReader` keep one shape: change all three together.
 - `gzipstream` walks members in a loop: pgzip's `Read` recurses per member, and
   a flood of empty ones overflows the stack beyond any `recover`.
+- `gzipstream` stores every terminal error before it returns it: pgzip has no
+  context and blocks forever on a read after a member's end.
+- `gzipstream` hands `Reset` only its own `*bufio.Reader`. Any other reader
+  makes pgzip rebuffer and drop the bytes past the member boundary.
+- `gzipstream` checks the context on the compressed side: a member of empty
+  stored blocks consumes input while it produces nothing.
 - `verifiedDirs` holds directories only, sound because extraction never
   replaces a path; a new `ensureDir` caller `Lstat`s every component first.
 - The duplicate refusal rests on the first copy being read-only; root with
@@ -236,9 +311,11 @@ check and extractor a download does; no signature can vouch for it.
 
 ## Signatures and OpenPGP framing
 
+Behavior: [Signatures](../guides/signatures.md).
+
 | Input | Refused when | Where | Sentinel | Exit |
 | :-- | :-- | :-- | :-- | :-- |
-| A `signatures:` source | a scheme but `http(s)` or `file`, a `file` host but `localhost`, or userinfo | `signature.ValidateRequirementSource` | `ErrUnsupportedSignatureSource`, `ErrSignatureSourceUserinfo` | 2 |
+| A `signatures:` source | a scheme other than `http(s)` or `file`, a `file` host other than `localhost`, or userinfo | `signature.ValidateRequirementSource` | `ErrUnsupportedSignatureSource`, `ErrSignatureSourceUserinfo` | 2 |
 | A `file://` source | absent, unreadable, not regular on the opened descriptor, or too large | `Fetcher.fetchFile` | `ErrSignatureSourceUnavailable` | 4 |
 | A keyring | a keybox; secret key material, bad framing, over 4096 packets, or no keys | `signature.LoadKeyring` | `ErrKeyringIsKeybox`, `ErrKeyringUnreadable` | 2 |
 | A signature blob | a non-signature packet, over 64 packets, or bad framing | `checkOne` | that blob fails as `ERRSIG` | 10 if the policy fails |
@@ -279,6 +356,18 @@ blocks at line-start opening lines, one packet ceiling per file.
   because `os.OpenRoot` follows a symlink at the path it opens.
 - Each identity part is checked before the join: `path.Join` fuses a `..`-led
   version into an element the next `..` cancels.
+- A collection name has two alphabets, picked by source kind:
+  `IsCollectionNamePart` (`^[a-z][a-z0-9_]*$`, what Galaxy servers accept) and
+  `IsURLCollectionNamePart` (`[A-Za-z0-9_]+`, for a url artifact's own
+  `MANIFEST.json`). Neither is path safety: `SplitFQDN` checks shape only, so
+  a caller joining halves into a path applies `IsPathElement`.
+- `IsExactVersion` is a path check: whatever it accepts is an `IsPathElement`
+  whether `semver.CoerceNewVersion` is on or off.
+  `TestIsExactVersionImpliesIsPathElementExhaustive` and a fuzz target pin
+  that, because a semver upgrade widening the grammar would reopen path
+  traversal.
+- Role names (`IsRoleName`, `IsRoleInstallName`) have their own alphabet,
+  since real ones carry hyphens, capitals and leading digits.
 - Roles write through an `os.Root` at `roles_path` after `IsRoleInstallName`,
   and cleanup [roots its removals](#reading-an-installed-tree-cleanup-and-outdated) too.
 - The extracted store writes through an `os.Root`; the local artifact store
@@ -289,15 +378,15 @@ blocks at line-start opening lines, one packet ceiling per file.
 
 ## Reading an installed tree: cleanup and outdated
 
-| Input | Refused when | Where | Sentinel | Exit |
-| :-- | :-- | :-- | :-- | :-- |
-| A project's `ansible_collections` | its probe fails with anything but not-exist | `cleanup.openProjectWorkspace` | project skipped, warned | - |
-| A scanned namespace, name or version | not `helpers.IsPathElement` | `cleanup` scan | skipped, warned | - |
-| The same at removal | not `IsPathElement`, or the install path outside the collections path | `cleanup.removeInstalled` | `ErrUnsafeRemovalPath` | 5 |
-| A role directory | no recorded roles path, not an install name, or no extract marker | `cleanup.scanProjectRoles`, `scannedRole` | never indexed | - |
-| A recorded requirements file | not a regular file by `Stat` | `cleanup.loadRequirements` | `ErrProjectRequirementsUnreadable` | 2 |
-| `MANIFEST.json`, `GALAXY.yml`, install info | not a regular file by `Lstat` through the root | `manifestIsRegularFile`, `readRegularFile` | skipped | - |
-| An `outdated` sidecar | a bad name or version, fields not recomposing its `.info` name, or another manifest version | `scanInstalledCollection` | skipped | - |
+| Input | Refused when | Where | Outcome |
+| :-- | :-- | :-- | :-- |
+| A project's `ansible_collections` | its probe fails with anything but not-exist | `cleanup.openProjectWorkspace` | project skipped, warned |
+| A scanned namespace, name or version | not `helpers.IsPathElement` | `cleanup` scan | skipped, warned |
+| The same at removal | not `IsPathElement`, or the install path outside the collections path | `cleanup.removeInstalled` | `ErrUnsafeRemovalPath`, exit 5 |
+| A role directory | no recorded roles path, not an install name, or no extract marker | `cleanup.scanProjectRoles`, `scannedRole` | never indexed |
+| A recorded requirements file | not a regular file by `Stat` | `cleanup.loadRequirements` | `ErrProjectRequirementsUnreadable`, exit 2 |
+| `MANIFEST.json`, `GALAXY.yml`, install info | not a regular file by `Lstat` through the root | `manifestIsRegularFile`, `readRegularFile` | skipped |
+| An `outdated` sidecar | a bad name or version, fields not recomposing its `.info` name, or another manifest version | `scanInstalledCollection` | skipped |
 
 - Reachability covers every registered project before any delete, and a failed
   probe skips its project rather than aiming at another directory.
@@ -306,20 +395,6 @@ blocks at line-start opening lines, one packet ceiling per file.
 - Removal re-opens an `os.Root`, so a symlink swapped in since the scan is
   refused. Accepted: a symlink planted deeper in a collections path, and a
   writer swapping the collections path itself between scan and removal.
-
-## The S3 endpoint
-
-| Input | Refused when | Where | Sentinel | Exit |
-| :-- | :-- | :-- | :-- | :-- |
-| A redirect | always, a same-host upgrade to `https` included | `s3.refuseRedirect` | `ErrCacheBackendUnusable` | 2 |
-| A snapshot or registry object | past a `StateObjectMax*Size` cap, or an empty gzip member | `s3.Backend.readObject` | `ErrStateObjectTooLarge`, `ErrCorruptStateObject` | 9 |
-| A listing page or delete result | past `S3ListMaxSize` | `s3.Client` | `ErrResponseTooLarge` | 4 |
-| A batch delete | a per-key `<Error>` inside a `200` | `deleteObjectsBatch` | `ErrCacheBackendUnavailable` | 4 |
-
-- A redirected SigV4 request cannot verify; following it would forward the
-  `X-Amz-*` headers, session token among them, and replay a PUT body.
-- The refusal sits on the S3 client's own copy of the shared client; listed
-  keys are untrusted, so the delete body goes through `encoding/xml`.
 
 ## Printed output
 

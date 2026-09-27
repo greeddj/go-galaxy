@@ -27,6 +27,11 @@ roles:
 
 </div>
 
+| Write | When |
+| --- | --- |
+| `galaxy.toml` | You want the constraint beside the name, a strict schema, and run settings in [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table) |
+| `requirements.yml` | `ansible-galaxy` must read the file too |
+
 ## Collections
 
 === "Galaxy"
@@ -71,10 +76,13 @@ roles:
         ]
         ```
 
-        1.  `,` names the ref: a branch, a tag or a full 40-hex commit, never
-            an abbreviated one. Absent means `HEAD`.
-        2.  `#` picks a directory. With no `galaxy.yml` or `MANIFEST.json`
-            there, every collection one level down installs.
+        1.  `,` names the ref: a branch, a tag, `refs/heads/<name>`,
+            `refs/tags/<name>` or a full 40-hex commit, never an abbreviated
+            one. Absent means `HEAD`. A name that is both a branch and a tag
+            means the branch, with a warning.
+        2.  `#` picks the directory to build from, the repository root by
+            default ([What a git repository must hold](#what-a-git-repository-must-hold)).
+            `#` comes before `,`: `<url>,main#sub` asks for the ref `main#sub`.
 
     === "requirements.yml"
 
@@ -87,11 +95,14 @@ roles:
         ```
 
         1.  Needed here: a bare `https://` URL is a tarball, not a repository.
-        2.  A branch, a tag or a full 40-hex commit, never an abbreviated one.
-            Absent means `HEAD`.
-        3.  `#` picks a directory and `,` the ref, which overrides `version:`.
-            With no `galaxy.yml` or `MANIFEST.json` there, every collection one
-            level down installs.
+        2.  A branch, a tag, `refs/heads/<name>`, `refs/tags/<name>` or a full
+            40-hex commit, never an abbreviated one. Absent means `HEAD`. A
+            name that is both a branch and a tag means the branch, with a
+            warning.
+        3.  `#` picks the directory to build from, the repository root by
+            default ([What a git repository must hold](#what-a-git-repository-must-hold)).
+            `,` names the ref, which wins over a mapping's `version:`. `#`
+            comes before `,`: `<url>,main#sub` asks for the ref `main#sub`.
 
 === "url"
 
@@ -133,14 +144,35 @@ roles:
 
 | Key | Galaxy | git | url |
 | --- | --- | --- | --- |
-| `name` | `namespace.name` | Repository URL, or `ns.name` when `source` holds the URL | Tarball URL |
+| `name` | `namespace.name`, each part `^[a-z][a-z0-9_]*$` | Repository URL, or `ns.name` when `source` holds the URL | Tarball URL |
 | `namespace` | Beside a one-part `name` | Beside `source` | Refused |
 | `version` | Constraint | Ref | Exact version |
 | `source` | Server id or URL | Repository URL (optional) | Refused |
 | `type` | `galaxy` or absent | `git`, or a `git+` or `git@` name | `url`, or an `http(s)://` name |
 | `signatures` | [Allowed](signatures.md#signatures-in-the-requirements-file) | Refused | Refused |
 
-A bare top-level list is read as `collections:`.
+A bare top-level list is read as `collections:`, so an old roles-only file
+needs its entries moved under `roles:`.
+
+### What a git repository must hold
+
+The directory `#` picks, the repository root by default, must hold
+`galaxy.yml` or `MANIFEST.json`. When it holds neither, every directory one
+level down that holds one installs as a collection.
+
+- `galaxy.yml` needs an exact `MAJOR.MINOR.PATCH` version, or the run exits
+  `2`.
+- A directory holding both `galaxy.yml` and `MANIFEST.json` is refused, exit
+  `2`.
+- Each `dependencies:` key must be `namespace.name`. A git URL or a path
+  exits `3`.
+- Two directories declaring one `namespace.name` are refused, exit `2`.
+- `build_ignore` is honored. A `manifest:` key is refused, exit `2`.
+- Submodules are skipped with a warning.
+
+The internals pages [Git discovery](../internals/install-pipeline.md#git-discovery)
+and [Git and url sources](../internals/boundaries.md#git-and-url-sources)
+show how the tree is built and checked.
 
 ### Version constraints
 
@@ -160,8 +192,8 @@ Every other form admits a prerelease only when it names one, as `>=1.0.0-0`
 does ([Prereleases](../get-started/ansible-galaxy-compat.md#prereleases)).
 
 > [!TIP]
-> Quote every version in YAML: an unquoted `1.10` reaches go-galaxy as the
-> number `1.1`.
+> Quote every version in `requirements.yml`: an unquoted `1.10` reaches
+> go-galaxy as the number `1.1`.
 
 ### When no version fits
 
@@ -194,8 +226,10 @@ hint: pre-release versions of ansible.netcommon exist and are excluded by plain 
 
 go-galaxy's [PubGrub solver](../internals/solver.md) tries older
 releases when a newer one conflicts. When no combination fits, it exits
-[`3`](../reference/exit-codes.md) rather than pick leniently; the proof's `So, because`
-line names the constraints to relax.
+[`3`](../reference/exit-codes.md). In the proof, `root` is your requirements
+file, and the `So, because` line names the constraints to relax. A `hint:`
+line about prereleases matters only if you meant to allow them
+([Prereleases](../get-started/ansible-galaxy-compat.md#prereleases)).
 
 ## Roles
 
@@ -288,16 +322,27 @@ An install name matches `^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$` and is never
 `ansible_collections`. A Galaxy role needs a server with the
 [v1 role API](servers-and-auth.md#roles-and-the-v1-role-api).
 
+A role needs `meta/main.yml` or `meta/main.yaml` at its top level, not both,
+or the run exits `2`. A url role's tarball holds the role at the archive root
+or in its single top-level directory.
+
 Each role's `meta` dependencies install too, unless `--no-deps` is set. A
-local role (no dot) is skipped, and so, with a warning, is a collection's role
-(two or more dots).
+local role (no dot) is skipped. A collection's role (two or more dots) is
+skipped with a warning. One run resolves at most 1000 roles, dependencies
+included, and exits `2` past that.
+
+### An existing role directory
+
+| The directory under `roles_path` holds | go-galaxy |
+| --- | --- |
+| go-galaxy's `.extract-done` marker | Kept when it holds the same source and version, else replaced |
+| `meta/.galaxy_install_info` only, from `ansible-galaxy` | Replaced, with a warning |
+| Neither | Refused, exit `5`: remove the directory to let go-galaxy manage it |
 
 ## galaxy.toml
 
-| Use | When |
-| --- | --- |
-| `galaxy.toml` | You want the constraint beside the name, a strict schema, and run settings in [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table) |
-| `requirements.yml` | `ansible-galaxy` must read the file too |
+`galaxy.toml` holds the two lists in a `[project]` table, and run settings in
+[`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table).
 
 ### The `[project]` table
 
@@ -314,7 +359,7 @@ roles = ["geerlingguy.docker,8.0.0"] # (4)!
 ```
 
 1.  The name, then a [constraint](#version-constraints).
-2.  A git pointer, never split into a constraint.
+2.  A git source, never split into a constraint.
 3.  An [inline table](#inline-tables-and-projectcollections).
 4.  `src,version,name`, never split into a constraint.
 
@@ -324,11 +369,11 @@ roles = ["geerlingguy.docker,8.0.0"] # (4)!
 | `collections` | Array of strings and tables | This or `roles` | [Collections](#collections) |
 | `roles` | Array of strings and tables | This or `collections` | [Roles](#roles) |
 
-`collections = []` installs nothing; a file with neither list exits `2`. A
+`collections = []` installs nothing. A file with neither list exits `2`. A
 `${VAR}` in an entry stays literal: only
 [`[tool.go-galaxy]`](../reference/configuration.md#var-expansion) expands one.
 
-### Dependency strings
+### Collection strings
 
 ```mermaid
 flowchart LR
@@ -343,6 +388,26 @@ flowchart LR
 
 The name is the longest run of `A-Za-z0-9_.`, followed by whitespace or an
 operator, so `ns.name>=1.0` equals `ns.name >= 1.0`.
+
+<details markdown>
+<summary>Refused spellings</summary>
+
+A name running straight into its constraint and an unparsable constraint stop
+at load:
+
+```text
+✗ failed to load requirements file: invalid collection name: "ns.name@1.0": put a space or a version operator between the name and its constraint
+✗ failed to load requirements file: invalid collection name: "ns.name:1.0": put a space or a version operator between the name and its constraint
+✗ failed to load requirements file: invalid collection name: "ns.name-1.0": put a space or a version operator between the name and its constraint
+✗ failed to load requirements file: invalid collection name: "ns.name1.0.0"
+✗ failed to load requirements file: invalid collection version constraint: ">>= 1.0" for ns.name
+```
+
+`ns.name1.0.0` is a four-part name, since nothing separates the version. Only
+the grammar is checked at load: `ns.name >= 99` loads and fails in the
+resolve.
+
+</details>
 
 ### Inline tables and `[[project.collections]]`
 
@@ -364,9 +429,10 @@ src = "geerlingguy.postgresql"
 version = "3.5.0"
 ```
 
-A collection table takes `namespace`, `name`, `version`, `source`, `type` and
-`signatures`; a role table takes `name`, `role`, `src`, `scm` and `version`.
-Every value is a string; `signatures` is a string or an array of them.
+A collection table takes the keys in the [Collections](#collections) table. A
+role table takes `name`, `src`, `scm` and `version`, plus `role`: ansible's
+older spelling of `name`, which also serves as `src` when `src` is absent.
+Every value is a string, except that `signatures` may be an array of strings.
 
 ### Stricter than requirements.yml
 
@@ -390,9 +456,12 @@ flowchart LR
   C -->|no| D["Read ./requirements.yml"]
 ```
 
-The variables are `GO_GALAXY_REQUIREMENTS_FILE` and
-`ANSIBLE_GALAXY_REQUIREMENTS_FILE`; an empty export counts as set, names no
-file and exits `2`. The extension alone decides, `.TOML` too: a `galaxy.txt`
+The flag is `-r`, also spelled `--requirements-file` or ansible's
+`--role-file` ([Paths and files](../reference/cli.md#paths-and-files)). Its
+variables are `GO_GALAXY_REQUIREMENTS_FILE` and
+`ANSIBLE_GALAXY_REQUIREMENTS_FILE`. An empty export counts as set and names no
+file: `install`, `warm` and `lock` then exit `2`, and `hash`, `explain` and
+`outdated` read only a `galaxy.lock` in the working directory. The extension alone decides, `.TOML` too: a `galaxy.txt`
 reads as YAML.
 
 When discovery finds both files, go-galaxy warns:
@@ -401,9 +470,14 @@ When discovery finds both files, go-galaxy warns:
 ! galaxy.toml and requirements.yml are both present in the current directory; using galaxy.toml and ignoring requirements.yml (name one with --requirements-file to choose)
 ```
 
-With neither file, `install`, `warm`, `lock` and `hash` exit `2`. A
-world-writable directory does not stop discovery, as
-[Security](../internals/boundaries.md#loading-requirementsyml-and-the-lockfile) explains.
+With neither file, `install`, `warm` and `lock` exit `2`. So does `hash`,
+unless a `galaxy.lock` is present ([A cache key for CI](lockfile.md#a-cache-key-for-ci)).
+
+Unlike `./ansible.cfg`
+([Where it is found](../reference/configuration.md#where-it-is-found)), a
+requirements file is still discovered in a world-writable directory. In a
+shared directory such as `/tmp`, name the file with `-r`
+([Trust model](security.md#trust-model)).
 
 ## What is refused
 
@@ -413,7 +487,7 @@ Each exits `2` before anything installs, naming the entry.
 | --- | --- | --- |
 | A `file`, `dir` or `subdirs` type, a local path, or another scheme such as `ssh://` without `git+` | Unsupported source | A Galaxy name, `git+ssh://...` or an https tarball |
 | A credential in a URL | It would reach logs and the lockfile | A binding for [git](servers-and-auth.md#git-sources-and-credentials) or [url](servers-and-auth.md#url-sources-and-credentials) |
-| A `#fragment` in a url source | Not part of a tarball URL | The URL without it |
+| A `#fragment` in a url source | Not part of a tarball URL. A query is allowed. Progress and error lines leave it out, but `galaxy.lock` records it, so keep tokens out of it | The URL without it |
 | `src:` or `scm:` in a collection | Role keys | The entry under `roles:` |
 | A collection named twice, even by two repositories | One entry per collection | One entry |
 | `signatures:` on a git or url collection | Signatures cover Galaxy collections only | Drop it: the pin covers it |
@@ -424,37 +498,16 @@ Each exits `2` before anything installs, naming the entry.
 | `source:`, `signatures:` or `type:` on a role | It would change the entry's meaning | The entry without it |
 | Two roles with one install name, case ignored | Both would land in one directory | Distinct `name:` values |
 
-<details markdown>
-<summary>Refused spellings in galaxy.toml</summary>
-
-A name running straight into its constraint, an upper-case name and an
-unparsable constraint stop at load:
-
-```text
-✗ failed to load requirements file: invalid collection name: "ns.name@1.0": put a space or a version operator between the name and its constraint
-✗ failed to load requirements file: invalid collection name: "ns.name:1.0": put a space or a version operator between the name and its constraint
-✗ failed to load requirements file: invalid collection name: "ns.name-1.0": put a space or a version operator between the name and its constraint
-✗ failed to load requirements file: invalid collection name: "Acme"."App" must each match ^[a-z][a-z0-9_]*$
-✗ failed to load requirements file: invalid collection name: "ns.name1.0.0"
-✗ failed to load requirements file: invalid collection version constraint: ">>= 1.0" for ns.name
-```
-
-`ns.name1.0.0` is a four-part name, since nothing separates the version. Only
-the grammar is checked at load: `ns.name >= 99` loads and fails in the
-resolve.
-
-</details>
-
 ## Moving to galaxy.toml
 
 - [ ] Upgrade every go-galaxy sharing the cache or the lockfile first
       ([From v1.2.x](../reference/upgrading.md#from-v12x)).
-- [ ] Rewrite the entries, copying each constraint exactly, and delete
-      `requirements.yml`, or every run that names no file warns.
-- [ ] Run `go-galaxy lock --check`: the same entries give the same
-      `galaxy.lock`.
-- [ ] Without a lockfile, expect a new
-      [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) key; a respelled
-      constraint (`"1.0.0"` as `== 1.0.0`) costs one fresh resolve.
+- [ ] Rewrite the entries in `galaxy.toml`, copying each constraint exactly.
+      A respelled one, such as `"1.0.0"` as `== 1.0.0`, costs one fresh
+      resolve.
+- [ ] Delete `requirements.yml`, or every run that names no file warns.
+- [ ] With a lockfile, run `go-galaxy lock --check`: the same entries give
+      the same `galaxy.lock`. Without one, expect a new
+      [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) key.
 - [ ] Optionally move `cache_dir` and the whole server list from `ansible.cfg`
       into [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table).

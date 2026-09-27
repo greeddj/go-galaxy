@@ -8,7 +8,9 @@ go-galaxy is a fast Ansible Galaxy collections and roles installer for CI, writt
 
 ## Documentation
 
-`README.md` is a short landing page (GitHub-renderable syntax only); the
+`README.md` is a short landing page (GitHub-renderable syntax only) that
+repeats `docs/index.md`'s opening and the quick start's install snippets
+(`docs/internals/development.md` lists what changes together); the
 reference material lives in `docs/`, which builds into a Zensical site
 (`zensical.toml` at the root, `docs/index.md` its landing page, `docs/assets/`
 the logo, favicon, benchmark chart and site CSS). The site is the primary
@@ -18,12 +20,14 @@ first (default) tab before `requirements.yml`, or the left column of a
 side-by-side comparison, which suits only lines short enough not to scroll.
 Keep the pages true after a behavior change. Each `nav` section of
 `zensical.toml` is one directory, and a page lives in its section's. Get
-started, `docs/get-started/`: `getting-started.md` (install, first run,
-lockfile, CI) and `ansible-galaxy-compat.md` (every deliberate divergence).
+started, `docs/get-started/`: `getting-started.md` (H1 "Quick start": install, first run,
+pointing ansible at the installs, lockfile, CI) and `ansible-galaxy-compat.md` (every deliberate divergence).
 Guides, `docs/guides/`: `requirements.md` (requirements.yml and galaxy.toml
-entries, constraints, which file is read), `lockfile.md` (lock, `--frozen`,
+entries, constraints, what a git repository must hold, an existing role
+directory, which file is read), `lockfile.md` (lock, `--frozen`,
 `lock --check`, hash, tree, explain, outdated), `ci.md`, `servers-and-auth.md`,
-`caching.md`, `signatures.md` and `security.md` (verifying a release and the
+`caching.md` (the local cache, retention, cache flags, what cleanup keeps,
+S3), `signatures.md` and `security.md` (verifying a release and the
 operator's trust model; its `#verifying-a-release` anchor is linked from the
 Homebrew cask, pinned to the release tag). Reference, `docs/reference/`:
 `cli.md` (commands and options), `configuration.md` (setting precedence,
@@ -38,8 +42,12 @@ live in `docs/internals/`, short pages that link the user pages for behavior:
 an exit code), `boundaries.md` (each security boundary: what is refused,
 where, which sentinel), `commands.md` plus one `flow-<command>.md` per command
 (control flow as Mermaid diagrams: an overview, the branches, an exits table)
-and `development.md` (tests, gates, lint, the docs site, the benchmark
-harness). A new page needs a `nav` entry in `zensical.toml`, and a link out of
+and `development.md` (tests, gates, lint, the docs site and the rules its
+pages follow, the benchmark harness). A user page's H1 matches its `nav` label.
+Rewording a heading changes its anchor, so update every link to it; no
+heading carries an attr_list id. Examples that pin a release use one
+literal (README.md, getting-started.md, ci.md, security.md), which
+`CONTRIBUTING.md`'s release steps bump. A new page needs a `nav` entry in `zensical.toml`, and a link out of
 `docs/` must be absolute. One document sits at the root instead, because
 GitHub reads it from there: `CONTRIBUTING.md` (the commit subjects the release
 notes are grouped from, and cutting a release). A release archive carries the
@@ -48,7 +56,8 @@ constrains where the docs live.
 `cmd/go-galaxy/main.go`'s `--help` exit-code index is hand-kept string literals
 in `newRootCommand`'s Description, each phrase leading its row in
 `docs/reference/exit-codes.md`; `TestRootCommandDisclosesDefaultCommandAndExitCodes` pins
-the literals against the `exitcode` constants but does not read the doc, so
+the literals against the `exitcode` constants and `FromSignal` but does not
+read the doc, so
 change both together.
 
 ## Commands

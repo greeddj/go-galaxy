@@ -7,16 +7,21 @@ a run gets its exit code. What each code means is on
 ## HTTP clients
 
 `internal/galaxy/fetch` builds every `*http.Client` and owns its per-origin
-policy; every pool comes from `newTransport`, so their settings cannot drift.
-Every client runs `checkRedirect`: 10 hops at most, `Referer` deleted.
+policy. The S3 client is a copy of one. Every pool comes from `newTransport`,
+so their settings cannot drift.
 
-| Client | Constructor | Carries | Refuses a redirect | Used for |
-| --- | --- | --- | --- | --- |
-| Galaxy | `fetch.New` | a server's token and relaxed TLS, on its exact origin only | past 10 hops | Galaxy API, downloads, S3 cache |
-| Offline | `fetch.NewOffline` | nothing: fails every request with `ErrOfflineMode` | - | Galaxy under `--offline`; signature and url clients take the same transport |
-| Signature | `fetch.NewUnauthenticated` | nothing | past 10 hops | `signatures:` sources |
-| Git | `fetch.NewGit` | only the `GO_GALAXY_GIT_*` credential go-git adds; a non-2xx body capped at 64 KiB | off-origin: `ErrGitTransportFailed` | `gitfetch` |
-| url | `fetch.NewURLDownload` | a `GO_GALAXY_URL_*` Bearer token, judged per hop | https to http: `ErrDownloadFailed` | `Infra.URLHTTP` |
+| Client | Constructor | Carries | Used for |
+| --- | --- | --- | --- |
+| Galaxy | `fetch.New` | a server's token and relaxed TLS, on its exact origin only | Galaxy API, downloads |
+| S3 | `newClient`, run by `Backend.Open`: a shallow copy of the Galaxy client `s3.New` was handed, same transport, `CheckRedirect` set to `refuseRedirect` | the SigV4 headers it signs per request | the S3 cache |
+| Offline | `fetch.NewOffline` | nothing: fails every request with `ErrOfflineMode` | Galaxy under `--offline`. The signature and url clients take the same transport then |
+| Signature | `fetch.NewUnauthenticated` | nothing | `signatures:` sources |
+| Git | `fetch.NewGit` | only the `GO_GALAXY_GIT_*` credential go-git adds; a non-2xx body capped at 64 KiB | `gitfetch` |
+| url | `fetch.NewURLDownload` | a `GO_GALAXY_URL_*` Bearer token, judged per hop | `Infra.URLHTTP` |
+
+The diagram shows the Galaxy client's layers, outermost first. `NewGit` wraps
+them in `errorBodyCapTransport`, `NewURLDownload` puts `urlAuthTransport`
+outside them, and an offline client is `offlineTransport` alone.
 
 ```mermaid
 flowchart TD
@@ -27,21 +32,26 @@ flowchart TD
   D -->|"yes"| IP["insecure pool"]
 ```
 
-- No `http.Client.Timeout`, which caps a whole transfer: `ResponseHeaderTimeout`
-  bounds the first byte and the watchdog each read.
+- No `http.Client.Timeout` on a network client, since it caps a whole
+  transfer: `ResponseHeaderTimeout` bounds the first byte and the watchdog
+  each read.
+- The watchdog cancels its derived context when a read stalls, and reports
+  `ErrReadStalled` only while the caller's context is live. Its body is
+  unsynchronized: abort by canceling the context, never by a concurrent `Close`.
 - Two pools, not one `DialTLSContext`: the idle pool key ignores `tls.Config`,
   and `DialTLSContext` switches off ALPN HTTP/2.
 - The auth and TLS layers stay separate types, so a token and
   `InsecureSkipVerify` never share a struct.
-- `serverAuths`, `urlBindings` and `gitCredentials` are the only `Reveal`
-  sites for Galaxy, url and git secrets, called while clients are wired.
 - The S3 backend rides the shared client, so config refuses `--offline` beside
   it (`ErrS3CacheOffline`) before any client is built.
+- `fetch.NewGit` takes no offline flag, and an ssh remote uses no HTTP client
+  at all. So the transport never refuses git traffic under `--offline`: each
+  git path must check `cfg.Offline` and refuse with `ErrOfflineMode` before it
+  reaches `gitfetch`.
 
-The watchdog cancels its derived context when a read stalls, and reports
-`ErrReadStalled` only while the caller's context is live. Its body is
-unsynchronized: abort by canceling the context, never by a concurrent `Close`.
-Per-hop credentials: [Redirects](boundaries.md#redirects).
+Redirect limits, per-hop credentials and the S3 copy's refusal of every hop:
+[Redirects](boundaries.md#redirects). Where each secret is revealed:
+[Credentials and the token pairing rule](boundaries.md#credentials-and-the-token-pairing-rule).
 
 ## Operator output
 
@@ -56,64 +66,51 @@ What a user sees: [Output and color](../reference/cli.md#output-and-color).
 
 - `internal/progress` is the one `Printer`, and under `--verbose` the `log`
   sink too, so a dependency's line is sanitized.
-- Each method cleans its payload into `safeout.Text`; `writeLine` then adds
-  markers and the version tag, so `OkVersionf` takes the version apart:
-  formatted in, its color would become U+FFFD.
+- Each method cleans its payload into `safeout.Text` before `writeLine` adds
+  the markers and the version tag. That is why `OkVersionf` and
+  `ErrorVersionf` take the version as a separate argument: a color escape
+  spelled into the format would be cleaned to U+FFFD.
 - The spinner writes `os.Stdout` directly when it is a character device (so
   `/dev/null` counts), with autowrap off for one frame's bytes only.
 - `Close` drops the spinner, because the next line would restart a kept one.
 
-`safeout.Clean` sanitizes text of external origin
-([what it replaces](boundaries.md)). `IsUnsafeRune` defines that set for
-`Clean`, `NewWriter` and `helpers.IsPathElement` alike, and `safeout.Text`
-forces an explicit conversion from any typed string. `NewWriter` cleans each
-`Write` alone, so `tree` and `explain` write whole lines.
+`safeout.Clean` sanitizes text of external origin. What it replaces is under
+[Printed output](boundaries.md#printed-output). `IsUnsafeRune` defines that
+set for `Clean`, `NewWriter` and `helpers.IsPathElement` alike, and
+`safeout.Text` forces an explicit conversion from any typed string. `NewWriter`
+cleans each `Write` alone, and a multi-byte rune split across writes becomes
+one U+FFFD per byte, so `tree` and `explain` write whole lines.
 
 ## Exit code classes
 
-```mermaid
-flowchart TD
-  R["command returns,<br/>LockLostError may relabel"] --> S{"handleResult:<br/>signal caught?"}
-  S -->|"yes"| XS(["exit 128 + signo,<br/>no error line"])
-  S -->|"no"| H{"ExitErrHandler<br/>captured an error?"}
-  H -->|"yes"| FE(["FromError:<br/>exit by class, below"])
-  H -->|"no"| P{"bare error<br/>from app.Run?"}
-  P -->|"yes: flag parse"| XP(["exit 2"])
-  P -->|"no"| X0(["exit 0"])
-```
+`handleResult` branches as drawn in
+[Process entry and exit](commands.md#process-entry-and-exit). An error that
+`ExitErrHandler` captured goes to `FromError`, which returns the code of the
+first `exitClasses` row whose predicate matches. `errors.Is` walks a joined
+failure, so a class above its
+[summary error](../reference/exit-codes.md#when-several-things-fail) keeps its
+code and one below collapses to it. `TestExitClassOrderIsPinned` pins the
+order.
 
-```mermaid
-flowchart TD
-  F["FromError: first<br/>matching exitClasses row"] --> C1{"1 canceled?"}
-  C1 -->|"yes"| E1(["exit 130"])
-  C1 -->|"no"| C2{"2-4 integrity,<br/>signature or lockfile?"}
-  C2 -->|"no"| C3{"5 server URL<br/>policy?"}
-  C2 -->|"yes"| E2(["exit 7, 10 or 6<br/>respectively"])
-  C3 -->|"yes"| E3(["exit 5"])
-  C3 -->|"no"| C4{"6, 7 install<br/>or network?"}
-  C4 -->|"no"| C5{"8, 9 cache busy<br/>or corrupt?"}
-  C4 -->|"yes"| E4(["exit 5 or 4<br/>respectively"])
-  C5 -->|"yes"| E5(["exit 8 or 9<br/>respectively"])
-  C5 -->|"no"| C6{"10, 11 resolution<br/>or usage?"}
-  C6 -->|"no match"| E7(["exit 1"])
-  C6 -->|"yes"| E6(["exit 3 or 2<br/>respectively"])
-```
-
-| Row | Predicate | Placed here because |
-| ---: | --- | --- |
-| 1 | `isCanceled` | checked first: only a caller's own cancellation may reach it |
-| 2-4 | `isIntegrityError`, `isSignatureError`, `isLockError` | above the install headline, which would claim them joined |
-| 5 | `isServerSuppliedURLPolicyError` | exits 5 bare or behind either headline |
-| 6, 7 | `isInstallError`, `isNetworkError` | hold the headlines `ErrInstallationFailed`, `ErrLatestVersionLookupFailed` |
-| 8, 9 | `isCacheBusyError`, `isCacheCorruptError` | above usage, whose `fs.ErrNotExist` arm matches any not-exist cause |
-
-`TestExitClassOrderIsPinned` pins the order. `errors.Is` walks a joined
-failure, so a class above its headline keeps its code and one below collapses
-to it.
+| Row | Predicate | Exit | Placed here because |
+| ---: | --- | ---: | --- |
+| 1 | `isCanceled` | 130 | checked first: only a caller's own cancellation may reach it |
+| 2 | `isIntegrityError` | 7 | above row 6, whose `ErrInstallationFailed` would claim it joined |
+| 3 | `isSignatureError` | 10 | as row 2, and below it: wrong bytes outrank who vouched for them |
+| 4 | `isLockError` | 6 | as row 2, and above row 5: `checkLockedDownloadURLs` wraps row 5's `ErrDownloadURLNotServerArtifact` |
+| 5 | `isServerSuppliedURLPolicyError` | 5 | exits 5 bare or behind either summary error |
+| 6 | `isInstallError` | 5 | holds `ErrInstallationFailed`, the summary error of `install` and `warm` |
+| 7 | `isNetworkError` | 4 | holds `ErrLatestVersionLookupFailed`, the summary error of `outdated` |
+| 8 | `isCacheBusyError` | 8 | below rows 6 and 7, so contention behind `ErrInstallationFailed` exits 5 and a joined wire failure stays the cause |
+| 9 | `isCacheCorruptError` | 9 | below row 6 for the same reason, and above rows 10 and 11 |
+| 10 | `isResolutionError` | 3 | above row 11 |
+| 11 | `isUsageError` | 2 | last: its `fs.ErrNotExist` arm matches any not-exist cause |
+| - | no match | 1 | the fallback |
 
 - `cache.LockLostError` renders the run's error behind `ErrCacheLockLost` with
-  `%v`, so lock loss outranks every class. A canceled parent, or a holder not
-  lost, passes the error through, which keeps the local backend inert.
+  `%v`, so lock loss outranks every class. A canceled parent, or a holder that
+  still has the lock, passes the error through. The local backend's holder
+  never loses its lock, so there it changes nothing.
 - `errRecorder` on the root's `ErrWriter` records whether urfave printed a
   flag failure (an argv one, never `GO_GALAXY_WORKERS=abc`); `handleResult`
   prints the rest.
@@ -123,13 +120,30 @@ to it.
 
 ## Adding a sentinel
 
-An error carries exactly one class's sentinel, or the check order decides its
-code; a producer rewraps a cause that carries another class's at the source. A
-sentinel for a stall, a deadline or a lost lock renders its context cause with
-`%v`, because a reachable `context.Canceled` exits 130 like a Ctrl-C.
+1. Add the sentinel to its class's predicate in
+   `cmd/go-galaxy/exitcode/exitcode.go`.
+2. Add a row for it to `fromErrorCases` in `exitcode_test.go`, or to
+   `genericSentinels` for a deliberate 1. Nothing enumerates `helpers`:
+   without that row, a sentinel left out of step 1 silently exits 1.
+3. If the producer wraps a context cause, render it with `%v` and pin that in
+   the producer's own test, as `TestLockLostError` does. The tables build `%v`
+   shapes themselves, so they never catch a switch to `%w`.
 
-`ErrSignatureSourceUnavailable` alone passes a Ctrl-C through (`%w`):
-`transportCause` strips only the `*url.Error`.
+Prefer one class per error. When a cause carries another class's sentinel,
+render it with `%v` at the source. Keep both with `%w` only when the class you
+want ranks higher: `lockfile.File.validate` keeps `ErrGalaxyServerURLUserinfo`
+under `ErrLockfileInvalid` so a lockfile exits 6, pinned by
+`TestLockfileUserinfoClassifiesAsLock`.
+
+A sentinel for a stall, a deadline or a lost lock renders its context cause
+with `%v`, because a reachable `context.Canceled` exits 130 like a Ctrl-C.
+`ErrSignatureSourceUnavailable` alone wraps its cause with `%w`, so a Ctrl-C
+during a signature fetch still exits 130. `transportCause` strips only the
+`*url.Error` layer, whose text carries the whole request URL, query included.
+`internal/galaxy/extracted`'s sentinels stay unclassified: only workers raise
+them, behind `ErrInstallationFailed`.
+
+### Where errors are relabeled
 
 | Relabel helper | Sentinel | Only when |
 | --- | --- | --- |
@@ -148,15 +162,10 @@ sentinel for a stall, a deadline or a lost lock renders its context cause with
 | JSON syntax error -> `ErrMetadataNotJSON` | `cache.decodeMetadata` (`*notJSONError`) | would exit 1; exits 4 via `isMetadataDocumentError` |
 | Any other decode error (`*json.UnmarshalTypeError`, a timestamp's `*time.ParseError`) -> `ErrMetadataMalformed`; a non-pointer target stays bare | `cache.decodeMetadata` | would exit 1; exits 4 via `isMetadataDocumentError` |
 
-The exit-code tests are closed tables and nothing enumerates `helpers`, so a
-new sentinel needs a predicate and a table row or it silently exits 1;
-`genericSentinels` lists deliberate 1s. The tables build `%v` shapes
-themselves, so only producer tests such as `TestLockLostError` catch a switch
-to `%w`. `internal/galaxy/extracted`'s sentinels stay unclassified: only
-workers raise them, behind `ErrInstallationFailed`.
+## The `--help` exit index
 
 `--help`'s exit index is literals in `newRootCommand`, each leading its row in
 [Exit codes](../reference/exit-codes.md).
 `TestRootCommandDisclosesDefaultCommandAndExitCodes` pins them to the
-`exitcode` constants but never reads the doc: change literal, test row and
-doc row together.
+`exitcode` constants and, for the 129 and 143 rows, to `exitcode.FromSignal`.
+It never reads the doc: change literal, test row and doc row together.
