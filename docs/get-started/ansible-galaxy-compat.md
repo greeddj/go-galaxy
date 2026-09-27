@@ -191,7 +191,7 @@ directory, holding its commit or sha256. ansible ignores it.
 
 | Area | ansible-galaxy | go-galaxy | What you do |
 | --- | --- | --- | --- |
-| Verifier | Runs `gpg` | Pure Go, which refuses a `.kbx` keybox, exit `2` | Export with `gpg --export --armor` |
+| Verifier | Runs `gpg` | Pure Go, which refuses a `.kbx` keybox, exit `2` | Export the keybox's keys as [Keyring and signature file formats](../guides/signatures.md#keyring-and-signature-file-formats) shows: a bare `gpg --export --armor KEYID` reads the default keyring and misses a dedicated keybox |
 | Required count | Counts signatures | Counts distinct signing keys | Sign with distinct keys |
 | `FILES.json` | Checks each listed file's hash | Also refuses an archive entry it does not list, exit `7`, once a signature verifies ([Manifest chain check](../guides/signatures.md#manifest-chain-check)) | - |
 

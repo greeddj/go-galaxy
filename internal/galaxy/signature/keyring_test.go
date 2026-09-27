@@ -196,7 +196,7 @@ func TestLoadKeyringRefusesSecretKeyMaterial(t *testing.T) {
 			if !strings.Contains(err.Error(), "secret key material") {
 				t.Fatalf("LoadKeyring(%s) error does not name the problem:\n%v", name, err)
 			}
-			if !strings.Contains(err.Error(), "--export --armor") {
+			if !strings.Contains(err.Error(), "--export --armor KEYID") {
 				t.Fatalf("LoadKeyring(%s) error does not name the remedy:\n%v", name, err)
 			}
 		})
@@ -369,7 +369,7 @@ func TestLoadKeyringRejectsKeybox(t *testing.T) {
 	}
 	// Naming the export command is why this sentinel is separate from
 	// ErrKeyringUnreadable; its wording lives in internal/galaxy/helpers.
-	if !strings.Contains(err.Error(), "--export --armor") {
+	if !strings.Contains(err.Error(), "--export --armor KEYID") {
 		t.Fatalf("keybox error does not name the export command: %v", err)
 	}
 }

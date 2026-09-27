@@ -142,7 +142,7 @@ func loadKeyring(path string, limit int64) (*Keyring, error) {
 func secretKeyMaterialError(path string) error {
 	return fmt.Errorf(
 		"%w: %q holds %w; verifying needs only the public half, "+
-			"so export that instead: gpg --export --armor > keyring.asc",
+			"so export that instead: gpg --export --armor KEYID > keyring.asc",
 		helpers.ErrKeyringUnreadable, path, errSecretKeyPacket)
 }
 

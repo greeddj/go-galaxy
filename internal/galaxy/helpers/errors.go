@@ -442,7 +442,7 @@ var (
 	// ErrKeyringUnreadable for its one-command remedy, named in the text.
 	ErrKeyringIsKeybox = errors.New(
 		"keyring is a GnuPG keybox (.kbx), which this tool cannot read; export an armored keyring instead: " +
-			"gpg --no-default-keyring --keyring <kbx> --export --armor > keyring.asc")
+			"gpg --no-default-keyring --keyring <kbx> --export --armor KEYID > keyring.asc")
 	// ErrKeyringRequired indicates a requirements entry declares signatures: while
 	// no keyring is configured. It is refused, as ansible-galaxy does, rather than
 	// installed unverified; unlike ErrKeyringUnreadable, no keyring was named.
