@@ -16,9 +16,9 @@ import (
 	"github.com/psvmcc/hub/pkg/types"
 )
 
-// scanProjectWorkspace scans a project's collections workspace into the index.
-// An absent or unrooted workspace is skipped, the latter with a warning quoting
-// projectPath (checkout content); a scan IO error aborts the run.
+// scanProjectWorkspace scans a project's recorded collections workspace into
+// the index. No recorded path, or an absent workspace, is skipped, an unrooted
+// one with a warning quoting projectPath (checkout content); a scan IO error aborts.
 func scanProjectWorkspace(
 	out output.Printer,
 	projectPath string,
@@ -27,7 +27,11 @@ func scanProjectWorkspace(
 	byKey map[string][]installedCollection,
 	deps map[string]map[string]string,
 ) error {
-	ws, err := openProjectWorkspace(projectPath, project)
+	if project.CollectionsPath == "" {
+		out.Debugf("project %q: no collections path recorded; collections are not scanned", projectPath)
+		return nil
+	}
+	ws, err := openProjectWorkspace(project.CollectionsPath)
 	if err != nil {
 		out.Warnf("skipping project %q: %v; nothing under it was scanned or removed", projectPath, err)
 		return nil

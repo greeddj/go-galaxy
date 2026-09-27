@@ -382,6 +382,7 @@ blocks at line-start opening lines, one packet ceiling per file.
 
 | Input | Refused when | Where | Outcome |
 | :-- | :-- | :-- | :-- |
+| A project's collections tree | no `collections_path` recorded, or not the recorded one, such as a vendored `collections/` | `cleanup.scanProjectWorkspace` | never scanned |
 | A project's `ansible_collections` | its probe fails with anything but not-exist | `cleanup.openProjectWorkspace` | project skipped, warned |
 | A scanned namespace, name or version | not `helpers.IsPathElement` | `cleanup` scan | skipped, warned |
 | The same at removal | not `IsPathElement`, or the install path outside the collections path | `cleanup.removeInstalled` | `ErrUnsafeRemovalPath`, exit 5 |

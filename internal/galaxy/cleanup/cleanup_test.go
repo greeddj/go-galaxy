@@ -3658,14 +3658,14 @@ func TestScanCollectionDirManifestMissingVersionPositiveControl(t *testing.T) {
 	}
 }
 
-// buildCollectionsPathFallbackFixture registers a project with an empty
-// CollectionsPath and an install under <project>/<fallbackDirName>, and
-// returns that install's directory.
-func buildCollectionsPathFallbackFixture(t *testing.T, cacheDir, fallbackDirName string) string {
+// buildUnrecordedCollectionsPathFixture registers a project with an empty
+// CollectionsPath and an install under <project>/<dirName>, the two names
+// cleanup once fell back to, and returns that install's directory.
+func buildUnrecordedCollectionsPathFixture(t *testing.T, cacheDir, dirName string) string {
 	t.Helper()
 	projectDir := t.TempDir()
-	fallbackRoot := filepath.Join(projectDir, fallbackDirName)
-	installDir := seedInstallTree(t, fallbackRoot)
+	unrecordedRoot := filepath.Join(projectDir, dirName)
+	installDir := seedInstallTree(t, unrecordedRoot)
 
 	reqPath := filepath.Join(projectDir, "requirements.yml")
 	if err := os.WriteFile(reqPath, []byte("collections: []\n"), helpers.FileMod); err != nil {
@@ -3679,49 +3679,50 @@ func buildCollectionsPathFallbackFixture(t *testing.T, cacheDir, fallbackDirName
 	return installDir
 }
 
-// TestOpenProjectWorkspaceFallsBackToDotCollections pins that an empty
-// CollectionsPath falls back to <project>/.collections, scanned and cleaned.
-func TestOpenProjectWorkspaceFallsBackToDotCollections(t *testing.T) {
+// TestOpenProjectWorkspaceSkipsDotCollectionsWithoutARecordedPath pins that
+// an empty CollectionsPath scans nothing, so an unreferenced install under
+// <project>/.collections, which no install recorded, survives.
+func TestOpenProjectWorkspaceSkipsDotCollectionsWithoutARecordedPath(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()
-	installDir := buildCollectionsPathFallbackFixture(t, cacheDir, ".collections")
+	installDir := buildUnrecordedCollectionsPathFixture(t, cacheDir, ".collections")
 
 	cfg := &config.Config{CacheDir: cacheDir, DryRun: false}
 	runtime := newTestRuntime()
 
 	if err := Start(t.Context(), cfg, runtime); err != nil {
-		t.Fatalf("expected Start to succeed scanning the .collections fallback, got %v", err)
+		t.Fatalf("expected Start to succeed with no collections path recorded, got %v", err)
 	}
 	manifestPath := filepath.Join(installDir, "MANIFEST.json")
-	if _, statErr := os.Stat(manifestPath); !os.IsNotExist(statErr) {
-		t.Fatalf("expected the unreferenced install under .collections to be removed, stat error: %v", statErr)
+	if _, statErr := os.Stat(manifestPath); statErr != nil {
+		t.Fatalf("expected the unrecorded install under .collections to survive, stat error: %v", statErr)
 	}
 }
 
-// TestOpenProjectWorkspaceFallsBackToCollections is
-// TestOpenProjectWorkspaceFallsBackToDotCollections's sibling for the second,
-// non-dotfile fallback candidate ("collections").
-func TestOpenProjectWorkspaceFallsBackToCollections(t *testing.T) {
+// TestOpenProjectWorkspaceSkipsCollectionsWithoutARecordedPath is
+// TestOpenProjectWorkspaceSkipsDotCollectionsWithoutARecordedPath's sibling
+// for "collections", the name a vendored tree beside the file often has.
+func TestOpenProjectWorkspaceSkipsCollectionsWithoutARecordedPath(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()
-	installDir := buildCollectionsPathFallbackFixture(t, cacheDir, "collections")
+	installDir := buildUnrecordedCollectionsPathFixture(t, cacheDir, "collections")
 
 	cfg := &config.Config{CacheDir: cacheDir, DryRun: false}
 	runtime := newTestRuntime()
 
 	if err := Start(t.Context(), cfg, runtime); err != nil {
-		t.Fatalf("expected Start to succeed scanning the collections fallback, got %v", err)
+		t.Fatalf("expected Start to succeed with no collections path recorded, got %v", err)
 	}
 	manifestPath := filepath.Join(installDir, "MANIFEST.json")
-	if _, statErr := os.Stat(manifestPath); !os.IsNotExist(statErr) {
-		t.Fatalf("expected the unreferenced install under collections to be removed, stat error: %v", statErr)
+	if _, statErr := os.Stat(manifestPath); statErr != nil {
+		t.Fatalf("expected the unrecorded install under collections to survive, stat error: %v", statErr)
 	}
 }
 
-// TestOpenProjectWorkspacePrefersRecordedCollectionsPathOverFallback pins
-// candidate order: the recorded CollectionsPath is opened first, so an
-// unreferenced collection under <project>/.collections survives.
-func TestOpenProjectWorkspacePrefersRecordedCollectionsPathOverFallback(t *testing.T) {
+// TestOpenProjectWorkspaceScansOnlyTheRecordedCollectionsPath pins that the
+// recorded CollectionsPath is the one tree scanned: its unreferenced install
+// is removed, one under <project>/.collections survives.
+func TestOpenProjectWorkspaceScansOnlyTheRecordedCollectionsPath(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()
 	projectDir := t.TempDir()
@@ -3729,14 +3730,14 @@ func TestOpenProjectWorkspacePrefersRecordedCollectionsPathOverFallback(t *testi
 	recordedPath := t.TempDir()
 	recordedInstallDir := seedInstallTree(t, recordedPath) // ns.name@1.0.0
 
-	fallbackRoot := filepath.Join(projectDir, ".collections")
-	fallbackInstallDir := filepath.Join(fallbackRoot, "ansible_collections", "sibling", "other")
-	if err := os.MkdirAll(fallbackInstallDir, helpers.DirMod); err != nil {
-		t.Fatalf("failed to create sibling fallback install dir: %v", err)
+	unrecordedRoot := filepath.Join(projectDir, ".collections")
+	unrecordedInstallDir := filepath.Join(unrecordedRoot, "ansible_collections", "sibling", "other")
+	if err := os.MkdirAll(unrecordedInstallDir, helpers.DirMod); err != nil {
+		t.Fatalf("failed to create sibling install dir: %v", err)
 	}
 	sibling := `{"collection_info": {"namespace": "sibling", "name": "other", "version": "1.0.0"}}`
-	fallbackManifestPath := filepath.Join(fallbackInstallDir, "MANIFEST.json")
-	if err := os.WriteFile(fallbackManifestPath, []byte(sibling), helpers.FileMod); err != nil {
+	unrecordedManifestPath := filepath.Join(unrecordedInstallDir, "MANIFEST.json")
+	if err := os.WriteFile(unrecordedManifestPath, []byte(sibling), helpers.FileMod); err != nil {
 		t.Fatalf("failed to write sibling manifest: %v", err)
 	}
 
@@ -3761,7 +3762,7 @@ func TestOpenProjectWorkspacePrefersRecordedCollectionsPathOverFallback(t *testi
 	if _, statErr := os.Stat(recordedManifest); !os.IsNotExist(statErr) {
 		t.Fatalf("expected the recorded CollectionsPath's unreferenced install to be removed, stat error: %v", statErr)
 	}
-	if _, statErr := os.Stat(fallbackManifestPath); statErr != nil {
+	if _, statErr := os.Stat(unrecordedManifestPath); statErr != nil {
 		t.Fatalf("expected the .collections sibling to survive untouched, stat error: %v", statErr)
 	}
 }
@@ -3882,4 +3883,29 @@ func TestStartTakesRootsFromEveryRememberedFile(t *testing.T) {
 		}
 		assertManifestSurvives(t, installDir)
 	})
+}
+
+// TestOpenProjectWorkspaceStopsAtAnAbsentRecordedPath pins that a recorded
+// CollectionsPath gone from disk, as an ephemeral CI tree is, scans nothing:
+// an unreferenced install under <project>/.collections is never reached.
+func TestOpenProjectWorkspaceStopsAtAnAbsentRecordedPath(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	projectDir := t.TempDir()
+	installDir := seedInstallTree(t, filepath.Join(projectDir, ".collections"))
+	reqPath := filepath.Join(projectDir, "requirements.yml")
+	if err := os.WriteFile(reqPath, []byte("collections: []\n"), helpers.FileMod); err != nil {
+		t.Fatalf("failed to write requirements file: %v", err)
+	}
+	gone := filepath.Join(t.TempDir(), "gone")
+	writeProjectRegistry(t, cacheDir, &store.ProjectRegistry{
+		Projects: map[string]store.ProjectRecord{
+			projectDir: {RequirementsFile: reqPath, CollectionsPath: gone, LastRun: time.Now().UTC()},
+		},
+	})
+
+	if err := Start(t.Context(), &config.Config{CacheDir: cacheDir}, newTestRuntime()); err != nil {
+		t.Fatalf("expected Start to succeed, got %v", err)
+	}
+	assertManifestSurvives(t, installDir)
 }

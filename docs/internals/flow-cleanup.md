@@ -32,9 +32,11 @@ without the dry-run banner, temp sweep or `--clear-cache`, plus
 
 ```mermaid
 flowchart TD
-    P["each recorded project,<br/>sorted by path"] --> WS["openProjectWorkspace: first candidate<br/>holding ansible_collections"]
+    P["each recorded project,<br/>sorted by path"] --> CP{"collections_path<br/>recorded?"}
+    CP -->|"no"| RS
+    CP -->|"yes"| WS["openProjectWorkspace: that path<br/>holding ansible_collections?"]
     WS -->|"probe error"| SKC["warn: collections skipped"]
-    WS -->|"none found"| RS
+    WS -->|"absent, or no<br/>ansible_collections"| RS
     WS -->|"rooted"| MC["scanCollectionDir per<br/>ns/name/MANIFEST.json"]
     MC --> RS{"roles_path recorded<br/>and opens as a root?"}
     MC -->|"read error"| X1(["exit 1"])
@@ -54,7 +56,7 @@ means to an operator: [What cleanup keeps](../guides/caching.md#what-cleanup-kee
 
 | Item | Indexed when | Otherwise |
 | --- | --- | --- |
-| Collections path | first of recorded `collections_path`, project `.collections`, `collections` holding `ansible_collections` | probe error, such as an escaping symlink: warn, skip |
+| Collections path | the recorded `collections_path` holds `ansible_collections`; no other tree, the project's own `.collections` or `collections` included | none recorded or absent: silent; probe error, such as an escaping symlink: warn, skip |
 | Collection | `ns/name/MANIFEST.json` is a regular file, parses, passes `IsPathElement` | absent or versionless: silent; non-regular, corrupt, unsafe: warn, skip |
 | Role | `IsRoleInstallName` directory holding a regular `.extract-done.<sha256>` file | never touched |
 | Role deps | the snapshot's installed-role record for that install path | `meta/main.yml` and `meta/requirements.yml`; artifact kept |

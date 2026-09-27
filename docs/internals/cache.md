@@ -143,12 +143,13 @@ never written, for cleanup's hint.
 | Rule | Why |
 | :-- | :-- |
 | Missing is empty; undecodable is `ErrCorruptProjectRegistry` | Read as empty, nothing is reachable and `cleanup` deletes everything |
-| No schema version: fields are only added, and absence reads conservatively, as no `roles_path` means "do not scan" | An older binary re-recording a project drops fields it does not know, so a missing field must read as the safe case |
+| No schema version: fields are only added, and absence reads conservatively, as no `collections_path` or `roles_path` means "do not scan" | An older binary re-recording a project drops fields it does not know, so a missing field must read as the safe case |
 | A galaxy.toml path goes in `requirements_file` | An older binary reads it as YAML, so its `cleanup` fails closed |
 | `requirements_file` is the latest file; `requirements_files` is it plus each earlier file still a regular file here, sorted, a `Stat` failure other than absence keeping it | One directory run with two files must keep what both reach; a gone file must not stay forever |
 | A record without `requirements_files` reads as its `requirements_file` (`ProjectRecord.Files`) | Records older binaries wrote, or rewrote, name one file |
 | `collections_path` and `roles_path` are absolute, a relative one made so against the working directory with its symlinks resolved (`helpers.PhysicalAbs`), where the kernel opens it for install; `""` when the working directory cannot be read; the requirements file, which keys the project, and a role's snapshot `install_path` take the same rule | Joined under the requirements file's directory instead, `install -r sub/requirements.yml` run from the parent would send `cleanup` to `sub/.collections`, a tree nobody installed. Against a symlinked `$PWD`, `-p ../coll` would name the link's parent's `coll`, not the tree install wrote |
 | Only install sets both paths (`ProjectRun.Installs`); `lock` and `warm` keep a record's paths, and a record they create has none | They write no install tree, and a run from another directory would repoint `cleanup` at trees it never wrote |
+| `cleanup` scans a recorded path and no other; an empty `collections_path` scans nothing, as an empty `roles_path` does | A fallback to the project's `.collections` or `collections` would delete trees nobody recorded, such as a vendored `collections/` beside the requirements file after a `lock` |
 | Recorded only once the requirements file loads (`loadRootsAndRecordProject`), before any source is fetched or anything installed | A run failing on its file, such as a mistyped `-r`, would replace the directory's good record, and `cleanup` would then delete what that record reaches |
 | `--dry-run` records nothing (`recordProjectUnlessDryRun`) | A preview enrolls nothing the destructive `cleanup` acts on |
 

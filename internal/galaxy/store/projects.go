@@ -23,7 +23,8 @@ type ProjectRecord struct {
 	// cleanup fails closed on it instead of reading the record as stale.
 	RequirementsFile string `json:"requirements_file"`
 	// CollectionsPath is the absolute collections directory the latest install
-	// used, or "" when no install has recorded one.
+	// used, or "" when no install has recorded one, which cleanup reads as "do
+	// not scan", the project's own .collections and collections included.
 	CollectionsPath string `json:"collections_path"`
 	// RolesPath is the latest install's absolute roles directory, or "" when
 	// none was recorded; omitempty keeps a collections-only record unchanged,

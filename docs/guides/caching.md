@@ -147,7 +147,10 @@ The record also names the collections and roles paths the project's latest
 `install` wrote, resolved from the directory `install` ran in, as `install`
 resolves them: `install -r sub/requirements.yml` run from the parent is found
 under the parent's `.collections` and `.roles`. `lock` and `warm` install
-nothing, so they leave both paths as they were. `cleanup` removes, from every
+nothing, so they leave both paths as they were. `cleanup` scans those two paths
+and nothing else: a project no `install` has recorded paths for has nothing
+scanned, and a tree no `install` wrote, such as a vendored `collections/`
+beside the requirements file, is never touched. `cleanup` removes, from every
 recorded project and from the cache, what no recorded project reaches:
 
 ```mermaid
@@ -163,7 +166,7 @@ flowchart TD
 
 | Item | Kept when | Otherwise |
 | --- | --- | --- |
-| Installed collection | A recorded project's `collections:` reaches it, directly or through dependencies | Removed from every project |
+| Installed collection | A recorded project's `collections:` reaches it, directly or through dependencies | Removed from every recorded collections path |
 | Installed role | A recorded project's `roles:` reaches it | Removed, if go-galaxy installed it under a recorded `roles_path` |
 | Extracted tree | A kept install uses it, or a recent `warm` shields it ([Freshness and retention](#freshness-and-retention)) | Swept |
 | Cached artifact | No removed install uses it | Removed with that install when the cache holds the install's record; otherwise kept until `--clear-cache` |

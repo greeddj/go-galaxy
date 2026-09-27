@@ -340,3 +340,39 @@ func TestCleanupPrunesWhatInstallWroteFromASymlinkedDirectory(t *testing.T) {
 	assertPathAbsent(t, f.rolePath("pinned"))
 	assertManifestInstalled(t, f.downloadPath, "lib")
 }
+
+// TestCleanupLeavesAVendoredTreeBesideTheFile runs lock alone from a project
+// directory holding a vendored collections/ansible_collections: no install
+// recorded that tree, so cleanup never scans it. Not parallel: t.Chdir.
+func TestCleanupLeavesAVendoredTreeBesideTheFile(t *testing.T) {
+	f := newE2EFixture(t)
+	projectDir, err := filepath.EvalSymlinks(filepath.Dir(f.cfg.RequirementsFile))
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	vendored := manifestPathFor(filepath.Join(projectDir, "collections"), "vendored")
+	if err := os.MkdirAll(filepath.Dir(vendored), helpers.DirMod); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(vendored), err)
+	}
+	manifest := `{"collection_info": {"namespace": "acme", "name": "vendored", "version": "1.0.0"}}`
+	if err := os.WriteFile(vendored, []byte(manifest), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", vendored, err)
+	}
+	t.Chdir(projectDir)
+	cfg := *f.cfg
+	cfg.RequirementsFile = "requirements.yml"
+	cfg.DownloadPath = ".collections"
+
+	if err := collections.Lock(context.Background(), &cfg, f.runtime); err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+	if record, ok := loadRegistry(t, cfg.CacheDir)[projectDir]; !ok || record.CollectionsPath != "" {
+		t.Fatalf("lock recorded %+v (present %v), want the project with no collections path", record, ok)
+	}
+	if err := cleanup.Start(context.Background(), &cfg, f.runtime); err != nil {
+		t.Fatalf("cleanup.Start: %v", err)
+	}
+	if _, err := os.Stat(vendored); err != nil {
+		t.Fatalf("the vendored acme.vendored after cleanup: %v", err)
+	}
+}
