@@ -444,7 +444,7 @@ func fetchArtifactMiss(
 	case col.isURL():
 		result, err = urlFetchToCache(ctx, deps, col, useCache)
 	default:
-		result, err = downloadCollectionToCache(ctx, deps, artifactKey(col), col.Source, meta, useCache)
+		result, err = downloadCollectionToCache(ctx, deps, col, meta, useCache)
 	}
 	if err != nil {
 		return artifactData{}, err
@@ -653,8 +653,7 @@ type downloadResult struct {
 func downloadCollectionToCache(
 	ctx context.Context,
 	deps installDeps,
-	key string,
-	base string,
+	col collection,
 	meta *types.GalaxyCollectionVersionInfo,
 	useCache bool,
 ) (downloadResult, error) {
@@ -668,7 +667,7 @@ func downloadCollectionToCache(
 
 	var result downloadResult
 	err := helpers.Retry(dlCtx, helpers.FetchRetryPolicy(), func() error {
-		attempted, attemptErr := attemptDownloadToCache(dlCtx, deps, key, base, meta, useCache)
+		attempted, attemptErr := attemptDownloadToCache(dlCtx, deps, col, meta, useCache)
 		if attemptErr != nil {
 			return artifactDeadlineError(ctx, dlCtx, budget, attemptErr)
 		}
@@ -718,12 +717,11 @@ func warnIfOffServerDownloadHost(runtime *infra.Infra, base, downloadURL string)
 func attemptDownloadToCache(
 	ctx context.Context,
 	deps installDeps,
-	key string,
-	base string,
+	col collection,
 	meta *types.GalaxyCollectionVersionInfo,
 	useCache bool,
 ) (downloadResult, error) {
-	warnIfOffServerDownloadHost(deps.runtime, base, meta.DownloadURL)
+	warnIfOffServerDownloadHost(deps.runtime, col.Source, meta.DownloadURL)
 	resp, err := downloadCollection(ctx, deps.runtime, meta.DownloadURL)
 	if err != nil {
 		return downloadResult{}, err
@@ -733,7 +731,7 @@ func attemptDownloadToCache(
 	}()
 
 	if deps.extractStore != nil {
-		return streamDownloadAndExtract(ctx, deps, key, meta, resp.Body, useCache)
+		return streamDownloadAndExtract(ctx, deps, col, meta, resp.Body, useCache)
 	}
 
 	tmpPath, cleanup, sha, err := writeDownloadToTemp(ctx, deps, resp.Body)
@@ -752,8 +750,12 @@ func attemptDownloadToCache(
 		cleanupIfNeeded(cleanup)
 		return downloadResult{}, err
 	}
+	if err := checkLockedArtifactIdentity(ctx, col, tmpPath); err != nil {
+		cleanupIfNeeded(cleanup)
+		return downloadResult{}, err
+	}
 	if useCache {
-		return commitDownload(ctx, deps.artifacts, key, tmpPath, sha, cleanup)
+		return commitDownload(ctx, deps.artifacts, artifactKey(col), tmpPath, sha, cleanup)
 	}
 	return downloadResult{Path: tmpPath, SHA: sha, Cleanup: cleanup}, nil
 }
@@ -763,7 +765,7 @@ func attemptDownloadToCache(
 func streamDownloadAndExtract(
 	ctx context.Context,
 	deps installDeps,
-	key string,
+	col collection,
 	meta *types.GalaxyCollectionVersionInfo,
 	body io.Reader,
 	useCache bool,
@@ -808,7 +810,11 @@ func streamDownloadAndExtract(
 	}
 
 	sha := hex.EncodeToString(hasher.Sum(nil))
-	if err := verifyDownloadSHA(meta, sha); err != nil {
+	err = verifyDownloadSHA(meta, sha)
+	if err == nil {
+		err = checkLockedArtifactIdentity(ctx, col, tmpFile.Name())
+	}
+	if err != nil {
 		_ = deps.extractStore.Discard(out.tmp)
 		cleanupIfNeeded(tmpCleanup)
 		return downloadResult{}, err
@@ -818,7 +824,7 @@ func streamDownloadAndExtract(
 		return downloadResult{}, err
 	}
 	if useCache {
-		return commitDownload(ctx, deps.artifacts, key, tmpFile.Name(), sha, tmpCleanup)
+		return commitDownload(ctx, deps.artifacts, artifactKey(col), tmpFile.Name(), sha, tmpCleanup)
 	}
 	return downloadResult{Path: tmpFile.Name(), SHA: sha, Cleanup: tmpCleanup}, nil
 }

@@ -34,8 +34,9 @@ file. While the requirements are unchanged, `lock` replays the
 `go-galaxy lock --refresh` to take newer releases your constraints allow.
 
 `lock` exits [`5`](../reference/exit-codes.md) when a server names a `download_url` that
-carries a query string or is not its own artifact URL. Such a server works only
-without a lockfile.
+carries a query string or leaves the server's origin. Such a server works only
+without a lockfile. Any path on that origin locks, such as a caching proxy's
+`.../get/<namespace>/<name>/<version>`.
 [Security boundaries](../internals/boundaries.md#loading-the-lockfile)
 (internals) explains why the lockfile refuses these.
 
@@ -138,8 +139,9 @@ every lockfile change.
 | What | Checked against | On mismatch |
 | --- | --- | --- |
 | Each entry of your requirements file | Its `galaxy.lock` entry exists and still matches: a Galaxy collection's constraint, a git collection's repository and ref, a url collection's URL and `version`, a role's source and version (for a git role, its ref) | `6` |
-| `galaxy.lock` itself | Present, valid, each `download_url` its server's own | `6` |
+| `galaxy.lock` itself | Present, valid, each `download_url` on its server's origin | `6` |
 | Galaxy or url collection bytes | The `sha256` pin, after one re-download of a bad cached copy (not under `--offline`) | `7` |
+| Galaxy collection bytes from a locked `download_url` | The entry's namespace, name and version, against the `MANIFEST.json` they carry | `7` |
 | git collection or any role, on a cache miss | The pinned `commit`, or for a url role the tarball's `sha256` | `7`, or `5` if the remote no longer has the commit |
 | Any artifact under `--offline` | The local cache | `5` if missing |
 

@@ -83,7 +83,7 @@ func galaxyLockfileEntry(
 	if err != nil {
 		return lockfile.Entry{}, err
 	}
-	if err := checkServerArtifactURL(col, lockedServerBase(deps.cfg, col.Source), downloadURL); err != nil {
+	if err := checkDownloadURLOrigin(lockedServerBase(deps.cfg, col.Source), downloadURL); err != nil {
 		return lockfile.Entry{}, err
 	}
 	return lockfile.Entry{
@@ -129,24 +129,20 @@ func lockedServerBase(cfg *config.Config, source string) string {
 	return candidate.base
 }
 
-// checkServerArtifactURL holds a locked download URL to its server's own
-// artifact - that server's origin, a path ending in the artifact's file name -
-// since the bytes land in the cache slot every later install of it reads.
-func checkServerArtifactURL(col collection, server, downloadURL string) error {
+// checkDownloadURLOrigin holds a locked download URL to its server's origin,
+// since the bytes land in the cache slot every later install of it reads; the
+// path is free, and checkLockedArtifactIdentity judges what it served instead.
+func checkDownloadURLOrigin(server, downloadURL string) error {
 	want, ok := parsedOrigin(server)
 	if !ok {
-		return fmt.Errorf("%w: its server %q is not an absolute URL", helpers.ErrDownloadURLNotServerArtifact, helpers.URLForMessage(server))
+		return fmt.Errorf("%w: its server %q is not an absolute URL", helpers.ErrDownloadURLOffServerOrigin, helpers.URLForMessage(server))
 	}
 	u, err := url.Parse(downloadURL)
 	if err != nil || u.Host == "" {
-		return fmt.Errorf("%w: %q is not an absolute URL", helpers.ErrDownloadURLNotServerArtifact, helpers.URLForMessage(downloadURL))
+		return fmt.Errorf("%w: %q is not an absolute URL", helpers.ErrDownloadURLOffServerOrigin, helpers.URLForMessage(downloadURL))
 	}
 	if got := helpers.Origin(u); got != want {
-		return fmt.Errorf("%w: its origin %s is not its server's %s", helpers.ErrDownloadURLNotServerArtifact, got, want)
-	}
-	filename := helpers.ArtifactFilename(col.Namespace, col.Name, col.Version)
-	if !strings.HasSuffix(u.Path, "/"+filename) {
-		return fmt.Errorf("%w: %q does not end in /%s", helpers.ErrDownloadURLNotServerArtifact, helpers.URLForMessage(downloadURL), filename)
+		return fmt.Errorf("%w: its origin %s is not its server's %s", helpers.ErrDownloadURLOffServerOrigin, got, want)
 	}
 	return nil
 }
@@ -253,17 +249,15 @@ func resolveFromLockfile(
 }
 
 // checkLockedDownloadURLs holds every Galaxy entry's download_url to its
-// server's own artifact, which lockfile.Load cannot judge: an entry's server
-// may be a server_list id, and resolving one takes this run's configuration.
+// server's origin, which lockfile.Load cannot judge: an entry's server may be
+// a server_list id, and resolving one takes this run's configuration.
 func checkLockedDownloadURLs(cfg *config.Config, byFQDN map[string]lockfile.Entry) error {
 	for _, fqdn := range slices.Sorted(maps.Keys(byFQDN)) {
 		e := byFQDN[fqdn]
 		if !e.IsGalaxy() {
 			continue
 		}
-		ns, name, _ := helpers.SplitFQDN(fqdn)
-		col := collection{Namespace: ns, Name: name, Version: e.Version}
-		if err := checkServerArtifactURL(col, lockedServerBase(cfg, e.Source), e.DownloadURL); err != nil {
+		if err := checkDownloadURLOrigin(lockedServerBase(cfg, e.Source), e.DownloadURL); err != nil {
 			return fmt.Errorf("%w: %s: %w", helpers.ErrLockfileInvalid, fqdn, err)
 		}
 	}

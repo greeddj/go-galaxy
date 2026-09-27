@@ -18,7 +18,7 @@ import (
 // downloadShapeFixture wires the download arm that has no extracted store (the
 // prefetcher's) to serve body as the artifact with no declared sha256, so
 // verifyDownloadSHA compares nothing and only the shape probe judges the bytes.
-func downloadShapeFixture(t *testing.T, body []byte) (installDeps, *types.GalaxyCollectionVersionInfo, string) {
+func downloadShapeFixture(t *testing.T, body []byte) (installDeps, *types.GalaxyCollectionVersionInfo, collection) {
 	t.Helper()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -36,7 +36,7 @@ func downloadShapeFixture(t *testing.T, body []byte) (installDeps, *types.Galaxy
 
 	col := collection{Namespace: "acme", Name: "widgets", Version: "1.0.0"}
 	meta := &types.GalaxyCollectionVersionInfo{DownloadURL: server.URL}
-	return deps, meta, artifactKey(col)
+	return deps, meta, col
 }
 
 // TestDownloadWithoutExtractStoreRejectsNonArchiveBytes pins that the shape
@@ -44,10 +44,11 @@ func downloadShapeFixture(t *testing.T, body []byte) (installDeps, *types.Galaxy
 // test, keeps it out of the shared artifact cache slot.
 func TestDownloadWithoutExtractStoreRejectsNonArchiveBytes(t *testing.T) {
 	t.Parallel()
-	deps, meta, key := downloadShapeFixture(t, []byte("<html>404</html>"))
+	deps, meta, col := downloadShapeFixture(t, []byte("<html>404</html>"))
+	key := artifactKey(col)
 
 	ctx := context.Background()
-	_, err := downloadCollectionToCache(ctx, deps, key, "", meta, true)
+	_, err := downloadCollectionToCache(ctx, deps, col, meta, true)
 
 	// Errorf, not Fatalf, so the cache assertion below is always reached.
 	if !errors.Is(err, helpers.ErrArtifactNotTarGz) {
@@ -67,10 +68,11 @@ func TestDownloadWithoutExtractStoreRejectsNonArchiveBytes(t *testing.T) {
 // the same fixture serving a real tarball commits it to the cache.
 func TestDownloadWithoutExtractStoreCommitsAValidArchive(t *testing.T) {
 	t.Parallel()
-	deps, meta, key := downloadShapeFixture(t, buildMinimalTarGz(t))
+	deps, meta, col := downloadShapeFixture(t, buildMinimalTarGz(t))
+	key := artifactKey(col)
 
 	ctx := context.Background()
-	result, err := downloadCollectionToCache(ctx, deps, key, "", meta, true)
+	result, err := downloadCollectionToCache(ctx, deps, col, meta, true)
 	if err != nil {
 		t.Fatalf("downloadCollectionToCache = %v, want nil", err)
 	}

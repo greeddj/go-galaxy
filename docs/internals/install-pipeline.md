@@ -216,6 +216,10 @@ shape-checked (`ErrMalformedArtifactSHA256`, exit 7).
 | `streamDownloadAndExtract` | An extracted store is present | Tees temp file, sha256 and `IngestReader` in one pass |
 | Temp file, then `archive.ProbeTarGz` | Prefetch, `--no-cache` | Keeps an error page out of a shared slot when no digest is declared |
 
+Bytes a locked `download_url` served pass `checkLockedArtifactIdentity` in
+either arm, after the sha256 and before the commit or `Promote`: their
+`MANIFEST.json` must name the entry, since the URL's path is not judged.
+
 | Budget | Covers | On expiry |
 | --- | --- | --- |
 | `--timeout` | `ResponseHeaderTimeout`, and each gap between body reads (the `fetch` watchdog) | No response or `ErrReadStalled`, both retried |
@@ -341,8 +345,8 @@ flowchart TD
 
 `prepareWithRecovery` refetches at most once, structurally: eviction sets
 `forceDownload`, which `canRetryCacheHit` refuses. A locked download commits
-only pin-matching bytes, so keeping its copy stops a wrong pin from emptying a
-shared slot.
+only bytes that match the pin and name the entry, so keeping its copy stops a
+wrong pin from emptying a shared slot.
 
 Only S3 fails a hit on read, comparing the bytes with `x-amz-meta-sha256`
 exactly; the local store checks no digest on read. Hence

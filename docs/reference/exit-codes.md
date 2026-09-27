@@ -141,6 +141,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `unsupported snapshot schema version` | `2` | A newer release wrote this cache, which is sound: [run one release](../guides/ci.md#pin-one-release). Deleting the snapshot helps only until the newer release saves again |
 | `collection signature verification failed` | `10` | The signatures do not meet the [required count](../guides/signatures.md#required-count-and-the-vacuous-pass); check the keyring and the count |
 | `collection signature vouches for a different collection` | `10` | The signed `MANIFEST.json` names another collection or version; never retry |
+| `artifact at a locked download url is not the locked collection` | `7` | The `download_url` in `galaxy.lock` serves another collection or version; check that entry, never retry |
 | `collection manifest chain does not match` | `7` | The artifact's files do not match its signed manifest ([Manifest chain check](../guides/signatures.md#manifest-chain-check)); never retry |
 | `collection signature source unavailable`, `collection signature fetch deadline exceeded` | `5` | A signature could not be fetched, always on a `Failed:` line; rerun |
 | `collection artifact contains no MANIFEST.json` | `5` | The artifact is not a collection; check its source |
@@ -154,7 +155,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | --- | --- | --- |
 | `explain` | `collection or role not found in lockfile` | `1` |
 | `explain` | no name, or more than one | `2` |
-| `lock` | a server's `download_url` with a query string, or off its server's artifact path | `5` |
+| `lock` | a server's `download_url` with a query string, or off its server's origin | `5` |
 | `install`, `warm`, `lock`, `outdated` | a server-supplied metadata URL with a credential | `5` |
 | `install`, `warm`, `lock` | a server-supplied download URL with a credential | `5` |
 | `lock` | the snapshot save fails after `Lockfile written` | the save error's code; `galaxy.lock` is already written |

@@ -96,18 +96,22 @@ Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-loc
 | :-- | :-- | :-- | :-- | :-- |
 | A lockfile `source` or `name` | userinfo, never printed; a name outside its alphabet | `lockfile.File.validate` | `ErrLockfileInvalid` | 6 |
 | A Galaxy entry's `download_url` | not canonical `http(s)`, or with userinfo, query or fragment | `lockfile.downloadURLProblem` | `ErrLockfileInvalid` | 6 |
-| A Galaxy entry's `download_url`, under `--frozen` | off its server's origin, or not ending `/<ns>-<name>-<version>.tar.gz` | `checkLockedDownloadURLs` | `ErrLockfileInvalid` | 6 |
+| A Galaxy entry's `download_url`, under `--frozen` | off its server's origin | `checkLockedDownloadURLs` | `ErrLockfileInvalid` | 6 |
+| The artifact a locked `download_url` serves | its `MANIFEST.json` names another namespace, name or version | `checkLockedArtifactIdentity` | `ErrLockedArtifactIdentityMismatch` | 7 |
 | A Galaxy entry's `sha256` | neither empty nor 64 lowercase hex digits | `lockfile.validateGalaxyEntry` | `ErrLockfileInvalid` | 6 |
 
-- `lock` and `--frozen` hold `download_url` to its server's own artifact,
-  because its bytes fill the
+- `lock` and `--frozen` hold `download_url` to its server's origin, because
+  its bytes fill the
   [cache slot](cache.md#artifact-cache-scoped-by-server-not-by-content) every
-  later install of that version reads. A refetch of a locked `download_url`
-  after a pin failure keeps the cached copy (`refetchCachedArtifact`), so no
-  wrong pin empties that slot.
-- `Load` cannot judge origin and path, since an entry's server may be a
+  later install of that version reads. The path is free, since a caching
+  proxy names its own, so the bytes are judged instead: both download arms
+  refuse a manifest naming another collection before the cache slot or the
+  extracted store takes them, pinned or not, as an empty `sha256` pins nothing.
+- A refetch of a locked `download_url` after a pin failure keeps the cached
+  copy (`refetchCachedArtifact`), so no wrong pin empties that slot.
+- `Load` cannot judge the origin, since an entry's server may be a
   `server_list` id that resolves only from the run's configuration. So
-  `--frozen` checks them before any request.
+  `--frozen` checks it before any request.
 - `lock` also refuses a query: a presigned capability would be committed, then
   expire. Both `lock` refusals exit 5 and are listed under
   [URLs a Galaxy server supplies](#urls-a-galaxy-server-supplies).
@@ -195,7 +199,7 @@ Behavior: [S3 cache (optional)](../guides/caching.md#s3-cache-optional).
 | :-- | :-- | :-- | :-- | :-- |
 | A download URL | not absolute `http(s)` with a host | `collections.checkDownloadURL` | `ErrUnsupportedDownloadURLScheme` | 4 |
 | A download URL | it carries userinfo | `checkDownloadURL` | `ErrDownloadURLUserinfo` | 5 |
-| A download URL at `lock` | a query, or not its server's own artifact | `lockableDownloadURL`, `checkServerArtifactURL` | `ErrDownloadURLQuery`, `ErrDownloadURLNotServerArtifact` | 5 |
+| A download URL at `lock` | a query, or off its server's origin | `lockableDownloadURL`, `checkDownloadURLOrigin` | `ErrDownloadURLQuery`, `ErrDownloadURLOffServerOrigin` | 5 |
 | `versions_url`, `highest_version.href` | the resolved URL carries userinfo | `normalizeVersionsURL` | `ErrMetadataURLUserinfo` | 5 |
 | A v1 role record or page link | a GitHub name outside its alphabet, a bad branch, or a link off the server's origin | `galaxyv1.validateRole`, `nextPage` | `ErrGalaxyRoleInvalid` | 2 |
 | A replayed Galaxy role pin | its repository is not `https://github.com/<user>/<repo>` | `galaxyv1.ValidateRepository` | `ErrGalaxyRoleInvalid` | 2 |
@@ -206,9 +210,9 @@ Behavior: [S3 cache (optional)](../guides/caching.md#s3-cache-optional).
   since a separate content host is legitimate. `warnIfOffServerDownloadHost`
   only warns, even under `--quiet`. A verifying `--frozen` run downloads the
   URL that fresh metadata names, so the same warning applies there. Only a URL
-  in a lockfile is held to the server's own artifact. `lock` checks it before
-  it writes the file, and `--frozen` before any request
-  ([Loading the lockfile](#loading-the-lockfile)).
+  in a lockfile is held to the server's origin, and what it serves to the
+  entry. `lock` checks the origin before it writes the file, and `--frozen`
+  before any request ([Loading the lockfile](#loading-the-lockfile)).
 - `normalizeVersionsURL` refuses after the server walk: inside it, a 404 would
   try the next server and a 401 would blame a credential.
 - A v1 record's GitHub URL is composed, never copied, and its `download_url` is

@@ -72,9 +72,9 @@ Each collection comes from the first server that has it: private ones from
 `hub`, the rest from public Galaxy.
 
 `lock` exits `5` when the hub names a `download_url` that carries a query
-string, leaves the hub's origin, or does not end in
-`<namespace>-<name>-<version>.tar.gz`. Such a hub works only without a
-lockfile ([Create the lockfile](lockfile.md#create-the-lockfile)).
+string or leaves the hub's origin. Such a hub works only without a lockfile
+([Create the lockfile](lockfile.md#create-the-lockfile)). The path is the
+hub's own, so a caching proxy's `.../get/<namespace>/<name>/<version>` locks.
 
 ## Which servers a run uses
 

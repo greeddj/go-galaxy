@@ -28,7 +28,7 @@ Start here from any release since v1.1.0. Upgrade in four steps:
    `install`, `warm` and `outdated` keep `--frozen`.
 
 The `lock` of step 3 exits `5` when a server names a `download_url` that
-carries a query string or is not the server's own artifact URL. Such a server
+carries a query string or leaves the server's origin. Such a server
 works only without a lockfile
 ([Create the lockfile](../guides/lockfile.md#create-the-lockfile)).
 

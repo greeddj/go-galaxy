@@ -143,7 +143,8 @@ func isIntegrityError(err error) bool {
 		// whose manifest names a different identity than the pin, and a url
 		// role's origin serving bytes with a different sha256 than the pin.
 		errors.Is(err, helpers.ErrURLArtifactIdentityMismatch) ||
-		errors.Is(err, helpers.ErrURLArtifactSHA256Mismatch)
+		errors.Is(err, helpers.ErrURLArtifactSHA256Mismatch) ||
+		errors.Is(err, helpers.ErrLockedArtifactIdentityMismatch)
 }
 
 // isSignatureError reports whether err is a signature verdict: the policy was
@@ -178,7 +179,7 @@ func isCacheBusyError(err error) bool {
 func isServerSuppliedURLPolicyError(err error) bool {
 	return errors.Is(err, helpers.ErrDownloadURLUserinfo) ||
 		errors.Is(err, helpers.ErrDownloadURLQuery) ||
-		errors.Is(err, helpers.ErrDownloadURLNotServerArtifact) ||
+		errors.Is(err, helpers.ErrDownloadURLOffServerOrigin) ||
 		errors.Is(err, helpers.ErrMetadataURLUserinfo)
 }
 

@@ -183,6 +183,26 @@ func TestBuildLockfileWritesTheServerDownloadURL(t *testing.T) {
 	}
 }
 
+// TestBuildLockfileLocksAProxyURLWithoutTheFileName pins that lock writes a
+// download URL on its server's origin whatever its path, the shape a caching
+// proxy serves; a frozen install judges the bytes it returns by their manifest.
+func TestBuildLockfileLocksAProxyURLWithoutTheFileName(t *testing.T) {
+	t.Parallel()
+	var proxyURL string
+	deps, resolved, graph, _ := newRewrittenBuildLockfileFixture(t, func(server string, body map[string]any) {
+		proxyURL = server + "/galaxy/ansible/get/acme/widgets/" + testVersion100
+		body["download_url"] = proxyURL
+	})
+
+	lf, err := buildLockfile(context.Background(), deps, resolved, graph, roleResolution{})
+	if err != nil {
+		t.Fatalf("buildLockfile error = %v, want nil", err)
+	}
+	if got := lf.Collections[0].DownloadURL; got != proxyURL {
+		t.Fatalf("lockfile entry DownloadURL = %q, want the server's %q", got, proxyURL)
+	}
+}
+
 // unlockableDownloadURLCase is one row of
 // TestBuildLockfileRefusesAnUnlockableDownloadURL: the download URL a server
 // names, built from the fake server's URL, and the sentinel refusing it.
@@ -209,11 +229,8 @@ func unlockableDownloadURLCases() []unlockableDownloadURLCase {
 		{name: "presigned query", want: helpers.ErrDownloadURLQuery, url: func(s string) string {
 			return s + artifact + "?" + presignedSignature
 		}},
-		{name: "another origin", want: helpers.ErrDownloadURLNotServerArtifact, url: func(string) string {
+		{name: "another origin", want: helpers.ErrDownloadURLOffServerOrigin, url: func(string) string {
 			return "https://cdn.example.invalid" + artifact
-		}},
-		{name: "another artifact", want: helpers.ErrDownloadURLNotServerArtifact, url: func(s string) string {
-			return s + "/download/acme-other-1.0.0.tar.gz"
 		}},
 	}
 }

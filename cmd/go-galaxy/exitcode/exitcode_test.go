@@ -147,14 +147,14 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitInstall,
 	},
 	{
-		name:     "download url off its server's artifact",
-		err:      fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLNotServerArtifact),
+		name:     "download url off its server's origin",
+		err:      fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLOffServerOrigin),
 		wantCode: ExitInstall,
 	},
 	{
 		// The same refusal met under --frozen is a lockfile verdict first.
-		name:     "frozen download url off its server's artifact",
-		err:      fmt.Errorf("%w: a.b: %w", helpers.ErrLockfileInvalid, helpers.ErrDownloadURLNotServerArtifact),
+		name:     "frozen download url off its server's origin",
+		err:      fmt.Errorf("%w: a.b: %w", helpers.ErrLockfileInvalid, helpers.ErrDownloadURLOffServerOrigin),
 		wantCode: ExitLock,
 	},
 	{
@@ -590,7 +590,7 @@ func TestGalaxyServerConfigErrorsMapToUsage(t *testing.T) {
 	}
 }
 
-// integritySentinels lists every artifact-digest sentinel exhaustively, as
+// integritySentinels lists every isIntegrityError sentinel exhaustively, as
 // galaxyServerConfigSentinels does, since each must exit ExitIntegrity.
 //
 //nolint:gochecknoglobals // a fixed table consumed by one test, not mutable shared state
@@ -600,9 +600,16 @@ var integritySentinels = []struct {
 }{
 	{name: "sha256 mismatch", err: helpers.ErrSHA256Mismatch},
 	{name: "malformed artifact sha256", err: helpers.ErrMalformedArtifactSHA256},
+	{name: "manifest chain mismatch", err: helpers.ErrManifestChainMismatch},
+	{name: "git commit mismatch", err: helpers.ErrGitCommitMismatch},
+	{name: "git artifact identity mismatch", err: helpers.ErrGitArtifactIdentityMismatch},
+	{name: "role artifact identity mismatch", err: helpers.ErrRoleArtifactIdentityMismatch},
+	{name: "url artifact identity mismatch", err: helpers.ErrURLArtifactIdentityMismatch},
+	{name: "url artifact sha256 mismatch", err: helpers.ErrURLArtifactSHA256Mismatch},
+	{name: "locked artifact identity mismatch", err: helpers.ErrLockedArtifactIdentityMismatch},
 }
 
-// TestIntegritySentinelsMapToExitIntegrity pins every artifact-digest
+// TestIntegritySentinelsMapToExitIntegrity pins every integrity
 // sentinel to ExitIntegrity, wrapped so the check goes through errors.Is
 // rather than requiring exact identity.
 func TestIntegritySentinelsMapToExitIntegrity(t *testing.T) {
@@ -1057,7 +1064,7 @@ func serverSuppliedURLPolicyCases() []serverSuppliedURLPolicyCase {
 	download := fmt.Errorf("%w: %q", helpers.ErrDownloadURLUserinfo, "https://h/a.tar.gz")
 	metadata := fmt.Errorf("%w: %q", helpers.ErrMetadataURLUserinfo, "https://h/api/v3/versions/")
 	query := fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLQuery)
-	offServer := fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLNotServerArtifact)
+	offServer := fmt.Errorf("lockfile: a.b: %w", helpers.ErrDownloadURLOffServerOrigin)
 
 	return []serverSuppliedURLPolicyCase{
 		{name: "download url, bare", err: download},

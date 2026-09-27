@@ -93,7 +93,8 @@ without a metadata request, unless the run verifies signatures
 ([Plan construction](install-pipeline.md#plan-construction)). Behavior:
 [Install from the lockfile](../guides/lockfile.md#install-from-the-lockfile).
 
-`lock` refuses a `download_url` that carries a query or is not its server's
-own artifact, and `--frozen` re-checks origin and path before any request.
+`lock` refuses a `download_url` that carries a query or leaves its server's
+origin, and `--frozen` re-checks the origin before any request and the
+served artifact's `MANIFEST.json` identity before it is cached.
 `lock` drops a fragment, since no request carries it. Rules, sentinels and
 exits: [Loading the lockfile](boundaries.md#loading-the-lockfile).

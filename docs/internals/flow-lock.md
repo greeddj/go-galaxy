@@ -64,7 +64,7 @@ flowchart TD
   B8 -->|"yes"| B9{"download_url present,<br/>absolute http or https?"}
   B9 -->|"no"| X4B(["exit 4"])
   B9 -->|"userinfo or a query"| X5B(["exit 5"])
-  B9 -->|"yes"| B10{"its server's origin,<br/>path ends in the artifact?"}
+  B9 -->|"yes"| B10{"on its server's<br/>origin?"}
   B10 -->|"no"| X5C(["exit 5"])
   B10 -->|"yes"| B13(["Galaxy entry: download_url<br/>without fragment, sha256"])
 ```
@@ -119,7 +119,7 @@ save: the file stays valid if the save fails.
 | 7 | `galaxyLockfileEntry` | a malformed sha256, `ErrMalformedArtifactSHA256` |
 | 4 | `lockableDownloadURL` | `download_url` missing or not absolute http(s) |
 | 5 | `lockableDownloadURL` | `download_url` with userinfo or a query |
-| 5 | `checkServerArtifactURL` | `download_url` not its server's artifact |
+| 5 | `checkDownloadURLOrigin` | `download_url` off its server's origin |
 | 1 | `lockfile.Save` | a filesystem error; no snapshot or metrics written |
 | 6 | `lockCheck` | file missing or invalid; drift |
 | 2, 4 | `SaveStore` | the save failed alone; appended to drift otherwise |

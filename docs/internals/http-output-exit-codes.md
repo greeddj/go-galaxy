@@ -99,7 +99,7 @@ order.
 | 1 | `isCanceled` | 130 | checked first: only a caller's own cancellation may reach it |
 | 2 | `isIntegrityError` | 7 | above row 6, whose `ErrInstallationFailed` would claim it joined |
 | 3 | `isSignatureError` | 10 | as row 2, and below it: wrong bytes outrank who vouched for them |
-| 4 | `isLockError` | 6 | as row 2, and above row 5: `checkLockedDownloadURLs` wraps row 5's `ErrDownloadURLNotServerArtifact` |
+| 4 | `isLockError` | 6 | as row 2, and above row 5: `checkLockedDownloadURLs` wraps row 5's `ErrDownloadURLOffServerOrigin` |
 | 5 | `isServerSuppliedURLPolicyError` | 5 | exits 5 bare or behind either summary error |
 | 6 | `isInstallError` | 5 | holds `ErrInstallationFailed`, the summary error of `install` and `warm` |
 | 7 | `isNetworkError` | 4 | holds `ErrLatestVersionLookupFailed`, the summary error of `outdated` |

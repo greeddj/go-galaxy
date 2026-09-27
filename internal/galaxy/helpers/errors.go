@@ -95,10 +95,14 @@ var (
 	// query string: typically a presigned capability that expires, and a
 	// lockfile is committed, so the URL is refused rather than written.
 	ErrDownloadURLQuery = errors.New("collection download url must not carry a query string")
-	// ErrDownloadURLNotServerArtifact indicates a lockfile download URL off its
-	// server's origin or not ending in the artifact's file name, which could fill
-	// that server's cache slot with another host's bytes.
-	ErrDownloadURLNotServerArtifact = errors.New("collection download url is not its server's own artifact url")
+	// ErrDownloadURLOffServerOrigin indicates a lockfile download URL off its
+	// server's origin, which could fill that server's cache slot with another
+	// host's bytes.
+	ErrDownloadURLOffServerOrigin = errors.New("collection download url is off its server's origin")
+	// ErrLockedArtifactIdentityMismatch reports that the artifact a locked
+	// download URL served names another namespace, name or version in its
+	// MANIFEST.json than the lockfile entry. Integrity class.
+	ErrLockedArtifactIdentityMismatch = errors.New("artifact at a locked download url is not the locked collection")
 	// ErrMetadataURLUserinfo indicates a Galaxy metadata URL (versions_url or
 	// highest_version.href, fresh or replayed from a snapshot) embeds userinfo, with
 	// ErrDownloadURLUserinfo's effect. It classifies alike but names another field.

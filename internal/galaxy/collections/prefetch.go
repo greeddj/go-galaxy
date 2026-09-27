@@ -207,7 +207,7 @@ func prefetchOne(
 	// keep this worker a policy-free cache filler that installs nothing.
 	downloadDeps := newInstallDeps(deps.cfg, deps.runtime, deps.st, deps.artifacts, nil, nil, nil, nil)
 	downloadDeps.collectionDeps = downloadDeps.withSources(deps.gitStore, deps.gitMemo, deps.roleMemo, deps.urlMemo)
-	result, err := downloadCollectionToCache(ctx, downloadDeps, artifactKey(col), col.Source, meta, true)
+	result, err := downloadCollectionToCache(ctx, downloadDeps, col, meta, true)
 	if err != nil {
 		return meta, downloadResult{}, err
 	}
