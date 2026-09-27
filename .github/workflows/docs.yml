@@ -5,6 +5,9 @@ on:
     branches: [ main ]
     paths:
       - '**.md'
+      - 'docs/**'
+      - 'zensical.toml'
+      - 'Justfile'
 
 jobs:
   prose:
@@ -21,3 +24,21 @@ jobs:
 
       - name: Run prose audit
         run: go test ./internal/proseaudit/
+
+  site:
+    name: Site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up just
+        uses: extractions/setup-just@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          cache-dependency-glob: 'Justfile'
+
+      - name: Build docs site
+        run: just docs_build

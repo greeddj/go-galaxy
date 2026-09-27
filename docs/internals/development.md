@@ -50,8 +50,8 @@ go test ./internal/galaxy/solver -fuzz FuzzSolve -fuzztime 60s
 | Workflow | Trigger | Runs |
 | --- | --- | --- |
 | `ci.yml` | push to `main` (not `**.md` alone), pull request, `workflow_call` | the check commands, pinned golangci-lint, the `-race` suite, a non-failing coverage upload |
-| `docs.yml` | push to `main` touching `**.md` | `go test ./internal/proseaudit/` |
-| `release.yml` | a `v*` tag | `ci.yml` first, then GoReleaser, attestation, the major tag move |
+| `docs.yml` | push to `main` touching `**.md`, `docs/**`, `zensical.toml` or the `Justfile` | `go test ./internal/proseaudit/`, `just docs_build` |
+| `release.yml` | a `v*` tag | `ci.yml` first, then GoReleaser, attestation, the major tag move, the [documentation site](#the-documentation-site) to GitHub Pages |
 | `action.yml` | a change to `action.yml` or itself; manual | the composite action against galaxy.ansible.com, and offline over a lockfile that does not load, where it must fail at its cache-key step with go-galaxy on `PATH` and nothing installed |
 
 - `.goreleaser.yml` runs no `before` hooks: the gate job ran the suite, and
@@ -205,8 +205,14 @@ packet-bearing fixture needs a `gatedFixtures` row and restated
 - `docs/` builds with [Zensical](https://zensical.org) through `uvx`, pinned
   as `ZENSICAL_VERSION` because it is pre-1.0.
 - `just docs` serves `http://localhost:8000/go-galaxy/`, rebuilt on save.
-  `just docs_build` fails on a dead link or anchor. No workflow runs it, so
-  run it after a change under `docs/`.
+  `just docs_build` fails on a dead link or anchor. `docs.yml` runs it only
+  once a change is on `main`, so run it before pushing a change under `docs/`.
+- The site is published from a release tag alone: `release.yml` builds it
+  from the tag and deploys it to GitHub Pages, so it describes the latest
+  release, not `main`, and a prerelease leaves it as it was. That needs Pages
+  set to deploy from GitHub Actions and the `github-pages` environment
+  admitting a `v*` tag alone: GitHub creates it with a rule for `main`,
+  removed so that no run on `main` can publish the site.
 - Anchors slug the way GitHub slugs them (`toc.slugify`), so
   `requirements.md#galaxytoml` resolves on both. Rewording a heading
   changes its anchor: update every link to it. The strict build catches those

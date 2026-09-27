@@ -17,8 +17,9 @@ go test -race ./...
 just docs_build     # after a docs change: a dead link or anchor fails it
 ```
 
-The first three are what CI runs. No workflow builds the site, so a dead link
-reaches `main` unless `just docs_build` catches it here. Never run the suite as
+The first three are what CI runs. `docs.yml` builds the site only once a change
+is on `main`, so a dead link reaches `main` unless `just docs_build` catches it
+here. Never run the suite as
 root ([Running the tests](docs/internals/development.md#running-the-tests) says
 why). A golangci-lint bump edits the `Justfile` and `.github/workflows/ci.yml`
 in one commit, or a gate fails
@@ -101,8 +102,9 @@ nothing at all.
 1. Pick the version. Versions are semver. A tag carrying a prerelease part,
    such as `v1.2.0-rc.1`, publishes as a GitHub prerelease and moves nothing
    users track: the Homebrew cask is not updated, the image gets no `latest`
-   tag, and the major tag (`v1`) stays where it is. So a release candidate
-   reaches no one running `brew upgrade`, pulling `latest` or using `@v1`.
+   tag, the documentation site is not republished, and the major tag (`v1`)
+   stays where it is. So a release candidate reaches no one running
+   `brew upgrade`, pulling `latest`, using `@v1` or reading the site.
 2. For a release, not a prerelease, move the docs' pinned-release examples to
    the new version in a commit of their own, before the tag, and push it to
    `main`. They live in `README.md`, `docs/get-started/getting-started.md`,
