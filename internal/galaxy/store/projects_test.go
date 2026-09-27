@@ -137,9 +137,9 @@ func TestLoadProjectRegistryWithoutRolesPathDecodesEmpty(t *testing.T) {
 	}
 }
 
-// TestRecordProjectWritesRolesPath proves RecordProject resolves the roles
-// path against the project directory by the same rule as the collections
-// path - relative joins, absolute stays - and that it survives a reload.
+// TestRecordProjectWritesRolesPath proves RecordProject resolves an install's
+// roles path by the collections path's rule - relative made absolute against
+// the working directory, absolute kept - and that it survives a reload.
 func TestRecordProjectWritesRolesPath(t *testing.T) {
 	t.Parallel()
 
@@ -149,14 +149,15 @@ func TestRecordProjectWritesRolesPath(t *testing.T) {
 		projectDir := t.TempDir()
 		reqPath := filepath.Join(projectDir, "requirements.yml")
 
-		if err := RecordProject(cacheDir, reqPath, "collections", "roles"); err != nil {
+		run := ProjectRun{RequirementsFile: reqPath, CollectionsPath: "collections", RolesPath: "roles", Installs: true}
+		if err := RecordProject(cacheDir, run); err != nil {
 			t.Fatalf("RecordProject: %v", err)
 		}
 		record := mustLoadProjectRecord(t, cacheDir, projectDir)
-		if want := filepath.Join(projectDir, "roles"); record.RolesPath != want {
+		if want := mustAbs(t, "roles"); record.RolesPath != want {
 			t.Fatalf("RolesPath = %q, want %q", record.RolesPath, want)
 		}
-		if want := filepath.Join(projectDir, "collections"); record.CollectionsPath != want {
+		if want := mustAbs(t, "collections"); record.CollectionsPath != want {
 			t.Fatalf("CollectionsPath = %q, want %q", record.CollectionsPath, want)
 		}
 	})
@@ -168,7 +169,8 @@ func TestRecordProjectWritesRolesPath(t *testing.T) {
 		rolesDir := t.TempDir()
 		reqPath := filepath.Join(projectDir, "requirements.yml")
 
-		if err := RecordProject(cacheDir, reqPath, "collections", rolesDir); err != nil {
+		run := ProjectRun{RequirementsFile: reqPath, CollectionsPath: "collections", RolesPath: rolesDir, Installs: true}
+		if err := RecordProject(cacheDir, run); err != nil {
 			t.Fatalf("RecordProject: %v", err)
 		}
 		if record := mustLoadProjectRecord(t, cacheDir, projectDir); record.RolesPath != rolesDir {
@@ -186,7 +188,7 @@ func TestRecordProjectWithoutRolesPathStaysLegacyShape(t *testing.T) {
 	projectDir := t.TempDir()
 	reqPath := filepath.Join(projectDir, "requirements.yml")
 
-	if err := RecordProject(cacheDir, reqPath, "collections", ""); err != nil {
+	if err := RecordProject(cacheDir, ProjectRun{RequirementsFile: reqPath, CollectionsPath: "collections", Installs: true}); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 	record := mustLoadProjectRecord(t, cacheDir, projectDir)
@@ -247,15 +249,15 @@ func mustLoadProjectRecord(t *testing.T, cacheDir, projectDir string) ProjectRec
 // the TOML file's own path in requirements_file, the one field cleanup reads.
 func TestNewProjectRecordKeysGalaxyTOMLByItsDirectory(t *testing.T) {
 	t.Parallel()
-	key, record := NewProjectRecord("/p/galaxy.toml", "collections", "")
+	key, record := NewProjectRecord(ProjectRun{RequirementsFile: "/p/galaxy.toml", CollectionsPath: "collections", Installs: true})
 	if key != "/p" {
 		t.Fatalf("key = %q, want /p", key)
 	}
 	if record.RequirementsFile != "/p/galaxy.toml" {
 		t.Fatalf("RequirementsFile = %q, want /p/galaxy.toml", record.RequirementsFile)
 	}
-	if record.CollectionsPath != "/p/collections" {
-		t.Fatalf("CollectionsPath = %q, want /p/collections", record.CollectionsPath)
+	if want := mustAbs(t, "collections"); record.CollectionsPath != want {
+		t.Fatalf("CollectionsPath = %q, want %q, the working directory's and not /p's", record.CollectionsPath, want)
 	}
 }
 
@@ -274,13 +276,13 @@ func TestRecordProjectOneRecordPerDirectory(t *testing.T) {
 		}
 	}
 
-	if err := RecordProject(cacheDir, tomlPath, "collections", ""); err != nil {
+	if err := RecordProject(cacheDir, ProjectRun{RequirementsFile: tomlPath}); err != nil {
 		t.Fatalf("RecordProject (galaxy.toml): %v", err)
 	}
 	if got := mustLoadProjectRecord(t, cacheDir, projectDir).RequirementsFile; got != tomlPath {
 		t.Fatalf("RequirementsFile = %q, want %q", got, tomlPath)
 	}
-	if err := RecordProject(cacheDir, yamlPath, "collections", ""); err != nil {
+	if err := RecordProject(cacheDir, ProjectRun{RequirementsFile: yamlPath}); err != nil {
 		t.Fatalf("RecordProject (requirements.yml): %v", err)
 	}
 	registry, err := LoadProjectRegistry(cacheDir)
@@ -313,7 +315,7 @@ func TestLoadProjectRegistryNamesItsFile(t *testing.T) {
 	if registry.Location != want {
 		t.Fatalf("Location (absent) = %q, want %q", registry.Location, want)
 	}
-	if err := RecordProject(cacheDir, filepath.Join(t.TempDir(), "requirements.yml"), "collections", ""); err != nil {
+	if err := RecordProject(cacheDir, ProjectRun{RequirementsFile: filepath.Join(t.TempDir(), "requirements.yml")}); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 	registry, err = LoadProjectRegistry(cacheDir)
@@ -354,7 +356,7 @@ func TestRecordKeepsOnlyEarlierFilesThatStillExist(t *testing.T) {
 	registry := &ProjectRegistry{Projects: map[string]ProjectRecord{
 		projectDir: {RequirementsFile: vanished, RequirementsFiles: []string{directory, kept, latest, vanished}},
 	}}
-	registry.Record(latest, "collections", "")
+	registry.Record(ProjectRun{RequirementsFile: latest})
 
 	want := []string{kept, latest}
 	if got := registry.Projects[projectDir].RequirementsFiles; !slices.Equal(got, want) {
@@ -394,7 +396,7 @@ func TestRecordKeepsAnEarlierFileStatCannotJudge(t *testing.T) {
 	registry := &ProjectRegistry{Projects: map[string]ProjectRecord{
 		projectDir: {RequirementsFile: latest, RequirementsFiles: []string{hidden, latest}},
 	}}
-	registry.Record(latest, "collections", "")
+	registry.Record(ProjectRun{RequirementsFile: latest})
 
 	if got, want := registry.Projects[projectDir].RequirementsFiles, []string{latest, hidden}; !slices.Equal(got, want) {
 		t.Fatalf("RequirementsFiles = %q, want %q", got, want)
@@ -424,7 +426,7 @@ func TestRecordFoldsALegacyRecordsFile(t *testing.T) {
 	}
 	writeRegistryFile(t, cacheDir, data)
 
-	if err := RecordProject(cacheDir, latest, "collections", ""); err != nil {
+	if err := RecordProject(cacheDir, ProjectRun{RequirementsFile: latest}); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 	if got, want := mustLoadProjectRecord(t, cacheDir, projectDir).RequirementsFiles, []string{legacy, latest}; !slices.Equal(got, want) {
@@ -462,5 +464,156 @@ func TestProjectRecordFiles(t *testing.T) {
 				t.Fatalf("Files() = %q, want %q", got, row.want)
 			}
 		})
+	}
+}
+
+// mustAbs is filepath.Abs(p) against this process's working directory,
+// failing the test on error.
+func mustAbs(t *testing.T, p string) string {
+	t.Helper()
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		t.Fatalf("Abs(%q): %v", p, err)
+	}
+	return abs
+}
+
+// TestRecordTakesInstallPathsOnlyFromAnInstall pins that lock and warm, which
+// write no install tree, give a record they create no paths and leave an
+// earlier install's as recorded, while the next install replaces both.
+func TestRecordTakesInstallPathsOnlyFromAnInstall(t *testing.T) {
+	t.Parallel()
+	projectDir := t.TempDir()
+	reqPath := filepath.Join(projectDir, "requirements.yml")
+	collectionsDir, rolesDir := t.TempDir(), t.TempDir()
+	notInstalling := ProjectRun{RequirementsFile: reqPath, CollectionsPath: t.TempDir(), RolesPath: t.TempDir()}
+	registry := &ProjectRegistry{}
+
+	registry.Record(notInstalling)
+	if got := registry.Projects[projectDir]; got.CollectionsPath != "" || got.RolesPath != "" {
+		t.Fatalf("a record lock or warm created carries install paths: %+v", got)
+	}
+	registry.Record(ProjectRun{RequirementsFile: reqPath, CollectionsPath: collectionsDir, RolesPath: rolesDir, Installs: true})
+	registry.Record(notInstalling)
+	if got := registry.Projects[projectDir]; got.CollectionsPath != collectionsDir || got.RolesPath != rolesDir {
+		t.Fatalf("after lock or warm: %+v, want the install's %q and %q kept", got, collectionsDir, rolesDir)
+	}
+	registry.Record(ProjectRun{RequirementsFile: reqPath, CollectionsPath: collectionsDir, Installs: true})
+	if got := registry.Projects[projectDir]; got.CollectionsPath != collectionsDir || got.RolesPath != "" {
+		t.Fatalf("after an install with no roles path: %+v, want %q and no roles path", got, collectionsDir)
+	}
+}
+
+// TestRecordProjectResolvesInstallPathsAgainstTheWorkingDirectory is `install
+// -r sub/requirements.yml` run from sub's parent: the record names the trees
+// install wrote under the parent, not under sub. Not parallel: t.Chdir.
+func TestRecordProjectResolvesInstallPathsAgainstTheWorkingDirectory(t *testing.T) {
+	parent := physicalTempDir(t)
+	projectDir := filepath.Join(parent, "sub")
+	cacheDir := t.TempDir()
+	t.Chdir(parent)
+
+	run := ProjectRun{
+		RequirementsFile: filepath.Join("sub", "requirements.yml"),
+		CollectionsPath:  ".collections",
+		RolesPath:        ".roles",
+		Installs:         true,
+	}
+	if err := RecordProject(cacheDir, run); err != nil {
+		t.Fatalf("RecordProject: %v", err)
+	}
+	record := mustLoadProjectRecord(t, cacheDir, projectDir)
+	if want := filepath.Join(projectDir, "requirements.yml"); record.RequirementsFile != want {
+		t.Fatalf("RequirementsFile = %q, want %q", record.RequirementsFile, want)
+	}
+	if want := filepath.Join(parent, ".collections"); record.CollectionsPath != want {
+		t.Fatalf("CollectionsPath = %q, want %q", record.CollectionsPath, want)
+	}
+	if want := filepath.Join(parent, ".roles"); record.RolesPath != want {
+		t.Fatalf("RolesPath = %q, want %q", record.RolesPath, want)
+	}
+}
+
+// TestRecordLeavesAPathAbsCannotResolveUnrecorded pins that a relative path is
+// recorded as "" once the working directory is gone, so cleanup scans nothing
+// rather than a guess. Not parallel: t.Chdir; skipped where Abs still answers.
+func TestRecordLeavesAPathAbsCannotResolveUnrecorded(t *testing.T) {
+	gone := filepath.Join(t.TempDir(), "gone")
+	if err := os.Mkdir(gone, helpers.DirMod); err != nil {
+		t.Fatalf("mkdir %s: %v", gone, err)
+	}
+	projectDir := t.TempDir()
+	t.Chdir(gone)
+	if err := os.Remove(gone); err != nil {
+		t.Fatalf("remove %s: %v", gone, err)
+	}
+	if abs, err := helpers.PhysicalAbs(".collections"); err == nil {
+		t.Skipf("this platform still resolves a removed working directory, as %q", abs)
+	}
+
+	registry := &ProjectRegistry{}
+	registry.Record(ProjectRun{
+		RequirementsFile: filepath.Join(projectDir, "requirements.yml"),
+		CollectionsPath:  ".collections",
+		RolesPath:        filepath.Join(projectDir, ".roles"),
+		Installs:         true,
+	})
+	record := registry.Projects[projectDir]
+	if record.CollectionsPath != "" {
+		t.Fatalf("CollectionsPath = %q, want \"\" when Abs fails", record.CollectionsPath)
+	}
+	if want := filepath.Join(projectDir, ".roles"); record.RolesPath != want {
+		t.Fatalf("RolesPath = %q, want the absolute %q kept", record.RolesPath, want)
+	}
+}
+
+// physicalTempDir is a fresh t.TempDir with its symlinks resolved, the spelling
+// the kernel gives the working directory; t.TempDir sits under a symlink on macOS.
+func physicalTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	return dir
+}
+
+// TestRecordProjectResolvesPathsFromASymlinkedWorkingDirectory enters real/x by
+// the link repo/deploy: "../" names real, where the kernel opens the file and
+// the trees, not repo, where $PWD points. Not parallel: t.Chdir.
+func TestRecordProjectResolvesPathsFromASymlinkedWorkingDirectory(t *testing.T) {
+	root := physicalTempDir(t)
+	target := filepath.Join(root, "real", "x")
+	link := filepath.Join(root, "repo", "deploy")
+	for _, dir := range []string{target, filepath.Dir(link)} {
+		if err := os.MkdirAll(dir, helpers.DirMod); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink %s: %v", link, err)
+	}
+	cacheDir := t.TempDir()
+	t.Chdir(link)
+
+	run := ProjectRun{
+		RequirementsFile: filepath.Join("..", "requirements.yml"),
+		CollectionsPath:  filepath.Join("..", "coll"),
+		RolesPath:        filepath.Join("..", "roles"),
+		Installs:         true,
+	}
+	if err := RecordProject(cacheDir, run); err != nil {
+		t.Fatalf("RecordProject: %v", err)
+	}
+	physical := filepath.Join(root, "real")
+	record := mustLoadProjectRecord(t, cacheDir, physical)
+	for field, pair := range map[string][2]string{
+		"RequirementsFile": {record.RequirementsFile, filepath.Join(physical, "requirements.yml")},
+		"CollectionsPath":  {record.CollectionsPath, filepath.Join(physical, "coll")},
+		"RolesPath":        {record.RolesPath, filepath.Join(physical, "roles")},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s = %q, want %q under the link's target, not its parent", field, pair[0], pair[1])
+		}
 	}
 }

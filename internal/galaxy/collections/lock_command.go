@@ -29,7 +29,7 @@ func runLock(ctx context.Context, cfg *config.Config, runtime *infra.Infra) erro
 // lockfile, on a backend runLock already opened and locked. cfg.Check is
 // checked first so the stricter lockCheck verdict also covers --dry-run.
 func lockWithState(ctx context.Context, cfg *config.Config, runtime *infra.Infra, state *installState, start time.Time) error {
-	roots, roleRoots, err := loadRootsAndRecordProject(ctx, cfg, runtime, state.backend)
+	roots, roleRoots, err := loadRootsAndRecordProject(ctx, cfg, runtime, state.backend, false)
 	if err != nil {
 		return err
 	}

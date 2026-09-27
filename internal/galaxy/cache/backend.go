@@ -49,10 +49,10 @@ type Backend interface {
 	LoadStore(ctx context.Context) (*store.Store, error)
 	SaveStore(ctx context.Context, st *store.Store) error
 	ClearFiles(ctx context.Context) error
-	// RecordProject enrolls the project behind requirementsFile in the cleanup
-	// registry; an empty rolesPath records none, which cleanup reads as "do not
-	// scan" (see store.ProjectRecord).
-	RecordProject(ctx context.Context, requirementsFile, downloadPath, rolesPath string) error
+	// RecordProject enrolls run's project in the cleanup registry through
+	// store.ProjectRegistry.Record, which takes the install paths only from a
+	// run that installs (see store.ProjectRun and store.ProjectRecord).
+	RecordProject(ctx context.Context, run store.ProjectRun) error
 	LoadProjectRegistry(ctx context.Context) (*store.ProjectRegistry, error)
 	// Artifacts returns the backend's artifact store, which unlike the Backend
 	// is safe for concurrent use. Call it only after a successful Open: the S3

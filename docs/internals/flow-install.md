@@ -67,7 +67,8 @@ flowchart TD
 Why this order: [Plan construction](install-pipeline.md#plan-construction).
 `loadRootsAndRecordProject` records the project only after the file loads, so
 a run that fails on its file leaves the directory's record as it was, and
-before any source is fetched or anything installed.
+before any source is fetched or anything installed. Install alone records its
+paths, made absolute as it opens them ([Project registry](cache.md#project-registry)).
 
 ## Collection resolution
 

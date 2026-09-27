@@ -87,11 +87,11 @@ func (b *Backend) ClearFiles(_ context.Context) error {
 }
 
 // RecordProject records the project in the local registry.
-func (b *Backend) RecordProject(_ context.Context, requirementsFile, downloadPath, rolesPath string) error {
+func (b *Backend) RecordProject(_ context.Context, run store.ProjectRun) error {
 	if b.cacheDir == "" {
 		return helpers.ErrCacheDirEmpty
 	}
-	return classifyCacheFailure(store.RecordProject(b.cacheDir, requirementsFile, downloadPath, rolesPath))
+	return classifyCacheFailure(store.RecordProject(b.cacheDir, run))
 }
 
 // LoadProjectRegistry loads the local project registry.

@@ -67,11 +67,11 @@ func newRoleTarget(root *os.Root, cfg *config.Config, r resolvedRole) (installTa
 	return installTarget{root: root, rel: r.Name, path: absoluteOrAsIs(filepath.Join(cfg.RolesPath, r.Name)), marker: r.Name}, true
 }
 
-// absoluteOrAsIs renders p absolute, or as given when it cannot. Cleanup
-// finds a role's record by its absolute install path, so the record must
-// not depend on how --roles-path was spelled.
+// absoluteOrAsIs renders p absolute by helpers.PhysicalAbs, the rule the
+// registry records roles_path by, or as given when it cannot: cleanup finds a
+// role's record by that install path, whatever --roles-path's spelling.
 func absoluteOrAsIs(p string) string {
-	abs, err := filepath.Abs(p)
+	abs, err := helpers.PhysicalAbs(p)
 	if err != nil {
 		return p
 	}

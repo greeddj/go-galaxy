@@ -29,7 +29,8 @@ drawn on [install flow](flow-install.md): the same
 `resolveCollectionsInternal` and `resolveRoles`, without `newVerifyContext` or
 `planCollections`. It installs nothing but saves the snapshot, so later runs
 replay the resolve. It records its project once the file loads, as install
-does, `--check` included.
+does, `--check` included, but leaves the install paths to install
+([Project registry](cache.md#project-registry)).
 
 ## Building the lockfile
 
@@ -139,6 +140,6 @@ save: the file stays valid if the save fails.
 `--check` still runs the full resolve and honors `--refresh`: `initInstall`
 never reads `--check`. The other options supply values without changing the
 flow: the pool sizes `--workers` and `--download-workers`, `--cache-dir`,
-`--download-path` and `--roles-path` (only recorded in the project
-registry), the other paths and files, `--lock-file`, the server and output
+`--download-path` and `--roles-path` (unused, since only install records
+them), the other paths and files, `--lock-file`, the server and output
 options, and the other `--s3-*` flags.

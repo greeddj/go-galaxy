@@ -192,27 +192,35 @@ func clearCacheIfRequested(
 }
 
 // loadRootsAndRecordProject is loadRoots followed, only on success, by the
-// registry record, under the holder ctx and before any discovery commit, so a
-// file that fails to load never replaces the directory's last good record.
+// registry record (with the install paths when installs), under the holder ctx
+// before any discovery commit, so a file failing to load keeps the last record.
 func loadRootsAndRecordProject(
-	ctx context.Context, cfg *config.Config, runtime *infra.Infra, backend cacheManager.Backend,
+	ctx context.Context, cfg *config.Config, runtime *infra.Infra, backend cacheManager.Backend, installs bool,
 ) ([]collection, []requirements.RoleRequirement, error) {
 	roots, roleRoots, err := loadRoots(cfg, runtime)
 	if err != nil {
 		return nil, nil, err
 	}
-	recordProjectUnlessDryRun(ctx, cfg, runtime, backend)
+	recordProjectUnlessDryRun(ctx, cfg, runtime, backend, installs)
 	return roots, roleRoots, nil
 }
 
 // recordProjectUnlessDryRun records this project in the registry except
 // under --dry-run, which previews and so enrolls nothing for the destructive
 // cleanup to act on; a failed record only warns.
-func recordProjectUnlessDryRun(ctx context.Context, cfg *config.Config, runtime *infra.Infra, backend cacheManager.Backend) {
+func recordProjectUnlessDryRun(
+	ctx context.Context, cfg *config.Config, runtime *infra.Infra, backend cacheManager.Backend, installs bool,
+) {
 	if cfg.DryRun {
 		return
 	}
-	if err := backend.RecordProject(ctx, cfg.RequirementsFile, cfg.DownloadPath, cfg.RolesPath); err != nil {
+	run := store.ProjectRun{
+		RequirementsFile: cfg.RequirementsFile,
+		CollectionsPath:  cfg.DownloadPath,
+		RolesPath:        cfg.RolesPath,
+		Installs:         installs,
+	}
+	if err := backend.RecordProject(ctx, run); err != nil {
 		runtime.Output.Warnf("Failed to record project: %v", err)
 	}
 }
@@ -241,7 +249,7 @@ func sweepDeadRunTemps(ctx context.Context, runtime *infra.Infra, backend cacheM
 func prepareInstallPlan(
 	ctx context.Context, cfg *config.Config, runtime *infra.Infra, state *installState, root *os.Root,
 ) (*installPlan, error) {
-	roots, roleRoots, err := loadRootsAndRecordProject(ctx, cfg, runtime, state.backend)
+	roots, roleRoots, err := loadRootsAndRecordProject(ctx, cfg, runtime, state.backend, true)
 	if err != nil {
 		return nil, err
 	}

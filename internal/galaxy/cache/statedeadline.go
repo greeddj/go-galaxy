@@ -56,10 +56,10 @@ func (b *stateDeadlineBackend) LoadProjectRegistry(ctx context.Context) (*store.
 }
 
 // RecordProject bounds b.RecordProject with this decorator's budget.
-func (b *stateDeadlineBackend) RecordProject(ctx context.Context, requirementsFile, downloadPath, rolesPath string) error {
+func (b *stateDeadlineBackend) RecordProject(ctx context.Context, run store.ProjectRun) error {
 	dlCtx, cancel := context.WithTimeout(ctx, b.budget)
 	defer cancel()
-	err := b.inner.RecordProject(dlCtx, requirementsFile, downloadPath, rolesPath)
+	err := b.inner.RecordProject(dlCtx, run)
 	return deadlineError(ctx, dlCtx, b.budget, helpers.ErrStateObjectDeadline, err)
 }
 

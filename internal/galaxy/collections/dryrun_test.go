@@ -642,7 +642,7 @@ func TestLoadRootsAndRecordProjectSkipsDryRun(t *testing.T) {
 				t.Fatalf("initInstall recorded %+v before any file loaded, want nothing", got)
 			}
 
-			if _, _, err := loadRootsAndRecordProject(lockCtx, cfg, runtime, state.backend); err != nil {
+			if _, _, err := loadRootsAndRecordProject(lockCtx, cfg, runtime, state.backend, true); err != nil {
 				t.Fatalf("loadRootsAndRecordProject: %v", err)
 			}
 			_, recorded := mustLoadRegistryProjects(t, cacheDir)[root]

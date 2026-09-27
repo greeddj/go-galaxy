@@ -22,10 +22,12 @@ type ProjectRecord struct {
 	// galaxy.toml included; kept in this one field so an older binary's
 	// cleanup fails closed on it instead of reading the record as stale.
 	RequirementsFile string `json:"requirements_file"`
-	CollectionsPath  string `json:"collections_path"`
-	// RolesPath is the absolute roles directory, or "" when none was
-	// configured; omitempty keeps a collections-only record unchanged, and
-	// cleanup reads an absent path as "do not scan", never as a guess.
+	// CollectionsPath is the absolute collections directory the latest install
+	// used, or "" when no install has recorded one.
+	CollectionsPath string `json:"collections_path"`
+	// RolesPath is the latest install's absolute roles directory, or "" when
+	// none was recorded; omitempty keeps a collections-only record unchanged,
+	// and cleanup reads an absent path as "do not scan", never as a guess.
 	RolesPath string `json:"roles_path,omitempty"`
 	// RequirementsFiles is the latest file and each earlier one rememberedFiles
 	// keeps, sorted. Files reads a record without it as its RequirementsFile,
@@ -53,8 +55,18 @@ type ProjectRegistry struct {
 	Location string                   `json:"-"`
 }
 
+// ProjectRun is what one run tells the registry: the requirements file it
+// loaded and the install paths as configured, which count only when Installs
+// is set, since install alone writes the trees cleanup scans.
+type ProjectRun struct {
+	RequirementsFile string
+	CollectionsPath  string
+	RolesPath        string
+	Installs         bool
+}
+
 // RecordProject records or updates a project entry in the registry.
-func RecordProject(cacheDir, requirementsFile, downloadPath, rolesPath string) error {
+func RecordProject(cacheDir string, run ProjectRun) error {
 	if cacheDir == "" {
 		return nil
 	}
@@ -62,18 +74,21 @@ func RecordProject(cacheDir, requirementsFile, downloadPath, rolesPath string) e
 	if err != nil {
 		return err
 	}
-	registry.Record(requirementsFile, downloadPath, rolesPath)
+	registry.Record(run)
 	return saveProjectRegistry(cacheDir, registry)
 }
 
-// Record builds this run's entry with NewProjectRecord and folds in the files
-// the directory's earlier entry remembers; both backends record through it, so
-// their registries keep one shape and one rule for what is remembered.
-func (r *ProjectRegistry) Record(requirementsFile, downloadPath, rolesPath string) {
-	projectPath, record := NewProjectRecord(requirementsFile, downloadPath, rolesPath)
+// Record builds this run's entry with NewProjectRecord and folds in what the
+// directory's earlier entry keeps: the files it remembers and, unless run
+// installs, its install paths. Both backends record through it.
+func (r *ProjectRegistry) Record(run ProjectRun) {
+	projectPath, record := NewProjectRecord(run)
 	r.Projects = ensureMap(r.Projects)
 	if previous, ok := r.Projects[projectPath]; ok {
 		record.RequirementsFiles = rememberedFiles(record.RequirementsFile, previous.Files())
+		if !run.Installs {
+			record.CollectionsPath, record.RolesPath = previous.CollectionsPath, previous.RolesPath
+		}
 	}
 	r.Projects[projectPath] = record
 }
@@ -97,21 +112,23 @@ func rememberedFiles(latest string, earlier []string) []string {
 }
 
 // NewProjectRecord builds a run's registry entry, keyed by the directory of the
-// absolute requirements file, with both paths resolved against it by one rule.
-// Both backends build records here, so their registries keep one shape.
-func NewProjectRecord(requirementsFile, downloadPath, rolesPath string) (string, ProjectRecord) {
-	absReq, err := filepath.Abs(requirementsFile)
+// requirements file made absolute by helpers.PhysicalAbs, as the run opened it,
+// with an installing run's paths by installPath. Both backends build records here.
+func NewProjectRecord(run ProjectRun) (string, ProjectRecord) {
+	absReq, err := helpers.PhysicalAbs(run.RequirementsFile)
 	if err != nil {
-		absReq = requirementsFile
+		absReq = run.RequirementsFile
 	}
-	projectPath := filepath.Dir(absReq)
-	return projectPath, ProjectRecord{
+	record := ProjectRecord{
 		RequirementsFile:  absReq,
 		RequirementsFiles: []string{absReq},
-		CollectionsPath:   resolveProjectPath(projectPath, downloadPath),
-		RolesPath:         resolveProjectPath(projectPath, rolesPath),
 		LastRun:           time.Now().UTC(),
 	}
+	if run.Installs {
+		record.CollectionsPath = installPath(run.CollectionsPath)
+		record.RolesPath = installPath(run.RolesPath)
+	}
+	return filepath.Dir(absReq), record
 }
 
 // LoadProjectRegistry loads cacheDir's registry with Projects never nil. A
@@ -172,14 +189,16 @@ func projectRegistryPath(cacheDir string) string {
 	return filepath.Join(cacheDir, helpers.StoreDBProjects)
 }
 
-// resolveProjectPath joins a relative p under projectPath; an empty p stays
-// empty, so "not configured" survives rather than becoming the project directory.
-func resolveProjectPath(projectPath, p string) string {
-	if p == "" {
-		return ""
-	}
-	if filepath.IsAbs(p) {
+// installPath makes a relative p absolute by helpers.PhysicalAbs, against the
+// physical working directory install opens it in, so cleanup scans that tree;
+// an empty p, or one the working directory cannot resolve, is "".
+func installPath(p string) string {
+	if p == "" || filepath.IsAbs(p) {
 		return p
 	}
-	return filepath.Join(projectPath, p)
+	abs, err := helpers.PhysicalAbs(p)
+	if err != nil {
+		return ""
+	}
+	return abs
 }

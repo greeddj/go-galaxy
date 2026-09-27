@@ -316,7 +316,7 @@ func readOnlyDir(t *testing.T) string {
 
 // TestBackendRoundTripsRoleBucketsAndRolesPath pins that SaveStore/LoadStore
 // keep an installed role and a role pin, and that RecordProject keeps a roles
-// path resolved against the project directory.
+// path resolved as install resolves it.
 func TestBackendRoundTripsRoleBucketsAndRolesPath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -370,14 +370,16 @@ func assertRoleBucketsRoundTrip(t *testing.T, b *Backend, dir string) {
 	}
 }
 
-// assertRolesPathRoundTrip records a project with a relative roles path
-// through b and reads the resolved path back from the registry.
+// assertRolesPathRoundTrip records an install with a relative roles path
+// through b and reads it back from the registry absolute against the working
+// directory, the one install opened it against.
 func assertRolesPathRoundTrip(t *testing.T, b *Backend) {
 	t.Helper()
 	ctx := context.Background()
 	projectDir := t.TempDir()
 	reqPath := filepath.Join(projectDir, "requirements.yml")
-	if err := b.RecordProject(ctx, reqPath, "collections", "roles"); err != nil {
+	run := store.ProjectRun{RequirementsFile: reqPath, CollectionsPath: "collections", RolesPath: "roles", Installs: true}
+	if err := b.RecordProject(ctx, run); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 	registry, err := b.LoadProjectRegistry(ctx)
@@ -388,7 +390,11 @@ func assertRolesPathRoundTrip(t *testing.T, b *Backend) {
 	if !ok {
 		t.Fatalf("no record under %q, got %#v", projectDir, registry.Projects)
 	}
-	if want := filepath.Join(projectDir, "roles"); record.RolesPath != want {
+	want, err := filepath.Abs("roles")
+	if err != nil {
+		t.Fatalf("Abs: %v", err)
+	}
+	if record.RolesPath != want {
 		t.Fatalf("RolesPath = %q, want %q", record.RolesPath, want)
 	}
 }

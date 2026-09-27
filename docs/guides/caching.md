@@ -141,8 +141,14 @@ on its file, a mistyped `-r` included, leaves the directory's record as it
 was. A project is the file's directory, and its record remembers every
 requirements file a run there loaded, while the file still exists: after
 `install` and `install -r requirements-dev.yml` in one directory, `cleanup`
-keeps what either file reaches. `cleanup` removes, from every recorded
-project and from the cache, what no recorded project reaches:
+keeps what either file reaches.
+
+The record also names the collections and roles paths the project's latest
+`install` wrote, resolved from the directory `install` ran in, as `install`
+resolves them: `install -r sub/requirements.yml` run from the parent is found
+under the parent's `.collections` and `.roles`. `lock` and `warm` install
+nothing, so they leave both paths as they were. `cleanup` removes, from every
+recorded project and from the cache, what no recorded project reaches:
 
 ```mermaid
 flowchart TD

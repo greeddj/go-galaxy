@@ -34,7 +34,7 @@ func runWarm(ctx context.Context, cfg *config.Config, runtime *infra.Infra) erro
 // snapshot and writes the metrics report, against a backend runWarm already
 // opened and locked; it never releases or closes that backend itself.
 func warmWithState(ctx context.Context, cfg *config.Config, runtime *infra.Infra, state *installState, start time.Time) error {
-	roots, roleRoots, err := loadRootsAndRecordProject(ctx, cfg, runtime, state.backend)
+	roots, roleRoots, err := loadRootsAndRecordProject(ctx, cfg, runtime, state.backend, false)
 	if err != nil {
 		return err
 	}

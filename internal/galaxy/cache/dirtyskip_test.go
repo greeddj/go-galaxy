@@ -42,7 +42,7 @@ func (s *saveCountingBackend) SaveStore(_ context.Context, _ *store.Store) error
 
 func (s *saveCountingBackend) ClearFiles(_ context.Context) error { return nil }
 
-func (s *saveCountingBackend) RecordProject(_ context.Context, _, _, _ string) error { return nil }
+func (s *saveCountingBackend) RecordProject(_ context.Context, _ store.ProjectRun) error { return nil }
 
 // LoadProjectRegistry returns a fresh, empty registry rather than nil, for
 // the identical reason LoadStore above does.

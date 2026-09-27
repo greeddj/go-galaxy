@@ -12,6 +12,7 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/extracted"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
+	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
@@ -65,7 +66,8 @@ func TestLockOnAColdCacheLeavesNoEvidenceForCleanupToActOn(t *testing.T) {
 
 	// Without a recorded project cleanup returns before the sweep; this one
 	// has no install tree, so the sweep runs with an empty keep set.
-	if err := state.backend.RecordProject(context.Background(), reqPath, cfg.DownloadPath, ""); err != nil {
+	run := store.ProjectRun{RequirementsFile: reqPath, CollectionsPath: cfg.DownloadPath, Installs: true}
+	if err := state.backend.RecordProject(context.Background(), run); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 

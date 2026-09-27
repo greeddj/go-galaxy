@@ -30,7 +30,8 @@ flowchart TD
 runs inside `withBackend`, whose startup is
 [Shared setup](commands.md#shared-setup): the dead-run temp sweep and
 `--clear-cache` happen there. `RecordProject` waits for the requirements file
-to load, as in install.
+to load, as in install, and leaves the install paths to install
+([Project registry](cache.md#project-registry)).
 
 ## Plan
 
@@ -176,6 +177,6 @@ still fetched during resolution and its build discarded
 `--disable-gpg-verify` turns `--keyring` off. The other options supply values
 without changing the flow: the pool sizes `--workers` and
 `--download-workers`, `--cache-dir`, `--download-path` and `--roles-path`
-(only recorded in the project registry), the other paths and files,
+(unused, since only install records them), the other paths and files,
 `--lock-file`, the server and output options, and the other signature and
 `--s3-*` flags.

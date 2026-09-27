@@ -192,7 +192,7 @@ func (b *Backend) ClearFiles(ctx context.Context) error {
 // RecordProject records the project metadata in S3. The record is built and
 // merged by store.ProjectRegistry.Record, the method the local backend's
 // registry goes through, so the object and the file hold one shape.
-func (b *Backend) RecordProject(ctx context.Context, requirementsFile, downloadPath, rolesPath string) error {
+func (b *Backend) RecordProject(ctx context.Context, run store.ProjectRun) error {
 	if err := b.Open(ctx); err != nil {
 		return err
 	}
@@ -200,7 +200,7 @@ func (b *Backend) RecordProject(ctx context.Context, requirementsFile, downloadP
 	if err != nil {
 		return err
 	}
-	registry.Record(requirementsFile, downloadPath, rolesPath)
+	registry.Record(run)
 	return b.saveProjectRegistry(ctx, registry)
 }
 

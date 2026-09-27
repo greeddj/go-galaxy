@@ -7,32 +7,15 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
 
-// physicalAbs is path cleaned when absolute, else joined under the physical
-// working directory, which Python's os.getcwd() and the kernel both use where
-// os.Getwd may return a symlinked $PWD; symlinks inside path are kept.
-func physicalAbs(path string) (string, error) {
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path), nil
-	}
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", err
-	}
-	if resolved, err := filepath.EvalSymlinks(wd); err == nil {
-		wd = resolved
-	}
-	return filepath.Join(wd, path), nil
-}
-
 // ansibleConfigDir is the directory a relative path read from the ansible.cfg
-// at cfgPath resolves under: the file's own, made absolute by physicalAbs, as
-// ansible's unfrackpath(follow=False) does; "" for no file.
+// at cfgPath resolves under: the file's own, made absolute by
+// helpers.PhysicalAbs, as ansible's unfrackpath(follow=False) does; "" for none.
 func ansibleConfigDir(cfgPath string) string {
 	if cfgPath == "" {
 		return ""
 	}
 	dir := filepath.Dir(cfgPath)
-	if abs, err := physicalAbs(dir); err == nil {
+	if abs, err := helpers.PhysicalAbs(dir); err == nil {
 		return abs
 	}
 	return dir
@@ -53,10 +36,10 @@ func resolveAnsibleConfigPath(value, cfgDir string) string {
 }
 
 // resolveAnsibleConfigEnv resolves $ANSIBLE_CONFIG, already expanded, as
-// ansible's find_ini_config_file does: made absolute by physicalAbs, and a
-// directory standing for the ansible.cfg inside it.
+// ansible's find_ini_config_file does: made absolute by helpers.PhysicalAbs,
+// and a directory standing for the ansible.cfg inside it.
 func resolveAnsibleConfigEnv(expanded string) string {
-	path, err := physicalAbs(expanded)
+	path, err := helpers.PhysicalAbs(expanded)
 	if err != nil {
 		path = expanded
 	}
@@ -66,11 +49,11 @@ func resolveAnsibleConfigEnv(expanded string) string {
 	return path
 }
 
-// canonicalPath is path made absolute by physicalAbs with the symlinks of its
-// longest existing prefix resolved, so two spellings of one directory compare
-// equal before it exists; path only cleaned when the working directory is unread.
+// canonicalPath is path made absolute by helpers.PhysicalAbs with its longest
+// existing prefix's symlinks resolved, so two spellings of one directory match
+// before it exists; path only cleaned when the working directory is unread.
 func canonicalPath(path string) string {
-	abs, err := physicalAbs(path)
+	abs, err := helpers.PhysicalAbs(path)
 	if err != nil {
 		return filepath.Clean(path)
 	}

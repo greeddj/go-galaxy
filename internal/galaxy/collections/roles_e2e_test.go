@@ -804,8 +804,9 @@ func TestRoleCleanupDryRunAndLegacyProject(t *testing.T) {
 	f.cfg.DryRun = false
 
 	// An older binary re-recording the project drops the roles path, which
-	// is exactly what store.RecordProject does when handed none.
-	if err := store.RecordProject(f.cacheDir, f.reqPath, f.downloadPath, ""); err != nil {
+	// is exactly what store.RecordProject does when an install hands it none.
+	legacy := store.ProjectRun{RequirementsFile: f.reqPath, CollectionsPath: f.downloadPath, Installs: true}
+	if err := store.RecordProject(f.cacheDir, legacy); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 	mustCleanup(t, f.gitFixture)

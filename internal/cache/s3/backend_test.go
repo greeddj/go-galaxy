@@ -703,9 +703,9 @@ func putRawStoreObject(ctx context.Context, t *testing.T, b *Backend, rawJSON []
 	}
 }
 
-// TestRecordProjectRoundTripsRolesPath proves the registry object carries the
-// recorded roles path resolved against the project directory, and that a run
-// recording none leaves the key out.
+// TestRecordProjectRoundTripsRolesPath proves the registry object carries an
+// install's relative paths made absolute against the working directory, as
+// install opens them, and that an install recording no roles path leaves the key out.
 func TestRecordProjectRoundTripsRolesPath(t *testing.T) {
 	t.Parallel()
 	b := newTestBackend(t)
@@ -713,7 +713,8 @@ func TestRecordProjectRoundTripsRolesPath(t *testing.T) {
 
 	projectDir := t.TempDir()
 	reqPath := filepath.Join(projectDir, "requirements.yml")
-	if err := b.RecordProject(ctx, reqPath, "collections", "roles"); err != nil {
+	run := store.ProjectRun{RequirementsFile: reqPath, CollectionsPath: "collections", RolesPath: "roles", Installs: true}
+	if err := b.RecordProject(ctx, run); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 	registry, err := b.LoadProjectRegistry(ctx)
@@ -724,14 +725,19 @@ func TestRecordProjectRoundTripsRolesPath(t *testing.T) {
 	if !ok {
 		t.Fatalf("no record under %q, got %#v", projectDir, registry.Projects)
 	}
-	if want := filepath.Join(projectDir, "roles"); record.RolesPath != want {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if want := filepath.Join(cwd, "roles"); record.RolesPath != want {
 		t.Fatalf("RolesPath = %q, want %q", record.RolesPath, want)
 	}
-	if want := filepath.Join(projectDir, "collections"); record.CollectionsPath != want {
+	if want := filepath.Join(cwd, "collections"); record.CollectionsPath != want {
 		t.Fatalf("CollectionsPath = %q, want %q", record.CollectionsPath, want)
 	}
 
-	if err := b.RecordProject(ctx, reqPath, "collections", ""); err != nil {
+	run.RolesPath = ""
+	if err := b.RecordProject(ctx, run); err != nil {
 		t.Fatalf("RecordProject without a roles path: %v", err)
 	}
 	data, err := b.readObject(ctx, b.key(statePrefix, projectsObject))
@@ -760,7 +766,7 @@ func TestLoadProjectRegistryNamesItsObject(t *testing.T) {
 	if registry.Location != want {
 		t.Fatalf("Location (absent) = %q, want %q", registry.Location, want)
 	}
-	if err := b.RecordProject(ctx, filepath.Join(t.TempDir(), "requirements.yml"), "collections", ""); err != nil {
+	if err := b.RecordProject(ctx, store.ProjectRun{RequirementsFile: filepath.Join(t.TempDir(), "requirements.yml")}); err != nil {
 		t.Fatalf("RecordProject: %v", err)
 	}
 	registry, err = b.LoadProjectRegistry(ctx)
@@ -786,7 +792,7 @@ func TestRecordProjectRemembersEveryFile(t *testing.T) {
 		if err := os.WriteFile(path, []byte("collections: []\n"), 0o600); err != nil {
 			t.Fatalf("write %s: %v", path, err)
 		}
-		if err := b.RecordProject(ctx, path, "collections", ""); err != nil {
+		if err := b.RecordProject(ctx, store.ProjectRun{RequirementsFile: path}); err != nil {
 			t.Fatalf("RecordProject(%s): %v", path, err)
 		}
 	}

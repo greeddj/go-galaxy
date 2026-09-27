@@ -1084,7 +1084,8 @@ func recordAbsentWorkspaceProject(t *testing.T, cfg *config.Config, runtime *inf
 			t.Errorf("failed to close backend after recording project: %v", err)
 		}
 	}()
-	if err := backend.RecordProject(t.Context(), reqPath, downloadPath, ""); err != nil {
+	run := store.ProjectRun{RequirementsFile: reqPath, CollectionsPath: downloadPath, Installs: true}
+	if err := backend.RecordProject(t.Context(), run); err != nil {
 		t.Fatalf("failed to record project: %v", err)
 	}
 }
