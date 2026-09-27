@@ -186,6 +186,19 @@ func TestTargetsDoNotShareADirectory(t *testing.T) {
 	}
 }
 
+func TestAnsibleTargetSeesOnlyItsInstallTree(t *testing.T) {
+	tgt := ansibleTarget(options{workDir: t.TempDir()})
+
+	for _, want := range []string{
+		"ANSIBLE_COLLECTIONS_PATH=" + tgt.install,
+		"ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=false",
+	} {
+		if !hasEnv(tgt.env, want) {
+			t.Fatalf("env = %v lacks %q; a collection found elsewhere turns the run into a no-op", tgt.env, want)
+		}
+	}
+}
+
 // hasEnv reports whether the environment carries an exact key=value pair.
 func hasEnv(env []string, want string) bool {
 	return slices.Contains(env, want)

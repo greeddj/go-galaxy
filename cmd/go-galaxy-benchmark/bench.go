@@ -115,9 +115,9 @@ type target struct {
 	subcommands []string
 }
 
-// ansibleTarget describes ansible-galaxy. ANSIBLE_LOCAL_TEMP moves its
-// download and unpack work out of ~/.ansible/tmp into the work directory, so
-// both tools are measured on the same filesystem.
+// ansibleTarget describes ansible-galaxy. Without the sys.path scan off, a
+// collection under site-packages counts as installed and the run is a no-op;
+// ANSIBLE_LOCAL_TEMP keeps its temporary work on the measured filesystem.
 func ansibleTarget(opts options) target {
 	root := filepath.Join(opts.workDir, "ag")
 	install := filepath.Join(root, "collections")
@@ -133,6 +133,7 @@ func ansibleTarget(opts options) target {
 		env: []string{
 			"ANSIBLE_GALAXY_CACHE_DIR=" + cache,
 			"ANSIBLE_COLLECTIONS_PATH=" + install,
+			"ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=false",
 			"ANSIBLE_LOCAL_TEMP=" + tmp,
 			"TMPDIR=" + tmp,
 		},

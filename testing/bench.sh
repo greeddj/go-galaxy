@@ -76,7 +76,8 @@ gg_env() {
 }
 
 ag_env() {
-  printf '%s ' "ANSIBLE_GALAXY_CACHE_DIR=$AG_CACHE" "ANSIBLE_COLLECTIONS_PATH=$TARGET"
+  printf '%s ' "ANSIBLE_GALAXY_CACHE_DIR=$AG_CACHE" "ANSIBLE_COLLECTIONS_PATH=$TARGET" \
+    "ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=false"
 }
 
 # lock_dir prepares a private working directory holding the requirements file

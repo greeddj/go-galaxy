@@ -63,6 +63,9 @@ designs](../guides/caching.md#what-the-directory-holds), not one design done fas
 Each run times `ansible-galaxy collection install --no-deps` or
 `go-galaxy install --no-deps` over `testing/requirements-<N>.yml`: fetch plus
 extract, not two resolvers. Each tool has its own cache, on one filesystem.
+`ansible-galaxy` sees only its own install directory (`ANSIBLE_COLLECTIONS_PATH`
+names it, `ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=false`), because a collection it
+finds anywhere else counts as installed and the run then installs nothing.
 
 <details markdown>
 <summary>Test host</summary>
