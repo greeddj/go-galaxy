@@ -75,7 +75,9 @@ func newRootCommand(onErr func(error), errOut io.Writer) (*cli.Command, *errReco
 			"  8    Cache contention\n" +
 			"  9    Persisted cache state is corrupt or oversized\n" +
 			"  10   Signature verification failure\n" +
-			"  130  Interrupted\n",
+			"  129  Interrupted: a caught SIGHUP\n" +
+			"  130  Interrupted: a caught SIGINT\n" +
+			"  143  Interrupted: a caught SIGTERM\n",
 		HideHelpCommand:        true,
 		UseShortOptionHandling: true,
 		DefaultCommand:         "install",

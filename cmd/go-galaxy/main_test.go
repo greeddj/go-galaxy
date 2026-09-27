@@ -106,8 +106,8 @@ func handleResultCases() []handleResultCase {
 var errTestUsage = errors.New("flag parse error")
 
 // TestRootCommandDisclosesDefaultCommandAndExitCodes pins that --help says a
-// bare go-galaxy installs and lists every exit class; the rows use the exitcode
-// constants, so renumbering a class without updating the help text fails.
+// bare go-galaxy installs and lists every exit code; the rows come from exitcode,
+// so renumbering a class without updating the help text fails.
 func TestRootCommandDisclosesDefaultCommandAndExitCodes(t *testing.T) {
 	cmd, _ := newRootCommand(nil, io.Discard)
 
@@ -133,7 +133,9 @@ func TestRootCommandDisclosesDefaultCommandAndExitCodes(t *testing.T) {
 		{"Cache contention", exitcode.ExitCacheBusy},
 		{"Persisted cache state is corrupt or oversized", exitcode.ExitCacheCorrupt},
 		{"Signature verification failure", exitcode.ExitSignature},
-		{"Interrupted", exitcode.ExitInterrupt},
+		{"Interrupted: a caught SIGHUP", exitcode.FromSignal(syscall.SIGHUP)},
+		{"Interrupted: a caught SIGINT", exitcode.ExitInterrupt},
+		{"Interrupted: a caught SIGTERM", exitcode.FromSignal(syscall.SIGTERM)},
 	}
 	for _, row := range rows {
 		line := fmt.Sprintf("  %-5d%s", row.code, row.phrase)
