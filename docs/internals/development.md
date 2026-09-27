@@ -246,6 +246,7 @@ Change both sides in one commit:
 | The tagline, opening paragraph, benchmark chart and caption, and the "Why go-galaxy" list | `docs/index.md` |
 | The binary snippet and the container alias | The Binary and Container tabs under Quick start's [Install](../get-started/getting-started.md#install) |
 | Its Quick start section | The example files and commands of [Quick start](../get-started/getting-started.md) |
+| Its header, `docs/assets/logo-banner.svg` and `logo-banner-white.svg` | A copy of `logo.svg` and `logo-white.svg`, beside the wordmark |
 
 ## The benchmark harness
 

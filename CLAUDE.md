@@ -13,7 +13,7 @@ repeats `docs/index.md`'s opening and the quick start's install snippets
 (`docs/internals/development.md` lists what changes together); the
 reference material lives in `docs/`, which builds into a Zensical site
 (`zensical.toml` at the root, `docs/index.md` its landing page, `docs/assets/`
-the logo, favicon, benchmark chart and site CSS). The site is the primary
+the logo, README's logo banner, favicon, benchmark chart and site CSS). The site is the primary
 reading surface, so user pages may use its admonitions, tabs, cards and code
 annotations. An example given in both formats leads with `galaxy.toml`: the
 first (default) tab before `requirements.yml`, or the left column of a

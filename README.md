@@ -1,8 +1,8 @@
 <h1>
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-white.svg">
-    <img src="docs/assets/logo.svg" alt="" width="72" align="absmiddle">
-  </picture>&nbsp;go-galaxy
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-banner-white.svg">
+    <img src="docs/assets/logo-banner.svg" alt="go-galaxy" width="100%">
+  </picture>
 </h1>
 
 [![CI](https://github.com/greeddj/go-galaxy/actions/workflows/ci.yml/badge.svg)](https://github.com/greeddj/go-galaxy/actions/workflows/ci.yml)
