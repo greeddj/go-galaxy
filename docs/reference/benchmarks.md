@@ -9,13 +9,13 @@ and a warm cache.
 
     ---
 
-    **23.0x** faster: 419 s -> 18 s
+    **17.2x** faster: 459 s -> 27 s
 
 -   **Warm cache, 100 collections**
 
     ---
 
-    **294.3x** faster: 291 s -> 0.99 s
+    **275.2x** faster: 272 s -> 0.99 s
 
 </div>
 
@@ -23,18 +23,18 @@ and a warm cache.
 
 > [!NOTE]
 > Mean of 5 runs, both tools with `--no-deps`, on Linux with xfs against
-> `ansible-core` 2.21.3.
+> `ansible-core` 2.21.4.
 
 ## Results
 
 | Cache | Collections | ansible-galaxy (s) | go-galaxy (s) | Speedup |
 | :-- | --: | --: | --: | --: |
-| cold | 1 | 7.195 | 2.723 | 2.6x |
-| cold | 10 | 64.716 | 8.224 | 7.9x |
-| cold | 100 | 419.146 | 18.221 | 23.0x |
-| warm | 1 | 5.357 | 0.205 | 26.2x |
-| warm | 10 | 25.927 | 0.278 | 93.4x |
-| warm | 100 | 290.971 | 0.989 | 294.3x |
+| cold | 1 | 7.761 | 3.076 | 2.5x |
+| cold | 10 | 43.348 | 4.173 | 10.4x |
+| cold | 100 | 458.890 | 26.611 | 17.2x |
+| warm | 1 | 5.966 | 0.194 | 30.8x |
+| warm | 10 | 35.964 | 0.282 | 127.5x |
+| warm | 100 | 272.312 | 0.989 | 275.2x |
 
 The chart and this table come from one
 [go-galaxy-benchmark](#go-galaxy-benchmark) report. The chart rounds each
@@ -75,8 +75,8 @@ finds anywhere else counts as installed and the run then installs nothing.
 | Guest | libvirt, Oracle Linux Server 10.1, kernel `6.12.0-203.76.7.5.el10uek.x86_64` |
 | CPU and memory | 4 vCPU, 8 GB |
 | Storage | SSD RAID6 passed through as a block device, formatted xfs |
-| Tools | `ansible-galaxy [core 2.21.3]`, go-galaxy `v1.1.0-pre` built with go1.27.0 from the source of commit `9e3b117` |
-| Commit in the sample output | `2d12b2c`, the same source before a rebase that changed only CI workflow files |
+| Tools | `ansible-galaxy [core 2.21.4]`, go-galaxy `v1.2.3-78-g7cf1db4-dirty` built with go1.27.1 from the source of commit `7cf1db4` |
+| `-dirty` in the version | The harness's `ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=false`, not yet committed; it landed next as `a5c0093`, which changes no go-galaxy source |
 | The 66,000 objects | An earlier `testing/bench.sh` run, commit `826c765`, go1.26.7 |
 
 </details>
@@ -86,7 +86,7 @@ finds anywhere else counts as installed and the run then installs nothing.
 | Rows | Bound by | On the test host |
 | :-- | :-- | :-- |
 | warm | Storage metadata work | 100 collections add over 66,000 files, symlinks and directories |
-| cold | The network and Galaxy that day | 10 collections: `ansible-galaxy` runs spanned 36.7 s to 143.7 s |
+| cold | The network and Galaxy that day | 100 collections: `ansible-galaxy` runs spanned 386.0 s to 617.4 s |
 
 > [!TIP]
 > Keep the cache and install directory on one filesystem, or files are copied,
@@ -160,35 +160,35 @@ offline.
 <summary>Sample output</summary>
 
 ```console
-✔ ansible-galaxy cold size 1: mean 7.195s over 5 runs
-✔ go-galaxy cold size 1: mean 2.723s over 5 runs
+✔ ansible-galaxy cold size 1: mean 7.761s over 5 runs
+✔ go-galaxy cold size 1: mean 3.076s over 5 runs
 ...
 ✔ go-galaxy warm size 100: mean 0.989s over 5 runs
 ✔ report written to /var/tmp/gg-bench/report.json
-ansible-galaxy  ansible-galaxy [core 2.21.3]
-go-galaxy       v1.1.0-pre (commit 2d12b2c, built by just @ 2026-08-22T16:32:56Z) // go1.27.0
+ansible-galaxy  ansible-galaxy [core 2.21.4]
+go-galaxy       v1.2.3-78-g7cf1db4-dirty (commit 7cf1db4, built by just @ 2026-09-27T16:07:23Z) // go1.27.1
 host            linux/amd64, 4 cpus, xfs
 measurement     5 runs, --no-deps
 
 SCENARIO  SIZE  TOOL            MEAN      MIN       MAX       FAILED
-cold      1     ansible-galaxy  7.195s    6.958s    7.603s    0
-cold      1     go-galaxy       2.723s    2.494s    2.881s    0
-cold      1     speedup         2.6x
-cold      10    ansible-galaxy  64.716s   36.671s   143.697s  0
-cold      10    go-galaxy       8.224s    5.320s    11.655s   0
-cold      10    speedup         7.9x
-cold      100   ansible-galaxy  419.146s  378.640s  456.976s  0
-cold      100   go-galaxy       18.221s   16.459s   20.906s   0
-cold      100   speedup         23.0x
-warm      1     ansible-galaxy  5.357s    5.146s    5.857s    0
-warm      1     go-galaxy       0.205s    0.191s    0.236s    0
-warm      1     speedup         26.2x
-warm      10    ansible-galaxy  25.927s   22.945s   28.109s   0
-warm      10    go-galaxy       0.278s    0.258s    0.320s    0
-warm      10    speedup         93.4x
-warm      100   ansible-galaxy  290.971s  232.861s  452.386s  0
-warm      100   go-galaxy       0.989s    0.914s    1.131s    0
-warm      100   speedup         294.3x
+cold      1     ansible-galaxy  7.761s    7.462s    8.100s    0
+cold      1     go-galaxy       3.076s    2.718s    3.794s    0
+cold      1     speedup         2.5x
+cold      10    ansible-galaxy  43.348s   39.939s   50.557s   0
+cold      10    go-galaxy       4.173s    3.535s    5.274s    0
+cold      10    speedup         10.4x
+cold      100   ansible-galaxy  458.890s  386.008s  617.438s  0
+cold      100   go-galaxy       26.611s   22.183s   37.924s   0
+cold      100   speedup         17.2x
+warm      1     ansible-galaxy  5.966s    5.228s    6.974s    0
+warm      1     go-galaxy       0.194s    0.192s    0.199s    0
+warm      1     speedup         30.8x
+warm      10    ansible-galaxy  35.964s   23.499s   49.323s   0
+warm      10    go-galaxy       0.282s    0.266s    0.294s    0
+warm      10    speedup         127.5x
+warm      100   ansible-galaxy  272.312s  240.008s  359.534s  0
+warm      100   go-galaxy       0.989s    0.918s    1.060s    0
+warm      100   speedup         275.2x
 ```
 
 </details>

@@ -12,43 +12,43 @@
     .a, .d { font-size: 10.5px; }
   </style>
   <text class="t" x="4" y="24">go-galaxy vs ansible-galaxy - install speedup</text>
-  <text class="s" x="4" y="43">ansible-galaxy 2.21.3 / go-galaxy v1.1.0-pre · linux/amd64 · xfs · 5 runs</text>
+  <text class="s" x="4" y="43">ansible-galaxy 2.21.4 / go-galaxy v1.2.3-78-g7cf1db4-dirty · linux/amd64 · xfs · 5 runs</text>
 
   <line class="g" x1="160" y1="88" x2="160" y2="346"/>
-  <line class="g" x1="318" y1="88" x2="318" y2="346"/>
-  <line class="g" x1="477" y1="88" x2="477" y2="346"/>
+  <line class="g" x1="320" y1="88" x2="320" y2="346"/>
+  <line class="g" x1="481" y1="88" x2="481" y2="346"/>
   <text class="a" x="160" y="362" text-anchor="middle">1×</text>
-  <text class="a" x="318" y="362" text-anchor="middle">10×</text>
-  <text class="a" x="477" y="362" text-anchor="middle">100×</text>
+  <text class="a" x="320" y="362" text-anchor="middle">10×</text>
+  <text class="a" x="481" y="362" text-anchor="middle">100×</text>
   <text class="a" x="696" y="362" text-anchor="end">logarithmic scale</text>
 
   <rect x="4" y="70" width="10" height="10" rx="3" fill="#4493f8"/>
   <text class="p" x="20" y="79">Cold cache</text>
-  <rect x="160" y="95" width="66.83" height="14" rx="7" fill="#4493f8"/>
+  <rect x="160" y="95" width="64.42" height="14" rx="7" fill="#4493f8"/>
   <text class="l" x="148" y="100" text-anchor="end">1 collection</text>
-  <text class="d" x="148" y="115" text-anchor="end">7.195s → 2.723s</text>
-  <text class="v" x="576" y="106">2.64×</text>
-  <rect x="160" y="137" width="141.9" height="14" rx="7" fill="#4493f8"/>
+  <text class="d" x="148" y="115" text-anchor="end">7.761s → 3.076s</text>
+  <text class="v" x="576" y="106">2.52×</text>
+  <rect x="160" y="137" width="162.91" height="14" rx="7" fill="#4493f8"/>
   <text class="l" x="148" y="142" text-anchor="end">10 collections</text>
-  <text class="d" x="148" y="157" text-anchor="end">64.716s → 8.224s</text>
-  <text class="v" x="576" y="148">7.87×</text>
-  <rect x="160" y="179" width="215.67" height="14" rx="7" fill="#4493f8"/>
+  <text class="d" x="148" y="157" text-anchor="end">43.348s → 4.173s</text>
+  <text class="v" x="576" y="148">10.39×</text>
+  <rect x="160" y="179" width="198.19" height="14" rx="7" fill="#4493f8"/>
   <text class="l" x="148" y="184" text-anchor="end">100 collections</text>
-  <text class="d" x="148" y="199" text-anchor="end">419.146s → 18.221s</text>
-  <text class="v" x="576" y="190">23×</text>
+  <text class="d" x="148" y="199" text-anchor="end">458.890s → 26.611s</text>
+  <text class="v" x="576" y="190">17.24×</text>
 
   <rect x="4" y="216" width="10" height="10" rx="3" fill="#3fb950"/>
   <text class="p" x="20" y="225">Warm cache</text>
-  <rect x="160" y="241" width="224.58" height="14" rx="7" fill="#3fb950"/>
+  <rect x="160" y="241" width="238.46" height="14" rx="7" fill="#3fb950"/>
   <text class="l" x="148" y="246" text-anchor="end">1 collection</text>
-  <text class="d" x="148" y="261" text-anchor="end">5.357s → 0.205s</text>
-  <text class="v" x="576" y="252">26.18×</text>
-  <rect x="160" y="283" width="312.05" height="14" rx="7" fill="#3fb950"/>
+  <text class="d" x="148" y="261" text-anchor="end">5.966s → 0.194s</text>
+  <text class="v" x="576" y="252">30.75×</text>
+  <rect x="160" y="283" width="337.46" height="14" rx="7" fill="#3fb950"/>
   <text class="l" x="148" y="288" text-anchor="end">10 collections</text>
-  <text class="d" x="148" y="303" text-anchor="end">25.927s → 0.278s</text>
-  <text class="v" x="576" y="294">93.4×</text>
+  <text class="d" x="148" y="303" text-anchor="end">35.964s → 0.282s</text>
+  <text class="v" x="576" y="294">127.53×</text>
   <rect x="160" y="325" width="391" height="14" rx="7" fill="#3fb950"/>
   <text class="l" x="148" y="330" text-anchor="end">100 collections</text>
-  <text class="d" x="148" y="345" text-anchor="end">290.971s → 0.989s</text>
-  <text class="v" x="576" y="336">294.33×</text>
+  <text class="d" x="148" y="345" text-anchor="end">272.312s → 0.989s</text>
+  <text class="v" x="576" y="336">275.23×</text>
 </svg>
