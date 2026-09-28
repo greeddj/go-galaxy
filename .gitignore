@@ -37,7 +37,6 @@ go.work.sum
 /testing/*
 !/testing/docker-compose.yaml
 !/testing/requirements-*.yml
-!/testing/bench.sh
 
 
 # IDEs and editors

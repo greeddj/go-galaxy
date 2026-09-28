@@ -4,9 +4,8 @@ Everything here runs from a checkout with Go, `git` and
 [just](https://github.com/casey/just). `just lint` also needs golangci-lint at
 the pinned release, and `just docs` and `just docs_build` need
 [uv](https://docs.astral.sh/uv/), whose `uvx` fetches Zensical. The test suite
-needs no network, container runtime or Python. Both benchmark harnesses need
-Python, and `testing/bench.sh` also needs `hyperfine` and, for its S3
-scenarios, a container runtime.
+needs no network, container runtime or Python. The benchmark harness needs
+Python, for `ansible-galaxy`.
 
 ## Recipes
 
@@ -209,7 +208,7 @@ packet-bearing fixture needs a `gatedFixtures` row and restated
   `just docs_build` fails on a dead link or anchor. No workflow runs it, so
   run it after a change under `docs/`.
 - Anchors slug the way GitHub slugs them (`toc.slugify`), so
-  `benchmarks.md#testingbenchsh` resolves on both. Rewording a heading
+  `requirements.md#galaxytoml` resolves on both. Rewording a heading
   changes its anchor: update every link to it. The strict build catches those
   under `docs/`; grep `README.md`, `CONTRIBUTING.md`, `.goreleaser.yml` and Go
   comments for the rest.
@@ -250,40 +249,10 @@ Change both sides in one commit:
 
 ## The benchmark harness
 
-Setup and a first run of either harness are on
+`cmd/go-galaxy-benchmark` compares `ansible-galaxy` and go-galaxy on
+collections in `cold` and `warm`: `run` measures and writes `report.json`,
+`show` re-renders it as a table or SVG. Setup, flags and a sample run are on
 [Reproduce](../reference/benchmarks.md#reproduce).
-
-### testing/bench.sh
-
-It times `ansible-galaxy` against `go-galaxy` over
-`testing/requirements-{1,10,100}.yml` and `requirements-roles.yml`, every
-command with `--no-deps`, so it compares fetch plus extract. `frozen` and the
-`s3-*` scenarios time go-galaxy alone, since ansible-galaxy has no lockfile or
-S3 cache to match.
-
-Caches live under `$TMPDIR`: not in `$HOME`, so a wipe spares yours, nor in the
-repository, where extracted Go files would reach a linter.
-
-| Knob | Default |
-| --- | --- |
-| `RUNS`, `WARMUP` | `5`, `1` |
-| `SIZES` | `1 10 100` |
-| `SCENARIOS` | `cold warm frozen s3-cold s3-warm s3-frozen roles-cold roles-warm` |
-| `S3_ENDPOINT` | `http://127.0.0.1:9000` |
-| `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` | `go-galaxy-bench`, `local-user`, `local-password` |
-
-| Output in `dist/bench/` | Holds |
-| --- | --- |
-| `<scenario>-<N>.md` | one collection scenario at one size |
-| `roles-cold.md`, `roles-warm.md` | the role scenarios |
-| `resources-<N>.md` | peak RSS and bytes downloaded, from a separate single-run pass |
-| `summary.md` | everything above, with tool versions and host |
-
-### go-galaxy-benchmark
-
-`cmd/go-galaxy-benchmark` narrows the comparison to collections in `cold` and
-`warm`: `run` measures and writes `report.json`, `show` re-renders it as a
-table or SVG. Flags and a sample run: [Benchmarks](../reference/benchmarks.md#go-galaxy-benchmark).
 
 - It passes the caller's environment through and overrides only each tool's
   cache, temporary and install paths.

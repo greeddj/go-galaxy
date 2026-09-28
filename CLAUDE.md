@@ -79,7 +79,7 @@ Single test: `go test ./internal/galaxy/archive/ -run 'TestName'` (standard Go; 
 
 CI (`.github/workflows/ci.yml`) runs the same checks plus `go test -v -race -coverprofile=...`, so run tests with `-race` before considering concurrency work done.
 
-Benchmarks: `testing/bench.sh` (needs `hyperfine`, a `.venv` with ansible-core, and `docker compose -f testing/docker-compose.yaml up -d minio-svc` for the s3-* scenarios). See `docs/reference/benchmarks.md`.
+Benchmarks: `dist/go-galaxy-benchmark run` (built by `just build`; needs a `.venv` with ansible-core). See `docs/reference/benchmarks.md`.
 
 ## Things that fail the build in non-obvious ways
 

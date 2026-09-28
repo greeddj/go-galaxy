@@ -13,9 +13,8 @@ services:
     environment:
       MINIO_ROOT_USER: local-user
       MINIO_ROOT_PASSWORD: local-password
-    # Published so a go-galaxy running on the host - testing/bench.sh, or an
-    # ad-hoc --s3-endpoint run - reaches the same MinIO the containerized
-    # services below reach at minio-svc:9000.
+    # Published so a go-galaxy running on the host with --s3-endpoint reaches
+    # the same MinIO the containerized services below reach at minio-svc:9000.
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"

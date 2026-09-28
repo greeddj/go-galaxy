@@ -37,7 +37,7 @@ and a warm cache.
 | warm | 100 | 272.312 | 0.989 | 275.2x |
 
 The chart and this table come from one
-[go-galaxy-benchmark](#go-galaxy-benchmark) report. The chart rounds each
+[go-galaxy-benchmark](#reproduce) report. The chart rounds each
 ratio to two decimals, and the table rounds it to one.
 
 ### What each tool caches
@@ -77,7 +77,7 @@ finds anywhere else counts as installed and the run then installs nothing.
 | Storage | SSD RAID6 passed through as a block device, formatted xfs |
 | Tools | `ansible-galaxy [core 2.21.4]`, go-galaxy `v1.2.3-78-g7cf1db4-dirty` built with go1.27.1 from the source of commit `7cf1db4` |
 | `-dirty` in the version | The harness's `ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=false`, not yet committed; it landed next as `a5c0093`, which changes no go-galaxy source |
-| The 66,000 objects | An earlier `testing/bench.sh` run, commit `826c765`, go1.26.7 |
+| The 66,000 objects | An earlier run, commit `826c765`, go1.26.7 |
 
 </details>
 
@@ -95,12 +95,7 @@ finds anywhere else counts as installed and the run then installs nothing.
 
 ## Reproduce
 
-| Harness | Needs | Measures |
-| :-- | :-- | :-- |
-| [go-galaxy-benchmark](#go-galaxy-benchmark) | The two binaries | Collections, `cold` and `warm` |
-| [`testing/bench.sh`](#testingbenchsh) | `hyperfine`, `python3`, MinIO for S3 | Also roles, peak RSS and bytes downloaded, plus go-galaxy alone under `--frozen --offline` and on S3 |
-
-Both run from a checkout:
+`cmd/go-galaxy-benchmark` runs from a checkout:
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install ansible-core
@@ -108,14 +103,12 @@ go build -o dist/ ./cmd/go-galaxy ./cmd/go-galaxy-benchmark
 ```
 
 > [!WARNING]
-> Both harnesses pass your environment through to the tools they time, so
-> unset `GO_GALAXY_*` and `ANSIBLE_*` variables first. An exported
+> go-galaxy-benchmark passes your environment through to the tools it times,
+> so unset `GO_GALAXY_*` and `ANSIBLE_*` variables first. An exported
 > `GO_GALAXY_S3_BUCKET`, for example, turns the go-galaxy runs into S3 runs.
 
 > [!TIP]
 > Keep `--work-dir` and `$TMPDIR` on real disk: a `tmpfs` measures RAM.
-
-### go-galaxy-benchmark
 
 ```bash
 dist/go-galaxy-benchmark run --ansible-galaxy .venv/bin/ansible-galaxy \
@@ -192,21 +185,3 @@ warm      100   speedup         275.2x
 ```
 
 </details>
-
-### testing/bench.sh
-
-```bash
-docker compose -f testing/docker-compose.yaml up -d minio-svc # (1)!
-testing/bench.sh # (2)!
-SIZES=10 SCENARIOS="cold warm" testing/bench.sh # (3)!
-```
-
-1.  Only for the S3 scenarios. Without MinIO they are skipped with a warning.
-2.  Every size and scenario: about three hours.
-3.  Or one size, two scenarios. The internals section
-    [The benchmark harness](../internals/development.md#the-benchmark-harness)
-    lists every knob and output file.
-
-Role figures are not published. `SCENARIOS="roles-cold roles-warm"
-testing/bench.sh` measures them. `ansible-galaxy` keeps no role cache, so its
-warm role runs download every role again.
