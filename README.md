@@ -58,6 +58,7 @@ before you switch.
 | Go | `go install github.com/greeddj/go-galaxy/cmd/go-galaxy@latest` |
 | Release binary | Download, check and install it as below |
 | Container | `ghcr.io/greeddj/go-galaxy`, run in your project through the alias below. `:<version>-alpine` adds a shell for a CI job image |
+| Your image | `COPY --from=ghcr.io/greeddj/go-galaxy:<version> /go-galaxy /usr/local/bin/go-galaxy` in its Dockerfile ([Install](docs/get-started/getting-started.md#install)) |
 | From source | `go build -o dist/go-galaxy ./cmd/go-galaxy` in a clone |
 
 ```bash

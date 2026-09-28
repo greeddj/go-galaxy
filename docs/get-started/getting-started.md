@@ -55,6 +55,21 @@ versions, and run the same install in CI.
     | `latest` (never a prerelease), `<version>`, `<version>-distroless` | distroless, no shell | the alias above, or [baking into a CI image](../guides/ci.md#container-image-bake) |
     | `<version>-alpine` | Alpine, with a shell | a CI job that runs go-galaxy from its script, as in [GitLab CI](../guides/ci.md#gitlab-ci) |
 
+=== "Your image"
+
+    ```dockerfile
+    FROM ghcr.io/astral-sh/uv:0.12.17-python3.14-alpine
+    COPY --from=ghcr.io/greeddj/go-galaxy:1.3.0 /go-galaxy /usr/local/bin/go-galaxy
+    ```
+
+    The binary is static, so any Linux base takes it, Alpine or glibc, and
+    `COPY --from` picks the `amd64` or `arm64` build of the image you build.
+    In a `<version>-alpine` tag it is at `/usr/local/bin/go-galaxy` instead.
+    Alpine carries CA certificates; a `debian:*-slim` base needs
+    `ca-certificates` installed, or HTTPS requests fail. [Pin](../guides/ci.md#pin-one-release)
+    the tag. To bake a warm cache in as well, see
+    [Container image bake](../guides/ci.md#container-image-bake).
+
 === "GitHub Actions"
 
     ```yaml
