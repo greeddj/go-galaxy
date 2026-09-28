@@ -284,7 +284,7 @@ func TestReclaimAbandonsALockItNeverHeld(t *testing.T) {
 
 // assertReclaimOrphanCleanup runs one orphan-cleanup row end to end against a
 // real fake S3 server, driving reclaimIfExpired directly: the create-PUT Lock
-// issues first would poison the putsServed anchor and spend the row's budget.
+// issues first would be the PUT orphanRowHandler counts and spend the budget.
 func assertReclaimOrphanCleanup(t *testing.T, blockPostPutHead, wantRelease bool) {
 	t.Helper()
 	key := path.Join(locksPrefix, lockObject)
@@ -299,19 +299,7 @@ func assertReclaimOrphanCleanup(t *testing.T, blockPostPutHead, wantRelease bool
 	opCtx, cancel := context.WithTimeout(context.Background(), budget)
 	t.Cleanup(cancel)
 
-	var putsServed atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The ownership check that follows the swap PUT is held until the
-		// caller's budget is gone, so the failure row fails on that budget
-		// every time instead of racing a loopback round trip it would win.
-		if blockPostPutHead && r.Method == http.MethodHead && r.URL.Path == lockPath && putsServed.Load() > 0 {
-			<-opCtx.Done()
-		}
-		fake.ServeHTTP(w, r)
-		if r.Method == http.MethodPut && r.URL.Path == lockPath {
-			putsServed.Add(1)
-		}
-	}))
+	srv := httptest.NewServer(orphanRowHandler(fake, lockPath, blockPostPutHead))
 	t.Cleanup(srv.Close)
 
 	b := newLockBackendAt(t, srv.URL, orphanRowClient(srv, blockPostPutHead), testLockTiming(time.Minute))
@@ -319,7 +307,7 @@ func assertReclaimOrphanCleanup(t *testing.T, blockPostPutHead, wantRelease bool
 		t.Fatalf("Open: %v", err)
 	}
 	// Seeded straight into the fake rather than over HTTP, so the reclaim's own
-	// swap PUT is the first one this key ever sees and the anchor above counts
+	// swap PUT is the first one this key ever sees and orphanRowHandler counts
 	// only it.
 	fake.storeLockObject(key, foreignToken, time.Now().UTC().Add(-time.Hour))
 

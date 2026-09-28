@@ -34,6 +34,39 @@ func orphanRowClient(srv *httptest.Server, blockPostPutHead bool) *http.Client {
 	return &client
 }
 
+// orphanHoldLimit caps holdUnanswered, so a client that stops honoring its
+// budget fails the row instead of hanging srv.Close on the held request.
+const orphanHoldLimit = 10 * time.Second
+
+// orphanRowHandler serves fake, but with blockPostPutHead it holds the first
+// HEAD of lockPath after a PUT there, the ownership check, until the client
+// abandons it, and answers it with nothing.
+func orphanRowHandler(fake *fakeS3, lockPath string, blockPostPutHead bool) http.Handler {
+	var putsServed atomic.Int32
+	var held atomic.Bool
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if blockPostPutHead && r.Method == http.MethodHead && r.URL.Path == lockPath &&
+			putsServed.Load() > 0 && held.CompareAndSwap(false, true) {
+			holdUnanswered(r)
+			return
+		}
+		fake.ServeHTTP(w, r)
+		if r.Method == http.MethodPut && r.URL.Path == lockPath {
+			putsServed.Add(1)
+		}
+	})
+}
+
+// holdUnanswered waits for the client to abandon r. A reply sent as the budget
+// fires can beat the client's cancellation and pass the ownership check, so
+// the failure row would hold the lock after all.
+func holdUnanswered(r *http.Request) {
+	select {
+	case <-r.Context().Done():
+	case <-time.After(orphanHoldLimit):
+	}
+}
+
 // TestFreshCreateAbandonsALockItNeverHeld pins that an acquisition failing
 // after its create-if-absent PUT landed deletes that object rather than leaving
 // an orphan; the control row shows the same fixture does grant the lock.
@@ -73,23 +106,11 @@ func assertFreshCreateOrphanCleanup(t *testing.T, blockPostPutHead, wantRelease 
 	opCtx, cancel := context.WithTimeout(context.Background(), budget)
 	t.Cleanup(cancel)
 
-	var putsServed atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The ownership check that follows the create PUT is held until the
-		// caller's budget is gone, so the failure row fails on that budget every
-		// time instead of racing a loopback round trip it would win.
-		if blockPostPutHead && r.Method == http.MethodHead && r.URL.Path == lockPath && putsServed.Load() > 0 {
-			<-opCtx.Done()
-		}
-		fake.ServeHTTP(w, r)
-		if r.Method == http.MethodPut && r.URL.Path == lockPath {
-			putsServed.Add(1)
-		}
-	}))
+	srv := httptest.NewServer(orphanRowHandler(fake, lockPath, blockPostPutHead))
 	t.Cleanup(srv.Close)
 
 	b := newLockBackendAt(t, srv.URL, orphanRowClient(srv, blockPostPutHead), testLockTiming(time.Minute))
-	// Open writes only its probe key, so putsServed counts the create below
+	// Open writes only its probe key, so orphanRowHandler counts the create below
 	// alone: it is the first PUT the lock key sees.
 	if err := b.Open(context.Background()); err != nil {
 		t.Fatalf("Open: %v", err)
