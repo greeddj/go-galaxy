@@ -116,7 +116,7 @@ func parseRoleString(value string) (roleSpec, error) {
 	}
 	if strings.Count(value, ",") > roleSpecMaxCommas {
 		return roleSpec{}, fmt.Errorf("%w: %q has more than %d commas; the format is src[,version[,name]]",
-			helpers.ErrInvalidRoleEntry, valueForMessage(value), roleSpecMaxCommas)
+			helpers.ErrInvalidRoleEntry, helpers.ValueForMessage(value), roleSpecMaxCommas)
 	}
 	parts := strings.Split(value, ",")
 	spec := roleSpec{src: strings.TrimSpace(parts[roleSpecSrc])}
@@ -182,7 +182,7 @@ func roleMapSpec(value map[string]any) (roleSpec, error) {
 	if role := stringField(value, "role"); role != "" {
 		if strings.Contains(role, ",") {
 			return roleSpec{}, fmt.Errorf("%w: an old-style role: %q carries a comma",
-				helpers.ErrInvalidRoleEntry, valueForMessage(role))
+				helpers.ErrInvalidRoleEntry, helpers.ValueForMessage(role))
 		}
 		spec.name = role
 		if spec.src == "" {
@@ -223,7 +223,7 @@ func splitScmPrefix(src string) (string, string) {
 // and the install name it ends up with.
 func finishRole(spec roleSpec) (RoleRequirement, error) {
 	if spec.scm != "" && spec.scm != TypeGit {
-		return RoleRequirement{}, fmt.Errorf("%w %q (only git is supported)", helpers.ErrUnsupportedRoleScm, valueForMessage(spec.scm))
+		return RoleRequirement{}, fmt.Errorf("%w %q (only git is supported)", helpers.ErrUnsupportedRoleScm, helpers.ValueForMessage(spec.scm))
 	}
 	if spec.version == "*" {
 		spec.version = ""
@@ -233,7 +233,7 @@ func finishRole(spec roleSpec) (RoleRequirement, error) {
 		return RoleRequirement{}, err
 	}
 	if !helpers.IsRoleInstallName(req.Name) {
-		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleInstallName, valueForMessage(req.Name))
+		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleInstallName, helpers.ValueForMessage(req.Name))
 	}
 	return req, nil
 }
@@ -247,9 +247,9 @@ func classifyRole(spec roleSpec) (RoleRequirement, error) {
 		return gitRole(spec)
 	case isURLRoleSource(spec.src):
 		return urlRole(spec)
-	case looksLikeSourceName(spec.src) || strings.HasSuffix(strings.ToLower(spec.src), ".tar.gz"):
+	case helpers.LooksLikeSourceName(spec.src) || strings.HasSuffix(strings.ToLower(spec.src), ".tar.gz"):
 		return RoleRequirement{}, fmt.Errorf("%w %q (only Galaxy roles, git and url sources are supported)",
-			helpers.ErrUnsupportedRoleSource, valueForMessage(spec.src))
+			helpers.ErrUnsupportedRoleSource, helpers.ValueForMessage(spec.src))
 	default:
 		return galaxyRole(spec)
 	}
@@ -271,7 +271,7 @@ func urlRole(spec roleSpec) (RoleRequirement, error) {
 		return RoleRequirement{}, err
 	}
 	if spec.version != "" && !helpers.IsRoleVersion(spec.version) {
-		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleVersion, valueForMessage(spec.version))
+		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleVersion, helpers.ValueForMessage(spec.version))
 	}
 	name := spec.name
 	if name == "" {
@@ -325,10 +325,10 @@ func gitRole(spec roleSpec) (RoleRequirement, error) {
 func galaxyRole(spec roleSpec) (RoleRequirement, error) {
 	if !helpers.IsRoleName(spec.src) {
 		return RoleRequirement{}, fmt.Errorf("%w: %q is not owner.role with each half matching ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
-			helpers.ErrInvalidRoleName, valueForMessage(spec.src))
+			helpers.ErrInvalidRoleName, helpers.ValueForMessage(spec.src))
 	}
 	if spec.version != "" && !helpers.IsRoleVersion(spec.version) {
-		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleVersion, valueForMessage(spec.version))
+		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleVersion, helpers.ValueForMessage(spec.version))
 	}
 	name := spec.name
 	if name == "" {
@@ -394,7 +394,7 @@ func ParseRoleDependency(dep gitsource.RoleDependency) (RoleRequirement, Depende
 // before source classification: a no-dot name is local, a name with two or
 // more dots is a collection's role.
 func dependencySkip(spec roleSpec) DependencySkip {
-	if spec.scm != "" || gitsource.IsPointer(spec.src) || looksLikeSourceName(spec.src) {
+	if spec.scm != "" || gitsource.IsPointer(spec.src) || helpers.LooksLikeSourceName(spec.src) {
 		return DependencyInstalled
 	}
 	switch strings.Count(spec.src, ".") {

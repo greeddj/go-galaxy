@@ -1,6 +1,10 @@
 package helpers
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 // TestWithoutQuery pins the cut and that a URL carrying no query is left alone,
 // which matters as much because the function runs over values this tool did
@@ -236,6 +240,69 @@ func TestURLForMessageCutsEveryUserinfo(t *testing.T) {
 				t.Errorf("URLForMessage(%q) = %q, want %q", tc.raw, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestValueForMessage pins that a value spelled as a URL or path loses the
+// userinfo of every URL it holds, and that any other value, "@1.0" included,
+// is quoted as written and bounded.
+func TestValueForMessage(t *testing.T) {
+	t.Parallel()
+
+	secret := "u:" + "p4ss@"
+	long := strings.Repeat("1", MessageValueMaxLen+1)
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"URL", "https://u:" + "s3cret@h.example/x", "https://h.example/x"},
+		{"git pointer", "git+https://" + secret + "h.example/r.git", "git+https://h.example/r.git"},
+		{"a second URL after a comma", "git+https://h.example/r.git,https://" + secret + "h.example/x",
+			"git+https://h.example/r.git,https://h.example/x"},
+		{"a URL after a prefix", "x/https://" + secret + "h.example/y", "x/https://h.example/y"},
+		{"two URLs, both with userinfo", "https://" + secret + "a.example/x,ssh://" + secret + "b.example/y",
+			"https://a.example/x,ssh://b.example/y"},
+		{"at sign before a version", "@1.0", "@1.0"},
+		{"name at a version", "community.general@8.0.0", "community.general@8.0.0"},
+		{"constraint", ">= 1.0", ">= 1.0"},
+		{"refused constraint", ">>= 1.0", ">>= 1.0"},
+		{"over the cap", long, long[:MessageValueMaxLen] + fmt.Sprintf("... (%d bytes)", len(long))},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := ValueForMessage(tc.raw); got != tc.want {
+				t.Errorf("ValueForMessage(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLooksLikeSourceName pins each shape the predicate reads as a URL, a git
+// pointer or a path, and the names, constraints and versions it leaves alone.
+func TestLooksLikeSourceName(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]bool{
+		"HTTPS://h.example/x":   true,
+		"git+h.example:o/r.git": true,
+		"git@h.example:o/r.git": true,
+		"./roles/web":           true,
+		"../roles/web":          true,
+		"/srv/roles/web":        true,
+		"~/roles/web":           true,
+		"ns.name":               false,
+		">=1.0":                 false,
+		"1.10":                  false,
+		"":                      false,
+	}
+	for in, want := range cases {
+		if got := LooksLikeSourceName(in); got != want {
+			t.Errorf("LooksLikeSourceName(%q) = %v, want %v", in, got, want)
+		}
 	}
 }
 

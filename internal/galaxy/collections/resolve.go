@@ -503,7 +503,8 @@ func exactVersionFromConstraints(constraints []string) (string, bool, error) {
 		}
 		if _, err := semver.NewVersion(candidate); err != nil {
 			if _, cErr := semver.NewConstraint(normalized); cErr != nil {
-				return "", false, fmt.Errorf("invalid version constraint %q: %w", raw, cErr)
+				//nolint:err113 // semver's error repeats the raw value, userinfo included, so it is dropped rather than wrapped
+				return "", false, fmt.Errorf("invalid version constraint %q", helpers.ValueForMessage(raw))
 			}
 			// A valid range/wildcard constraint (e.g. ">=1.0.0" or "1.x") is
 			// non-exact by definition; it contributes no pin.
@@ -1089,7 +1090,8 @@ func constraintSatisfied(version, constraint string) (bool, error) {
 	}
 	c, err := semver.NewConstraint(normalized)
 	if err != nil {
-		return false, fmt.Errorf("invalid constraint %q: %w", normalized, err)
+		//nolint:err113 // semver's error repeats the raw value, userinfo included, so it is dropped rather than wrapped
+		return false, fmt.Errorf("invalid constraint %q", helpers.ValueForMessage(normalized))
 	}
 	return c.Check(v), nil
 }

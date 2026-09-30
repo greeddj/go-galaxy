@@ -223,3 +223,21 @@ func TestInvalidRootConstraintNamesTheRoot(t *testing.T) {
 		t.Fatalf("Solve error = %q, want it to name the parent %q", err, testPkgFoo)
 	}
 }
+
+// TestDependencyConstraintRefusalNamesItOnce pins that a dependency constraint
+// the solver refuses is named by newVerSet's refusal alone, once, with the
+// userinfo of a URL cut.
+func TestDependencyConstraintRefusalNamesItOnce(t *testing.T) {
+	t.Parallel()
+	p := newFakeProvider().withVersions(testPkgFoo, testVersion100).withVersions("bar", testVersion100).
+		withDeps(testPkgFoo, testVersion100, map[string]string{"bar": "https://u:" + "s3cret@h.example/x"})
+	_, err := Solve(t.Context(), []Requirement{{Package: testPkgFoo, Constraint: testVersion100}}, p)
+	if err == nil {
+		t.Fatal("Solve accepted a URL as a dependency constraint")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "invalid dependency constraint for") || strings.Count(msg, "h.example/x") != 1 ||
+		strings.Contains(msg, "s3cret") {
+		t.Fatalf("Solve error = %q, want the constraint named once without its userinfo", msg)
+	}
+}

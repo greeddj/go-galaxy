@@ -281,7 +281,8 @@ func canonicalizeDependencies(fqdn string, raw map[string]string) (map[string]so
 		normalized := helpers.NormalizeConstraint(rawConstraint)
 		if normalized != "" {
 			if _, err := semver.NewConstraint(normalized); err != nil {
-				return nil, fmt.Errorf("invalid dependency constraint %q for %s -> %s: %w", rawConstraint, fqdn, dep, err)
+				//nolint:err113 // semver's error repeats the raw value, userinfo included, so it is dropped rather than wrapped
+				return nil, fmt.Errorf("invalid dependency constraint %q for %s -> %s", helpers.ValueForMessage(rawConstraint), fqdn, dep)
 			}
 		}
 		out[dep] = normalized

@@ -56,7 +56,7 @@ and [What is refused](../guides/requirements.md#what-is-refused).
 
 - No load refusal prints an entry or a list whole: it names the index
   (`collections[N]`, `roles[N]`), the key and, for a list or a mapping, the Go
-  type. A value it quotes goes through `requirements.valueForMessage`, which
+  type. A value it quotes goes through `helpers.ValueForMessage`, which
   cuts one that looks like a URL or path as `helpers.URLForMessage` does and
   bounds any other, and `gitsource.ParseRef` refuses a URL typed as a ref
   without naming it.
@@ -419,6 +419,7 @@ blocks at line-start opening lines, one packet ceiling per file.
 | :-- | :-- | :-- |
 | Text of external origin | C0 and C1 controls but `\n` and `\t`, DEL, U+2028, U+2029 and invalid UTF-8 become U+FFFD | `safeout.Clean` |
 | A refused URL | query, fragment and the userinfo after every `://` cut by string scan, so a second URL after a comma or a prefix loses its own too, then truncated | `helpers.URLForMessage` |
+| A version constraint the resolve refuses, from requirements.yml or a server's metadata | named once, cut as a refused URL when it looks like a URL or path, else bounded as written; semver's own message, which repeats it, is left out | `helpers.ValueForMessage` |
 | A URL rendered or persisted, not fetched | query and userinfo cut | `helpers.WithoutCredentials` |
 | A persisted signature source | query cut only | `helpers.WithoutQuery` |
 | A failed request | re-rendered over the cut URL the caller asked for | `helpers.CutTransportURL` |

@@ -104,7 +104,7 @@ func splitCollectionSpec(spec string) (any, error) {
 	}
 	if rest[0] != ' ' && rest[0] != '\t' && !strings.ContainsRune(collectionSpecOperators, rune(rest[0])) {
 		return nil, fmt.Errorf("%w: %q: put a space or a version operator between the name and its constraint",
-			helpers.ErrInvalidCollectionName, valueForMessage(spec))
+			helpers.ErrInvalidCollectionName, helpers.ValueForMessage(spec))
 	}
 	constraint := strings.TrimSpace(rest)
 	if err := checkConstraint(name, constraint); err != nil {
@@ -117,7 +117,7 @@ func splitCollectionSpec(spec string) (any, error) {
 // a git pointer, an http(s) URL and a path-shaped value, each judged whole
 // by parseCollectionStringItem in that same order.
 func passesWhole(trimmed string) bool {
-	return trimmed == "" || gitsource.IsPointer(trimmed) || urlsource.IsHTTPURL(trimmed) || looksLikeSourceName(trimmed)
+	return trimmed == "" || gitsource.IsPointer(trimmed) || urlsource.IsHTTPURL(trimmed) || helpers.LooksLikeSourceName(trimmed)
 }
 
 // nameRunLength is the length of the longest prefix of [A-Za-z0-9_.]. Upper
@@ -146,7 +146,7 @@ func checkConstraint(name, constraint string) error {
 	}
 	if _, err := semver.NewConstraint(normalized); err != nil {
 		return fmt.Errorf("%w: %q for %s", helpers.ErrInvalidCollectionConstraint,
-			valueForMessage(constraint), valueForMessage(name))
+			helpers.ValueForMessage(constraint), helpers.ValueForMessage(name))
 	}
 	return nil
 }
@@ -191,7 +191,7 @@ func isGalaxyTable(table map[string]any) bool {
 	}
 	name, _ := table["name"].(string)
 	source, _ := table["source"].(string)
-	return !looksLikeSourceName(name) && !gitsource.IsPointer(source) &&
+	return !helpers.LooksLikeSourceName(name) && !gitsource.IsPointer(source) &&
 		!gitsource.IsLocator(source) && !urlsource.IsLocator(source)
 }
 

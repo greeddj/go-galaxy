@@ -2,6 +2,7 @@ package solver
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Masterminds/semver/v3"
@@ -178,5 +179,26 @@ func TestSingletonVerSetRoundtrip(t *testing.T) {
 	}
 	if !s.contains(mustV(t, "1.2.3")) || s.contains(mustV(t, "1.2.4")) || s.contains(mustV(t, "1.2.3-rc.1")) {
 		t.Fatalf("singletonVerSet(1.2.3+build) membership is not the single precedence point")
+	}
+}
+
+// TestNewVerSetRefusalNamesTheCutValue pins that a constraint semver refuses is
+// named once, a URL without its userinfo, and that semver's own message, which
+// repeats the input whole, is left out.
+func TestNewVerSetRefusalNamesTheCutValue(t *testing.T) {
+	t.Parallel()
+	_, err := newVerSet("https://u:s3cret@h.example/x")
+	if err == nil {
+		t.Fatal("newVerSet accepted a URL as a constraint")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `invalid version constraint "https://h.example/x"`) ||
+		strings.Contains(msg, "s3cret") || strings.Contains(msg, "improper constraint") {
+		t.Fatalf("newVerSet refusal = %q, want the URL named once without its userinfo", msg)
+	}
+
+	_, err = newVerSet(">>= 1.0")
+	if err == nil || !strings.Contains(err.Error(), `">>= 1.0"`) {
+		t.Fatalf("newVerSet(%q) refusal = %v, want it to name the value as written", ">>= 1.0", err)
 	}
 }

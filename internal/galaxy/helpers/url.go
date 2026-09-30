@@ -108,3 +108,37 @@ func withoutEveryUserinfo(raw string) string {
 		}
 	}
 }
+
+// ValueForMessage is how a refusal names a value it quotes: one that looks like
+// a URL or path as URLForMessage cuts it, any other as written, bounded by
+// TruncateForMessage.
+func ValueForMessage(value string) string {
+	if LooksLikeSourceName(value) {
+		return URLForMessage(value)
+	}
+	return TruncateForMessage(value)
+}
+
+// LooksLikeSourceName reports whether value is spelled as a URL, a git pointer
+// or a path, the shapes a refusal cuts rather than quotes as written.
+func LooksLikeSourceName(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.Contains(lower, "://"):
+		return true
+	case strings.HasPrefix(lower, "git+"):
+		return true
+	case strings.HasPrefix(lower, "git@"):
+		return true
+	case strings.HasPrefix(lower, "./"),
+		strings.HasPrefix(lower, "../"),
+		strings.HasPrefix(lower, "/"),
+		strings.HasPrefix(lower, "~"):
+		return true
+	}
+	return false
+}

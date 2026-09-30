@@ -209,7 +209,7 @@ func parseCollectionItem(item any, defaultSource string) (CollectionRequirement,
 	}
 	if !helpers.IsCollectionNamePart(req.Namespace) || !helpers.IsCollectionNamePart(req.Name) {
 		return CollectionRequirement{}, fmt.Errorf("%w: %q.%q must each match ^[a-z][a-z0-9_]*$",
-			helpers.ErrInvalidCollectionName, valueForMessage(req.Namespace), valueForMessage(req.Name))
+			helpers.ErrInvalidCollectionName, helpers.ValueForMessage(req.Namespace), helpers.ValueForMessage(req.Name))
 	}
 	return req, nil
 }
@@ -247,13 +247,13 @@ func parseCollectionStringItem(value string, defaultSource string) (CollectionRe
 		// download's own question.
 		return parseURLRequirement(name, "")
 	}
-	if looksLikeSourceName(name) {
+	if helpers.LooksLikeSourceName(name) {
 		return CollectionRequirement{}, fmt.Errorf("%w %q (only Galaxy API, git and url sources are supported)",
 			helpers.ErrUnsupportedCollectionSource, helpers.URLForMessage(name))
 	}
 	namespace, collection, ok := helpers.SplitFQDN(name)
 	if !ok {
-		return CollectionRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, valueForMessage(name))
+		return CollectionRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, helpers.ValueForMessage(name))
 	}
 	return CollectionRequirement{
 		Namespace: namespace,
@@ -341,18 +341,18 @@ func checkEntryValues(sentinel error, entry map[string]any, known map[string]str
 // normalizeCollectionName would silently replace name with its last segment.
 func checkNamespaceNameConflict(req CollectionRequirement) error {
 	if req.Namespace == "" || req.Name == "" || !strings.Contains(req.Name, ".") ||
-		req.Type != "" || looksLikeSourceName(req.Name) {
+		req.Type != "" || helpers.LooksLikeSourceName(req.Name) {
 		return nil
 	}
 	if _, _, ok := helpers.SplitFQDN(req.Name); !ok {
 		return nil
 	}
 	return fmt.Errorf("%w: namespace %q with dotted name %q", helpers.ErrConflictingNamespaceName,
-		valueForMessage(req.Namespace), valueForMessage(req.Name))
+		helpers.ValueForMessage(req.Namespace), helpers.ValueForMessage(req.Name))
 }
 
 func normalizeCollectionName(req CollectionRequirement) CollectionRequirement {
-	if req.Name == "" || !strings.Contains(req.Name, ".") || req.Type != "" || looksLikeSourceName(req.Name) {
+	if req.Name == "" || !strings.Contains(req.Name, ".") || req.Type != "" || helpers.LooksLikeSourceName(req.Name) {
 		return req
 	}
 	namespace, collection, ok := helpers.SplitFQDN(req.Name)
@@ -392,9 +392,9 @@ func validateRequirement(req CollectionRequirement, raw any) error {
 	}
 	if req.Type != "" {
 		return fmt.Errorf("%w %q (only galaxy, git and url are supported)",
-			helpers.ErrUnsupportedCollectionType, valueForMessage(req.Type))
+			helpers.ErrUnsupportedCollectionType, helpers.ValueForMessage(req.Type))
 	}
-	if looksLikeSourceName(req.Name) {
+	if helpers.LooksLikeSourceName(req.Name) {
 		return fmt.Errorf("%w %q (only Galaxy API, git and url sources are supported)",
 			helpers.ErrUnsupportedCollectionSource, helpers.URLForMessage(req.Name))
 	}
@@ -438,7 +438,7 @@ func parseURLMapItem(req CollectionRequirement, raw map[string]any) (CollectionR
 	}
 	if req.Version != "" && req.Version != "*" && !helpers.IsExactVersion(req.Version) {
 		return CollectionRequirement{}, fmt.Errorf("%w: url version %q is not an exact version",
-			helpers.ErrInvalidCollectionVersion, valueForMessage(req.Version))
+			helpers.ErrInvalidCollectionVersion, helpers.ValueForMessage(req.Version))
 	}
 	version := req.Version
 	if version == "*" {
@@ -502,8 +502,8 @@ func gitCollectionName(req CollectionRequirement) (string, string, error) {
 	// A URL or path is refused whole: split at a dot in its userinfo, each
 	// half would be quoted apart and the one past the dot left uncut.
 	namespace, name, ok := helpers.SplitFQDN(req.Name)
-	if !ok || looksLikeSourceName(req.Name) {
-		return "", "", fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, valueForMessage(req.Name))
+	if !ok || helpers.LooksLikeSourceName(req.Name) {
+		return "", "", fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, helpers.ValueForMessage(req.Name))
 	}
 	return namespace, name, nil
 }
@@ -597,7 +597,7 @@ func checkSourceUserinfo(req CollectionRequirement) error {
 		return nil
 	}
 	if parsed.User != nil {
-		return fmt.Errorf("%w: collection %q", helpers.ErrGalaxyServerURLUserinfo, valueForMessage(req.Name))
+		return fmt.Errorf("%w: collection %q", helpers.ErrGalaxyServerURLUserinfo, helpers.ValueForMessage(req.Name))
 	}
 	return nil
 }
@@ -606,19 +606,19 @@ func applyRequirementDefaults(req CollectionRequirement, defaultSource string) C
 	if req.Version == "" {
 		req.Version = "*"
 	}
-	if req.Source == "" && req.Type == "" && !looksLikeSourceName(req.Name) {
+	if req.Source == "" && req.Type == "" && !helpers.LooksLikeSourceName(req.Name) {
 		req.Source = defaultSource
 	}
 	return req
 }
 
 func normalizeRequirementNamespace(req CollectionRequirement) (CollectionRequirement, error) {
-	if req.Namespace != "" || req.Type != "" || looksLikeSourceName(req.Name) {
+	if req.Namespace != "" || req.Type != "" || helpers.LooksLikeSourceName(req.Name) {
 		return req, nil
 	}
 	namespace, collection, ok := helpers.SplitFQDN(req.Name)
 	if !ok {
-		return CollectionRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, valueForMessage(req.Name))
+		return CollectionRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, helpers.ValueForMessage(req.Name))
 	}
 	req.Namespace = namespace
 	req.Name = collection
@@ -653,39 +653,6 @@ func parseStringList(value any) []string {
 		}
 		return []string{str}
 	}
-}
-
-// valueForMessage is how a refusal names an entry value: one that looks like
-// a URL or path as helpers.URLForMessage cuts it, any other as written,
-// bounded by helpers.TruncateForMessage.
-func valueForMessage(value string) string {
-	if looksLikeSourceName(value) {
-		return helpers.URLForMessage(value)
-	}
-	return helpers.TruncateForMessage(value)
-}
-
-// looksLikeSourceName reports whether the value looks like a URL or path.
-func looksLikeSourceName(value string) bool {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return false
-	}
-	lower := strings.ToLower(trimmed)
-	switch {
-	case strings.Contains(lower, "://"):
-		return true
-	case strings.HasPrefix(lower, "git+"):
-		return true
-	case strings.HasPrefix(lower, "git@"):
-		return true
-	case strings.HasPrefix(lower, "./"),
-		strings.HasPrefix(lower, "../"),
-		strings.HasPrefix(lower, "/"),
-		strings.HasPrefix(lower, "~"):
-		return true
-	}
-	return false
 }
 
 // RolesError reports that collections: parsed and roles: did not. Load and

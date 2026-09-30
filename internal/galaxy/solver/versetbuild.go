@@ -108,7 +108,10 @@ func newVerSet(raw string) (verSet, error) {
 		return fullVerSet(), nil
 	}
 	if _, err := semver.NewConstraint(normalized); err != nil {
-		return verSet{}, fmt.Errorf("invalid version constraint %q: %w", raw, err)
+		// semver's message repeats the input in its own shape, so only the
+		// value, cut as a load refusal cuts it, is named.
+		//nolint:err113 // semver's error repeats the raw value, userinfo included, so it is dropped rather than wrapped
+		return verSet{}, fmt.Errorf("invalid version constraint %q", helpers.ValueForMessage(raw))
 	}
 
 	segments := strings.Split(helpers.RewriteConstraintRange(normalized), "||")
@@ -124,7 +127,7 @@ func newVerSet(raw string) (verSet, error) {
 		}
 		group, err := buildGroup(comps)
 		if err != nil {
-			return verSet{}, fmt.Errorf("invalid version constraint %q: %w", raw, err)
+			return verSet{}, fmt.Errorf("invalid version constraint %q: %w", helpers.ValueForMessage(raw), err)
 		}
 		out = out.union(group)
 	}

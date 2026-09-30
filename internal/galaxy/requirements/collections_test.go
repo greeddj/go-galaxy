@@ -461,27 +461,6 @@ func laterURLEchoRejectedCases() []parseCollectionsRejectedCase {
 	}
 }
 
-// TestValueForMessageCutsEveryUserinfo pins that a quoted value loses the
-// userinfo of every URL it holds, the first or a later one, and that a value
-// that looks like no URL or path is quoted as written.
-func TestValueForMessageCutsEveryUserinfo(t *testing.T) {
-	t.Parallel()
-	secret := "u:" + "p4ss@"
-	cases := map[string]string{
-		"https://" + secret + "h.example/x":                                 "https://h.example/x",
-		"git+https://h.example/r.git,https://" + secret + "h.example/x":     "git+https://h.example/r.git,https://h.example/x",
-		"x/https://" + secret + "h.example/y":                               "x/https://h.example/y",
-		"https://" + secret + "a.example/x,ssh://" + secret + "b.example/y": "https://a.example/x,ssh://b.example/y",
-		"community.general@8.0.0":                                           "community.general@8.0.0",
-		">= 1.0":                                                            ">= 1.0",
-	}
-	for in, want := range cases {
-		if got := valueForMessage(in); got != want {
-			t.Errorf("valueForMessage(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // TestLoadRefusalsNameNoEntryValue pins whole refusal texts: the entry is named
 // by its index, a URL loses its userinfo, and a nameless mapping or a nested
 // list is named by what is missing or by its Go type, never printed.

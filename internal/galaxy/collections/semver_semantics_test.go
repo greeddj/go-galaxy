@@ -344,3 +344,26 @@ func TestOverlongConstraintIsRejectedAsInvalid(t *testing.T) {
 		t.Fatalf("exactVersionFromConstraints([\">=1.0.0\"]) = (%q, %v), want (\"\", false)", version, exact)
 	}
 }
+
+// TestRefusedConstraintHidesUserinfo pins that the exact-pin probe, the frozen
+// root check and the metadata provider each name a constraint semver refuses
+// without the userinfo of a URL in it.
+func TestRefusedConstraintHidesUserinfo(t *testing.T) {
+	t.Parallel()
+	credentialed := "https://u:" + "s3cret@h.example/x"
+
+	_, _, err := exactVersionFromConstraints([]string{credentialed})
+	if err == nil || !strings.Contains(err.Error(), "invalid version constraint") || strings.Contains(err.Error(), "s3cret") {
+		t.Fatalf("exactVersionFromConstraints refusal = %v, want an invalid version constraint without the password", err)
+	}
+
+	_, err = constraintSatisfied("1.0.0", credentialed)
+	if err == nil || !strings.Contains(err.Error(), "invalid constraint") || strings.Contains(err.Error(), "s3cret") {
+		t.Fatalf("constraintSatisfied refusal = %v, want an invalid constraint without the password", err)
+	}
+
+	_, err = canonicalizeDependencies("acme.app", map[string]string{"acme.dep": credentialed})
+	if err == nil || strings.Contains(err.Error(), "s3cret") {
+		t.Fatalf("canonicalizeDependencies refusal = %v, want one without the password", err)
+	}
+}
