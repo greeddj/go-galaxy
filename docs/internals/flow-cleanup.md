@@ -63,6 +63,10 @@ means to an operator: [What cleanup keeps](../guides/caching.md#what-cleanup-kee
 | Role | `IsRoleInstallName` directory holding a regular `.extract-done.<sha256>` file | never touched |
 | Role deps | the snapshot's installed-role record for that install path | `meta/main.yml` and `meta/requirements.yml`; artifact kept |
 
+Each recorded path the scan leaves unwalked, absent, without
+`ansible_collections` or skipped, is noted for the extracted sweep
+(`recordedUnseen`).
+
 Namespace and name come from the walked directories, never the manifest
 ([Reading an installed tree: cleanup and outdated](boundaries.md#reading-an-installed-tree-cleanup-and-outdated)).
 
@@ -125,7 +129,10 @@ flowchart TD
 - The legacy sweep skips any key shaped like a scoped one
   ([Legacy flat-key artifacts](cache.md#legacy-flat-key-artifacts)).
 - The keep set is every kept install's sha plus entries warmed within 30
-  days; no cache dir or recorded content skips the sweep.
+  days; no cache dir or recorded content skips the sweep. A record no scan
+  found stays in it only while a project that has not left has a recorded
+  collections or roles path the scan left unwalked that may hold it
+  (`mayHold`), so a project deleted with its trees frees theirs.
 - A failed extracted sweep only prints.
 - A never-persisted snapshot is never saved, so no empty one is fabricated.
 

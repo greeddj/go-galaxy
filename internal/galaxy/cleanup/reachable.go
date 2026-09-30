@@ -23,12 +23,12 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// buildReachable returns the installed keys every recorded project reaches and
-// every on-disk copy by key. All workspaces are scanned before any root
-// resolves, so a root reaches a copy any project installed, in any order.
+// buildReachable returns the installed keys every recorded project reaches,
+// every on-disk copy by key, and the trees no scan walked. All workspaces are
+// scanned before any root resolves, so a root reaches a copy any project installed.
 func buildReachable(
 	runtime *infra.Infra, registry *store.ProjectRegistry, st *store.Store,
-) (map[string]bool, map[string][]installedCollection, roleReachability, error) {
+) (map[string]bool, map[string][]installedCollection, roleReachability, unseenTrees, error) {
 	reachable := make(map[string]bool)
 	roles := roleReachability{reachable: make(map[string]bool), byName: make(rolesByName)}
 	installedIndex := make(map[string][]installedCollection)
@@ -42,30 +42,36 @@ func buildReachable(
 	projectPaths := slices.Sorted(maps.Keys(registry.Projects))
 
 	// Phase 1: every project's workspace into the shared index, before any
-	// root resolves against it.
+	// root resolves against it, noting each recorded tree no scan walked.
+	unwalked := make(map[string]unseenTrees, len(projectPaths))
 	for _, projectPath := range projectPaths {
-		if err := scanProjectWorkspace(
-			runtime.Output, projectPath, registry.Projects[projectPath], installedIndex, installedByKey,
-		); err != nil {
-			return nil, nil, roleReachability{}, err
+		project := registry.Projects[projectPath]
+		collectionsUnseen, err := scanProjectWorkspace(runtime.Output, projectPath, project, installedIndex, installedByKey)
+		if err != nil {
+			return nil, nil, roleReachability{}, unseenTrees{}, err
 		}
-		if err := scanProjectRoles(runtime.Output, projectPath, registry.Projects[projectPath], st, roles.byName); err != nil {
-			return nil, nil, roleReachability{}, err
+		rolesUnseen, err := scanProjectRoles(runtime.Output, projectPath, project, st, roles.byName)
+		if err != nil {
+			return nil, nil, roleReachability{}, unseenTrees{}, err
 		}
+		unwalked[projectPath] = recordedUnseen(project, collectionsUnseen, rolesUnseen)
 	}
 
 	// Phase 2: every recorded project's roots, against the complete index.
 	// Every project left with nothing to read is gathered, so one error names all.
 	var unanchored []string
+	var unseen unseenTrees
 	for _, projectPath := range projectPaths {
 		project := registry.Projects[projectPath]
 		if projectLeft(projectPath, project) {
 			runtime.Output.Warnf("project %q no longer exists; it keeps nothing this run", projectPath)
 			continue
 		}
+		unseen.collections = append(unseen.collections, unwalked[projectPath].collections...)
+		unseen.roles = append(unseen.roles, unwalked[projectPath].roles...)
 		roots, anchored, err := projectRequirementRoots(runtime.Output, registry.Location, projectPath, project)
 		if err != nil {
-			return nil, nil, roleReachability{}, err
+			return nil, nil, roleReachability{}, unseenTrees{}, err
 		}
 		if !anchored {
 			unanchored = append(unanchored, projectPath)
@@ -74,10 +80,22 @@ func buildReachable(
 		markProjectRoots(st, project, roots, reachable, roles, installedByKey, installedIndex, constraints)
 	}
 	if len(unanchored) > 0 {
-		return nil, nil, roleReachability{}, unanchoredProjectsError(registry.Location, unanchored)
+		return nil, nil, roleReachability{}, unseenTrees{}, unanchoredProjectsError(registry.Location, unanchored)
 	}
 	markKeptCopyDependencies(installedByKey, reachable, installedIndex, constraints)
-	return reachable, installedByKey, roles, nil
+	return reachable, installedByKey, roles, unseen, nil
+}
+
+// recordedUnseen is one project's recorded paths that its scan left unwalked.
+func recordedUnseen(project store.ProjectRecord, collectionsUnseen, rolesUnseen bool) unseenTrees {
+	var trees unseenTrees
+	if collectionsUnseen {
+		trees.collections = []string{project.CollectionsPath}
+	}
+	if rolesUnseen {
+		trees.roles = []string{project.RolesPath}
+	}
+	return trees
 }
 
 // markProjectRoots marks what one anchored project's roots reach: its files'

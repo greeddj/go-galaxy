@@ -2955,7 +2955,8 @@ func TestSweepExtractedStoreNoopWhenCacheDirEmpty(t *testing.T) {
 	runtime := newTestRuntime()
 	st := store.New()
 
-	sweepExtractedStore(t.Context(), cfg, runtime, st, map[string]bool{}, map[string][]installedCollection{}, roleReachability{})
+	sweepExtractedStore(t.Context(), cfg, runtime, st, map[string]bool{}, map[string][]installedCollection{},
+		roleReachability{}, unseenTrees{})
 }
 
 // TestStartLeavesExtractedCacheWhenNoSnapshotPersisted pins that with no

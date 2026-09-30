@@ -18,33 +18,33 @@ import (
 )
 
 // scanProjectWorkspace scans a project's recorded collections workspace into
-// the index. No recorded path, or an absent workspace, is skipped, an unrooted
-// one with a warning quoting projectPath (checkout content); a scan IO error aborts.
+// the index, reporting a recorded path it left unwalked: absent, holding no
+// ansible_collections, or unrooted, warned quoting projectPath. A scan IO error aborts.
 func scanProjectWorkspace(
 	out output.Printer,
 	projectPath string,
 	project store.ProjectRecord,
 	index map[string][]installedCollection,
 	byKey map[string][]installedCollection,
-) error {
+) (bool, error) {
 	if project.CollectionsPath == "" {
 		out.Debugf("project %q: no collections path recorded; collections are not scanned", projectPath)
-		return nil
+		return false, nil
 	}
 	ws, err := openProjectWorkspace(project.CollectionsPath)
 	if err != nil {
 		out.Warnf("skipping project %q: %v; nothing under it was scanned or removed", projectPath, err)
-		return nil
+		return true, nil
 	}
 	if ws.root == nil {
-		return nil
+		return true, nil
 	}
 	defer func() { _ = ws.root.Close() }()
 
 	if err := scanInstalledCollections(out, ws, index, byKey); err != nil {
-		return fmt.Errorf("failed to scan %q: %w", ws.path, err)
+		return false, fmt.Errorf("failed to scan %q: %w", ws.path, err)
 	}
-	return nil
+	return false, nil
 }
 
 // scanInstalledCollections indexes only manifests at exactly

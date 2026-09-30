@@ -43,25 +43,26 @@ type installedRole struct {
 type rolesByName map[string][]installedRole
 
 // scanProjectRoles indexes the marked roles under a project's recorded roles
-// path, through an os.Root at it. A record with no roles path is never scanned:
-// guessing one would aim a delete at a directory nobody configured.
-func scanProjectRoles(out output.Printer, projectPath string, project store.ProjectRecord, st *store.Store, byName rolesByName) error {
+// path through an os.Root at it, reporting a recorded path it could not open.
+// With none recorded nothing is scanned: a guess would aim a delete elsewhere.
+func scanProjectRoles(
+	out output.Printer, projectPath string, project store.ProjectRecord, st *store.Store, byName rolesByName,
+) (bool, error) {
 	if project.RolesPath == "" {
 		out.Debugf("project %q: no roles path recorded; roles are not scanned", projectPath)
-		return nil
+		return false, nil
 	}
 	root, err := os.OpenRoot(project.RolesPath)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+		if !errors.Is(err, fs.ErrNotExist) {
+			out.Warnf("skipping roles of project %q: %v; nothing under %q was scanned or removed", projectPath, err, project.RolesPath)
 		}
-		out.Warnf("skipping roles of project %q: %v; nothing under %q was scanned or removed", projectPath, err, project.RolesPath)
-		return nil
+		return true, nil
 	}
 	defer func() { _ = root.Close() }()
 	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
-		return fmt.Errorf("failed to scan %q: %w", project.RolesPath, err)
+		return false, fmt.Errorf("failed to scan %q: %w", project.RolesPath, err)
 	}
 	records := recordsByInstallPath(st)
 	for _, e := range entries {
@@ -69,7 +70,7 @@ func scanProjectRoles(out output.Printer, projectPath string, project store.Proj
 			byName[inst.Name] = append(byName[inst.Name], inst)
 		}
 	}
-	return nil
+	return false, nil
 }
 
 // scannedRole returns the installed role for a roles path entry that is a
@@ -257,15 +258,22 @@ func removeRole(ctx context.Context, inst installedRole, artifacts cacheManager.
 }
 
 // roleKeepSHAs is the extracted-store keep set's role half: the artifact sha
-// of every installed role that is not about to be removed.
-func roleKeepSHAs(st *store.Store, reachable map[string]bool, byName rolesByName) map[string]bool {
+// of every installed role that is not about to be removed, and of a role no
+// scan found only while an unseen roles path of a project still here may hold it.
+func roleKeepSHAs(st *store.Store, reachable map[string]bool, byName rolesByName, unseen []string) map[string]bool {
 	keep := make(map[string]bool)
 	if st == nil {
 		return keep
 	}
 	for name, sha := range st.InstalledRoleArtifactSHAs() {
-		if _, scanned := byName[name]; scanned && !reachable[name] {
+		_, scanned := byName[name]
+		if scanned && !reachable[name] {
 			continue
+		}
+		if !scanned {
+			if rec, _ := st.GetInstalledRole(name); !mayHold(unseen, rec.InstallPath) {
+				continue
+			}
 		}
 		keep[sha] = true
 	}

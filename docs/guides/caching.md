@@ -193,14 +193,16 @@ flowchart TD
 | --- | --- | --- |
 | Installed collection | A recorded project's `collections:`, or a `galaxy.lock` standing in, reaches it, directly or through dependencies | Removed from every recorded collections path where its marker matches it |
 | Installed role | A recorded project's `roles:`, or a `galaxy.lock` standing in, reaches it | Removed, if go-galaxy installed it under a recorded `roles_path` |
-| Extracted tree | A kept install uses it, or a recent `warm` shields it ([Freshness and retention](#freshness-and-retention)) | Swept |
+| Extracted tree | A kept install uses it, or a recent `warm` shields it ([Freshness and retention](#freshness-and-retention)). An install that no scanned path holds keeps it only while a project that has not left records an absent path that could hold it, as on a runner before its `install` | Swept, so a deleted project frees its trees |
 | Cached artifact | No removed install uses it | Removed with that install when the cache holds the install's record; otherwise kept until `--clear-cache` |
 
 An artifact no install record names, such as a superseded git commit's, also
-stays until `--clear-cache`. Older releases cached a collection's tarball as
-`<namespace>-<name>-<version>.tar.gz`. No run reads that name any more, so
-`cleanup` deletes it for every collection go-galaxy installed in a recorded
-project, even one still in use.
+stays until `--clear-cache`. So does the artifact of an install whose project
+left with its collections path: no scan finds that copy, so nothing removes
+it, though its extracted tree goes. Older releases cached a collection's
+tarball as `<namespace>-<name>-<version>.tar.gz`. No run reads that name any
+more, so `cleanup` deletes it for every collection go-galaxy installed in a
+recorded project, even one still in use.
 
 <details markdown>
 <summary>When cleanup warns, skips or stops</summary>

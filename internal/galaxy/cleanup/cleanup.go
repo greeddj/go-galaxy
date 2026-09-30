@@ -84,7 +84,7 @@ func cleanupWithState(ctx context.Context, cfg *config.Config, runtime *infra.In
 	}
 	warnIfSnapshotNotPersisted(runtime, state.store)
 
-	reachable, installedByKey, roles, err := buildReachable(runtime, state.registry, state.store)
+	reachable, installedByKey, roles, unseen, err := buildReachable(runtime, state.registry, state.store)
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func cleanupWithState(ctx context.Context, cfg *config.Config, runtime *infra.In
 		return fmt.Errorf("cleanup stopped before sweeping cached artifacts: %w", err)
 	}
 	sweepLegacyArtifacts(ctx, cfg, runtime, state.backend, installedByKey)
-	sweepExtractedStore(ctx, cfg, runtime, state.store, reachable, installedByKey, roles)
+	sweepExtractedStore(ctx, cfg, runtime, state.store, reachable, installedByKey, roles, unseen)
 	return finalizeCleanup(ctx, cfg, runtime, state.backend, state.store, removed)
 }
 

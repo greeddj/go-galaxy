@@ -72,8 +72,13 @@ changes with `ArtifactKey`. The flow is in
 
 `cleanup`'s `sweepExtractedStore` keeps the digests of installs and roles
 that stay and of warms within 30 days, read from the snapshot: a disk scan
-misses an absent workspace, normal on an ephemeral runner. Only `warm` writes
-a warmed entry, or a tree would outlive its install by 30 days.
+misses an absent workspace, normal on an ephemeral runner. A record no scan
+found keeps its digest only while a project that has not left records a path
+no scan walked that may hold it (`unseenTrees`, `mayHold`): a collection
+records its install path relative when installed to a relative collections
+path, so any such tree may. A project deleted with its trees thus frees
+theirs. Only `warm` writes a warmed entry, or a tree would outlive its install
+by 30 days.
 
 The marker that proves an installed tree complete, and that `cleanup` trusts a
 collection copy by, lives beside the install, not in the cache:

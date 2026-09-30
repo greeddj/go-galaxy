@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"path/filepath"
 	"slices"
 
 	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
@@ -79,9 +80,9 @@ func reportLegacyArtifactSweepCandidate(ctx context.Context, runtime *infra.Infr
 	runtime.Output.PersistentPrintf("Would sweep legacy artifact %s", key)
 }
 
-// sweepExtractedStore drops extracted entries that no kept installed, role or
-// fresh warmed snapshot record references. It trusts the snapshot, not a scan,
-// and skips a snapshot with no recorded content, whose keep set would be empty.
+// sweepExtractedStore drops extracted entries that no kept installed, role or fresh warmed
+// snapshot record references, one no scan found once no unwalked tree of a project still here
+// may hold it. It skips a snapshot with no recorded content, whose keep set would be empty.
 func sweepExtractedStore(
 	ctx context.Context,
 	cfg *config.Config,
@@ -90,6 +91,7 @@ func sweepExtractedStore(
 	reachable map[string]bool,
 	installedByKey map[string][]installedCollection,
 	roles roleReachability,
+	unseen unseenTrees,
 ) {
 	if cfg == nil || cfg.CacheDir == "" || st == nil || !st.HasRecordedContent() {
 		return
@@ -98,8 +100,8 @@ func sweepExtractedStore(
 	if extractedStore == nil {
 		return
 	}
-	keep := extractedKeepSet(st, reachable, installedByKey)
-	maps.Copy(keep, roleKeepSHAs(st, roles.reachable, roles.byName))
+	keep := extractedKeepSet(st, reachable, installedByKey, unseen.collections)
+	maps.Copy(keep, roleKeepSHAs(st, roles.reachable, roles.byName, unseen.roles))
 
 	if cfg.DryRun {
 		reportExtractedSweepPlan(runtime, extractedStore, keep)
@@ -112,13 +114,14 @@ func sweepExtractedStore(
 	}
 }
 
-// extractedKeepSet returns the SHAs of installed records removeUnused keeps
-// plus every fresh warmed SHA. The warmed half never consults wouldRemove:
-// warm's intent is independent of install reachability.
+// extractedKeepSet returns the SHAs of installed records removeUnused keeps,
+// a record no scan found only while an unseen tree may hold it, plus every
+// fresh warmed SHA, which never consults wouldRemove: warm's intent is its own.
 func extractedKeepSet(
 	st *store.Store,
 	reachable map[string]bool,
 	installedByKey map[string][]installedCollection,
+	unseen []string,
 ) map[string]bool {
 	wouldRemove := make(map[string]bool, len(installedByKey))
 	for key, insts := range installedByKey {
@@ -134,12 +137,35 @@ func extractedKeepSet(
 		if wouldRemove[key] {
 			continue
 		}
+		if _, scanned := installedByKey[key]; !scanned {
+			if entry, _ := st.GetInstalled(key); !mayHold(unseen, entry.InstallPath) {
+				continue
+			}
+		}
 		keep[sha] = true
 	}
 	for _, sha := range warmedByKey {
 		keep[sha] = true
 	}
 	return keep
+}
+
+// unseenTrees are the recorded collections and roles paths of projects still
+// here that no scan walked, absent ones included, as on an ephemeral runner
+// before its install: a record none of the scans found may be in one.
+type unseenTrees struct {
+	collections []string
+	roles       []string
+}
+
+// mayHold reports whether one of trees may hold installPath unseen: one that
+// contains it, or any when the path is relative, as a collection's is when
+// install ran with a relative collections path, so it cannot be placed.
+func mayHold(trees []string, installPath string) bool {
+	if !filepath.IsAbs(installPath) {
+		return len(trees) > 0
+	}
+	return slices.ContainsFunc(trees, func(tree string) bool { return helpers.WithinDir(tree, installPath) })
 }
 
 // reportExtractedSweepPlan prints, without deleting anything, the extracted
