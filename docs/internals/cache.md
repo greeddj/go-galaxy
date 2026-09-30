@@ -122,13 +122,15 @@ replay decision branch by branch.
 
 `requirementsSignatureFromSpec` hashes `no-deps=false` or `no-deps=bound`,
 `servers=<serversSignature>`, then sorted `fqdn|constraint|source|type|signatures`
-lines. `--no-deps` is spelled `bound`, not `true`, so a `--no-deps` resolution
-an older binary recorded never replays: that one may pin a root to the first
-server without having asked it.
+lines, the constraint as `helpers.CanonicalConstraint` spells it. `--no-deps`
+is spelled `bound`, not `true`, so a `--no-deps` resolution an older binary
+recorded never replays: that one may pin a root to the first server without
+having asked it.
 
 | Input | Rule | Why |
 | :-- | :-- | :-- |
 | Server list | Id, URL and whether a token is set, in order | Order decides ownership; the signature is persisted, so no token |
+| Constraint | `helpers.CanonicalConstraint`; a recorded spec is made canonical before it is compared (`snapshotMatchesRequirements`, `tryIncrementalResolve`), only when its signature in this run's mode and server list is the recorded hash (`recordedRequirementsSpec`) | A respelling replays, and so does a snapshot an older release recorded as spelled; the solver still reads the constraint as written |
 | Unpinned root's source | Stays empty | "No preference" differs from "the default server" |
 | Git and url roots | Expanded first (`expandSourceRoots`) | Else `--clear-cache`, dropping pins, replays the old graph |
 | Signature source | Query cut by `normalizeSignatures` and again on save | Else hash and stored spec disagree and the incremental path stops |

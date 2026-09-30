@@ -75,10 +75,10 @@ paths, made absolute as it opens them ([Project registry](cache.md#project-regis
 ```mermaid
 flowchart TD
   R1["expandSourceRoots: git,<br/>then url, see Source discovery"] -->|"failed"| RXD(["exit 1, 2, 3, 4,<br/>5 or 7 by cause"])
-  R1 --> R2["requirements signature:<br/>roots, --no-deps, servers"]
+  R1 --> R2["requirements signature: canonical<br/>roots, --no-deps, servers"]
   R1 -->|"two roots,<br/>one collection"| RX2(["exit 2"])
   R2 --> R3{"--refresh or --no-cache<br/>without --offline?"}
-  R3 -->|"no"| R4{"snapshot signature equal,<br/>every root satisfied?"}
+  R3 -->|"no"| R4{"recorded signature, or recorded<br/>spec made canonical, equal;<br/>every root satisfied?"}
   R4 -->|"yes"| R5["replay the snapshot,<br/>no metadata request"]
   R5 --> R11A(["resolved set and graph"])
   R4 -->|"no"| R6{"only some roots changed,<br/>same mode and servers?"}

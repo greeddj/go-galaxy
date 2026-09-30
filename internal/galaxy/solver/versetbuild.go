@@ -19,20 +19,16 @@ import (
 // infinite comb, and admitting one would break closure under complement.
 var errNonIntervalConstraint = errors.New("solver: constraint has no exact interval representation")
 
-// vbOps and vbCVRegex mirror the vendored Masterminds v3.5.0 operator and
-// constraint-version grammars verbatim (constraints.go); the differential
-// test suite is the drift enforcement.
-const vbOps = `=||!=|>|<|>=|=>|<=|=<|~|~>|\^`
-
-const vbCVRegex = `v?([0-9|x|X|\*]+)(\.[0-9|x|X|\*]+)?(\.[0-9|x|X|\*]+)?` +
-	`(-([0-9A-Za-z\-]+(\.[0-9A-Za-z\-]+)*))?` +
-	`(\+([0-9A-Za-z\-]+(\.[0-9A-Za-z\-]+)*))?`
+// vbOps and vbCVRegex are the vendored grammars helpers keeps verbatim; the
+// differential test suite is the drift enforcement for both packages.
+const (
+	vbOps     = helpers.ConstraintOperatorPattern
+	vbCVRegex = helpers.ConstraintVersionPattern
+)
 
 var vbConstraintRegex = regexp.MustCompile(`^\s*(` + vbOps + `)\s*(` + vbCVRegex + `)\s*$`)
 
 var vbFindRegex = regexp.MustCompile(`(` + vbOps + `)\s*(` + vbCVRegex + `)`)
-
-var vbRangeRegex = regexp.MustCompile(`\s*(` + vbCVRegex + `)\s+-\s+(` + vbCVRegex + `)\s*`)
 
 // comparator is one parsed token mirroring the vendored constraint struct: con
 // is the zero-filled comparison version (metadata kept), orig the text after
@@ -44,22 +40,6 @@ type comparator struct {
 	dirty      bool
 	minorDirty bool
 	patchDirty bool
-}
-
-// vbRewriteRange mirrors the vendored rewriteRange, turning every "A - B" into
-// ">= A, <= B " before splitting. Groups 1 and 11 hold the two versions, since
-// each cv contributes nine inner groups.
-func vbRewriteRange(s string) string {
-	m := vbRangeRegex.FindAllStringSubmatch(s, -1)
-	if m == nil {
-		return s
-	}
-	out := s
-	for _, v := range m {
-		t := fmt.Sprintf(">= %s, <= %s ", v[1], v[11])
-		out = strings.Replace(out, v[0], t, 1)
-	}
-	return out
 }
 
 // vbIsX mirrors the vendored isX: an x-range segment marker.
@@ -131,7 +111,7 @@ func newVerSet(raw string) (verSet, error) {
 		return verSet{}, fmt.Errorf("invalid version constraint %q: %w", raw, err)
 	}
 
-	segments := strings.Split(vbRewriteRange(normalized), "||")
+	segments := strings.Split(helpers.RewriteConstraintRange(normalized), "||")
 	out := emptyVerSet()
 	var soleGroup []comparator
 	for _, seg := range segments {

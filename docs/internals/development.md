@@ -282,7 +282,7 @@ first can only agree with itself.
 | --- | --- | --- |
 | Go toolchain | `collectionbuild`'s `TestBuildGoldenDigest` (`compress/flate` bytes are not promised) | if `TestBuildStructure` and `rolebuild`'s `TestBuildArtifactShape` pass, take the new digest |
 | Go toolchain | `TestMetaHeaderCeilingIsWhatArchiveTarReads` | re-derive the meta-header ceiling, as under Probe budget above |
-| Masterminds/semver | `TestVerSetDifferentialAgainstCheck`, `TestVerSetGroundTruthRows` | fix the mirrored grammar in `versetbuild.go`; `Check` stays the authority |
+| Masterminds/semver | `TestVerSetDifferentialAgainstCheck`, `TestVerSetGroundTruthRows`, `TestCanonicalConstraintPreservesMeaning` | fix the mirrored grammar in `helpers/constraint.go` or `versetbuild.go`; `Check` stays the authority |
 | ProtonMail/go-crypto | `framing_test.go` measurements | a gate premise changed: investigate before moving a ceiling |
 | `go get -u tool` | `go tool actionlint` stops building: actionlint v1.7.12 compiles against `go.yaml.in/yaml/v4` `v4.0.0-rc.3` | pin `go.yaml.in/yaml/v4` back to `v4.0.0-rc.3` |
 

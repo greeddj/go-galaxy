@@ -170,7 +170,7 @@ span packages are under [Rules a change must keep](#rules-a-change-must-keep).
 | [`internal/progress`](http-output-exit-codes.md#operator-output) | the `Printer` implementation | spinner only on a TTY |
 | `internal/safeout` | control-character stripping | imports nothing in the module |
 | `internal/gzipstream` | gzip reads over untrusted bytes | - |
-| `internal/galaxy/helpers` | sentinels, caps, tuning constants, predicates, ansible's path expansion (`ExpandAnsiblePath`), the physical working directory a relative path resolves under (`PhysicalAbs`) | one rule per value shape |
+| `internal/galaxy/helpers` | sentinels, caps, tuning constants, predicates, ansible's path expansion (`ExpandAnsiblePath`), the physical working directory a relative path resolves under (`PhysicalAbs`), the constraint grammar and its canonical spelling (`CanonicalConstraint`) | one rule per value shape |
 
 <details markdown>
 <summary>Test-only and tooling packages</summary>

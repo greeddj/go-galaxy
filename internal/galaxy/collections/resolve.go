@@ -469,9 +469,10 @@ func normalizeSignatures(signatures []string) []string {
 	return out
 }
 
-// normalizeRequirementConstraint normalizes a constraint for hashing.
+// normalizeRequirementConstraint is a constraint as the requirements spec
+// keys it: canonical, so a respelling replays, with match-all written "*".
 func normalizeRequirementConstraint(value string) string {
-	normalized := helpers.NormalizeConstraint(value)
+	normalized := helpers.CanonicalConstraint(value)
 	if normalized == "" {
 		return "*"
 	}
@@ -582,19 +583,12 @@ func tryIncrementalResolve(
 	currentSpec map[string]store.RequirementSpec,
 	reqHash string,
 ) (map[string]collection, map[string][]string, bool, error) {
-	prevSpec := deps.st.RequirementsSnapshot()
-	if len(prevSpec) == 0 {
+	prevSpec, ok := recordedRequirementsSpec(deps.cfg, deps.st)
+	if !ok {
 		return nil, nil, false, nil
 	}
 
-	// The stored spec does not record --no-deps, so its signature is recomputed in
-	// this run's mode and must equal the persisted hash; a snapshot resolved in
-	// the other mode falls through to a fresh resolve.
-	if requirementsSignatureFromSpec(prevSpec, deps.cfg.NoDeps, serversSignature(deps.cfg)) != deps.st.MetaSnapshot().RequirementsHash {
-		return nil, nil, false, nil
-	}
-
-	unchangedRoots, changedRoots := splitRootsByChange(roots, currentSpec, prevSpec)
+	unchangedRoots, changedRoots := splitRootsByChange(roots, currentSpec, canonicalRequirementSpec(prevSpec))
 	if len(unchangedRoots) == 0 || len(changedRoots) == 0 {
 		return nil, nil, false, nil
 	}
@@ -914,7 +908,7 @@ func loadResolvedFromSnapshot(
 	roots []collection,
 	reqHash string,
 ) (map[string]collection, map[string][]string, bool) {
-	if !snapshotMatchesRequirements(st, reqHash) {
+	if !snapshotMatchesRequirements(cfg, st, reqHash) {
 		return nil, nil, false
 	}
 	resolvedSnapshot, graphSnapshot, ok := loadSnapshotData(st)
@@ -932,9 +926,44 @@ func loadResolvedFromSnapshot(
 	return resolved, filtered, true
 }
 
-func snapshotMatchesRequirements(st *store.Store, reqHash string) bool {
-	meta := st.MetaSnapshot()
-	return meta.RequirementsHash != "" && meta.RequirementsHash == reqHash
+// snapshotMatchesRequirements reports whether the snapshot was resolved for
+// these requirements: by its recorded hash, or by its recorded spec made
+// canonical, since an older release recorded each constraint as spelled.
+func snapshotMatchesRequirements(cfg *config.Config, st *store.Store, reqHash string) bool {
+	recorded := st.MetaSnapshot().RequirementsHash
+	if recorded == "" {
+		return false
+	}
+	if recorded == reqHash {
+		return true
+	}
+	prevSpec, ok := recordedRequirementsSpec(cfg, st)
+	return ok && requirementsSignatureFromSpec(canonicalRequirementSpec(prevSpec), cfg.NoDeps, serversSignature(cfg)) == reqHash
+}
+
+// recordedRequirementsSpec returns the snapshot's spec when the recorded hash
+// is its signature in this run's --no-deps mode and server list, which the
+// spec itself does not record; a snapshot of another mode is no match.
+func recordedRequirementsSpec(cfg *config.Config, st *store.Store) (map[string]store.RequirementSpec, bool) {
+	prevSpec := st.RequirementsSnapshot()
+	if len(prevSpec) == 0 {
+		return nil, false
+	}
+	if requirementsSignatureFromSpec(prevSpec, cfg.NoDeps, serversSignature(cfg)) != st.MetaSnapshot().RequirementsHash {
+		return nil, false
+	}
+	return prevSpec, true
+}
+
+// canonicalRequirementSpec returns a copy of spec with every constraint in
+// the form buildRequirementsSpec writes.
+func canonicalRequirementSpec(spec map[string]store.RequirementSpec) map[string]store.RequirementSpec {
+	out := make(map[string]store.RequirementSpec, len(spec))
+	for fqdn, entry := range spec {
+		entry.Constraint = normalizeRequirementConstraint(entry.Constraint)
+		out[fqdn] = entry
+	}
+	return out
 }
 
 func buildResolvedSnapshot(cfg *config.Config, resolvedSnapshot map[string]store.ResolvedEntry) (map[string]collection, bool) {

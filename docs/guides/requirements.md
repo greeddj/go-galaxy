@@ -191,6 +191,14 @@ show how the tree is built and checked.
 Every other form admits a prerelease only when it names one, as `>=1.0.0-0`
 does ([Prereleases](../get-started/ansible-galaxy-compat.md#prereleases)).
 
+A rerun [replays the last resolution](caching.md#what-a-rerun-reuses) across
+spellings of one constraint: whitespace, `,` or a space between AND clauses,
+`=`, `==` or nothing before an exact version, `=>`, `=<` and `~>` for `>=`,
+`<=` and `~`, and a hyphen range written as its two bounds, `1.2 - 1.4` as
+`>=1.2,<=1.4`. Without its spaces, `1.2-1.4` is a prerelease, not a range. Any
+other change, such as `1.0` for `1.0.0` or clauses in another order, resolves
+again.
+
 > [!TIP]
 > An unquoted value reads as the text written, so `version: 1.10` asks for
 > `1.10` and `version: 1.0` for `1.0.x`. `ansible-galaxy` reads both as
@@ -520,9 +528,9 @@ Each exits `2` before anything installs, naming the entry.
 
 - [ ] Upgrade every go-galaxy sharing the cache or the lockfile first
       ([From v1.2.x](../reference/upgrading.md#from-v12x)).
-- [ ] Rewrite the entries in `galaxy.toml`, copying each constraint exactly.
-      A respelled one, such as `"1.0.0"` as `== 1.0.0`, costs one fresh
-      resolve.
+- [ ] Rewrite the entries in `galaxy.toml`. A constraint may be respelled as
+      [Version constraints](#version-constraints) allows, such as `"1.0.0"`
+      as `== 1.0.0`, and still replays the last resolution.
 - [ ] Delete `requirements.yml`, or every run that names no file warns.
 - [ ] With a lockfile, run `go-galaxy lock --check`: the same entries give
       the same `galaxy.lock`. Without one, expect a new

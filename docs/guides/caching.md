@@ -70,10 +70,11 @@ the S3 cache, every artifact under `$TMPDIR` (`/tmp` when unset). Point
 | url role | The sha256 its URL served, under the same `version:` label | `--refresh`, `--clear-cache` |
 
 Reuse contacts no source, and nothing here expires by age. Editing an entry
-re-resolves it, but adding or dropping `type: galaxy` on a Galaxy entry does
-not ([Collections](requirements.md#collections)). The cache records these
-commits and sha256s in the snapshot, not in `galaxy.lock`. An
-[S3 cache](#s3-cache-optional) reuses the same way, and
+re-resolves it, but adding or dropping `type: galaxy` on a Galaxy entry
+([Collections](requirements.md#collections)) or respelling its constraint
+([Version constraints](requirements.md#version-constraints)) does not. The
+cache records these commits and sha256s in the snapshot, not in
+`galaxy.lock`. An [S3 cache](#s3-cache-optional) reuses the same way, and
 [Cache flags](#cache-flags) compares the flags that refresh it.
 
 ## Freshness and retention

@@ -152,6 +152,13 @@ exception: the refused shape above, an infinite comb that would break closure
 under complement. User rule:
 [Prereleases](../get-started/ansible-galaxy-compat.md#prereleases).
 
+The operator and version patterns are `helpers.ConstraintOperatorPattern` and
+`helpers.ConstraintVersionPattern`, which `helpers.CanonicalConstraint`
+compiles too, and `helpers.RewriteConstraintRange` is the range rewrite both
+share. `TestCanonicalConstraintPreservesMeaning` holds the canonical spelling
+of every differential constraint to the same set, singleton and `Check`
+answers.
+
 ## Determinism
 
 - Propagation pops the smallest changed package (`popSmallest`); candidate
