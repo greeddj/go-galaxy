@@ -52,7 +52,7 @@ before you switch.
 
 | Method | Command |
 | :-- | :-- |
-| GitHub Action | `uses: greeddj/go-galaxy@v1.3.0` runs a cached `install` on Linux or macOS. With `install: false` it only puts go-galaxy on `PATH` ([Inputs and outputs](docs/guides/ci.md#inputs-and-outputs)) |
+| GitHub Action | `uses: greeddj/go-galaxy@v1.3.1` runs a cached `install` on Linux or macOS. With `install: false` it only puts go-galaxy on `PATH` ([Inputs and outputs](docs/guides/ci.md#inputs-and-outputs)) |
 | GitLab CI | `ghcr.io/greeddj/go-galaxy:<version>-alpine` as the job image, with `entrypoint: [""]` ([GitLab CI](docs/guides/ci.md#gitlab-ci)) |
 | Homebrew | `brew install --cask greeddj/tap/go-galaxy` |
 | Go | `go install github.com/greeddj/go-galaxy/cmd/go-galaxy@latest` |

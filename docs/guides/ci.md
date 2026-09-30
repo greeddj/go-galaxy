@@ -29,7 +29,7 @@ Linux and macOS runners, amd64 or arm64.
         runs-on: ubuntu-latest
         steps:
           - uses: actions/checkout@v7
-          - uses: greeddj/go-galaxy@v1.3.0 # (1)!
+          - uses: greeddj/go-galaxy@v1.3.1 # (1)!
             with:
               frozen: true
     ```
@@ -44,7 +44,7 @@ Linux and macOS runners, amd64 or arm64.
       install:
         runs-on: ubuntu-latest
         env:
-          RELEASE: "1.3.0" # (1)!
+          RELEASE: "1.3.1" # (1)!
         steps:
           - uses: actions/checkout@v7
           - name: Install go-galaxy # (2)!
@@ -118,7 +118,7 @@ does not load, `2` for a `galaxy.toml` that does not load
 
 With `@v1`, a branch or a commit SHA and no `version` input, the action takes
 the first word of `go-galaxy --version`, minus a leading `v` (for example
-`1.3.0`), as both the `version` output and the key's release. A first word
+`1.3.1`), as both the `version` output and the key's release. A first word
 that is no version, such as `(devel)`, fails the action there rather than
 leave the release out of the key.
 
@@ -127,7 +127,7 @@ leave the release out of the key.
 ### Secrets
 
 ```yaml
-      - uses: greeddj/go-galaxy@v1.3.0
+      - uses: greeddj/go-galaxy@v1.3.1
         env:
           HUB_TOKEN: ${{ secrets.HUB_TOKEN }} # (1)!
           GO_GALAXY_GIT_CREDENTIALS: forge # (2)!
@@ -211,12 +211,12 @@ variables:
 
 install:
   image:
-    name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine # (2)!
+    name: ghcr.io/greeddj/go-galaxy:1.3.1-alpine # (2)!
     entrypoint: [""]
   cache:
     key:
       files: [galaxy.lock] # (3)!
-      prefix: go-galaxy-1.3.0
+      prefix: go-galaxy-1.3.1
     paths: [.cache/go-galaxy]
   script:
     - go-galaxy install --frozen # (4)!
@@ -281,7 +281,7 @@ takes `$CI_JOB_TOKEN`, bound as in
         runs-on: ubuntu-latest
         steps:
           - uses: actions/checkout@v7
-          - uses: greeddj/go-galaxy@v1.3.0
+          - uses: greeddj/go-galaxy@v1.3.1
             id: gg
             with:
               install: false # (2)!
@@ -314,7 +314,7 @@ takes `$CI_JOB_TOKEN`, bound as in
     ```yaml
     lockfile-drift:
       image:
-        name: ghcr.io/greeddj/go-galaxy:1.3.0-alpine
+        name: ghcr.io/greeddj/go-galaxy:1.3.1-alpine
         entrypoint: [""]
       script:
         - go-galaxy lock --check --refresh # (1)!
@@ -336,7 +336,7 @@ both checks.
 FROM debian:stable-slim
 
 # (1)!
-COPY --from=ghcr.io/greeddj/go-galaxy:1.3.0 /go-galaxy /usr/local/bin/go-galaxy
+COPY --from=ghcr.io/greeddj/go-galaxy:1.3.1 /go-galaxy /usr/local/bin/go-galaxy
 # (2)!
 RUN apt-get update -qq \
  && apt-get install -y -qq --no-install-recommends ca-certificates \
@@ -419,10 +419,10 @@ Pin it in each place:
 
 | Where | Pin with |
 | :-- | :-- |
-| The action | `@v1.3.0`. `@v1`, a branch or a commit SHA names no release, so add `version: 1.3.0` |
-| A downloaded binary | A fixed release URL, `releases/download/v1.3.0/` |
-| A baked image | `ghcr.io/greeddj/go-galaxy:1.3.0` |
-| A GitLab CI job | Its image, `ghcr.io/greeddj/go-galaxy:1.3.0-alpine`, and the cache key's `prefix` with it |
+| The action | `@v1.3.1`. `@v1`, a branch or a commit SHA names no release, so add `version: 1.3.1` |
+| A downloaded binary | A fixed release URL, `releases/download/v1.3.1/` |
+| A baked image | `ghcr.io/greeddj/go-galaxy:1.3.1` |
+| A GitLab CI job | Its image, `ghcr.io/greeddj/go-galaxy:1.3.1-alpine`, and the cache key's `prefix` with it |
 
 Run `go-galaxy lock` with that release too, on developer machines included.
 [Upgrading](../reference/upgrading.md) lists what each release changes.
