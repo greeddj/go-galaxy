@@ -31,6 +31,7 @@ Update any CI step that branches on the old code for these cases
 | A git collection entry whose `version:` has no value | `3`, no ref named `<nil>` | `2`, at load |
 | A role entry key, or a collection's `namespace:`, `source:`, `type:` or `signatures:`, written with no value, or a list or a mapping under a collection's `namespace:`, `source:` or `type:` | `0`, read as absent | `2`, at load |
 | `hash` with no `galaxy.lock`, over a requirements file that does not load, such as one that is not YAML or names a `type: file` source | `0`, a key over the file's bytes | `2` |
+| A lockfile that is a named pipe, such as `--lock-file <(...)` or a `galaxy.lock` made by `mkfifo` | `0` once a writer feeds the pipe. Without one, the run blocks, and `install --frozen` and `warm --frozen` hold the cache lock meanwhile, so other runs on that cache exit `8` | `6`, before the pipe is opened, from `hash`, `tree`, `explain`, `outdated`, `lock --check`, `install --frozen` and `warm --frozen` |
 
 What to do about a new code:
 
@@ -40,6 +41,9 @@ What to do about a new code:
   would ask, since `install` refuses it too. To key another tool's cache on a
   file go-galaxy does not install, hash the file itself, such as with
   `hashFiles()`.
+- `6` for `lockfile is invalid: <path> is not a regular file`: write what the
+  pipe carries to a regular file and name that one with `--lock-file` or
+  `lock_file`.
 
 ## From v1.2.x
 

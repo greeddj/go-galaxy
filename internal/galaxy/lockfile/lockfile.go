@@ -135,6 +135,11 @@ func ResolveDefaultPath(requirementsFile, override string) string {
 // IsNotExist or wraps helpers.ErrLockfileInvalid, never both and never neither:
 // LoadRequired, outdated and lock --dry-run tell absence from breakage by it.
 func Load(path string) (*File, error) {
+	// Stat, following a symlink, refuses a fifo before an open that would block
+	// with no writer; a failed Stat passes, so the read reports absence as before.
+	if info, err := os.Stat(path); err == nil && !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s is not a regular file", helpers.ErrLockfileInvalid, path)
+	}
 	//nolint:gosec // path is user-provided lockfile location.
 	data, err := os.ReadFile(path)
 	if err != nil {

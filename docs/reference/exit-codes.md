@@ -164,7 +164,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 <details markdown>
 <summary>Missing or broken lockfile</summary>
 
-| Command | No lockfile | Unreadable or invalid |
+| Command | No lockfile | Unreadable, invalid or not a regular file ([Lockfile](cli.md#lockfile)) |
 | --- | --- | --- |
 | `install --frozen`, `warm --frozen`, `lock --check` (after resolving), `tree`, `explain` | `6` | `6` |
 | `hash` | the digest of what the requirements file asks for (`2` if it does not load) | `6` |

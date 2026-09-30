@@ -63,6 +63,11 @@ version with `helpers.IsExactVersion` and keys entries by fqdn.
 | Absent, required | `LoadRequired` returns `ErrLockfileMissing` naming the path, exit 6 | `--frozen`, `lock --check`, `tree`, `explain` |
 | Any other failure | Wraps `helpers.ErrLockfileInvalid`, exit 6 | Fatal; `lock --dry-run` warns, the metrics report omits the hash |
 
+`Load` `Stat`s the path first, following a symlink, and refuses anything but
+a regular file, a directory or fifo included, as `ErrLockfileInvalid` before
+any open: a fifo would block `install --frozen` under the cache lock. A failed
+`Stat` passes, so the read reports absence as before.
+
 A new failure arm in `Load` must wrap `ErrLockfileInvalid`, never
 `fs.ErrNotExist`: callers read that as absence, and a bare one reaching the
 exit-code classifier exits 2.

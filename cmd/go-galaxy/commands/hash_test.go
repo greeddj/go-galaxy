@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/exitcode"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
@@ -360,5 +362,32 @@ func TestHashIsTheSameForRequirementsYAMLAndItsGalaxyTOML(t *testing.T) {
 	}
 	if fromYAML != fromTOML {
 		t.Errorf("hash of requirements.yml = %q, of its galaxy.toml = %q, want them equal", fromYAML, fromTOML)
+	}
+}
+
+// TestComputeHashRefusesAFifoLockfile pins that hash beside a named pipe
+// galaxy.lock exits 6 at once through lockfile.Load's gate, where the open
+// used to wait for a writer.
+func TestComputeHashRefusesAFifoLockfile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	reqPath := filepath.Join(dir, "requirements.yml")
+	writeTestFile(t, reqPath, []byte("collections: []\n"))
+	lockPath := filepath.Join(dir, lockfile.DefaultName)
+	if err := syscall.Mkfifo(lockPath, 0o600); err != nil {
+		t.Skipf("named pipes unavailable on this platform: %v", err)
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := computeHash(reqPath, lockPath)
+		errCh <- err
+	}()
+	select {
+	case err := <-errCh:
+		if code := exitcode.FromError(err); !errors.Is(err, helpers.ErrLockfileInvalid) || code != exitcode.ExitLock {
+			t.Fatalf("computeHash(fifo lockfile) error = %v (exit %d), want ErrLockfileInvalid, exit %d", err, code, exitcode.ExitLock)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("computeHash(fifo lockfile) did not return: the lockfile gate did not run before open")
 	}
 }

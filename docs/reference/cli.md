@@ -291,6 +291,12 @@ The path is the first of:
 2. `lock_file` in `galaxy.toml`, relative to that file.
 3. `galaxy.lock` beside the requirements file.
 
+A path that exists but is not a regular file, such as a directory or a named
+pipe, `<(...)` included, is refused before it is opened: exit `6` from every
+command that reads the lockfile, and a warning from `lock --dry-run`, which
+then reports every collection as added. A symlink to a regular file is read as
+that file.
+
 `lock --frozen` exits `2`, and `GO_GALAXY_FROZEN` never reaches `lock`. What
 the pins enforce: [What a frozen install
 checks](../guides/lockfile.md#what-a-frozen-install-checks).

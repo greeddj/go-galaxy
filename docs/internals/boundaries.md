@@ -103,6 +103,7 @@ Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-loc
 
 | Input | Refused when | Where | Sentinel | Exit |
 | :-- | :-- | :-- | :-- | :-- |
+| A lockfile path | `Stat` finds no regular file, such as a directory or fifo; checked before any open | `lockfile.Load` | `ErrLockfileInvalid` | 6 |
 | A lockfile `source` or `name` | userinfo, never printed; a name outside its alphabet | `lockfile.File.validate` | `ErrLockfileInvalid` | 6 |
 | A Galaxy entry's `download_url` | not canonical `http(s)`, or with userinfo, query or fragment | `lockfile.downloadURLProblem` | `ErrLockfileInvalid` | 6 |
 | A Galaxy entry's `download_url`, under `--frozen` | off its server's origin | `checkLockedDownloadURLs` | `ErrLockfileInvalid` | 6 |

@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 )
@@ -66,15 +68,17 @@ func TestLoadMissing(t *testing.T) {
 	}
 }
 
-// TestLoadWrapsUnreadableFileAsInvalid pins that a path Load cannot read (a
-// directory: chmod 0000 proves nothing as root) is ErrLockfileInvalid and not
+// TestLoadWrapsUnreadableFileAsInvalid pins that a regular file Load cannot
+// read (mode 000, which root reads anyway) is ErrLockfileInvalid and not
 // IsNotExist, and that a valid file at the same path then loads.
 func TestLoadWrapsUnreadableFileAsInvalid(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "lockfile-is-a-dir.yml")
-	if err := os.Mkdir(path, helpers.DirMod); err != nil {
-		t.Fatalf("mkdir %s: %v", path, err)
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 file")
+	}
+	path := filepath.Join(t.TempDir(), DefaultName)
+	if err := os.WriteFile(path, []byte("schema_version: 5\n"), 0o000); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 
 	_, err := Load(path)
@@ -86,14 +90,14 @@ func TestLoadWrapsUnreadableFileAsInvalid(t *testing.T) {
 	}
 
 	if err := os.Remove(path); err != nil {
-		t.Fatalf("remove directory: %v", err)
+		t.Fatalf("remove unreadable file: %v", err)
 	}
 	valid := &File{Collections: []Entry{{Name: "a.a", Version: "1.0.0", DownloadURL: downloadURLFor("a.a", "1.0.0")}}}
 	if err := Save(path, valid); err != nil {
 		t.Fatalf("save valid lockfile at the same path: %v", err)
 	}
 	if _, err := Load(path); err != nil {
-		t.Fatalf("Load after replacing the directory with a valid lockfile: %v", err)
+		t.Fatalf("Load after replacing the unreadable file with a valid lockfile: %v", err)
 	}
 }
 
@@ -611,4 +615,60 @@ func lineAt(lines []string, i int) string {
 // version carries, so every fixture that must load names one.
 func downloadURLFor(name, version string) string {
 	return "https://galaxy.example.invalid/download/" + strings.ReplaceAll(name, ".", "-") + "-" + version + ".tar.gz"
+}
+
+// nonRegularLoadBound caps how long Load of a named pipe may take before the
+// test calls the regular-file gate broken: past it, open() waits for a writer.
+const nonRegularLoadBound = 5 * time.Second
+
+// TestLoadRefusesANonRegularFileBeforeOpening pins the gate on a fifo and a
+// directory: ErrLockfileInvalid naming the path, never IsNotExist, and for the
+// fifo a return within the bound instead of an open that blocks.
+func TestLoadRefusesANonRegularFileBeforeOpening(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{"fifo", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), DefaultName)
+			if kind == "fifo" {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Skipf("named pipes unavailable on this platform: %v", err)
+				}
+			} else if err := os.Mkdir(path, helpers.DirMod); err != nil {
+				t.Fatalf("mkdir %s: %v", path, err)
+			}
+			errCh := make(chan error, 1)
+			go func() {
+				_, loadErr := Load(path)
+				errCh <- loadErr
+			}()
+			select {
+			case err := <-errCh:
+				if !errors.Is(err, helpers.ErrLockfileInvalid) || IsNotExist(err) || !strings.Contains(err.Error(), path+" is not a regular file") {
+					t.Fatalf("Load(%s) error = %v, want ErrLockfileInvalid naming %s as not a regular file", kind, err, path)
+				}
+			case <-time.After(nonRegularLoadBound):
+				t.Fatalf("Load(%s) did not return within %s: the gate did not run before open", kind, nonRegularLoadBound)
+			}
+		})
+	}
+}
+
+// TestLoadFollowsSymlinkToRegularLockfile is the gate's control: Stat follows a
+// symlink, so a galaxy.lock linked to a regular lockfile loads as that file.
+func TestLoadFollowsSymlinkToRegularLockfile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "shared.lock")
+	valid := &File{Collections: []Entry{{Name: "a.a", Version: "1.0.0", DownloadURL: downloadURLFor("a.a", "1.0.0")}}}
+	if err := Save(target, valid); err != nil {
+		t.Fatalf("save %s: %v", target, err)
+	}
+	link := filepath.Join(dir, DefaultName)
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink %s: %v", link, err)
+	}
+	if _, err := Load(link); err != nil {
+		t.Fatalf("Load(symlink) error = %v, want nil", err)
+	}
 }
