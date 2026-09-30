@@ -211,6 +211,38 @@ func TestAnsibleGalaxyServerDoesNotCollapseServerList(t *testing.T) {
 	})
 }
 
+// TestVerboseServerCreditFollowsTheServerList pins, through discovery and the
+// whole config build, that a server_list outranking [galaxy] server takes its
+// verbose credit, which only an applyAnsibleConfig run ahead of it can move.
+func TestVerboseServerCreditFollowsTheServerList(t *testing.T) {
+	const body = "[galaxy]\nserver = https://cfg.example/\nserver_list = hub\n\n[galaxy_server.hub]\nurl = https://hub.example/\n"
+	rows := []struct {
+		env     map[string]string
+		name    string
+		listEnv bool
+	}{
+		{name: "the ansible.cfg server_list"},
+		{name: "ANSIBLE_GALAXY_SERVER_LIST", env: map[string]string{"ANSIBLE_GALAXY_SERVER_LIST": "hub"}, listEnv: true},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			writeCWDAnsibleConfig(t, body)
+			projUnsetEnv(t, "GO_GALAXY_SERVER", "ANSIBLE_GALAXY_SERVER", "ANSIBLE_GALAXY_SERVER_LIST")
+			for k, v := range row.env {
+				t.Setenv(k, v)
+			}
+			cfg, err := buildConfigFor(t, "install", cliflags.CollectionFlags(), nil)
+			if err != nil {
+				t.Fatalf("BuildCollectionConfig() error = %v, want nil", err)
+			}
+			assertConfigField(t, "Server", cfg.Server, "https://hub.example")
+			assertConfigField(t, "AnsibleServerUsed", cfg.AnsibleServerUsed, false)
+			assertConfigField(t, "AnsibleServerListUsed", cfg.AnsibleServerListUsed, true)
+			assertConfigField(t, "AnsibleServerListEnvUsed", cfg.AnsibleServerListEnvUsed, row.listEnv)
+		})
+	}
+}
+
 // aliasCfg builds the install config with no CLI arguments at all, so a value
 // a row below asserts on can only have arrived through an env source.
 func aliasCfg(t *testing.T) *config.Config {

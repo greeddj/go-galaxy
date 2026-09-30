@@ -141,14 +141,17 @@ func (i *Infra) warn(cfg *config.Config, queue func(*config.Config) []string) {
 	}
 }
 
-// debugAnsibleSources logs each value ansible.cfg supplied, then the one
-// ANSIBLE_GALAXY_SERVER supplies whether or not a file was found at all,
-// since crediting the file for it would name a source that did not provide it.
+// debugAnsibleSources logs each value the run took from ansible.cfg, then the
+// list or server an ANSIBLE_GALAXY_SERVER* variable supplied, file or not; a
+// value a higher layer outranked is credited to no source.
 func (i *Infra) debugAnsibleSources(cfg *config.Config) {
 	if cfg.AnsibleConfigPath != "" {
 		i.debugAnsiblePaths(cfg)
 		if cfg.AnsibleCacheDirUsed {
 			i.Output.Debugf("Ansible.cfg %s: galaxy.cache_dir=%s", cfg.AnsibleConfigPath, cfg.CacheDir)
+		}
+		if cfg.AnsibleServerListUsed && !cfg.AnsibleServerListEnvUsed {
+			i.Output.Debugf("Ansible.cfg %s: galaxy.server_list=%s", cfg.AnsibleConfigPath, serverIDs(cfg.Servers))
 		}
 		if cfg.AnsibleServerUsed && !cfg.AnsibleServerEnvUsed {
 			i.Output.Debugf("Ansible.cfg %s: galaxy.server=%s", cfg.AnsibleConfigPath, cfg.Server)
@@ -157,9 +160,22 @@ func (i *Infra) debugAnsibleSources(cfg *config.Config) {
 			i.Output.Debugf("Ansible.cfg %s: galaxy.server_timeout=%s", cfg.AnsibleConfigPath, cfg.Timeout)
 		}
 	}
+	if cfg.AnsibleServerListEnvUsed {
+		i.Output.Debugf("Env ANSIBLE_GALAXY_SERVER_LIST: galaxy.server_list=%s", serverIDs(cfg.Servers))
+	}
 	if cfg.AnsibleServerEnvUsed {
 		i.Output.Debugf("Env ANSIBLE_GALAXY_SERVER: galaxy.server=%s", cfg.Server)
 	}
+}
+
+// serverIDs joins the resolved servers' ids with commas; config held each to
+// the server id alphabet, so none can carry a control sequence into the line.
+func serverIDs(servers []config.Server) string {
+	ids := make([]string, 0, len(servers))
+	for _, s := range servers {
+		ids = append(ids, s.ID)
+	}
+	return strings.Join(ids, ",")
 }
 
 // debugServerList logs each resolved server's id, URL, TLS policy and token

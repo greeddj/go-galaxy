@@ -141,3 +141,13 @@ without a bucket and unused `servers`.
 `applyProjectSettings` withdraws the `AnsibleCacheDirUsed` credit when
 galaxy.toml's `cache_dir` wins, so the ansible.cfg line never credits a file
 that lost.
+
+`resolveServers` moves the server credit the same way. `applyAnsibleConfig`
+credits `[galaxy] server` or `ANSIBLE_GALAXY_SERVER` through
+`AnsibleServerUsed` and `AnsibleServerEnvUsed` before any list is read. When a
+list decides and `--server` is unset, `creditServerList` clears both, whose
+`galaxy.server=` line would name the list's head. It sets
+`AnsibleServerListUsed`, with `AnsibleServerListEnvUsed` when
+`resolveServerList` read `ANSIBLE_GALAXY_SERVER_LIST`, for one
+`galaxy.server_list=<ids>` line. A `galaxy.toml` list keeps its `servers`
+credit in `ProjectSettingsUsed` alone, and `--server` gets no source line.

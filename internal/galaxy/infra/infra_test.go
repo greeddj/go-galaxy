@@ -164,6 +164,63 @@ func TestDebugConfigSourcesNamesProjectSettingsWithoutLeakingToken(t *testing.T)
 	}
 }
 
+// TestDebugConfigSourcesCreditsTheServerSourceThatDecided pins every server
+// source line whole: a list names its ids, one server its URL, and an
+// environment list is named with or without an ansible.cfg.
+func TestDebugConfigSourcesCreditsTheServerSourceThatDecided(t *testing.T) {
+	t.Parallel()
+	hub := config.Server{ID: "hub", URL: "https://hub.example"}
+	pub := config.Server{ID: "pub", URL: "https://pub.example"}
+	anon := []config.Server{{URL: hub.URL}}
+	const anonLine = `Galaxy server "": url=https://hub.example token=false insecure_skip_tls_verify=false`
+	const hubLine = `Galaxy server "hub": url=https://hub.example token=false insecure_skip_tls_verify=false`
+	const pubLine = `Galaxy server "pub": url=https://pub.example token=false insecure_skip_tls_verify=false`
+	cases := []struct {
+		cfg  *config.Config
+		name string
+		want []string
+	}{
+		{
+			name: "ansible.cfg server_list",
+			cfg:  &config.Config{AnsibleConfigPath: "ansible.cfg", AnsibleServerListUsed: true, Servers: []config.Server{hub, pub}},
+			want: []string{"Ansible.cfg ansible.cfg: galaxy.server_list=hub,pub", hubLine, pubLine},
+		},
+		{
+			name: "ANSIBLE_GALAXY_SERVER_LIST beside an ansible.cfg",
+			cfg: &config.Config{
+				AnsibleConfigPath: "ansible.cfg", AnsibleServerListUsed: true, AnsibleServerListEnvUsed: true,
+				Servers: []config.Server{hub},
+			},
+			want: []string{"Env ANSIBLE_GALAXY_SERVER_LIST: galaxy.server_list=hub", hubLine},
+		},
+		{
+			name: "ANSIBLE_GALAXY_SERVER_LIST with no ansible.cfg",
+			cfg:  &config.Config{AnsibleServerListUsed: true, AnsibleServerListEnvUsed: true, Servers: []config.Server{hub}},
+			want: []string{"Env ANSIBLE_GALAXY_SERVER_LIST: galaxy.server_list=hub", hubLine},
+		},
+		{
+			name: "ansible.cfg server",
+			cfg:  &config.Config{AnsibleConfigPath: "ansible.cfg", AnsibleServerUsed: true, Server: hub.URL, Servers: anon},
+			want: []string{"Ansible.cfg ansible.cfg: galaxy.server=https://hub.example", anonLine},
+		},
+		{
+			name: "ANSIBLE_GALAXY_SERVER",
+			cfg:  &config.Config{AnsibleServerUsed: true, AnsibleServerEnvUsed: true, Server: hub.URL, Servers: anon},
+			want: []string{"Env ANSIBLE_GALAXY_SERVER: galaxy.server=https://hub.example", anonLine},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			printer := &recordingPrinter{}
+			New(printer, nil).DebugConfigSources(tc.cfg)
+			if !slices.Equal(printer.debugLines, tc.want) {
+				t.Errorf("debug lines = %q, want %q", printer.debugLines, tc.want)
+			}
+		})
+	}
+}
+
 // TestDebugConfigSourcesNilSafe checks that the nil-guard contract
 // (nil Infra, nil Output, nil cfg) holds even though the method does
 // more than the ansible.cfg-sourced branch.

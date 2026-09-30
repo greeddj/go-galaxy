@@ -22,8 +22,11 @@ flowchart TB
   and a numeric flag keeps its built-in default.
 - Most settings have only some of these layers. [Options](cli.md#options)
   lists each flag's variables in order, and its default.
-- `--verbose` prints each value `ansible.cfg` supplied. Of the
-  `[tool.go-galaxy]` keys the run took, it prints the names, never the values.
+- `--verbose` prints each `[defaults]` and `[galaxy]` value the run took from
+  `ansible.cfg`, and one taken from `ANSIBLE_GALAXY_SERVER` or
+  `ANSIBLE_GALAXY_SERVER_LIST`, naming its source; a value a higher layer
+  outranked is left out. Of the `[tool.go-galaxy]` keys the run took, it
+  prints the names, never the values.
 
 > [!NOTE]
 > `ANSIBLE_GALAXY_SERVER` stands in for `[galaxy] server`, below any server

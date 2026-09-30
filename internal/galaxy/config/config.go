@@ -87,6 +87,11 @@ type Config struct {
 	// AnsibleServerEnvUsed reports that the ansible-side server came from
 	// ANSIBLE_GALAXY_SERVER, so debug output does not credit the file.
 	AnsibleServerEnvUsed bool
+	// AnsibleServerListUsed reports that [galaxy] server_list or, with
+	// AnsibleServerListEnvUsed, ANSIBLE_GALAXY_SERVER_LIST decided Servers;
+	// resolveServers then clears AnsibleServerUsed and AnsibleServerEnvUsed.
+	AnsibleServerListUsed    bool
+	AnsibleServerListEnvUsed bool
 }
 
 // IsNoCache reports whether cache reads and writes are disabled.

@@ -600,3 +600,69 @@ func psrvCheckDumpRedacts(t *testing.T, cfg *Config, err error) {
 	}
 	psrvNoPlaintext(t, "yaml.Marshal", string(yamlDump))
 }
+
+// psrvCredit is the verbose credit a resolve leaves: the four bits
+// debugAnsibleSources reads to name where the server or the list came from.
+type psrvCredit struct {
+	server, serverEnv, list, listEnv bool
+}
+
+// psrvCredited asserts a successful resolve that left exactly want's credit
+// bits, whatever the servers themselves are.
+func psrvCredited(want psrvCredit) func(t *testing.T, cfg *Config, err error) {
+	return func(t *testing.T, cfg *Config, err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("resolveServers() error = %v, want nil", err)
+		}
+		got := psrvCredit{
+			server: cfg.AnsibleServerUsed, serverEnv: cfg.AnsibleServerEnvUsed,
+			list: cfg.AnsibleServerListUsed, listEnv: cfg.AnsibleServerListEnvUsed,
+		}
+		if got != want {
+			t.Errorf("credit = %+v, want %+v", got, want)
+		}
+	}
+}
+
+// TestResolveServersCreditsOnlyTheSourceThatDecided pins that a server list
+// withdraws the credit of the single server it outranked and, from ansible.cfg
+// or ANSIBLE_GALAXY_SERVER_LIST, takes its own. Not parallel: rows export.
+func TestResolveServersCreditsOnlyTheSourceThatDecided(t *testing.T) {
+	const cfgServer, envServer = "https://cfg.example", "https://env.example"
+	hubSection := map[string]map[string]string{psrvHubID: {"url": psrvHubURL}}
+	cfgList := ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: cfgServer, ServerList: psrvHubID}, GalaxyServers: hubSection}
+	cfgServerOnly := ansibleConfig{Galaxy: ansibleGalaxyConfig{Server: cfgServer}, GalaxyServers: hubSection}
+	psrvRunCases(t, []psrvCase{
+		{name: "ansible.cfg server beside its server_list", ansCfg: cfgList, check: psrvCredited(psrvCredit{list: true})},
+		{
+			name: "ANSIBLE_GALAXY_SERVER beside the ansible.cfg server_list", ansCfg: cfgList,
+			env: map[string]string{"ANSIBLE_GALAXY_SERVER": envServer}, check: psrvCredited(psrvCredit{list: true}),
+		},
+		{
+			name: "ANSIBLE_GALAXY_SERVER beside ANSIBLE_GALAXY_SERVER_LIST", ansCfg: cfgServerOnly,
+			env:   map[string]string{"ANSIBLE_GALAXY_SERVER": envServer, "ANSIBLE_GALAXY_SERVER_LIST": psrvHubID},
+			check: psrvCredited(psrvCredit{list: true, listEnv: true}),
+		},
+		{
+			name: "ansible.cfg server beside galaxy.toml servers", ansCfg: cfgServerOnly, project: psrvHubAndPub(),
+			check: psrvCredited(psrvCredit{}), wantUsed: []string{"servers"},
+		},
+		{
+			name: "ANSIBLE_GALAXY_SERVER_LIST over galaxy.toml servers", ansCfg: cfgServerOnly, project: psrvHubAndPub(),
+			env:   map[string]string{"ANSIBLE_GALAXY_SERVER_LIST": psrvPubID},
+			check: psrvCredited(psrvCredit{list: true, listEnv: true}), wantUsed: []string{"servers"},
+		},
+		{name: "ansible.cfg server alone", ansCfg: cfgServerOnly, check: psrvCredited(psrvCredit{server: true})},
+		{
+			name: "ANSIBLE_GALAXY_SERVER alone", env: map[string]string{"ANSIBLE_GALAXY_SERVER": envServer},
+			check: psrvCredited(psrvCredit{server: true, serverEnv: true}),
+		},
+		{
+			name: "exported-empty ANSIBLE_GALAXY_SERVER_LIST", ansCfg: cfgList,
+			env: map[string]string{"ANSIBLE_GALAXY_SERVER_LIST": ""}, check: psrvCredited(psrvCredit{server: true}),
+		},
+		{name: "--server naming a list id", ansCfg: cfgList, args: []string{"--server=" + psrvHubID}, check: psrvCredited(psrvCredit{})},
+		{name: "--server naming a url", ansCfg: cfgList, args: []string{"--server=https://anon.example"}, check: psrvCredited(psrvCredit{})},
+	})
+}

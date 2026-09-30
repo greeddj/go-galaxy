@@ -222,24 +222,45 @@ func TestResolveServersExplicitURLIgnoresList(t *testing.T) {
 }
 
 // TestResolveServerListEnvBeatsIni pins that ANSIBLE_GALAXY_SERVER_LIST, once
-// set at all, wins over [galaxy] server_list, a blank value meaning no list.
+// set at all, wins over galaxy.toml ids and [galaxy] server_list, a blank value
+// meaning no list, and that the source returned names the one that won.
 func TestResolveServerListEnvBeatsIni(t *testing.T) {
 	t.Run("env overrides ini", func(t *testing.T) {
 		t.Setenv("ANSIBLE_GALAXY_SERVER_LIST", "from-env")
 		ansCfg := ansibleConfig{Galaxy: ansibleGalaxyConfig{ServerList: "from-ini"}}
-		got := resolveServerList(ansCfg, nil)
+		got, source := resolveServerList(ansCfg, []string{"from-toml"})
 		want := []string{"from-env"}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("resolveServerList() = %v, want %v", got, want)
+		if !reflect.DeepEqual(got, want) || source != serverListFromEnv {
+			t.Errorf("resolveServerList() = %v, %v, want %v, %v", got, source, want, serverListFromEnv)
 		}
 	})
 
 	t.Run("env set to whitespace means unset, not fall back to ini", func(t *testing.T) {
 		t.Setenv("ANSIBLE_GALAXY_SERVER_LIST", "   ")
 		ansCfg := ansibleConfig{Galaxy: ansibleGalaxyConfig{ServerList: "from-ini"}}
-		got := resolveServerList(ansCfg, nil)
-		if got != nil {
-			t.Errorf("resolveServerList() = %v, want nil", got)
+		got, source := resolveServerList(ansCfg, nil)
+		if got != nil || source != serverListFromEnv {
+			t.Errorf("resolveServerList() = %v, %v, want nil, %v", got, source, serverListFromEnv)
+		}
+	})
+
+	t.Run("galaxy.toml ids beat the ini list", func(t *testing.T) {
+		psUnsetEnv(t, "ANSIBLE_GALAXY_SERVER_LIST")
+		ansCfg := ansibleConfig{Galaxy: ansibleGalaxyConfig{ServerList: "from-ini"}}
+		got, source := resolveServerList(ansCfg, []string{"from-toml"})
+		want := []string{"from-toml"}
+		if !reflect.DeepEqual(got, want) || source != serverListFromProject {
+			t.Errorf("resolveServerList() = %v, %v, want %v, %v", got, source, want, serverListFromProject)
+		}
+	})
+
+	t.Run("ini list alone", func(t *testing.T) {
+		psUnsetEnv(t, "ANSIBLE_GALAXY_SERVER_LIST")
+		ansCfg := ansibleConfig{Galaxy: ansibleGalaxyConfig{ServerList: " hub , pub ,"}}
+		got, source := resolveServerList(ansCfg, nil)
+		want := []string{"hub", "pub"}
+		if !reflect.DeepEqual(got, want) || source != serverListFromAnsibleCfg {
+			t.Errorf("resolveServerList() = %v, %v, want %v, %v", got, source, want, serverListFromAnsibleCfg)
 		}
 	})
 }

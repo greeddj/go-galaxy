@@ -188,11 +188,16 @@ func resolveServers(cfg *Config, c *cli.Command, ansCfg ansibleConfig, project p
 	if len(project.Servers) > 0 {
 		sections = projectSections(project)
 	}
-	ids := resolveServerList(ansCfg, sections.ids)
+	ids, listSource := resolveServerList(ansCfg, sections.ids)
 
 	servers, err := resolveServerCandidates(cfg, c, ids, sections)
 	if err != nil {
 		return err
+	}
+	// A list that decided takes the verbose credit from the single server it
+	// outranked; --server names its own source and is credited to no one.
+	if !c.IsSet("server") && len(ids) > 0 {
+		creditServerList(cfg, listSource)
 	}
 	// Credited only when a resolved server was built from a galaxy.toml entry:
 	// an exported-empty server list or an anonymous --server leaves the
@@ -302,19 +307,37 @@ func resolveExplicitServer(value string, ids []string, sections serverSections) 
 	return server, nil, err
 }
 
-// resolveServerList returns the trimmed, non-empty ids of server_list:
-// ANSIBLE_GALAXY_SERVER_LIST whenever it is set, even to "", else galaxy.toml's
+// serverListSource names where resolveServerList read its ids.
+type serverListSource uint8
+
+const (
+	serverListFromAnsibleCfg serverListSource = iota
+	serverListFromEnv
+	serverListFromProject
+)
+
+// creditServerList moves the debug credit to the list that decided Servers:
+// the single ansible-side server it outranked loses its own, and galaxy.toml's
+// list is credited through ProjectSettingsUsed instead.
+func creditServerList(cfg *Config, source serverListSource) {
+	cfg.AnsibleServerUsed, cfg.AnsibleServerEnvUsed = false, false
+	cfg.AnsibleServerListUsed = source != serverListFromProject
+	cfg.AnsibleServerListEnvUsed = source == serverListFromEnv
+}
+
+// resolveServerList returns the trimmed, non-empty ids of server_list and their
+// source: ANSIBLE_GALAXY_SERVER_LIST whenever set, even to "", else galaxy.toml's
 // entries in file order, else [galaxy] server_list; whitespace-only is unset.
-func resolveServerList(ansCfg ansibleConfig, projectIDs []string) []string {
-	raw := ansCfg.Galaxy.ServerList
+func resolveServerList(ansCfg ansibleConfig, projectIDs []string) ([]string, serverListSource) {
+	raw, source := ansCfg.Galaxy.ServerList, serverListFromAnsibleCfg
 	if v, ok := os.LookupEnv("ANSIBLE_GALAXY_SERVER_LIST"); ok {
-		raw = v
+		raw, source = v, serverListFromEnv
 	} else if len(projectIDs) > 0 {
-		return projectIDs
+		return projectIDs, serverListFromProject
 	}
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil
+		return nil, source
 	}
 
 	var ids []string
@@ -323,7 +346,7 @@ func resolveServerList(ansCfg ansibleConfig, projectIDs []string) []string {
 			ids = append(ids, p)
 		}
 	}
-	return ids
+	return ids, source
 }
 
 // validateServerIDs requires every id to match serverIDPattern and refuses
