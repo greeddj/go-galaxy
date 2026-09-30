@@ -119,6 +119,11 @@ func sourcePairs() []tomlYAMLPair {
 			yaml: yamlCollections("name: acme.app\n    version: '>= 1.4.0'\n    source: automation_hub"),
 		},
 		{
+			name: "galaxy table with explicit type",
+			toml: tomlCollections(`{ name = "acme.app", type = "galaxy", version = ">= 1.4.0" }`),
+			yaml: yamlCollections("name: acme.app\n    type: galaxy\n    version: '>= 1.4.0'"),
+		},
+		{
 			name: "galaxy table with signatures",
 			toml: tomlCollections(`{ name = "acme.signed", version = "*", signatures = ["https://keys.example.com/a.asc"] }`),
 			yaml: yamlCollections("name: acme.signed\n    version: '*'\n    signatures:\n      - https://keys.example.com/a.asc"),
@@ -360,7 +365,7 @@ func tomlStringRefusalCases() []tomlRefusalCase {
 }
 
 func tomlTableRefusalCases() []tomlRefusalCase {
-	return []tomlRefusalCase{
+	return append([]tomlRefusalCase{
 		{
 			name: "unknown key", toml: tomlCollections(`{ name = "ns.name", foo = "x" }`),
 			wantErr: helpers.ErrInvalidCollectionEntry, wantMsg: `unknown key "foo" on a collection entry`,
@@ -418,6 +423,22 @@ func tomlTableRefusalCases() []tomlRefusalCase {
 			name:    "credential in a source-shaped name",
 			toml:    tomlCollections(`{ name = "ssh://deploy:hunter2@h/x", version = "1.0.0.0" }`),
 			wantErr: helpers.ErrUnsupportedCollectionSource, notMsg: "hunter2",
+		},
+	}, tomlTypedGalaxyRefusalCases()...)
+}
+
+// tomlTypedGalaxyRefusalCases are table refusals that type = "galaxy" leaves
+// as they are without it: the constraint is still judged, and a pointer name
+// is refused as a source rather than inferred as one.
+func tomlTypedGalaxyRefusalCases() []tomlRefusalCase {
+	return []tomlRefusalCase{
+		{
+			name: "broken constraint in a typed galaxy table", toml: tomlCollections(`{ name = "acme.app", type = "galaxy", version = ">= 0..20" }`),
+			wantErr: helpers.ErrInvalidCollectionConstraint, wantMsg: `">= 0..20" for acme.app`,
+		},
+		{
+			name: "git pointer name in a typed galaxy table", toml: tomlCollections(`{ name = "git+https://h.example/a.git", type = "galaxy" }`),
+			wantErr: helpers.ErrUnsupportedCollectionSource,
 		},
 	}
 }

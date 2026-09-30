@@ -246,6 +246,31 @@ func TestLockCheckPassesOnAnUpToDateLockfile(t *testing.T) {
 	}
 }
 
+// TestLockCheckPassesAfterTypeGalaxyIsWrittenOut pins that spelling out
+// type: galaxy on a locked Galaxy entry is no drift: --check passes and leaves
+// the lockfile byte-identical.
+func TestLockCheckPassesAfterTypeGalaxyIsWrittenOut(t *testing.T) {
+	t.Parallel()
+	f := newLockRun(t)
+	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("seed Lock: %v", err)
+	}
+	path := lockfile.ResolveDefaultPath(f.cfg.RequirementsFile, f.cfg.LockFile)
+	before := mustReadFile(t, path)
+
+	mustWriteFile(t, f.cfg.RequirementsFile,
+		[]byte("collections:\n  - name: acme.widgets\n    type: galaxy\n    version: \"*\"\n"))
+	f.cfg.Check = true
+	if err := Lock(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("check Lock: %v", err)
+	}
+
+	after := mustReadFile(t, path)
+	if string(before) != string(after) {
+		t.Fatalf("check Lock rewrote the lockfile:\n%s", after)
+	}
+}
+
 // TestLockCheckFailsOnDrift pins that a root added after locking fails
 // --check with helpers.ErrLockfileDrift and the lock exit code, leaves the
 // file byte-identical and still writes the check run's metrics report.

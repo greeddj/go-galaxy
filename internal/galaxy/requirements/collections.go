@@ -36,7 +36,9 @@ type CollectionRequirement struct {
 	Signatures []string
 }
 
-// Type values a requirements entry may carry. An empty type is Galaxy.
+// Type values a requirements entry may carry. A Galaxy collection entry
+// parses to the empty type, whether or not it spelled type: galaxy; a role
+// keeps TypeGalaxy.
 const (
 	TypeGalaxy = "galaxy"
 	TypeGit    = "git"
@@ -274,11 +276,22 @@ func parseCollectionMapItem(value map[string]any, defaultSource string) (Collect
 	if req.Type == TypeURL || (req.Type == "" && urlsource.IsHTTPURL(req.Name)) {
 		return parseURLMapItem(req, value)
 	}
+	req = foldGalaxyType(req)
 	if err := checkNamespaceNameConflict(req); err != nil {
 		return CollectionRequirement{}, err
 	}
 	req = normalizeCollectionName(req)
 	return finalizeCollectionRequirement(req, defaultSource, value)
+}
+
+// foldGalaxyType rewrites type: galaxy as the absent type it means, so both
+// spellings parse alike. It runs past the git and url dispatch, since an
+// explicit type must never reach that inference from the name.
+func foldGalaxyType(req CollectionRequirement) CollectionRequirement {
+	if req.Type == TypeGalaxy {
+		req.Type = ""
+	}
+	return req
 }
 
 func parseCollectionMapFields(value map[string]any) CollectionRequirement {
@@ -378,10 +391,10 @@ func validateRequirement(req CollectionRequirement, raw any) error {
 	if req.Name == "" {
 		return fmt.Errorf("%w: %v", helpers.ErrInvalidCollectionEntry, raw)
 	}
-	if req.Type != "" && req.Type != TypeGalaxy {
+	if req.Type != "" {
 		return fmt.Errorf("%w %q (only galaxy, git and url are supported)", helpers.ErrUnsupportedCollectionType, req.Type)
 	}
-	if req.Type == "" && looksLikeSourceName(req.Name) {
+	if looksLikeSourceName(req.Name) {
 		return fmt.Errorf("%w %q (only Galaxy API, git and url sources are supported)",
 			helpers.ErrUnsupportedCollectionSource, helpers.URLForMessage(req.Name))
 	}
@@ -591,7 +604,7 @@ func applyRequirementDefaults(req CollectionRequirement, defaultSource string) C
 	if req.Version == "" {
 		req.Version = "*"
 	}
-	if req.Source == "" && (req.Type == "galaxy" || (req.Type == "" && !looksLikeSourceName(req.Name))) {
+	if req.Source == "" && req.Type == "" && !looksLikeSourceName(req.Name) {
 		req.Source = defaultSource
 	}
 	return req

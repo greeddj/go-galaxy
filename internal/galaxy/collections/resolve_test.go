@@ -1,13 +1,18 @@
 package collections
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"slices"
 	"testing"
 
 	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
+	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
+	"github.com/greeddj/go-galaxy/internal/galaxy/store"
+	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
 
 func TestBuildInstallLevels(t *testing.T) {
@@ -235,4 +240,87 @@ func TestSnapshotReuseVetoed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRequirementsSignatureIgnoresExplicitGalaxyType pins that type: galaxy
+// adds nothing to the replay key: prepareRoots already reads an absent type
+// as galaxy, so every spelling keys one resolution.
+func TestRequirementsSignatureIgnoresExplicitGalaxyType(t *testing.T) {
+	t.Parallel()
+	spellings := map[string]string{
+		"absent":               "collections:\n  - name: acme.app\n",
+		"dotted and galaxy":    "collections:\n  - name: acme.app\n    type: galaxy\n",
+		"namespace and galaxy": "collections:\n  - namespace: acme\n    name: app\n    type: galaxy\n",
+	}
+	sigs := map[string]string{}
+	for name, body := range spellings {
+		spec := buildRequirementsSpec(preparedRootsFromYAML(t, body))
+		if got := spec["acme.app"].Type; got != typeGalaxy {
+			t.Fatalf("%s: spec Type = %q, want %q", name, got, typeGalaxy)
+		}
+		sigs[name] = requirementsSignatureFromSpec(spec, false, "servers")
+	}
+	if sigs["dotted and galaxy"] != sigs["absent"] || sigs["namespace and galaxy"] != sigs["absent"] {
+		t.Fatalf("signatures differ: %v", sigs)
+	}
+}
+
+// TestExplicitGalaxyTypeReplaysTheUntypedResolution pins that adding type:
+// galaxy replays a resolution recorded without it. The replay Store holds only
+// that resolution, since warm metadata would answer a fresh resolve unasked too.
+func TestExplicitGalaxyTypeReplaysTheUntypedResolution(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name         string
+		body         string
+		wantRequests bool
+	}{
+		{name: "type galaxy added", body: "collections:\n  - name: acme.app\n    type: galaxy\n"},
+		{name: "control: an exact pin", body: "collections:\n  - name: acme.app\n    version: 1.0.0\n", wantRequests: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := fakegalaxy.New(t)
+			srv.AddVersion("acme", "app", "1.0.0", nil)
+			cfg := &config.Config{Server: srv.URL(), Workers: 1}
+			runtime := infra.New(noopPrinter{}, srv.Client())
+			untyped := preparedRootsFromYAML(t, "collections:\n  - name: acme.app\n")
+			resolved, graph, err := resolveCollectionsInternal(context.Background(),
+				newCollectionDeps(cfg, runtime, store.New()), untyped, resolveTopLevel)
+			if err != nil {
+				t.Fatalf("first resolve: %v", err)
+			}
+			spec := buildRequirementsSpec(untyped)
+			replaySt := store.New()
+			recordResolution(replaySt, resolved, graph,
+				requirementsSignatureFromSpec(spec, cfg.NoDeps, serversSignature(cfg)), cfg.Server, spec)
+			srv.ResetCounts()
+			_, _, err = resolveCollectionsInternal(context.Background(),
+				newCollectionDeps(cfg, runtime, replaySt), preparedRootsFromYAML(t, tc.body), resolveTopLevel)
+			if err != nil {
+				t.Fatalf("second resolve: %v", err)
+			}
+			if got := srv.Total() > 0; got != tc.wantRequests {
+				t.Fatalf("second resolve made %d requests, want requests: %v", srv.Total(), tc.wantRequests)
+			}
+		})
+	}
+}
+
+// preparedRootsFromYAML loads body as a requirements.yml the way a run does,
+// then prepares its roots as the resolve and the replay key see them.
+func preparedRootsFromYAML(t *testing.T, body string) []collection {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "requirements.yml")
+	mustWriteFile(t, path, []byte(body))
+	roots, _, err := loadRequirements(path, "")
+	if err != nil {
+		t.Fatalf("loadRequirements: %v", err)
+	}
+	prepared, err := prepareRoots(roots)
+	if err != nil {
+		t.Fatalf("prepareRoots: %v", err)
+	}
+	return prepared
 }

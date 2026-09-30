@@ -3,6 +3,7 @@ package requirements
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -323,7 +324,7 @@ type parseCollectionsRejectedCase struct {
 // formats, a scalar collections value, namespace/name conflicts, and a
 // credential-bearing source: in both entry shapes.
 func parseCollectionsRejectedCases() []parseCollectionsRejectedCase {
-	return append([]parseCollectionsRejectedCase{
+	return append(append([]parseCollectionsRejectedCase{
 		{
 			name:    "unsupported format",
 			input:   "foo: bar\n",
@@ -380,10 +381,10 @@ func parseCollectionsRejectedCases() []parseCollectionsRejectedCase {
 			wantErr:        helpers.ErrGalaxyServerURLUserinfo,
 			mustNotContain: "tok3n-must-not-leak",
 		},
-	}, signatureSourceRejectedCases()...)
+	}, galaxyTypeRejectedCases()...), signatureSourceRejectedCases()...)
 }
 
-// signatureSourceRejectedCases is the signatures: half of the table above:
+// signatureSourceRejectedCases is the signatures: part of parseCollectionsRejectedCases:
 // every row is one way checkSignatureSources refuses a declared value.
 func signatureSourceRejectedCases() []parseCollectionsRejectedCase {
 	return append([]parseCollectionsRejectedCase{
@@ -494,6 +495,46 @@ func tooManySignatureSourcesInput() string {
 	return b.String()
 }
 
+// galaxyTypeRejectedCases is the type: galaxy part of parseCollectionsRejectedCases:
+// the type is folded past the git and url dispatch, so a pointer or URL name is
+// refused as a source rather than inferred as one from the name.
+func galaxyTypeRejectedCases() []parseCollectionsRejectedCase {
+	return []parseCollectionsRejectedCase{
+		{
+			name:    "type galaxy beside a git pointer name",
+			input:   "- name: git+https://h.example/r.git\n  type: galaxy\n",
+			source:  "https://default",
+			wantErr: helpers.ErrUnsupportedCollectionSource,
+		},
+		{
+			name:    "type galaxy beside a url name",
+			input:   "- name: https://h.example/a-b-1.0.0.tar.gz\n  type: galaxy\n",
+			source:  "https://default",
+			wantErr: helpers.ErrUnsupportedCollectionSource,
+		},
+		{
+			name: "type galaxy beside a url name does not leak its userinfo",
+			// #nosec G101 -- test fixture literal, not a real credential
+			input:          "- name: https://u:s3cret@h.example/a-b-1.0.0.tar.gz\n  type: galaxy\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrUnsupportedCollectionSource,
+			mustNotContain: "s3cret",
+		},
+		{
+			name:    "type galaxy with namespace plus dotted name conflict",
+			input:   "- namespace: foo\n  name: acme.app\n  type: galaxy\n",
+			source:  "https://default",
+			wantErr: helpers.ErrConflictingNamespaceName,
+		},
+		{
+			name:    "type galaxy with a name that has no namespace",
+			input:   "- name: app\n  type: galaxy\n",
+			source:  "https://default",
+			wantErr: helpers.ErrInvalidCollectionName,
+		},
+	}
+}
+
 // TestParseCollectionsNullValue pins that ansible's "collections:" and
 // "collections: ~" idioms parse as an empty list, since both decode to nil.
 func TestParseCollectionsNullValue(t *testing.T) {
@@ -515,6 +556,46 @@ func TestParseCollectionsNullValue(t *testing.T) {
 			}
 			if len(collections) != 0 {
 				t.Fatalf("expected 0 collections, got %d", len(collections))
+			}
+		})
+	}
+}
+
+// TestParseCollectionsTypeGalaxyParsesAsAbsentType pins that type: galaxy,
+// in any case and spacing, parses to the same File as the entry without it,
+// with the empty type, for a dotted name and an explicit namespace alike.
+func TestParseCollectionsTypeGalaxyParsesAsAbsentType(t *testing.T) {
+	t.Parallel()
+	const keys = "  version: '>=1.0.0'\n  source: https://hub.example/api/\n" +
+		"  signatures:\n    - https://keys.example/a.asc\n"
+	cases := []struct {
+		name, typed, untyped string
+	}{
+		{name: "dotted name", typed: "- name: acme.app\n  type: galaxy\n", untyped: "- name: acme.app\n"},
+		{name: "dotted name with other keys", typed: "- name: acme.app\n  type: galaxy\n" + keys, untyped: "- name: acme.app\n" + keys},
+		{
+			name:    "explicit namespace",
+			typed:   "- namespace: acme\n  name: app\n  type: galaxy\n",
+			untyped: "- namespace: acme\n  name: app\n",
+		},
+		{name: "mixed case and spacing", typed: "- name: acme.app\n  type: ' Galaxy '\n", untyped: "- name: acme.app\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			typed, err := Parse([]byte(tc.typed), "https://default")
+			if err != nil {
+				t.Fatalf("Parse typed: %v", err)
+			}
+			untyped, err := Parse([]byte(tc.untyped), "https://default")
+			if err != nil {
+				t.Fatalf("Parse untyped: %v", err)
+			}
+			if !reflect.DeepEqual(typed, untyped) {
+				t.Fatalf("typed parses to %#v, untyped to %#v", typed, untyped)
+			}
+			if len(typed.Collections) != 1 || typed.Collections[0].Type != "" {
+				t.Fatalf("collections = %#v, want one entry with the empty type", typed.Collections)
 			}
 		})
 	}
