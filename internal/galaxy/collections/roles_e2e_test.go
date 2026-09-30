@@ -968,3 +968,28 @@ func TestRoleInstallLineNamesTheVersion(t *testing.T) {
 		}
 	}
 }
+
+// TestRoleUnquotedVersionLocksAsWritten pins that an unquoted version: 1.10
+// locks the tag 1.10, so quoting it later still matches galaxy.lock under
+// --frozen, where the lock once recorded 1.1 and the frozen run exited 6.
+func TestRoleUnquotedVersionLocksAsWritten(t *testing.T) {
+	t.Parallel()
+	f := newRoleFixture(t)
+	c1, c2 := fakeCommit("tagged-1.1"), fakeCommit("tagged-1.10")
+	repo := &fakeGitRepo{refs: map[string]string{"HEAD": c2, "refs/heads/main": c2, "refs/tags/1.1": c1, "refs/tags/1.10": c2}}
+	for _, c := range []string{c1, c2} {
+		repo.addRole(c, fakeGitRole{roleName: "tagged", files: map[string]string{"COMMIT": c + "\n"}})
+	}
+	f.git.add("https://github.com/acme/ansible-role-tagged", repo)
+	f.galaxy.AddRole("acme", "tagged", "acme", "ansible-role-tagged", "main", []fakegalaxy.RoleVersion{{Name: "1.1"}, {Name: "1.10"}})
+
+	f.writeRequirements(t, "roles:\n  - src: acme.tagged\n    version: 1.10\n")
+	entry := findLockRole(t, f.lockfile(t), "acme.tagged")
+	if entry.Version != "1.10" || entry.Ref != "refs/tags/1.10" || entry.Commit != c2 {
+		t.Fatalf("locked role = %+v, want version 1.10 at refs/tags/1.10", entry)
+	}
+	f.writeRequirements(t, "roles:\n  - src: acme.tagged\n    version: \"1.10\"\n")
+	f.cfg.Frozen = true
+	f.mustInstall(t)
+	assertFileContains(t, filepath.Join(f.rolePath("acme.tagged"), "COMMIT"), c2)
+}

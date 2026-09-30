@@ -192,8 +192,10 @@ Every other form admits a prerelease only when it names one, as `>=1.0.0-0`
 does ([Prereleases](../get-started/ansible-galaxy-compat.md#prereleases)).
 
 > [!TIP]
-> Quote every version in `requirements.yml`: an unquoted `1.10` reaches
-> go-galaxy as the number `1.1`.
+> An unquoted value reads as the text written, so `version: 1.10` asks for
+> `1.10` and `version: 1.0` for `1.0.x`. `ansible-galaxy` reads both as
+> numbers, `1.10` as `1.1`: quote versions in a file both tools read
+> ([Versions and resolution](../get-started/ansible-galaxy-compat.md#versions-and-resolution)).
 
 ### When no version fits
 
@@ -441,7 +443,7 @@ Every value is a string, except that `signatures` may be an array of strings.
 | Unknown key on a collection | Ignored | Refused, exit `2` |
 | Unknown key on a role | Dropped with a warning | Refused, exit `2` |
 | Other top-level key or table | Ignored | Refused, exit `2` |
-| A number where text belongs | Read as text, or ignored | Refused, exit `2` |
+| A number, `true` or a date where text belongs | Read as the text written | Refused, exit `2` |
 | Unparsable constraint | Exit `1` at the resolve | Exit `2` at load |
 
 ## Which file is read

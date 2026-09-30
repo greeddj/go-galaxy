@@ -173,12 +173,26 @@ func rolePairs() []tomlYAMLPair {
 	}
 }
 
+// unquotedPairs are unquoted YAML numbers beside the galaxy.toml string that
+// spells the same text: both formats read the text written.
+func unquotedPairs() []tomlYAMLPair {
+	return []tomlYAMLPair{
+		{name: "unquoted trailing zero", toml: tomlCollections(`"ns.name 1.10"`), yaml: yamlCollections("name: ns.name\n    version: 1.10")},
+		{name: "unquoted partial", toml: tomlCollections(`"ns.name 1.0"`), yaml: yamlCollections("name: ns.name\n    version: 1.0")},
+		{
+			name: "unquoted git ref", toml: tomlCollections(`{ name = "git+https://git.example.com/acme/net.git", version = "1.10" }`),
+			yaml: yamlCollections("name: git+https://git.example.com/acme/net.git\n    version: 1.10"),
+		},
+		{name: "unquoted role version", toml: tomlRoles(`{ src = "a.b", version = "1.10" }`), yaml: yamlRoles("src: a.b\n    version: 1.10")},
+	}
+}
+
 // TestParseTOMLMatchesYAML pins that every galaxy.toml spelling parses to
 // the File its requirements.yml counterpart parses to, Warnings included, so
 // the two formats can never drift in what an entry means.
 func TestParseTOMLMatchesYAML(t *testing.T) {
 	t.Parallel()
-	cases := append(append(constraintPairs(), sourcePairs()...), rolePairs()...)
+	cases := append(append(append(constraintPairs(), sourcePairs()...), rolePairs()...), unquotedPairs()...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

@@ -2,7 +2,8 @@
 
 go-galaxy reads your files and variables as `ansible-galaxy` does, apart from
 the differences below, measured against ansible-core 2.21.2 (the `~`, `$VAR`,
-`{{CWD}}` and `ANSIBLE_CONFIG` rows and the `-r` file name against 2.21.3).
+`{{CWD}}` and `ANSIBLE_CONFIG` rows, the `-r` file name and an unquoted version
+against 2.21.3).
 
 | Surface | go-galaxy |
 | --- | --- |
@@ -96,6 +97,7 @@ test for non-zero or branch on the code.
 | Rerun | Asks the servers again, keeping an installed version that fits | Reuses the last resolution, even into an empty tree, until the requirements, the servers or `--no-deps` change | Pass `--refresh` for new releases ([What a rerun reuses](../guides/caching.md#what-a-rerun-reuses)) |
 | Constraint grammar | Comparison operators, comma-joined; `1.0` means `1.0.0` | Adds `1.x`, `~1.2`, `^1.2`, `1.2 - 1.4`, <code>&#124;&#124;</code>; `1.0` means `1.0.x` | Use [ansible's operators](../guides/requirements.md#version-constraints) and full `X.Y.Z` in a shared file |
 | `requires_ansible` | Skips versions that exclude the running core | Not read | Pin a version your ansible-core supports |
+| An unquoted version, such as `1.10` | Read as a YAML number and written back, so `1.10` becomes `1.1`: a git collection checks out `1.1`, a Galaxy role asks for `1.1`, and a Galaxy collection or a git role fails with exit `250` | The text written, `1.10`, in the requirements file and in a role's `meta/main.yml` and `meta/requirements.yml` | [Quote versions](../guides/requirements.md#version-constraints) in a file both tools read |
 
 ### Prereleases
 
@@ -242,10 +244,6 @@ neither tool installed
   ansible reads `meta/main.yml`.
 - Files marked `export-ignore` in `.gitattributes` are installed, where
   ansible, which installs from an archive, leaves them out.
-- In a role's `meta/main.yml` or `meta/requirements.yml`, an unquoted
-  `version: 1.10` stays the text `1.10`, where ansible reads the float `1.1`.
-  In the requirements file both read `1.1`, so quote it
-  ([Version constraints](../guides/requirements.md#version-constraints)).
 - A dependency whose install name is already requested is skipped, with a
   warning when it asks for another source or version. ansible skips it
   silently. Two entries of the requirements file with one install name are

@@ -62,9 +62,14 @@ func galaxyRoleAcceptedCases() []roleAcceptedCase {
 			want:  RoleRequirement{Name: "geerlingguy.docker", Src: "geerlingguy.docker", Type: TypeGalaxy},
 		},
 		{
-			name:  "numeric version is rendered",
+			name:  "numeric version reads as written",
 			input: "- src: geerlingguy.docker\n  version: 7\n",
 			want:  RoleRequirement{Name: "geerlingguy.docker", Src: "geerlingguy.docker", Version: "7", Type: TypeGalaxy},
+		},
+		{
+			name:  "unquoted trailing zero reads as written",
+			input: "- src: geerlingguy.docker\n  version: 1.10\n",
+			want:  RoleRequirement{Name: "geerlingguy.docker", Src: "geerlingguy.docker", Version: "1.10", Type: TypeGalaxy},
 		},
 		{
 			name:  "mixed case galaxy name",
@@ -124,6 +129,11 @@ func gitRoleAcceptedCases() []roleAcceptedCase {
 			name:  "qualified ref",
 			input: "- src: git+" + repo + "\n  version: refs/tags/v1\n",
 			want:  RoleRequirement{Name: "ansible-role-app", Src: repo, Version: "refs/tags/v1", Type: TypeGit},
+		},
+		{
+			name:  "unquoted ref reads as written",
+			input: "- src: git+" + repo + "\n  version: 1.10\n",
+			want:  RoleRequirement{Name: "ansible-role-app", Src: repo, Version: "1.10", Type: TypeGit},
 		},
 		{
 			name:  "uppercase scm prefix",

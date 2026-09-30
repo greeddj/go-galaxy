@@ -196,8 +196,8 @@ func roleMapSpec(value map[string]any) (roleSpec, error) {
 	return spec, nil
 }
 
-// stringField reads one scalar key of a mapping as a trimmed string; a
-// non-string scalar (a bare 1.0 version) is rendered, a missing key is "".
+// stringField reads one key of a mapping as a trimmed string: a scalar is
+// the text written, a missing or null key is "", a list or mapping rendered.
 func stringField(value map[string]any, key string) string {
 	raw, ok := value[key]
 	if !ok || raw == nil {

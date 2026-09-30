@@ -306,19 +306,23 @@ func TestParseCollectionsRejectedCases(t *testing.T) {
 			if tc.mustNotContain != "" && strings.Contains(err.Error(), tc.mustNotContain) {
 				t.Fatalf("error must not echo the rejected source's credential, got %v", err)
 			}
+			if tc.mustContain != "" && !strings.Contains(err.Error(), tc.mustContain) {
+				t.Fatalf("error must quote %s, got %v", tc.mustContain, err)
+			}
 		})
 	}
 }
 
 // parseCollectionsRejectedCase is one row of TestParseCollectionsRejectedCases.
-// An empty mustNotContain skips the substring check, which only the
-// credential-bearing rows need.
+// An empty mustNotContain skips the credential check; a set mustContain names
+// the text the refusal must quote, which tells the arm that refused apart.
 type parseCollectionsRejectedCase struct {
 	wantErr        error
 	name           string
 	input          string
 	source         string
 	mustNotContain string
+	mustContain    string
 }
 
 // parseCollectionsRejectedCases enumerates the shapes Parse refuses: bad
@@ -417,12 +421,20 @@ func signatureSourceRejectedCases() []parseCollectionsRejectedCase {
 			wantErr: helpers.ErrUnsupportedSignatureSource,
 		},
 		{
-			// The same arm one level in: a list carrying a non-string element,
-			// which fmt.Sprint would render as "false" or "0".
+			// The same arm one level in: a list carrying a nested list, which
+			// fmt.Sprint would render as a plausible "[...]" source.
 			name:    "signatures list element that is not a string rejected",
-			input:   "- name: ns.name\n  signatures:\n    - false\n",
+			input:   "- name: ns.name\n  signatures:\n    - [https://sig.example/a.asc]\n",
 			source:  "https://default",
 			wantErr: helpers.ErrUnsupportedSignatureSource,
+		},
+		{
+			// An unquoted false is the text "false", which names no source.
+			name:        "signatures list element false reads as the text false",
+			input:       "- name: ns.name\n  signatures:\n    - false\n",
+			source:      "https://default",
+			wantErr:     helpers.ErrUnsupportedSignatureSource,
+			mustContain: `"false"`,
 		},
 	}, fileSourceRejectedCases()...)
 }

@@ -1051,3 +1051,22 @@ func TestOfflineGalaxyMissPrintsNoPrefetchWarning(t *testing.T) {
 		t.Fatalf("Total() = %d, want 0 (the offline transport never dials)", got)
 	}
 }
+
+// TestUnquotedPartialVersionInstallsItsOwnMinor pins that an unquoted
+// version: 1.0 asks for 1.0.x, as "1.0" does, where it once read as the
+// number 1 and installed the newest 1.x.
+func TestUnquotedPartialVersionInstallsItsOwnMinor(t *testing.T) {
+	t.Parallel()
+	f := newE2EFixture(t)
+	f.server.AddVersion("acme", "app", "1.5.0", map[string]string{"acme.lib": ">=1.0.0"})
+	content := "collections:\n  - name: acme.app\n    version: 1.0\n"
+	if err := os.WriteFile(f.cfg.RequirementsFile, []byte(content), helpers.FileMod); err != nil {
+		t.Fatalf("write requirements.yml: %v", err)
+	}
+	if err := collections.Start(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := readManifestVersion(t, f.downloadPath, "app"); got != testVersion100 {
+		t.Fatalf("installed acme.app %s, want %s", got, testVersion100)
+	}
+}

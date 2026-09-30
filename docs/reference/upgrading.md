@@ -5,9 +5,31 @@ go-galaxy release. One rule holds at every upgrade. Every job and machine that
 shares a cache or a lockfile runs the same release, since an older binary
 refuses what a newer one writes ([Pin one release](../guides/ci.md#pin-one-release)).
 
+## From v1.3.x
+
+Start here from v1.3.0 or v1.3.1. From an older release, follow
+[From v1.2.x](#from-v12x) first.
+
+The tables below list every change since v1.3.1 that can break a job or change
+its result, except an input that used to be refused and is now accepted.
+
+| Change | What you do | If you do not |
+| --- | --- | --- |
+| An unquoted value in `requirements.yml` reads as the text written, as a role's `meta/main.yml` already did: `version: 1.10` asks for `1.10`, not `1.1`, and `version: 1.0` for `1.0.x`, not every `1.x`. A number, `true` or a date under a collection's `namespace:`, `source:` or `type:`, ignored before, is read and judged ([Version constraints](../guides/requirements.md#version-constraints)) | Before the new release runs `install`, `lock` or `cleanup` over a project, quote each unquoted numeric value as the text you mean: `"1.1"` and `"1"` keep what `1.10` and `1.0` asked for. Then relock: run `go-galaxy lock` and commit `galaxy.lock` ([Create the lockfile](../guides/lockfile.md#create-the-lockfile)) | `--frozen` runs and `lock --check` exit `6` where `galaxy.lock` no longer matches, such as a role locked at `1.1`. A plain `install` takes another version, a lower one for `1.0`, and `cleanup` removes an installed version the new reading no longer reaches |
+
+### Exit codes that changed
+
+Update any CI step that branches on the old code for these cases
+([Using exit codes in CI](exit-codes.md#using-exit-codes-in-ci)).
+
+| Situation | Was | Now |
+| --- | --- | --- |
+| A number, `true` or a date under a collection's `namespace:` or `type:`, such as `type: 1` | `0`, the key ignored | `2`, at load |
+
 ## From v1.2.x
 
-Start here from any release since v1.1.0. Upgrade in four steps:
+Start here from v1.1.0 through v1.2.3, and read [From v1.3.x](#from-v13x)
+before step 3. Upgrade in four steps:
 
 1. Pin the release you run now in every place
    [Pin one release](../guides/ci.md#pin-one-release) lists, so no job takes

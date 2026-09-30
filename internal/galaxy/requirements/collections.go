@@ -88,13 +88,54 @@ func Read(path string) ([]byte, error) {
 	return data, err
 }
 
-// Parse parses requirements data.
+// Parse parses requirements data, every scalar read as the text written.
 func Parse(data []byte, defaultSource string) (File, error) {
-	var raw any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return File{}, fmt.Errorf("%w: %w", helpers.ErrInvalidRequirementsYAML, err)
+	raw, err := decodeYAML(data)
+	if err != nil {
+		return File{}, err
 	}
 	return parseRaw(raw, defaultSource)
+}
+
+// decodeYAML decodes requirements YAML with every scalar read as the text
+// written, so an unquoted 1.10 stays "1.10". One Decode of the retagged tree
+// keeps yaml's alias budget, merge keys and duplicate-key refusal.
+func decodeYAML(data []byte) (any, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("%w: %w", helpers.ErrInvalidRequirementsYAML, err)
+	}
+	keepScalarText(&root)
+	var raw any
+	if err := root.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("%w: %w", helpers.ErrInvalidRequirementsYAML, err)
+	}
+	return raw, nil
+}
+
+// YAML tags of the scalars keepScalarText turns into strings.
+const (
+	yamlTagStr       = "!!str"
+	yamlTagInt       = "!!int"
+	yamlTagFloat     = "!!float"
+	yamlTagBool      = "!!bool"
+	yamlTagTimestamp = "!!timestamp"
+	yamlTagBinary    = "!!binary"
+)
+
+// keepScalarText retags every number, bool, timestamp and binary scalar, keys
+// included, as a string; null and the merge key stay. An alias has no content
+// of its own, so the node it names is retagged where its anchor sits.
+func keepScalarText(n *yaml.Node) {
+	if n.Kind == yaml.ScalarNode {
+		switch n.ShortTag() {
+		case yamlTagInt, yamlTagFloat, yamlTagBool, yamlTagTimestamp, yamlTagBinary:
+			n.Tag = yamlTagStr
+		}
+	}
+	for _, child := range n.Content {
+		keepScalarText(child)
+	}
 }
 
 // parseRaw parses a decoded requirements payload. A mapping needs at least
