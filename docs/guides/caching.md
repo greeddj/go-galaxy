@@ -146,6 +146,16 @@ requirements file a run there loaded, while the file still exists: after
 `install` and `install -r requirements-dev.yml` in one directory, `cleanup`
 keeps what either file reaches.
 
+A project leaves when its directory is deleted: `cleanup` warns once and keeps
+nothing for it, so what only that project reached goes from every recorded
+path that still exists. While the directory remains, a remembered file that is
+gone does not simply drop out: that run, `cleanup` also reads the
+`galaxy.toml`, `requirements.yml` and `galaxy.lock` in the directory that no
+run recorded, each with a warning, so deleting `requirements.yml` before a run
+has recorded the `galaxy.toml` beside it removes nothing. A `galaxy.lock` read
+this way keeps exactly the versions and roles it pins. With nothing left to
+read, `cleanup` stops before deleting anything, under `--dry-run` too.
+
 The record also names the collections and roles paths the project's latest
 `install` wrote, resolved from the directory `install` ran in, as `install`
 resolves them: `install -r sub/requirements.yml` run from the parent is found
@@ -170,7 +180,7 @@ every recorded project and from the cache, what no recorded project reaches:
 
 ```mermaid
 flowchart TD
-  R[Project registry] --> L[Reload each remembered requirements file]
+  R[Project registry] --> L[Reload each remembered requirements file, or what stands in for a gone one]
   L --> T[Its collections and roles entries]
   T --> S[What they reach through recorded dependencies]
   S --> U[Remove unreachable installs and artifacts]
@@ -181,8 +191,8 @@ flowchart TD
 
 | Item | Kept when | Otherwise |
 | --- | --- | --- |
-| Installed collection | A recorded project's `collections:` reaches it, directly or through dependencies | Removed from every recorded collections path where its marker matches it |
-| Installed role | A recorded project's `roles:` reaches it | Removed, if go-galaxy installed it under a recorded `roles_path` |
+| Installed collection | A recorded project's `collections:`, or a `galaxy.lock` standing in, reaches it, directly or through dependencies | Removed from every recorded collections path where its marker matches it |
+| Installed role | A recorded project's `roles:`, or a `galaxy.lock` standing in, reaches it | Removed, if go-galaxy installed it under a recorded `roles_path` |
 | Extracted tree | A kept install uses it, or a recent `warm` shields it ([Freshness and retention](#freshness-and-retention)) | Swept |
 | Cached artifact | No removed install uses it | Removed with that install when the cache holds the install's record; otherwise kept until `--clear-cache` |
 
@@ -197,8 +207,11 @@ project, even one still in use.
 
 | Situation | What `cleanup` does |
 | --- | --- |
-| A remembered requirements file no longer exists | Warns; it adds nothing this run, and the project's next record forgets it |
-| A remembered requirements file fails to load | Exits `2` before deleting anything, naming the file, its project and the registry file or S3 object. Fix or restore the file, move it away if no run uses it any more, or delete the project's entry from the registry |
+| The project's directory no longer exists | Warns once; the project keeps nothing this run. Its record stays, since on a shared cache the same path can be another machine's project |
+| A remembered requirements file no longer exists, but its directory does | Warns; the file adds nothing, and the `galaxy.toml`, `requirements.yml` and `galaxy.lock` there that no run recorded are read in its place, each with a warning. The project's next record forgets the gone file |
+| Nothing is left to read: every remembered file is gone, and none of those three exists | Exits `2` before deleting anything, `--dry-run` too, naming every such project and the registry file or S3 object. Restore the file or write its replacement in that directory, or, if no run there reads one any more, delete the project's entry from the registry |
+| A `galaxy.lock` read in place of a gone file does not load, or is not a regular file | Exits `6` before deleting anything, naming it and its project |
+| A remembered requirements file, or one read in place of a gone one, fails to load | Exits `2` before deleting anything, naming the file, its project and the registry file or S3 object. Fix or restore the file, move it away if no run uses it any more, or delete the project's entry from the registry |
 | Its `roles:` list is refused, such as an `include:` | Warns; keeps the roles under that project's `roles_path` and their dependencies |
 | A git or url requirement whose commit or sha256 the cache never recorded | Keeps every install from that repository or URL |
 | `ansible_collections` escapes its path or loops | Warns; skips scanning that project |

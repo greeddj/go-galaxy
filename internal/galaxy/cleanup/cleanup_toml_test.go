@@ -13,27 +13,28 @@ import (
 // tomlCleanupCase is one recorded galaxy.toml: its body (or absence when
 // write is false) and what cleanup must do with ns.name's install tree.
 type tomlCleanupCase struct {
+	wantErr     error
 	name        string
 	body        string
 	wantWarning string
 	write       bool
-	wantErr     bool
 	wantKept    bool
 }
 
 // tomlCleanupCases pins that a recorded galaxy.toml is reloaded through the
 // extension dispatch: its roots keep the collection, a roles refusal keeps
-// the collections, a broken file aborts, and a missing one is stale.
+// the collections, a broken file aborts, and so does a missing one.
 func tomlCleanupCases() []tomlCleanupCase {
 	return []tomlCleanupCase{
 		{name: "valid galaxy.toml naming the collection", write: true,
 			body: "[project]\ncollections = [\"ns.name\"]\n", wantKept: true},
 		{name: "broken galaxy.toml aborts and removes nothing", write: true,
-			body: "[project\ncollections = [\"ns.name\"]\n", wantErr: true, wantKept: true},
+			body: "[project\ncollections = [\"ns.name\"]\n", wantErr: helpers.ErrProjectRequirementsUnreadable, wantKept: true},
 		{name: "roles refusal keeps the collections", write: true,
 			body:        "[project]\ncollections = [\"ns.name\"]\nroles = [{ include = \"x\" }]\n",
 			wantWarning: "cannot be read", wantKept: true},
-		{name: "missing galaxy.toml is a stale entry", wantWarning: "no longer exists"},
+		{name: "missing galaxy.toml aborts and removes nothing", wantWarning: "no longer exists",
+			wantErr: helpers.ErrProjectRequirementsMissing, wantKept: true},
 	}
 }
 
@@ -65,10 +66,10 @@ func TestStartReloadsARecordedGalaxyTOML(t *testing.T) {
 // the warning it must have printed, and whether ns.name's tree survived.
 func assertTOMLCleanupOutcome(t *testing.T, tc tomlCleanupCase, err error, printer *recordingPrinter, installDir string) {
 	t.Helper()
-	if tc.wantErr && !errors.Is(err, helpers.ErrProjectRequirementsUnreadable) {
-		t.Fatalf("Start: %v, want ErrProjectRequirementsUnreadable", err)
+	if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+		t.Fatalf("Start: %v, want %v", err, tc.wantErr)
 	}
-	if !tc.wantErr && err != nil {
+	if tc.wantErr == nil && err != nil {
 		t.Fatalf("Start: %v, want success", err)
 	}
 	if tc.wantWarning != "" && !printer.hasWarningContaining(tc.wantWarning) {

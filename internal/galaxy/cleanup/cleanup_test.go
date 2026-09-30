@@ -718,31 +718,49 @@ func TestStartFailsOnUnreadableRequirementsCorrupt(t *testing.T) {
 	assertManifestSurvives(t, installDir)
 }
 
-// TestStartToleratesMissingRequirementsAsStaleEntry pins that a requirements
-// file that no longer exists is a stale entry, warned about and contributing no
-// roots; only a present but unreadable file has unknown roots and aborts.
-func TestStartToleratesMissingRequirementsAsStaleEntry(t *testing.T) {
+// TestStartRefusesAProjectLeftWithNothingToRead pins that a recorded file gone
+// from a directory that remains, with no stand-in beside it, stops the run and
+// the dry run alike before anything is removed, naming the project.
+func TestStartRefusesAProjectLeftWithNothingToRead(t *testing.T) {
+	t.Parallel()
+	for _, dryRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dry-run=%v", dryRun), func(t *testing.T) {
+			t.Parallel()
+			cacheDir := t.TempDir()
+			downloadPath := t.TempDir()
+			installDir := seedInstallTree(t, downloadPath)
+			projectDir := t.TempDir()
+			registerCleanupProjectAt(t, cacheDir, downloadPath, filepath.Join(projectDir, "requirements.yml"))
+
+			err := Start(t.Context(), &config.Config{CacheDir: cacheDir, DryRun: dryRun}, newTestRuntime())
+			if !errors.Is(err, helpers.ErrProjectRequirementsMissing) || !strings.Contains(err.Error(), `"proj"`) {
+				t.Fatalf("Start error = %v, want ErrProjectRequirementsMissing naming the project", err)
+			}
+			assertManifestSurvives(t, installDir)
+		})
+	}
+}
+
+// TestStartKeepsNothingForAVanishedProject pins that a project whose directory
+// is gone, the way a project leaves, keeps nothing: one warning, and its
+// install in a collections path that remains is removed.
+func TestStartKeepsNothingForAVanishedProject(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()
 	downloadPath := t.TempDir()
 	installDir := seedInstallTree(t, downloadPath)
-
-	reqPath := filepath.Join(t.TempDir(), "does-not-exist.yml")
-	registerCleanupProjectAt(t, cacheDir, downloadPath, reqPath)
+	projectDir := filepath.Join(t.TempDir(), "gone")
+	registerCleanupProjectAt(t, cacheDir, downloadPath, filepath.Join(projectDir, "requirements.yml"))
 
 	printer := &recordingPrinter{}
-	runtime := newTestRuntimeWith(printer)
-	cfg := &config.Config{CacheDir: cacheDir, DryRun: false}
-
-	if err := Start(t.Context(), cfg, runtime); err != nil {
-		t.Fatalf("expected Start to succeed with a stale (missing) requirements file, got %v", err)
+	if err := Start(t.Context(), &config.Config{CacheDir: cacheDir}, newTestRuntimeWith(printer)); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-	if !printer.hasWarningContaining("no longer exists") {
-		t.Fatalf("expected a warning about the missing requirements file, got: %v", printer.warnings)
+	if !printer.hasWarningContaining("no longer exists; it keeps nothing") {
+		t.Fatalf("expected the vanished-project warning, got: %v", printer.warnings)
 	}
-	manifestPath := filepath.Join(installDir, "MANIFEST.json")
-	if _, statErr := os.Stat(manifestPath); !os.IsNotExist(statErr) {
-		t.Fatalf("expected the unreferenced install to still be removed despite the stale entry, stat error: %v", statErr)
+	if _, statErr := os.Stat(filepath.Join(installDir, "MANIFEST.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected the vanished project's install to be removed, stat error: %v", statErr)
 	}
 }
 
@@ -1109,6 +1127,9 @@ func seedExtractedDir(t *testing.T, cacheDir, sha string) {
 func recordAbsentWorkspaceProject(t *testing.T, cfg *config.Config, runtime *infra.Infra, downloadPath string) {
 	t.Helper()
 	reqPath := filepath.Join(t.TempDir(), "requirements.yml")
+	if err := os.WriteFile(reqPath, []byte("collections: []\n"), helpers.FileMod); err != nil {
+		t.Fatalf("failed to write requirements file: %v", err)
+	}
 	backend, err := cacheBackend.New(cfg, runtime)
 	if err != nil {
 		t.Fatalf("failed to build backend to record project: %v", err)
@@ -3443,11 +3464,14 @@ func buildStaleRegistryFixture(t *testing.T, cacheDir string, staleContent []byt
 	t.Helper()
 	staleDownloadPath := t.TempDir()
 	seedManifestAt(t, staleDownloadPath, "stale", "coll", "1.0.0")
-	staleReqPath := filepath.Join(t.TempDir(), "stale-requirements.yml")
-	if staleContent != nil {
-		if err := os.WriteFile(staleReqPath, staleContent, helpers.FileMod); err != nil {
-			t.Fatalf("failed to write stale project's requirements file: %v", err)
+	staleDir := t.TempDir()
+	staleReqPath := filepath.Join(staleDir, "stale-requirements.yml")
+	if staleContent == nil {
+		if err := os.Remove(staleDir); err != nil {
+			t.Fatalf("failed to remove the stale project's directory: %v", err)
 		}
+	} else if err := os.WriteFile(staleReqPath, staleContent, helpers.FileMod); err != nil {
+		t.Fatalf("failed to write stale project's requirements file: %v", err)
 	}
 
 	otherDownloadPath := t.TempDir()
@@ -3466,8 +3490,8 @@ func buildStaleRegistryFixture(t *testing.T, cacheDir string, staleContent []byt
 	return staleDownloadPath, otherInstallDir
 }
 
-// TestStaleRegistryEntryToleratedWithOtherProjectCleanup pins that a missing
-// requirements file is a warned stale entry and other projects still clean up.
+// TestStaleRegistryEntryToleratedWithOtherProjectCleanup pins that a project
+// whose directory is gone is a warned stale entry and others still clean up.
 func TestStaleRegistryEntryToleratedWithOtherProjectCleanup(t *testing.T) {
 	t.Parallel()
 	cacheDir := t.TempDir()

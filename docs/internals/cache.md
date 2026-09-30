@@ -157,6 +157,7 @@ never written, for cleanup's hint.
 | `cleanup` scans a recorded path and no other; an empty `collections_path` scans nothing, as an empty `roles_path` does | A fallback to the project's `.collections` or `collections` would delete trees nobody recorded, such as a vendored `collections/` beside the requirements file after a `lock` |
 | Recorded only once the requirements file loads (`loadRootsAndRecordProject`), before any source is fetched or anything installed | A run failing on its file, such as a mistyped `-r`, would replace the directory's good record, and `cleanup` would then delete what that record reaches |
 | `--dry-run` records nothing (`recordProjectUnlessDryRun`) | A preview enrolls nothing the destructive `cleanup` acts on |
+| Never pruned, `cleanup` included; a project none of whose recorded files' directories exists has left and keeps nothing (`projectLeft`) | On a shared cache the same path can be another machine's live project, and dropping its record there would stop that machine's roots from keeping copies |
 
 ## The cache seam
 

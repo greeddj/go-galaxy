@@ -509,10 +509,11 @@ func isInputFileUsageError(err error) bool {
 
 // isRecordedStateUsageError reports whether something this program recorded
 // cannot be used as recorded: a newer binary's snapshot schema, or a recorded
-// project's requirements file that fails to load for a reason other than absence.
+// project whose requirements fail to load or are gone from a remaining directory.
 func isRecordedStateUsageError(err error) bool {
 	return errors.Is(err, helpers.ErrUnsupportedSchemaVersion) ||
-		errors.Is(err, helpers.ErrProjectRequirementsUnreadable)
+		errors.Is(err, helpers.ErrProjectRequirementsUnreadable) ||
+		errors.Is(err, helpers.ErrProjectRequirementsMissing)
 }
 
 // isGalaxyServerConfigError reports whether a Galaxy server's configuration

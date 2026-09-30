@@ -18,6 +18,7 @@ its result, except an input that used to be refused and is now accepted.
 | An unquoted value in `requirements.yml` reads as the text written, as a role's `meta/main.yml` already did: `version: 1.10` asks for `1.10`, not `1.1`, and `version: 1.0` for `1.0.x`, not every `1.x`. A number, `true` or a date under a collection's `namespace:`, `source:` or `type:`, ignored before, is read and judged ([Version constraints](../guides/requirements.md#version-constraints)) | Before the new release runs `install`, `lock` or `cleanup` over a project, quote each unquoted numeric value as the text you mean: `"1.1"` and `"1"` keep what `1.10` and `1.0` asked for. Then relock: run `go-galaxy lock` and commit `galaxy.lock` ([Create the lockfile](../guides/lockfile.md#create-the-lockfile)) | `--frozen` runs and `lock --check` exit `6` where `galaxy.lock` no longer matches, such as a role locked at `1.1`. A plain `install` takes another version, a lower one for `1.0`, and `cleanup` removes an installed version the new reading no longer reaches |
 | A key an entry is read by, written with no value, such as `version:`, `name: ~` or `signatures: null`, and a list or a mapping under a key that takes text, such as `type: [git]`, exit `2` at load. Before, a collection's `version:` with no value read as the text `<nil>`, and most other such keys, a list under `type:` included, read as absent ([What is refused](../guides/requirements.md#what-is-refused)) | Write the value, or delete the key. `version: ""` still means no version | `install`, `warm`, `lock`, `hash` with no `galaxy.lock` and, beside one, `tree` exit `2` before anything installs. `cleanup` exits `2` and deletes nothing while a recorded project's file holds such a collection entry. One in `roles:` keeps that project's roles, with a warning |
 | `go-galaxy hash` with no `galaxy.lock` keys on the collections and roles the requirements file asks for, not on its bytes, so its key changes once and then stays across comments, formatting, collection order, a respelled constraint and a move to `galaxy.toml` ([A cache key for CI](../guides/lockfile.md#a-cache-key-for-ci)) | Expect one CI cache miss where the key does not carry the go-galaxy release. The action's key carries it | Nothing: the miss costs one cold run |
+| `cleanup` reads the `galaxy.toml`, `requirements.yml` and `galaxy.lock` in a project's directory in place of a remembered requirements file that is gone, and stops when nothing is left to read ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)). Before, a gone file kept nothing, so deleting `requirements.yml` before a run recorded the `galaxy.toml` beside it removed that project's collections. A project whose directory is gone keeps nothing, as before, with one warning instead of one per file | To retire a project whose directory stays, delete its entry from `<cache_dir>/projects.json` or from the `state/projects.json` object on S3 | Its installs stay, and `cleanup` exits `2` while nothing is left to read there |
 
 ### Exit codes that changed
 
@@ -32,6 +33,9 @@ Update any CI step that branches on the old code for these cases
 | A role entry key, or a collection's `namespace:`, `source:`, `type:` or `signatures:`, written with no value, or a list or a mapping under a collection's `namespace:`, `source:` or `type:` | `0`, read as absent | `2`, at load |
 | `hash` with no `galaxy.lock`, over a requirements file that does not load, such as one that is not YAML or names a `type: file` source | `0`, a key over the file's bytes | `2` |
 | A lockfile that is a named pipe, such as `--lock-file <(...)` or a `galaxy.lock` made by `mkfifo` | `0` once a writer feeds the pipe. Without one, the run blocks, and `install --frozen` and `warm --frozen` hold the cache lock meanwhile, so other runs on that cache exit `8` | `6`, before the pipe is opened, from `hash`, `tree`, `explain`, `outdated`, `lock --check`, `install --frozen` and `warm --frozen` |
+| `cleanup` where a project's directory remains but no requirements file it remembers is left, and it holds no `galaxy.toml`, `requirements.yml` or `galaxy.lock` | `0`, removing what only those files reached | `2`, removing nothing, under `--dry-run` too |
+| `cleanup` where a remembered requirements file is gone and a `galaxy.toml` or `requirements.yml` beside it does not load | `0` | `2` |
+| `cleanup` where a remembered requirements file is gone and the `galaxy.lock` beside it does not load or is not a regular file | `0` | `6` |
 
 What to do about a new code:
 
@@ -41,9 +45,16 @@ What to do about a new code:
   would ask, since `install` refuses it too. To key another tool's cache on a
   file go-galaxy does not install, hash the file itself, such as with
   `hashFiles()`.
+- `2` from `cleanup` for
+  `recorded project has no requirements file or lockfile`: restore the file,
+  or write the `galaxy.toml` that replaced it, in the directory the message
+  names. For a directory no run uses any more, delete the project's entry from
+  the registry the message names, `<cache_dir>/projects.json` or the
+  `state/projects.json` object on S3.
 - `6` for `lockfile is invalid: <path> is not a regular file`: write what the
   pipe carries to a regular file and name that one with `--lock-file` or
   `lock_file`.
+- `6` from `cleanup`: fix the `galaxy.lock` the message names, or move it away.
 
 ## From v1.2.x
 

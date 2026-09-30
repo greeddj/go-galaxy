@@ -34,6 +34,7 @@ code instead of parsing the log.
 | git and url sources | a credential in the URL, a bad ref or subdir, nothing usable fetched |
 | Roles | no v1 role API, an unusable v1 record, or no readable role meta |
 | Cache | an unusable backend, S3 without both keys or with `--offline`, a newer snapshot schema |
+| Recorded projects (`cleanup`) | a requirements file a project remembers, or one read in its place, does not load, or the project's directory remains with nothing left to read ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)) |
 | Signatures | an unreadable keyring, a refused count, status code or `signatures:` source, or `signatures:` without a keyring ([Signatures](../guides/signatures.md)) |
 
 </details>
@@ -138,6 +139,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `corrupt project registry`, `corrupt cache state object`, `corrupt snapshot store`, `cache state object exceeds the maximum allowed size` | `9` | Delete the printed path or S3 key, or `go-galaxy.db` for the [snapshot](../guides/caching.md#what-the-directory-holds); `--clear-cache` keeps them |
 | `requirements file name must end in .yml, .yaml or .toml` | `2` | `-r` or its variable names another file, `/dev/stdin` included, or is exported empty; rename the file ([Which file is read](../guides/requirements.md#which-file-is-read)) |
 | `requirements file is not a regular file` | `2` | A directory or named pipe stands where the file should be; name the file itself |
+| `project requirements file is unreadable`, `recorded project has no requirements file or lockfile` | `2` | `cleanup` cannot tell what a recorded project keeps, so it deletes nothing; fix or restore the file the message names, or delete that project's entry from the registry it names ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)) |
 | `unsupported snapshot schema version` | `2` | A newer release wrote this cache, which is sound: [run one release](../guides/ci.md#pin-one-release). Deleting the snapshot helps only until the newer release saves again |
 | `collection signature verification failed` | `10` | The signatures do not meet the [required count](../guides/signatures.md#required-count-and-the-vacuous-pass); check the keyring and the count |
 | `collection signature vouches for a different collection` | `10` | The signed `MANIFEST.json` names another collection or version; never retry |
@@ -160,6 +162,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `install`, `warm`, `lock` | a server-supplied download URL with a credential | `5` |
 | `lock` | the snapshot save fails after `Lockfile written` | the save error's code; `galaxy.lock` is already written |
 | `install`, `warm`, `lock` (`tree` and `hash` without a lockfile too, from `galaxy.toml`) | a [constraint](../guides/requirements.md#stricter-than-requirementsyml) semver cannot parse | `2` from `galaxy.toml`, `1` from `requirements.yml` |
+| `cleanup` | a `galaxy.lock` read in place of a gone requirements file that does not load or is not a regular file | `6` |
 
 <details markdown>
 <summary>Missing or broken lockfile</summary>

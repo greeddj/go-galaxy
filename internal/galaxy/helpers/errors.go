@@ -333,6 +333,10 @@ var (
 	// failed to load for a reason other than fs.ErrNotExist. Cleanup aborts: the
 	// roots it would contribute are unknown and could protect any project's copies.
 	ErrProjectRequirementsUnreadable = errors.New("project requirements file is unreadable")
+	// ErrProjectRequirementsMissing indicates a recorded project whose directory
+	// remains with none of its requirements files and no stand-in beside them.
+	// Cleanup aborts: reading it as needing nothing would remove what it uses.
+	ErrProjectRequirementsMissing = errors.New("recorded project has no requirements file or lockfile")
 	// ErrCorruptManifest indicates a MANIFEST.json exists but is not valid JSON. It
 	// is reported, and the install counts as neither a reachability source nor a
 	// deletion candidate.

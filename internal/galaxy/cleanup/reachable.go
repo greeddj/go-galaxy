@@ -5,14 +5,18 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"os"
 	"path"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
+	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 	"github.com/greeddj/go-galaxy/internal/galaxy/output"
 	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
@@ -51,19 +55,52 @@ func buildReachable(
 	}
 
 	// Phase 2: every recorded project's roots, against the complete index.
+	// Every project left with nothing to read is gathered, so one error names all.
+	var unanchored []string
 	for _, projectPath := range projectPaths {
-		file, rolesUnread, err := projectRequirementRoots(runtime.Output, registry.Location, projectPath, registry.Projects[projectPath])
+		project := registry.Projects[projectPath]
+		if projectLeft(projectPath, project) {
+			runtime.Output.Warnf("project %q no longer exists; it keeps nothing this run", projectPath)
+			continue
+		}
+		roots, anchored, err := projectRequirementRoots(runtime.Output, registry.Location, projectPath, project)
 		if err != nil {
 			return nil, nil, roleReachability{}, err
 		}
-		if rolesUnread {
-			markReachableRoles(keepProjectRoles(registry.Projects[projectPath], roles.byName), roles.byName, roles.reachable)
+		if !anchored {
+			unanchored = append(unanchored, projectPath)
+			continue
 		}
-		markReachableRoles(roleRootNames(file), roles.byName, roles.reachable)
-		markCollectionRoots(st, file.Collections, reachable, installedByKey, installedIndex, constraints)
+		markProjectRoots(st, project, roots, reachable, roles, installedByKey, installedIndex, constraints)
+	}
+	if len(unanchored) > 0 {
+		return nil, nil, roleReachability{}, unanchoredProjectsError(registry.Location, unanchored)
 	}
 	markKeptCopyDependencies(installedByKey, reachable, installedIndex, constraints)
 	return reachable, installedByKey, roles, nil
+}
+
+// markProjectRoots marks what one anchored project's roots reach: its files'
+// entries, a stand-in galaxy.lock's exact keys and role names, and every role
+// under its roles path when a roles: list could not be read.
+func markProjectRoots(
+	st *store.Store,
+	project store.ProjectRecord,
+	roots projectRoots,
+	reachable map[string]bool,
+	roles roleReachability,
+	installedByKey, installedIndex map[string][]installedCollection,
+	constraints map[string]*semver.Constraints,
+) {
+	if roots.rolesUnread {
+		markReachableRoles(keepProjectRoles(project, roles.byName), roles.byName, roles.reachable)
+	}
+	markReachableRoles(roleRootNames(roots.file), roles.byName, roles.reachable)
+	markReachableRoles(roots.lockedRoles, roles.byName, roles.reachable)
+	markCollectionRoots(st, roots.file.Collections, reachable, installedByKey, installedIndex, constraints)
+	for _, key := range roots.lockedKeys {
+		markReachable(key, reachable, installedByKey, installedIndex, constraints)
+	}
 }
 
 // markKeptCopyDependencies marks what each untrusted copy's own manifest needs:
@@ -239,38 +276,159 @@ func gitSubdirWithin(entrySubdir, rootSubdir string) bool {
 	return parent == rootSubdir
 }
 
-// projectRequirementRoots joins the roots of every file a project remembers,
-// even for a skipped workspace. A missing file adds nothing; any other failure
-// aborts, since unknown roots could protect any project's copies.
-func projectRequirementRoots(
-	out output.Printer, registryLocation, projectPath string, project store.ProjectRecord,
-) (requirements.File, bool, error) {
-	var union requirements.File
-	rolesUnread := false
-	for _, path := range project.Files() {
-		file, unread, err := recordedFileRoots(out, registryLocation, projectPath, path)
-		if err != nil {
-			return requirements.File{}, false, err
-		}
-		union.Collections = append(union.Collections, file.Collections...)
-		union.Roles = append(union.Roles, file.Roles...)
-		rolesUnread = rolesUnread || unread
-	}
-	return union, rolesUnread, nil
+// projectRoots is what one recorded project keeps: the entries of the files
+// read for it, the exact keys and role names a stand-in galaxy.lock pins, and
+// whether a refused roles: list keeps its whole roles path.
+type projectRoots struct {
+	file        requirements.File
+	lockedKeys  []string
+	lockedRoles []string
+	rolesUnread bool
 }
 
-// recordedFileRoots loads one remembered file under the per-file policy: its
-// roots, nothing with a warning when it is gone, its collections alone when
-// its roles: list is refused, and ErrProjectRequirementsUnreadable otherwise.
-func recordedFileRoots(out output.Printer, registryLocation, projectPath, path string) (requirements.File, bool, error) {
+// add joins one loaded requirements file into the project's roots.
+func (r *projectRoots) add(file requirements.File, rolesUnread bool) {
+	r.file.Collections = append(r.file.Collections, file.Collections...)
+	r.file.Roles = append(r.file.Roles, file.Roles...)
+	r.rolesUnread = r.rolesUnread || rolesUnread
+}
+
+// projectRequirementRoots joins the roots of every file a project that has not
+// left remembers and, once one is gone, of its directory's stand-ins; anchored
+// is false when nothing is left to read. Any other failure aborts.
+func projectRequirementRoots(
+	out output.Printer, registryLocation, projectPath string, project store.ProjectRecord,
+) (projectRoots, bool, error) {
+	files := project.Files()
+	var roots projectRoots
+	loaded, gone := 0, 0
+	for _, path := range files {
+		file, unread, err := loadRootsFile(out, registryLocation, projectPath, path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			out.Warnf("project %q: requirements file %q no longer exists; it contributes no reachability roots this run",
+				projectPath, path)
+			gone++
+			continue
+		case err != nil:
+			return projectRoots{}, false, err
+		}
+		roots.add(file, unread)
+		loaded++
+	}
+	if gone == 0 && len(files) > 0 {
+		return roots, true, nil
+	}
+	for _, dir := range projectDirs(projectPath, files) {
+		standIns, err := standInRoots(out, registryLocation, projectPath, dir, files, &roots)
+		if err != nil {
+			return projectRoots{}, false, err
+		}
+		loaded += standIns
+	}
+	return roots, loaded > 0, nil
+}
+
+// projectLeft reports whether a project has left this machine: none of the
+// directories its recorded files sit in exists, which is how a checkout that
+// is deleted leaves the registry, since no command prunes a record.
+func projectLeft(projectPath string, project store.ProjectRecord) bool {
+	return !slices.ContainsFunc(projectDirs(projectPath, project.Files()), dirExists)
+}
+
+// projectDirs lists the directories a project's recorded files sit in, which
+// for every record a run writes is the one directory keying it; a record
+// naming no file falls back to its key.
+func projectDirs(projectPath string, files []string) []string {
+	if len(files) == 0 {
+		return []string{projectPath}
+	}
+	dirs := make([]string, 0, len(files))
+	for _, f := range files {
+		dirs = append(dirs, filepath.Dir(f))
+	}
+	slices.Sort(dirs)
+	return slices.Compact(dirs)
+}
+
+// dirExists reports whether dir is anything but gone: a project leaves when
+// its directory does, and any other Stat failure is left to the file loads.
+func dirExists(dir string) bool {
+	_, err := os.Stat(dir)
+	return !errors.Is(err, fs.ErrNotExist)
+}
+
+// standInRoots reads what stands in for a project's gone files: the galaxy.toml
+// and requirements.yml discovery would read in its directory, unless recorded,
+// and the galaxy.lock beside them; it returns how many it found.
+func standInRoots(
+	out output.Printer, registryLocation, projectPath, dir string, recorded []string, roots *projectRoots,
+) (int, error) {
+	if !dirExists(dir) {
+		return 0, nil
+	}
+	found := 0
+	for _, name := range []string{helpers.RequirementsTOMLName, helpers.RequirementsYAMLName} {
+		path := filepath.Join(dir, name)
+		if slices.Contains(recorded, path) {
+			continue
+		}
+		file, unread, err := loadRootsFile(out, registryLocation, projectPath, path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		out.Warnf("project %q: keeping what %q reaches in place of its missing requirements file", projectPath, path)
+		roots.add(file, unread)
+		found++
+	}
+	keys, roleNames, ok, err := lockedRoots(registryLocation, projectPath, dir)
+	if err != nil || !ok {
+		return found, err
+	}
+	out.Warnf("project %q: keeping what %q pins in place of its missing requirements file", projectPath,
+		filepath.Join(dir, lockfile.DefaultName))
+	roots.lockedKeys = append(roots.lockedKeys, keys...)
+	roots.lockedRoles = append(roots.lockedRoles, roleNames...)
+	return found + 1, nil
+}
+
+// lockedRoots reads the project directory's galaxy.lock: every collection key
+// and role name it pins. Absent is not found; one lockfile.Load refuses, a
+// fifo included before it is opened, aborts the run, naming it.
+func lockedRoots(registryLocation, projectPath, dir string) ([]string, []string, bool, error) {
+	path := filepath.Join(dir, lockfile.DefaultName)
+	lf, err := lockfile.Load(path)
+	if lockfile.IsNotExist(err) {
+		return nil, nil, false, nil
+	}
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("project %q: %w (%s)", projectPath, err,
+			unreadableProjectHint(registryLocation, projectPath, path))
+	}
+	keys := make([]string, 0, len(lf.Collections))
+	for _, e := range lf.Collections {
+		keys = append(keys, e.Name+"@"+e.Version)
+	}
+	roleNames := make([]string, 0, len(lf.Roles))
+	for _, r := range lf.Roles {
+		roleNames = append(roleNames, r.Name)
+	}
+	return keys, roleNames, true, nil
+}
+
+// loadRootsFile loads one requirements file under the per-file policy: its
+// roots, a bare fs.ErrNotExist when it is gone, its collections alone when its
+// roles: list is refused, and ErrProjectRequirementsUnreadable otherwise.
+func loadRootsFile(out output.Printer, registryLocation, projectPath, path string) (requirements.File, bool, error) {
 	file, err := requirements.Load(path, "")
 	if err == nil {
 		return file, false, nil
 	}
 	if errors.Is(err, fs.ErrNotExist) {
-		out.Warnf("project %q: requirements file %q no longer exists; it contributes no reachability roots this run",
-			projectPath, path)
-		return requirements.File{}, false, nil
+		return requirements.File{}, false, err
 	}
 	// An unreadable roles: list keeps every role under the project's roles
 	// path and still judges its collections, so one such file cannot abort
@@ -283,6 +441,23 @@ func recordedFileRoots(out output.Printer, registryLocation, projectPath, path s
 	return requirements.File{}, false, fmt.Errorf("%w: %s: %w (%s)",
 		helpers.ErrProjectRequirementsUnreadable, path, err,
 		unreadableProjectHint(registryLocation, projectPath, path))
+}
+
+// unanchoredProjectsError is ErrProjectRequirementsMissing naming every project
+// whose directory remains with nothing to read, and the registry to delete a
+// retired project's entry from.
+func unanchoredProjectsError(registryLocation string, projects []string) error {
+	registry := "the project registry"
+	if registryLocation != "" {
+		registry = registryLocation
+	}
+	quoted := make([]string, 0, len(projects))
+	for _, p := range projects {
+		quoted = append(quoted, strconv.Quote(p))
+	}
+	return fmt.Errorf("%w: %s (for each: restore a galaxy.toml, requirements.yml or galaxy.lock in that directory, "+
+		"or, if no run there reads one any more, delete its entry from %s)",
+		helpers.ErrProjectRequirementsMissing, strings.Join(quoted, ", "), registry)
 }
 
 // unreadableProjectHint names the three ways out of a recorded file cleanup

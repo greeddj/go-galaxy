@@ -14,7 +14,8 @@ flowchart TD
     P -->|"yes"| SC["scan every project's<br/>collections and roles"]
     SC -->|"read error"| X1(["exit 1"])
     SC --> RE["mark what each project's<br/>roots reach"]
-    RE -->|"requirements file<br/>unloadable"| X2R(["exit 2"])
+    RE -->|"a file unloadable, or<br/>nothing left to read"| X2R(["exit 2"])
+    RE -->|"stand-in galaxy.lock<br/>refused"| X6(["exit 6"])
     RE --> RM["remove unreachable collections,<br/>then roles"]
     RM -->|"unsafe path or<br/>I/O error"| XR(["exit 5 or 1"])
     RM --> SW["sweep legacy keys<br/>and the extracted store"]
@@ -81,10 +82,21 @@ since two copies of one version can list different dependencies.
 depends on, never the copy's own key. Every unsure case keeps more, the safe
 direction for a sweep.
 
-`projectRequirementRoots` reloads every file `ProjectRecord.Files` names, by
-extension, and joins their roots, each file under the same policy, refusing a
-non-regular one first, since a fifo would block under the lock. What a missing
-or refused file does: [What cleanup keeps](../guides/caching.md#what-cleanup-keeps).
+`buildReachable` first drops a project that has left (`projectLeft`: none of
+the directories its recorded files sit in exists), with one warning; it keeps
+nothing, never fails the run, and its record is never pruned. For every other
+project, `projectRequirementRoots` reloads every file `ProjectRecord.Files`
+names, by extension, each under one policy (`loadRootsFile`), refusing a
+non-regular one first, since a fifo would block under the lock. Once a
+remembered file is gone, `standInRoots` reads the directory's unrecorded
+`galaxy.toml` and `requirements.yml` under the same policy, and `lockedRoots`
+its `galaxy.lock` through `lockfile.Load`, whose regular-file gate runs before
+any open; the lock's collection keys go to `markReachable`, its role names to
+`markReachableRoles`. A project with nothing loaded is gathered, and after the
+loop `unanchoredProjectsError` returns `ErrProjectRequirementsMissing` naming
+them all, before any removal: roots are global, so no removal can be scoped
+around an unknown one. What each case does:
+[What cleanup keeps](../guides/caching.md#what-cleanup-keeps).
 
 ## Removal, sweeps and save
 
@@ -128,7 +140,9 @@ What bounds the cache sweeps:
 | --- | --- | --- |
 | 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, backend open, lock, snapshot or registry load |
 | 1 | scan | I/O error walking a workspace or listing a roles path |
-| 2 | `projectRequirementRoots` | `ErrProjectRequirementsUnreadable`, with a hint naming the file, the project and the registry's `Location` |
+| 2 | `loadRootsFile` | `ErrProjectRequirementsUnreadable` for a remembered or stand-in file, with a hint naming the file, the project and the registry's `Location` |
+| 2 | `unanchoredProjectsError` | `ErrProjectRequirementsMissing`, naming every project left with nothing to read and the registry's `Location` |
+| 6 | `lockedRoots` | a stand-in `galaxy.lock` that `lockfile.Load` refuses, not a regular file included (`ErrLockfileInvalid`) |
 | 5 | `removeInstalled`, `removeRole` | `ErrUnsafeRemovalPath` |
 | 1 | `removeInstalled`, `removeRole` | any other removal error |
 | 2, 4 | `finalizeCleanup` | `SaveStore` failed |

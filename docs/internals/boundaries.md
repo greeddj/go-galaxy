@@ -92,8 +92,9 @@ and [What is refused](../guides/requirements.md#what-is-refused).
   server with an operator token: SigV4 never sends the secret key. The access
   key id and any session token do reach that endpoint, and neither signs a
   request without the secret.
-- `cleanup` re-reads a recorded file through `Decode`, which expands nothing,
-  so its roots never depend on the cleaning process's environment.
+- `cleanup` re-reads a recorded file, or one standing in for a gone one,
+  through `Decode`, which expands nothing, so its roots never depend on the
+  cleaning process's environment.
 
 </details>
 
@@ -402,7 +403,8 @@ blocks at line-start opening lines, one packet ceiling per file.
 | The same at removal | not `IsPathElement`, or the install path outside the collections path | `cleanup.removeInstalled` | `ErrUnsafeRemovalPath`, exit 5 |
 | A scanned collection copy | no regular extract marker, in its version's `.info` directory or in the collection directory, that parses and whose tally equals the tree now, as in a tree `ansible-galaxy` installed or changed | `cleanup.trustedCopy` through `extractmarker.Check`, then `trustedCopies` | kept, counted for reachability only |
 | A role directory | no recorded roles path, not an install name, or no extract marker | `cleanup.scanProjectRoles`, `scannedRole` | never indexed |
-| A recorded requirements file | not a regular file by `Stat` | `requirements.Read`, from `cleanup.projectRequirementRoots` | `ErrProjectRequirementsUnreadable`, exit 2 |
+| A recorded requirements file, or one standing in for a gone one | not a regular file by `Stat` | `requirements.Read`, from `cleanup.loadRootsFile` | `ErrProjectRequirementsUnreadable`, exit 2 |
+| A `galaxy.lock` standing in for a gone file | not a regular file by `Stat`, or does not load | `lockfile.Load`, from `cleanup.lockedRoots` | `ErrLockfileInvalid`, exit 6 |
 | `MANIFEST.json`, `GALAXY.yml`, install info | not a regular file by `Lstat` through the root | `manifestIsRegularFile`, `readRegularFile` | skipped |
 | An `outdated` sidecar | a bad name or version, fields not recomposing its `.info` name, or another manifest version | `scanInstalledCollection` | skipped |
 
@@ -413,6 +415,10 @@ blocks at line-start opening lines, one packet ceiling per file.
 - Removal re-opens an `os.Root`, so a symlink swapped in since the scan is
   refused. Accepted: a symlink planted deeper in a collections path, and a
   writer swapping the collections path itself between scan and removal.
+- A stand-in is read only from a directory a record's files sit in, and only
+  once a file that record remembers is gone: beside files that still load it
+  only adds roots, and with none left it decides what the project keeps, no
+  more than an edit to the gone file could.
 
 ## Printed output
 

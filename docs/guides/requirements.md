@@ -488,7 +488,8 @@ read: from `install`, `warm`, `lock` and `tree`, from `hash` with no
 `galaxy.lock` beside it, and from every command given such a `galaxy.toml`,
 whose settings each one reads. `outdated` never reads a `requirements.yml`,
 and `cleanup` never reads the one `-r` names: it reloads, through the same
-check, the files its project records name
+check, the files its project records name, and in place of a gone one the
+`galaxy.toml` and `requirements.yml` beside it
 ([What cleanup keeps](caching.md#what-cleanup-keeps)). `explain` takes no
 roots from a `requirements.yml` it cannot load
 ([explain](../internals/flow-hash-tree-explain.md#explain)). A symlink to a

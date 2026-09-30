@@ -436,6 +436,13 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
+		// cleanup's verdict on a project directory left with no file to read:
+		// recorded state, not a corrupt cache, so it is not ExitCacheCorrupt.
+		name:     "recorded project has no requirements file or lockfile",
+		err:      fmt.Errorf("%w: %q (restore ...)", helpers.ErrProjectRequirementsMissing, "/p"),
+		wantCode: ExitUsage,
+	},
+	{
 		name:     "conflicting namespace name",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrConflictingNamespaceName),
 		wantCode: ExitUsage,
