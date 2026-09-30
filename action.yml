@@ -58,8 +58,10 @@ inputs:
   cache:
     description: >-
       Restore and save `~/.cache/go-galaxy`, keyed by `go-galaxy hash`. Set to
-      `false` if the job sets `GO_GALAXY_CACHE_DIR` itself, since the cached
-      path would then be the wrong one.
+      `false` when the job moves the cache anywhere else - `--cache-dir` in
+      `args`, `GO_GALAXY_CACHE_DIR`, `ANSIBLE_GALAXY_CACHE_DIR`, or a `cache_dir`
+      key in `galaxy.toml` or `ansible.cfg` - since the cached path would then
+      be the wrong one.
     required: false
     default: 'true'
 
