@@ -398,11 +398,11 @@ A name running straight into its constraint and an unparsable constraint stop
 at load:
 
 ```text
-✗ failed to load requirements file: invalid collection name: "ns.name@1.0": put a space or a version operator between the name and its constraint
-✗ failed to load requirements file: invalid collection name: "ns.name:1.0": put a space or a version operator between the name and its constraint
-✗ failed to load requirements file: invalid collection name: "ns.name-1.0": put a space or a version operator between the name and its constraint
-✗ failed to load requirements file: invalid collection name: "ns.name1.0.0"
-✗ failed to load requirements file: invalid collection version constraint: ">>= 1.0" for ns.name
+✗ failed to load requirements file: collections[0]: invalid collection name: "ns.name@1.0": put a space or a version operator between the name and its constraint
+✗ failed to load requirements file: collections[0]: invalid collection name: "ns.name:1.0": put a space or a version operator between the name and its constraint
+✗ failed to load requirements file: collections[0]: invalid collection name: "ns.name-1.0": put a space or a version operator between the name and its constraint
+✗ failed to load requirements file: collections[0]: invalid collection name: "ns.name1.0.0"
+✗ failed to load requirements file: collections[0]: invalid collection version constraint: ">>= 1.0" for ns.name
 ```
 
 `ns.name1.0.0` is a four-part name, since nothing separates the version. Only

@@ -170,9 +170,9 @@ func parseRaw(raw any, defaultSource string) (File, error) {
 	}
 }
 
-// parseCollectionList parses a list of collection items. A nil value (ansible
-// takes a bare "collections:" as an empty list) yields no entries; any other
-// non-list value is refused.
+// parseCollectionList parses a list of collection items, a refusal naming the
+// item's index. A nil value (ansible takes a bare "collections:" as an empty
+// list) yields no entries; any other non-list value is refused.
 func parseCollectionList(raw any, defaultSource string) (Collections, error) {
 	if raw == nil {
 		return nil, nil
@@ -182,10 +182,10 @@ func parseCollectionList(raw any, defaultSource string) (Collections, error) {
 		return nil, helpers.ErrInvalidCollectionsList
 	}
 	items := make(Collections, 0, len(list))
-	for _, item := range list {
+	for i, item := range list {
 		req, err := parseCollectionItem(item, defaultSource)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("collections[%d]: %w", i, err)
 		}
 		items = append(items, req)
 	}

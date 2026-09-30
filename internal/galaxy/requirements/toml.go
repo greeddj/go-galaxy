@@ -54,17 +54,17 @@ func collectionsBesideRolesError(raw map[string]any, defaultSource string, roles
 
 // shimCollections reshapes a collections array for parseRaw: a string is
 // split into name and constraint, an inline table is held to the closed key
-// set. Any other value passes through so parseRaw refuses it by its own rule.
+// set, a refusal names the index. Any other value is left to parseRaw.
 func shimCollections(value any) (any, error) {
 	list, ok := value.([]any)
 	if !ok {
 		return value, nil
 	}
 	items := make([]any, 0, len(list))
-	for _, item := range list {
+	for i, item := range list {
 		shimmed, err := shimCollectionItem(item)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("collections[%d]: %w", i, err)
 		}
 		items = append(items, shimmed)
 	}
