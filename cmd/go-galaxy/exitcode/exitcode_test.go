@@ -296,6 +296,16 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
+		name:     "migrate input named other than yml or yaml",
+		err:      fmt.Errorf("%w: %q is a galaxy.toml already", helpers.ErrMigrateSourceName, "galaxy.toml"),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "migrate target already exists",
+		err:      fmt.Errorf("%w: galaxy.toml; migrate never replaces it", helpers.ErrProjectFileExists),
+		wantCode: ExitUsage,
+	},
+	{
 		name:     "requirements path not a regular file",
 		err:      fmt.Errorf("failed to load requirements file: %w: dir.yml", helpers.ErrRequirementsNotRegular),
 		wantCode: ExitUsage,
@@ -1004,6 +1014,24 @@ func TestGenericSentinelsMapToExitError(t *testing.T) {
 				t.Errorf("FromError(%v) = %d, want %d", wrapped, got, ExitError)
 			}
 		})
+	}
+}
+
+// TestMigrateRoundTripIsAGenericFailure pins that a galaxy.toml migrate could
+// not read back exits 1 however it is wrapped, even over a usage cause that
+// was rendered with %v so it cannot classify the exit.
+func TestMigrateRoundTripIsAGenericFailure(t *testing.T) {
+	t.Parallel()
+	//nolint:errorlint // the usage cause is rendered with %v on purpose, as migrate renders it.
+	rendered := fmt.Errorf("%w: %v", helpers.ErrMigrateRoundTrip, helpers.ErrUnsupportedRequirementsFormat)
+	for name, err := range map[string]error{
+		"bare":                        helpers.ErrMigrateRoundTrip,
+		"wrapped":                     fmt.Errorf("requirements.yml: %w; nothing was written", helpers.ErrMigrateRoundTrip),
+		"over a rendered usage cause": fmt.Errorf("requirements.yml: %w; nothing was written", rendered),
+	} {
+		if got := FromError(err); got != ExitError {
+			t.Errorf("%s: FromError(%v) = %d, want %d", name, err, got, ExitError)
+		}
 	}
 }
 

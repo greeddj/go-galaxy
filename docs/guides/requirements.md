@@ -30,7 +30,7 @@ roles:
 | Write | When |
 | --- | --- |
 | `galaxy.toml` | You want the constraint beside the name, a strict schema, and run settings in [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table) |
-| `requirements.yml` | `ansible-galaxy` must read the file too |
+| `requirements.yml` | `ansible-galaxy` or another tool, such as AWX project sync, must read the file too, or a bot such as Renovate updates it ([Moving to galaxy.toml](#moving-to-galaxytoml)) |
 
 ## Collections
 
@@ -480,7 +480,8 @@ variables are `GO_GALAXY_REQUIREMENTS_FILE` and
 `.toml`, in any case, so `.TOML` reads as `galaxy.toml`. Any other value exits
 `2` before a file is read, whatever the command: a `galaxy.txt`, a name with no
 extension, `/dev/stdin` and `<(...)`. So does an empty export, which counts as
-set and names no file.
+set and names no file. `migrate` alone reads neither variable and takes only
+`.yml` or `.yaml` ([migrate](../reference/cli.md#migrate)).
 
 A requirements file that exists but is not a regular file, such as a
 directory or a named pipe, exits `2` before it is opened wherever it is
@@ -533,14 +534,55 @@ Each exits `2` before anything installs, naming the entry.
 
 ## Moving to galaxy.toml
 
+```bash
+go-galaxy migrate
+```
+
+```text
+! requirements.yml: comments are not carried into galaxy.toml
+✔ Wrote galaxy.toml (collections: 2, roles: 1)
+· Check galaxy.toml with go-galaxy lock --check -r galaxy.toml, then delete requirements.yml unless another tool still reads it
+```
+
+`migrate` writes `galaxy.toml` beside the requirements file, never over one
+([migrate](../reference/cli.md#migrate)). The file holds a `[project]` table
+alone: `name`, the directory's name, then the collections and roles.
+
+| In `requirements.yml` | In `galaxy.toml` |
+| --- | --- |
+| Each collection and role | The same entry at the same place: a string when it carries nothing else, else an inline table; constraints, sources, refs and signatures as parsed |
+| A default: `version: "*"`, `type: galaxy`, `type: url`, `signatures: []`, a git ref of `HEAD`, a role `name:` the entry gets anyway | Nothing |
+| A key go-galaxy ignores, a `version:` beside a git URL's `,ref`, comments, a YAML document after the first | Nothing, and a warning on stderr for each |
+| A [constraint](#stricter-than-requirementsyml) semver cannot parse | Exit `2`, nothing written |
+| Settings from `ansible.cfg`, flags or the environment | Never read |
+
+Before writing, `migrate` reads the new file back and compares every entry
+with what `requirements.yml` asks for. A difference exits `1` and writes
+nothing.
+
 - [ ] Upgrade every go-galaxy sharing the cache or the lockfile first
-      ([From v1.2.x](../reference/upgrading.md#from-v12x)).
-- [ ] Rewrite the entries in `galaxy.toml`. A constraint may be respelled as
-      [Version constraints](#version-constraints) allows, such as `"1.0.0"`
-      as `== 1.0.0`, and still replays the last resolution.
-- [ ] Delete `requirements.yml`, or every run that names no file warns.
-- [ ] With a lockfile, run `go-galaxy lock --check`: the same entries give
-      the same `galaxy.lock`. Without one,
-      [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) keeps its key.
+      ([From v1.3.x](../reference/upgrading.md#from-v13x)).
+- [ ] Run `go-galaxy migrate`, and read each warning and the new file.
+- [ ] Check it. With a lockfile, `go-galaxy lock --check -r galaxy.toml`
+      exits `0`: the same entries give the same `galaxy.lock`, replaying the
+      [last resolution](caching.md#what-a-rerun-reuses) when the cache holds
+      it. Offline, `go-galaxy tree -r galaxy.toml` prints no
+      `(missing in lockfile)`. Without a lockfile, run
+      `go-galaxy install --dry-run -r galaxy.toml`. Either way,
+      [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) prints the key it
+      printed for `requirements.yml`.
+- [ ] Delete `requirements.yml`. `cleanup` keeps what `galaxy.toml` reaches
+      whether or not a run has recorded it yet
+      ([What cleanup keeps](caching.md#what-cleanup-keeps)).
 - [ ] Optionally move `cache_dir` and the whole server list from `ansible.cfg`
       into [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table).
+
+> [!NOTE]
+> Keep `requirements.yml` while a tool that reads it at a fixed path still
+> runs, such as AWX project sync, which reads `requirements.yml`,
+> `roles/requirements.yml` and `collections/requirements.yml` (or `.yaml`).
+> Pass `-r galaxy.toml`, which skips the both-files warning, and after each
+> edit of `requirements.yml` run `rm galaxy.toml && go-galaxy migrate`, which
+> drops any edit made to `galaxy.toml`. A project whose `requirements.yml` a
+> bot such as Renovate rewrites stays on `requirements.yml`: go-galaxy reading
+> `galaxy.toml` would miss every update.

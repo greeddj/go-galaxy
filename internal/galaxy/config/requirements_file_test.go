@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/cliflags"
@@ -230,6 +231,82 @@ func TestFlagMounted(t *testing.T) {
 			c := &cli.Command{Name: "x", Flags: row.flags}
 			if got := flagMounted(c, "requirements-file"); got != row.want {
 				t.Errorf("flagMounted() = %v, want %v", got, row.want)
+			}
+		})
+	}
+}
+
+// runMigrateSourcePath runs MigrateSourcePath from a migrate subcommand
+// mounting cliflags.MigrateFlags under a root carrying cliflags.CommonFlags.
+func runMigrateSourcePath(t *testing.T, args []string) (string, error) {
+	t.Helper()
+
+	var gotPath string
+	var gotErr error
+	app := &cli.Command{
+		Name:  "go-galaxy",
+		Flags: cliflags.CommonFlags(),
+		Commands: []*cli.Command{
+			{
+				Name:  "migrate",
+				Flags: cliflags.MigrateFlags(),
+				Action: func(_ context.Context, c *cli.Command) error {
+					gotPath, gotErr = MigrateSourcePath(c)
+					return nil
+				},
+			},
+		},
+	}
+
+	fullArgs := append([]string{"go-galaxy", "migrate"}, args...)
+	if err := app.Run(context.Background(), fullArgs); err != nil {
+		t.Fatalf("app.Run() error = %v, want nil", err)
+	}
+	return gotPath, gotErr
+}
+
+// TestMigrateSourcePath pins migrate's input rule: -r as given when it ends
+// in .yml or .yaml, else ErrMigrateSourceName; unset, requirements.yml, with
+// no variable read and no galaxy.toml discovered.
+func TestMigrateSourcePath(t *testing.T) {
+	rows := []struct {
+		env      map[string]string
+		wantErr  error
+		name     string
+		wantPath string
+		wantMsg  string
+		args     []string
+		files    []string
+	}{
+		{name: "unset", wantPath: "requirements.yml"},
+		{name: "upper-case yaml", args: []string{"-r", "x.YAML"}, wantPath: "x.YAML"},
+		{name: "galaxy.toml", args: []string{"-r", "galaxy.toml"}, wantErr: helpers.ErrMigrateSourceName, wantMsg: "is a galaxy.toml already"},
+		{name: "upper-case toml", args: []string{"-r", "x.TOML"}, wantErr: helpers.ErrMigrateSourceName},
+		{name: "other extension", args: []string{"-r", "deps.txt"}, wantErr: helpers.ErrMigrateSourceName},
+		{name: "empty", args: []string{"-r", ""}, wantErr: helpers.ErrMigrateSourceName},
+		{name: "stdin", args: []string{"-r", "/dev/stdin"}, wantErr: helpers.ErrMigrateSourceName},
+		{name: "variable not read", env: map[string]string{"GO_GALAXY_REQUIREMENTS_FILE": "other.yml"}, wantPath: "requirements.yml"},
+		{name: "galaxy.toml not discovered", files: []string{"galaxy.toml"}, wantPath: "requirements.yml"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			clearRequirementsEnv(t)
+			for key, value := range row.env {
+				t.Setenv(key, value)
+			}
+			for _, name := range row.files {
+				writeCwdFile(t, name)
+			}
+			gotPath, gotErr := runMigrateSourcePath(t, row.args)
+			if !errors.Is(gotErr, row.wantErr) {
+				t.Fatalf("error = %v, want errors.Is %v", gotErr, row.wantErr)
+			}
+			if row.wantMsg != "" && !strings.Contains(gotErr.Error(), row.wantMsg) {
+				t.Fatalf("error = %q, want it to contain %q", gotErr, row.wantMsg)
+			}
+			if gotPath != row.wantPath {
+				t.Errorf("path = %q, want %q", gotPath, row.wantPath)
 			}
 		})
 	}

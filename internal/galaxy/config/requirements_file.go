@@ -11,8 +11,9 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// requirementsFileFlagName is the flag RequirementsPath reads; a command that
-// mounts no flag by this name gets "" and no file system access at all.
+// requirementsFileFlagName is the flag RequirementsPath and MigrateSourcePath
+// read; a command that mounts no flag by this name gets "" and no file system
+// access at all.
 const requirementsFileFlagName = "requirements-file"
 
 // RequirementsPath picks the run's requirements file: a set flag or variable
@@ -33,6 +34,22 @@ func RequirementsPath(c *cli.Command) (string, string, error) {
 	}
 	path, warning := discoverRequirementsPath()
 	return path, warning, nil
+}
+
+// MigrateSourcePath returns the requirements.yml migrate reads: -r as given,
+// else requirements.yml, never discovery and no variable. A name not ending in
+// .yml or .yaml, any case, a .toml one and "" included, is ErrMigrateSourceName.
+func MigrateSourcePath(c *cli.Command) (string, error) {
+	path := c.String(requirementsFileFlagName)
+	ext := filepath.Ext(path)
+	switch {
+	case strings.EqualFold(ext, ".yml") || strings.EqualFold(ext, ".yaml"):
+		return path, nil
+	case strings.EqualFold(ext, ".toml"):
+		return "", fmt.Errorf("%w: %q is a galaxy.toml already", helpers.ErrMigrateSourceName, path)
+	default:
+		return "", fmt.Errorf("%w: %q", helpers.ErrMigrateSourceName, path)
+	}
 }
 
 // hasRequirementsFileExtension reports whether path ends in .yml, .yaml or

@@ -28,6 +28,7 @@ cache lock is held, losing it mid-run turns any result into exit 8.
 | `cleanup` | [cleanup flow](flow-cleanup.md) | Removes what go-galaxy installed and no recorded project reaches |
 | `outdated` | [outdated flow](flow-outdated.md) | Compares locked or installed versions with their sources, no cache |
 | `hash`, `tree`, `explain` | [hash, tree and explain flows](flow-hash-tree-explain.md) | Read the lockfile and requirements file from disk |
+| `migrate` | [migrate flow](flow-migrate.md) | Reads one `requirements.yml`, writes `galaxy.toml` beside it |
 
 ## Process entry and exit
 
@@ -72,6 +73,7 @@ flowchart TD
   D8 -->|"yes"| D9{"which command?"}
   D9 -->|"install, warm, lock,<br/>outdated, cleanup"| RC(["runCollectionCommand,<br/>see Shared setup"])
   D9 -->|"hash, tree, explain"| FI(["read files from disk:<br/>no Config, no cache"])
+  D9 -->|"migrate"| MG(["read one file, write one:<br/>no Config, no cache"])
 ```
 
 `commands.NoArguments` is the root's `ArgValidator` because install is the
@@ -111,6 +113,7 @@ set value that does not end in `.yml`, `.yaml` or `.toml`, any case, with
 | --- | --- | --- |
 | `newConfigFromCLI`, first step of `BuildCollectionConfig` | install, warm, lock, outdated, cleanup | queued first on `Config.Warnings`, printed by `WarnConfig` |
 | the command's own action | hash, tree, explain | `progress.Warnf`, before any output |
+| `config.MigrateSourcePath`, not `RequirementsPath` | migrate | none: `-r` or `requirements.yml`, no discovery, no variable, `ErrMigrateSourceName` for another name |
 
 - The picked path stays relative and is only a name: a missing file fails
   where the command reads it, exit 2.

@@ -216,7 +216,8 @@ warns when both exist
 `ansible-galaxy` reads only what `-r` names, and never `galaxy.toml`. A
 server list in [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table)
 replaces `ansible.cfg`'s `server_list` and `[galaxy_server.*]` for go-galaxy
-only.
+only. `go-galaxy migrate` writes one from a `requirements.yml` ([Moving to
+galaxy.toml](../guides/requirements.md#moving-to-galaxytoml)).
 
 ### Roles
 

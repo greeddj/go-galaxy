@@ -209,6 +209,14 @@ func Warnf(format string, args ...any) {
 	writeLine(s.w, decorated{prefix: s.warn(), msg: safeout.Clean(fmt.Sprintf(format, args...))})
 }
 
+// PersistentPrintf prints a report line with the step marker to stdout for a
+// caller that owns no Progress, resolving color per call as Okf does; migrate
+// names its next step through it.
+func PersistentPrintf(format string, args ...any) {
+	s := stream{w: os.Stdout, color: colorEnabled(os.Stdout)}
+	writeLine(s.w, decorated{prefix: s.step(), msg: safeout.Clean(fmt.Sprintf(format, args...))})
+}
+
 // Printf updates the spinner suffix when a spinner is active, otherwise
 // prints a log line unless quiet mode is enabled.
 func (p *Progress) Printf(format string, args ...any) {

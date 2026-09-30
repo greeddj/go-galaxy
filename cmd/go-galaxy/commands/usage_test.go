@@ -14,7 +14,7 @@ import (
 func TestUsageNamesCollectionsAndRoles(t *testing.T) {
 	t.Parallel()
 
-	for _, cmd := range []*cli.Command{Install(), Warm(), Cleanup(), Outdated()} {
+	for _, cmd := range []*cli.Command{Install(), Warm(), Cleanup(), Outdated(), Migrate()} {
 		if !strings.Contains(cmd.Usage, "collections and roles") {
 			t.Errorf("%s Usage = %q, want it to name collections and roles", cmd.Name, cmd.Usage)
 		}

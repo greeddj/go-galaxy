@@ -143,6 +143,18 @@ var (
 	// parse as YAML; a document that parses into the wrong shape is
 	// ErrUnsupportedRequirementsFormat or an entry sentinel instead.
 	ErrInvalidRequirementsYAML = errors.New("requirements file is not valid YAML")
+	// ErrMigrateSourceName indicates a migrate -r value that does not end in
+	// .yml or .yaml, case ignored; a .toml name, and "", are refused alike,
+	// since migrate reads a requirements.yml and writes the galaxy.toml.
+	ErrMigrateSourceName = errors.New("migrate reads a requirements file named *.yml or *.yaml")
+	// ErrProjectFileExists indicates something already stands where migrate
+	// would write galaxy.toml: a file, a directory or a symlink, even dangling.
+	// migrate never replaces it, under --dry-run as in a real run.
+	ErrProjectFileExists = errors.New("galaxy.toml already exists")
+	// ErrMigrateRoundTrip indicates the galaxy.toml migrate rendered does not
+	// parse back to the requirements it came from. Nothing is written, and no
+	// exit class claims it: it is a defect of go-galaxy, not of the input.
+	ErrMigrateRoundTrip = errors.New("the migrated galaxy.toml does not read back as the requirements file")
 	// ErrInvalidRequirementsTOML indicates a galaxy.toml whose bytes do not
 	// parse as TOML; a document that parses into the wrong shape is
 	// ErrUnsupportedRequirementsFormat or an entry sentinel instead.
@@ -328,7 +340,7 @@ var (
 	ErrInvalidCollectionVersion = errors.New("collection version is not an exact version")
 	// ErrInvalidCollectionConstraint indicates a galaxy.toml version constraint
 	// semver refuses at load; requirements.yml leaves that check to the solver,
-	// so only the TOML path raises it.
+	// so only the TOML path and migrate raise it.
 	ErrInvalidCollectionConstraint = errors.New("invalid collection version constraint")
 	// ErrUnsafeRemovalPath indicates a computed removal path failed a
 	// containment check against its expected root directory.

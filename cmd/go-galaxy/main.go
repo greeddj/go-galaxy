@@ -94,6 +94,7 @@ func newRootCommand(onErr func(error), errOut io.Writer) (*cli.Command, *errReco
 			commands.Tree(),
 			commands.Explain(),
 			commands.Outdated(),
+			commands.Migrate(),
 		},
 		ExitErrHandler: func(_ context.Context, _ *cli.Command, err error) {
 			if onErr != nil {

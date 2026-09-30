@@ -1,6 +1,6 @@
 // Package projectfile decodes galaxy.toml, go-galaxy's own project file, into
-// the shapes the requirements and config packages judge. It is the module's
-// only importer of github.com/BurntSushi/toml, so a decode error is rendered here.
+// the shapes requirements and config judge, and Encode writes its [project]
+// table by hand. It alone imports BurntSushi/toml, so a decode error is rendered here.
 package projectfile
 
 import (

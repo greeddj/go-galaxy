@@ -375,7 +375,15 @@ func isUsageError(err error) bool {
 		isSignatureConfigError(err) ||
 		isGitUsageError(err) ||
 		isRoleUsageError(err) ||
-		isURLUsageError(err)
+		isURLUsageError(err) ||
+		isMigrateUsageError(err)
+}
+
+// isMigrateUsageError reports whether migrate refused its -r by name or found
+// something already where galaxy.toml would go; either needs an edit or a move.
+func isMigrateUsageError(err error) bool {
+	return errors.Is(err, helpers.ErrMigrateSourceName) ||
+		errors.Is(err, helpers.ErrProjectFileExists)
 }
 
 // isCommandLineUsageError reports whether go-galaxy, not urfave, refused the

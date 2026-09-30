@@ -2,8 +2,11 @@ package helpers
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -158,5 +161,193 @@ func TestWriteFileAtomicLeavesNoTempOnFailure(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("expected no leftover temp files, found %v", matches)
+	}
+}
+
+// assertOnlyEntries fails unless dir holds exactly the named entries, so a
+// leftover temp or a created symlink target shows up.
+func assertOnlyEntries(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	got := make([]string, 0, len(entries))
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if len(got) != len(want) {
+		t.Fatalf("entries = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("entries = %v, want %v", got, want)
+		}
+	}
+}
+
+// assertExistsError fails unless err is fs.ErrExist as a *fs.PathError that
+// names path, never the temp the link was made from.
+func assertExistsError(t *testing.T, err error, path string) {
+	t.Helper()
+	if !errors.Is(err, fs.ErrExist) {
+		t.Fatalf("err = %v, want fs.ErrExist", err)
+	}
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) || pathErr.Path != path {
+		t.Fatalf("err = %#v, want a *fs.PathError naming %s", err, path)
+	}
+}
+
+// TestWriteFileExclusiveCreates pins the content, FileMod past the umask and
+// a directory holding the target alone afterwards.
+func TestWriteFileExclusiveCreates(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "galaxy.toml")
+	want := []byte("[project]\n")
+	if err := WriteFileExclusive(path, want); err != nil {
+		t.Fatalf("WriteFileExclusive: %v", err)
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, want) {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != FileMod {
+		t.Fatalf("mode = %o, want %o", perm, FileMod)
+	}
+	assertOnlyEntries(t, dir, "galaxy.toml")
+}
+
+// plantedTargets puts a file, a directory or a symlink, dangling or not, at
+// path; a symlink points at dir/nowhere, which holds "original" when it exists.
+func plantedTargets() map[string]func(t *testing.T, dir, path string) {
+	return map[string]func(t *testing.T, dir, path string){
+		"file": func(t *testing.T, _, path string) {
+			t.Helper()
+			if err := os.WriteFile(path, []byte("original"), FileMod); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+		},
+		"directory": func(t *testing.T, _, path string) {
+			t.Helper()
+			if err := os.Mkdir(path, DirMod); err != nil {
+				t.Fatalf("Mkdir: %v", err)
+			}
+		},
+		"dangling symlink": func(t *testing.T, dir, path string) {
+			t.Helper()
+			if err := os.Symlink(filepath.Join(dir, "nowhere"), path); err != nil {
+				t.Fatalf("Symlink: %v", err)
+			}
+		},
+		"symlink to a file": func(t *testing.T, dir, path string) {
+			t.Helper()
+			if err := os.WriteFile(filepath.Join(dir, "nowhere"), []byte("original"), FileMod); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+			if err := os.Symlink(filepath.Join(dir, "nowhere"), path); err != nil {
+				t.Fatalf("Symlink: %v", err)
+			}
+		},
+	}
+}
+
+// assertTargetUnchanged fails unless path is still the entry before was, and
+// a symlink's target, when it exists, still holds "original".
+func assertTargetUnchanged(t *testing.T, dir, path string, before os.FileInfo) {
+	t.Helper()
+	after, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat: %v", err)
+	}
+	if !os.SameFile(before, after) || before.Mode() != after.Mode() || before.Size() != after.Size() {
+		t.Fatalf("target changed: %v -> %v", before, after)
+	}
+	nowhere := filepath.Join(dir, "nowhere")
+	if _, err := os.Lstat(nowhere); err == nil {
+		if got := mustReadFile(t, nowhere); string(got) != "original" {
+			t.Fatalf("symlink target content = %q, want it untouched", got)
+		}
+	}
+}
+
+// TestWriteFileExclusiveNeverReplaces pins that a file, a directory and a
+// symlink, dangling or not, stay as they were: nothing lands in them or
+// through them, a dangling link's target is never created, no temp is left.
+func TestWriteFileExclusiveNeverReplaces(t *testing.T) {
+	t.Parallel()
+	for name, plant := range plantedTargets() {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, "galaxy.toml")
+			plant(t, dir, path)
+			before, err := os.Lstat(path)
+			if err != nil {
+				t.Fatalf("Lstat: %v", err)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("ReadDir: %v", err)
+			}
+			assertExistsError(t, WriteFileExclusive(path, []byte("new")), path)
+			assertTargetUnchanged(t, dir, path, before)
+			names := make([]string, 0, len(entries))
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			assertOnlyEntries(t, dir, names...)
+		})
+	}
+}
+
+// TestWriteFileExclusiveFallsBackWithoutLinks pins the O_EXCL path a file
+// system without hard links takes: the target is written with FileMod, and
+// anything already there is still fs.ErrExist.
+func TestWriteFileExclusiveFallsBackWithoutLinks(t *testing.T) {
+	t.Parallel()
+	noLinks := func(oldname, newname string) error {
+		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: syscall.EPERM}
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "galaxy.toml")
+	want := []byte("[project]\n")
+	if err := writeFileExclusive(path, want, noLinks); err != nil {
+		t.Fatalf("writeFileExclusive: %v", err)
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, want) {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != FileMod {
+		t.Fatalf("mode = %o, want %o", perm, FileMod)
+	}
+	assertOnlyEntries(t, dir, "galaxy.toml")
+
+	assertExistsError(t, writeFileExclusive(path, []byte("new"), noLinks), path)
+	if got := mustReadFile(t, path); !bytes.Equal(got, want) {
+		t.Fatalf("content = %q after a refused write, want %q", got, want)
+	}
+	assertOnlyEntries(t, dir, "galaxy.toml")
+}
+
+// TestWriteFileExclusiveNeedsTheDirectory pins that a missing parent is
+// fs.ErrNotExist and is not created.
+func TestWriteFileExclusiveNeedsTheDirectory(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path := filepath.Join(root, "missing", "galaxy.toml")
+	if err := WriteFileExclusive(path, []byte("x")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("err = %v, want fs.ErrNotExist", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "missing")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Lstat(missing) = %v, want the directory never created", err)
 	}
 }

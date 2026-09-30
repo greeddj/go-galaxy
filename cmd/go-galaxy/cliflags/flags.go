@@ -228,6 +228,20 @@ func RequirementsFileFlag() cli.Flag {
 	}
 }
 
+// MigrateFlags declares migrate's one flag, the requirements.yml it reads,
+// under the names every command takes it by. It has no variable and no
+// discovery: a CI export aimed at install must not pick migrate's input.
+func MigrateFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.StringFlag{
+			Name:    "requirements-file",
+			Aliases: []string{"r", "role-file"},
+			Usage:   "Path to the requirements.yml to migrate, named *.yml or *.yaml; galaxy.toml is written beside it",
+			Value:   galaxyhelpers.RequirementsYAMLName,
+		},
+	}
+}
+
 // SignatureFlags defines the signature verification flags, mounted only by
 // commands that verify. With their variables they are the whole surface: a
 // setting that can relax verification never comes from an ansible.cfg.

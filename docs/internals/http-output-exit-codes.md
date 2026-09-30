@@ -75,13 +75,17 @@ What a user sees: [Output and color](../reference/cli.md#output-and-color).
 - The spinner writes `os.Stdout` directly when it is a character device (so
   `/dev/null` counts), with autowrap off for one frame's bytes only.
 - `Close` drops the spinner, because the next line would restart a kept one.
+- The package-level `Okf`, `Warnf`, `Errorf` and `PersistentPrintf` serve
+  `hash`, `tree`, `explain` and `migrate`, which own no `Progress`: they
+  resolve color per call and ignore `--quiet`.
 
 `safeout.Clean` sanitizes text of external origin. What it replaces is under
 [Printed output](boundaries.md#printed-output). `IsUnsafeRune` defines that
-set for `Clean`, `NewWriter` and `helpers.IsPathElement` alike, and
-`safeout.Text` forces an explicit conversion from any typed string. `NewWriter`
-cleans each `Write` alone, and a multi-byte rune split across writes becomes
-one U+FFFD per byte, so `tree` and `explain` write whole lines.
+set for `Clean`, `NewWriter` and `helpers.IsPathElement` alike, and for the
+strings `projectfile.Encode` writes, and `safeout.Text` forces an explicit
+conversion from any typed string. `NewWriter` cleans each `Write` alone, and a
+multi-byte rune split across writes becomes one U+FFFD per byte, so `tree`,
+`explain` and `migrate --dry-run` write whole lines.
 
 ## Exit code classes
 

@@ -43,6 +43,7 @@ queued for whoever prints later:
 | `Config.RoleWarnings` (`roles_path`) | `Infra.WarnRoleConfig` | only once a `roles:` block is read |
 | `Config.AnsibleSignatureKeys`, rendered by `AnsibleSignatureKeysWarning` | `newVerifyContext` | `install` and `warm` only |
 | the `RequirementsPath` return value | `progress.Warnf` | `hash`, `tree` and `explain`, which build no `Config` |
+| `requirements.Migration.Notices` | `progress.Warnf`, one line each, prefixed with the `-r` path | `migrate`, which builds no `Config` |
 
 ## Where each source is read
 

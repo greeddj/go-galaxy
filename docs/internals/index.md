@@ -102,8 +102,8 @@ flowchart TD
 ```
 
 Each group names the page that explains it. `outdated` opens no backend, and
-`hash`, `tree` and `explain` build no `Config`. [Command flows](commands.md)
-draws every command branch by branch.
+`hash`, `tree`, `explain` and `migrate` build no `Config`.
+[Command flows](commands.md) draws every command branch by branch.
 
 ## Where to read next
 
@@ -123,6 +123,7 @@ draws every command branch by branch.
 | What does `cleanup` remove, and why? | [cleanup flow](flow-cleanup.md) |
 | What does `outdated` compare? | [outdated flow](flow-outdated.md) |
 | What do `hash`, `tree` and `explain` read? | [hash, tree and explain](flow-hash-tree-explain.md) |
+| What does `migrate` read and write? | [migrate flow](flow-migrate.md) |
 | How are tests, gates, lint and the docs site run? | [Development](development.md) |
 | How is a release verified, and what must an operator trust? | [Security](../guides/security.md) |
 
@@ -135,15 +136,15 @@ span packages are under [Rules a change must keep](#rules-a-change-must-keep).
 | --- | --- | --- |
 | `cmd/go-galaxy` | `newRootCommand`, the signal handler in `run`, the exit decision in `handleResult` | SIGQUIT left to Go's goroutine dump |
 | `cmd/go-galaxy/cliflags` | flag names, aliases, defaults, environment sources, the expanding `ANSIBLE_*` path source | reads no value back |
-| [`cmd/go-galaxy/commands`](commands.md) | the command tree, `runCollectionCommand`, `lockfilePath`, the `hash`, `tree` and `explain` printers | - |
+| [`cmd/go-galaxy/commands`](commands.md) | the command tree, `runCollectionCommand`, `lockfilePath`, the `hash`, `tree` and `explain` printers, and `migrate` | - |
 | [`cmd/go-galaxy/exitcode`](http-output-exit-codes.md#exit-code-classes) | sentinel or signal to exit code (`FromError`, `FromSignal`) | a sentinel no `exitClasses` predicate matches exits 1 |
 | `cmd/go-galaxy/buildinfo` | the `--version` string | fills gaps from `debug.ReadBuildInfo`, never the network |
 | [`internal/galaxy/collections`](install-pipeline.md) | install, lock, warm, outdated for collections and roles | cache access only through `withBackend` |
 | [`internal/galaxy/cleanup`](flow-cleanup.md) | reachability over every recorded project, then removal | deletes through an `os.Root` per project |
 | [`internal/galaxy/config`](config-loading.md) | one `*Config` from every source | precedence; every secret a `Secret`; no network |
 | `internal/galaxy/infra` | `Infra`, the per-run container | test-only deadlines behind accessors |
-| `internal/galaxy/requirements` | requirements.yml and galaxy.toml entries, and the digest `hash` keys on without a lockfile (`File.Hash`) | every name, URL and signature source judged here |
-| `internal/galaxy/projectfile` | galaxy.toml schema, `[tool.go-galaxy]`, `${VAR}` expansion | - |
+| `internal/galaxy/requirements` | requirements.yml and galaxy.toml entries, the digest `hash` keys on without a lockfile (`File.Hash`), and `MigrateYAML`, which renders a requirements.yml as galaxy.toml | every name, URL and signature source judged here |
+| `internal/galaxy/projectfile` | galaxy.toml schema, `[tool.go-galaxy]`, `${VAR}` expansion, and `Encode`, the `[project]` writer | - |
 | [`internal/galaxy/lockfile`](lockfile-format.md) | galaxy.lock `Load`, `Save`, `Hash`, `Compare` | `Load` judges it as repository content |
 | [`internal/galaxy/solver`](solver.md) | the version solver | metadata only through `Provider` |
 | `internal/galaxy/gitsource` | git grammar, locator, pin key, credential matching, `Client` seam, `Offline` (the `--offline` client) | imports no go-git |
@@ -202,7 +203,7 @@ each rule.
 | `treearchive` is the only production tar writer | collections and roles share one byte shape and budget | forbidigo `tar.NewWriter` |
 | only `internal/cache.New` names a backend | the rest codes to `Backend` and `ArtifactStore` | depguard `cache-backends` |
 | `Infra` carries per-run dependencies | extend it rather than add a global or widen a signature | code review |
-| `cmd/go-galaxy` does no pipeline work | five commands hand off through `runCollectionCommand`; `hash`, `tree` and `explain` print what `lockfile` and `requirements` load | code review |
+| `cmd/go-galaxy` does no pipeline work | five commands hand off through `runCollectionCommand`; `hash`, `tree` and `explain` print what `lockfile` and `requirements` load; `migrate` writes what `requirements.MigrateYAML` renders | code review |
 
 The lint rules are listed under [Lint](development.md#lint). The name
 alphabets and the version check that keep install paths safe are under

@@ -112,9 +112,9 @@ have no key either.
 `install`, `warm`, `lock` and `outdated` read every key. `cleanup` reads
 `cache_dir`, `s3` and `servers`, so the rule in [Where a token may
 go](../guides/servers-and-auth.md#where-a-token-may-go) applies to it too. `hash`, `tree`
-and `explain` read only `lock_file`, and not even that under `--lock-file`. A
-command that reads any key needs every `${VAR}` in the table, even under a key
-it does not read.
+and `explain` read only `lock_file`, and not even that under `--lock-file`.
+`migrate` reads no key. A command that reads any key needs every `${VAR}` in
+the table, even under a key it does not read.
 
 ### `${VAR}` expansion
 
@@ -194,7 +194,7 @@ server_timeout = 60
 
 The first file that exists is read, and no other. One that cannot be read
 exits `2`. `install`, `warm`, `lock`, `outdated` and `cleanup` read it.
-`hash`, `tree` and `explain` never do.
+`hash`, `tree`, `explain` and `migrate` never do.
 
 ### What go-galaxy reads
 

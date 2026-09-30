@@ -46,7 +46,9 @@ collections takes seconds rather than minutes.
 
 Some differences break a pipeline that worked under `ansible-galaxy`, so read
 [Differences a migration runs into](docs/get-started/ansible-galaxy-compat.md#differences-a-migration-runs-into)
-before you switch.
+before you switch. `go-galaxy migrate` turns your `requirements.yml` into a
+`galaxy.toml` when you want one
+([Moving to galaxy.toml](docs/guides/requirements.md#moving-to-galaxytoml)).
 
 ## Install
 

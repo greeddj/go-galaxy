@@ -45,6 +45,7 @@ nav = [
       { "cleanup" = "internals/flow-cleanup.md" },
       { "outdated" = "internals/flow-outdated.md" },
       { "hash, tree, explain" = "internals/flow-hash-tree-explain.md" },
+      { "migrate" = "internals/flow-migrate.md" },
     ]},
     { "Development" = "internals/development.md" },
   ]},

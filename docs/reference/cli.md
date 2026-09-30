@@ -16,6 +16,7 @@ Start with the task table, then look up the command or option group.
 | Show the locked dependency tree | `go-galaxy tree` |
 | Why a collection is there | `go-galaxy explain community.general` |
 | Print a CI cache key | `go-galaxy hash` |
+| Move a requirements.yml to galaxy.toml | `go-galaxy migrate` |
 | Free disk space | `go-galaxy cleanup` |
 
 > [!TIP]
@@ -34,6 +35,7 @@ Start with the task table, then look up the command or option group.
 | `hash` | `h` | Prints a CI cache key | no | no | nothing |
 | `tree` | `t` | Prints the locked dependency tree | no | no | nothing |
 | `explain` | `why` | Shows why one entry is locked | no | no | nothing |
+| `migrate` | | Writes `galaxy.toml` from a `requirements.yml` | no | no | `galaxy.toml` beside it |
 
 No command but `explain <name>` takes an argument. Every name comes from the
 requirements file, and an extra word exits [`2`](exit-codes.md).
@@ -164,6 +166,21 @@ What each prints and when it fails: [Inspect what is
 locked](../guides/lockfile.md#inspect-what-is-locked) and [A cache key for
 CI](../guides/lockfile.md#a-cache-key-for-ci).
 
+### `migrate`
+
+```bash
+go-galaxy migrate -r collections/requirements.yml
+```
+
+`migrate` reads one `requirements.yml` and writes `galaxy.toml` beside it,
+here `collections/galaxy.toml`. It never replaces one: a file, directory or
+symlink already there exits `2`. `-r` defaults to `requirements.yml`, must end
+in `.yml` or `.yaml`, else exit `2`, reads no variable and never discovers a
+`galaxy.toml`. `--dry-run` prints the file on stdout, writes nothing, and exits
+as a real run would. Like `hash`, it reads files only, and the other global
+options do nothing. What it carries, and the steps around it: [Moving to
+galaxy.toml](../guides/requirements.md#moving-to-galaxytoml).
+
 ## Global options
 
 | Flag | Variables | Effect |
@@ -182,16 +199,16 @@ come after: [Where a setting comes
 from](configuration.md#where-a-setting-comes-from). A `[section] key` is
 `ansible.cfg`'s; a bare key sits in `galaxy.toml`'s `[tool.go-galaxy]` table.
 
-| Group | `install` | `warm` | `lock` | `outdated` | `cleanup` | `hash`, `tree`, `explain` |
-| --- | --- | --- | --- | --- | --- | --- |
-| [Global](#global-options) | yes | yes | yes | yes, `--cache-dir` ignored | yes | ignored |
-| [Paths and files](#paths-and-files) | yes | yes | yes | yes | `-r` only | `-r` only |
-| [Servers and network](#servers-and-network) | yes | yes | yes | yes | | |
-| [Concurrency](#concurrency) | yes | yes | yes | `--download-workers` ignored | | |
-| [Cache behavior](#cache-behavior) | yes | `--no-cache` exits `2` | yes | ignored; `--offline` exits `4` | | |
-| [Lockfile](#lockfile) | `--lock-file`, `--frozen` | `--lock-file`, `--frozen` | `--lock-file`, `--check` | `--lock-file`; `--frozen` ignored | | `--lock-file` |
-| [Signatures](#signatures) | yes | yes | | | | |
-| [S3](#s3) | yes | yes | yes | validated, then ignored | yes | |
+| Group | `install` | `warm` | `lock` | `outdated` | `cleanup` | `hash`, `tree`, `explain` | `migrate` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [Global](#global-options) | yes | yes | yes | yes, `--cache-dir` ignored | yes | ignored | `--dry-run`; the rest ignored |
+| [Paths and files](#paths-and-files) | yes | yes | yes | yes | `-r` only | `-r` only | `-r` only, no variable |
+| [Servers and network](#servers-and-network) | yes | yes | yes | yes | | | |
+| [Concurrency](#concurrency) | yes | yes | yes | `--download-workers` ignored | | | |
+| [Cache behavior](#cache-behavior) | yes | `--no-cache` exits `2` | yes | ignored; `--offline` exits `4` | | | |
+| [Lockfile](#lockfile) | `--lock-file`, `--frozen` | `--lock-file`, `--frozen` | `--lock-file`, `--check` | `--lock-file`; `--frozen` ignored | | `--lock-file` | |
+| [Signatures](#signatures) | yes | yes | | | | | |
+| [S3](#s3) | yes | yes | yes | validated, then ignored | yes | | |
 
 Blank: the command does not take the flag, so passing it exits `2`, and its
 variables are not read. Ignored: accepted with no effect. `outdated` warns
@@ -222,6 +239,7 @@ checks any other setting, and a `galaxy.toml` that fails to load exits `2`.
 The exception is `hash`, `tree` and `explain` under `--lock-file`: they do not
 load the table, so an unset `${VAR}` does not stop them. The names `-r` takes,
 and discovery: [Which file is read](../guides/requirements.md#which-file-is-read).
+`migrate` reads no `galaxy.toml` at all.
 
 ### Servers and network
 
@@ -380,11 +398,12 @@ $ go-galaxy lock --dry-run
 drift](../guides/lockfile.md#catch-drift).
 
 > [!WARNING]
-> An exported `GO_GALAXY_DRY_RUN` turns every `install`, `warm`, `lock` and
-> `cleanup` in a job into a dry run. Nothing is installed, warmed, locked or
-> removed, yet a job that would have succeeded still exits `0`. `lock --check`
-> still fails on drift. The sign is the banner above, or `cleanup`'s
-> `Dry-run cleanup complete`.
+> An exported `GO_GALAXY_DRY_RUN` turns every `install`, `warm`, `lock`,
+> `cleanup` and `migrate` in a job into a dry run. Nothing is installed,
+> warmed, locked, removed or written, yet a job that would have succeeded
+> still exits `0`. `lock --check` still fails on drift. The sign is the
+> banner above, `cleanup`'s `Dry-run cleanup complete`, or the file `migrate`
+> prints on stdout in place of its `Wrote galaxy.toml` line.
 
 | Command | Prints | Still does | Never does |
 | --- | --- | --- | --- |
@@ -393,6 +412,7 @@ drift](../guides/lockfile.md#catch-drift).
 | `lock` | `Would add`, `Would update`, `Would remove` and a verdict | Resolves like a real run | Writes the lockfile |
 | `cleanup` | `Would remove`, `Would sweep` and a candidate count | Takes the cache lock | Deletes or saves anything |
 | `outdated` | Its usual report | Every lookup | Writes `--metrics-file` |
+| `migrate` | The `galaxy.toml` it would write, on stdout | Reads the requirements file; exits `2` when `galaxy.toml` exists | Writes `galaxy.toml` |
 
 `install`, `warm` and `lock` also skip `--clear-cache` and the metrics report,
 and save the metadata caches only when a snapshot already exists. A would-fail

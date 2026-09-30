@@ -1,6 +1,6 @@
 // Package requirements parses requirements.yml and galaxy.toml into collection
-// and role entries. It is the boundary where every name, URL and signature
-// source is validated, and it refuses any shape this tool cannot install.
+// and role entries, validating every name, URL and signature source and refusing
+// any shape this tool cannot install; MigrateYAML renders the one as the other.
 package requirements
 
 import (

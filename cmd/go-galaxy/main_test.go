@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"syscall"
@@ -254,7 +255,7 @@ func positionalArgumentCases(dir string) ([]positionalArgumentCase, []positional
 	installFlags := []string{"--cache-dir", dir + "/cache", "--dry-run", "-r", missingReq}
 	inspectFlags := []string{"-r", missingReq, "--lock-file", dir + "/galaxy.lock"}
 
-	refused := []positionalArgumentCase{
+	refused := append([]positionalArgumentCase{
 		{
 			name:        "a first word that names no command",
 			args:        append([]string{"collection", "install", "ns.name"}, installFlags...),
@@ -281,8 +282,8 @@ func positionalArgumentCases(dir string) ([]positionalArgumentCase, []positional
 			args:        append([]string{"explain", "ns.a", "ns.b", "ns.c"}, inspectFlags...),
 			wantMessage: `unexpected arguments "ns.b" "ns.c": explain takes one`,
 		},
-	}
-	accepted := []positionalArgumentCase{
+	}, migrateRefusedArgumentCase(missingReq))
+	accepted := append([]positionalArgumentCase{
 		{
 			name:    "install named with none",
 			args:    append([]string{"install"}, installFlags...),
@@ -308,8 +309,29 @@ func positionalArgumentCases(dir string) ([]positionalArgumentCase, []positional
 			args:    append([]string{"hash"}, inspectFlags...),
 			wantErr: os.ErrNotExist,
 		},
-	}
+	}, migrateAcceptedArgumentCase(missingReq))
 	return refused, accepted
+}
+
+// migrateRefusedArgumentCase is migrate's refused row, without the
+// --lock-file the other file commands take, since migrate has none.
+func migrateRefusedArgumentCase(missingReq string) positionalArgumentCase {
+	return positionalArgumentCase{
+		name:        "an argument to migrate",
+		args:        []string{"migrate", "extra", "-r", missingReq},
+		wantMessage: `unexpected arguments "extra": migrate takes none`,
+		notWant:     defaultCommandClause,
+	}
+}
+
+// migrateAcceptedArgumentCase is migrate's accepted row: with no argument it
+// reaches the missing requirements file.
+func migrateAcceptedArgumentCase(missingReq string) positionalArgumentCase {
+	return positionalArgumentCase{
+		name:    "migrate with none",
+		args:    []string{"migrate", "-r", missingReq},
+		wantErr: fs.ErrNotExist,
+	}
 }
 
 // runRootCommand runs a fresh root command over args, since urfave mutates

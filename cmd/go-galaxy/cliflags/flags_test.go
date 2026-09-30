@@ -128,6 +128,24 @@ func TestCollectionFlagsRequirementsFile(t *testing.T) {
 	t.Fatal("CollectionFlags() mounts no requirements-file flag")
 }
 
+// TestMigrateFlagsReadNoVariable pins migrate's one flag: the names every
+// command takes the requirements file by, requirements.yml as its value, and
+// no environment source, so an export aimed at install never picks its input.
+func TestMigrateFlagsReadNoVariable(t *testing.T) {
+	t.Parallel()
+	flags := MigrateFlags()
+	if len(flags) != 1 {
+		t.Fatalf("MigrateFlags() returned %d flags, want 1", len(flags))
+	}
+	assertStringFlag(t, flags[0], wantStringFlag{
+		name:    "requirements-file",
+		aliases: []string{"r", "role-file"},
+		usage:   "Path to the requirements.yml to migrate, named *.yml or *.yaml; galaxy.toml is written beside it",
+		value:   "requirements.yml",
+		envKeys: []string{},
+	})
+}
+
 // TestDryRunEnv checks that the persistent --dry-run flag can be set via
 // GO_GALAXY_DRY_RUN, since it is a global flag also consumed by cleanup
 // (which has no --dry-run-specific wiring of its own).

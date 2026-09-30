@@ -99,6 +99,27 @@ and [What is refused](../guides/requirements.md#what-is-refused).
 
 </details>
 
+## Writing galaxy.toml
+
+Behavior: [Moving to galaxy.toml](../guides/requirements.md#moving-to-galaxytoml).
+
+| Input | Refused when | Where | Sentinel | Exit |
+| :-- | :-- | :-- | :-- | :-- |
+| `migrate`'s `-r` | it does not end in `.yml` or `.yaml`, any case; a `.toml` name and `""` included | `config.MigrateSourcePath` | `ErrMigrateSourceName` | 2 |
+| A Galaxy constraint | semver cannot parse it, as `galaxy.toml`'s own reader refuses it | `requirements.checkMigratable`, through `checkConstraint` | `ErrInvalidCollectionConstraint` | 2 |
+| The target | anything stands there, a directory or a dangling symlink included | `checkMigrateTarget`, then `helpers.WriteFileExclusive` against a race | `ErrProjectFileExists` | 2 |
+| The rendered bytes | they do not parse back through `ParseTOML` to what `Parse` read | `requirements.verifyMigration` | `ErrMigrateRoundTrip` | 1 |
+
+- Only the parsed requirements reach the file: no `ansible.cfg`, flag,
+  environment or `[tool.go-galaxy]`, so no setting or credential of the run
+  lands in a committed file.
+- The file is never replaced or followed: a synced temp is hard-linked into
+  place, so the file appears whole; where links are refused it is created
+  with `O_EXCL` and written in place. Mode `0644`.
+- Every string is a TOML basic string with each `safeout.IsUnsafeRune` rune
+  escaped as `\uXXXX`, so `--dry-run` prints nothing a terminal acts on; the
+  notices never change the bytes.
+
 ## Loading the lockfile
 
 Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-lockfile).
@@ -432,7 +453,7 @@ blocks at line-start opening lines, one packet ceiling per file.
 | A persisted signature source | query cut only | `helpers.WithoutQuery` |
 | A failed request | re-rendered over the cut URL the caller asked for | `helpers.CutTransportURL` |
 | An attacker-influenced message field | cut at 512 bytes, `... (N bytes)` appended | `helpers.TruncateForMessage` |
-| Lockfile fields in `tree`, `explain` | the writer is wrapped; a new printing command does the same | `safeout.NewWriter` |
+| Lockfile fields in `tree`, `explain`, and the file `migrate --dry-run` prints | the writer is wrapped; a new printing command does the same | `safeout.NewWriter` |
 
 - `\n` survives, so a forged line is stopped where values enter:
   `helpers.IsPathElement` refuses every `safeout.IsUnsafeRune` rune, and

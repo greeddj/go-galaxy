@@ -88,7 +88,9 @@ versions, and run the same install in CI.
 > `ANSIBLE_*` variables mostly carry over. Some differences break a pipeline
 > that worked under `ansible-galaxy`, so read
 > [Differences a migration runs into](ansible-galaxy-compat.md#differences-a-migration-runs-into)
-> before you switch.
+> before you switch. `go-galaxy migrate` turns your `requirements.yml` into a
+> `galaxy.toml` when you want one
+> ([Moving to galaxy.toml](../guides/requirements.md#moving-to-galaxytoml)).
 
 ## Your first install
 

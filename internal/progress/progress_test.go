@@ -538,6 +538,16 @@ func TestPackageLevelWarnf(t *testing.T) {
 	}
 }
 
+// TestPackageLevelPersistentPrintf verifies the standalone package-level
+// PersistentPrintf writes a step line to os.Stdout, where migrate names the
+// check to run next.
+func TestPackageLevelPersistentPrintf(t *testing.T) {
+	got := capturePipe(t, &os.Stdout, func() { PersistentPrintf("hello %s", "world") })
+	if want := stepGlyph + " hello world\n"; got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
 // hostileCallerText carries an ANSI escape and a lone CR; its clean form is
 // spelled by hand, not computed with safeout.Clean, so a broken Clean cannot
 // also break the expectation. Every sanitization test here shares the pair.
@@ -717,6 +727,7 @@ func TestPackageLevelHelpersSanitizeCallerText(t *testing.T) {
 	}{
 		{"Okf", &os.Stdout, func(msg string) { Okf("%s", msg) }, okGlyph + " "},
 		{"Errorf", &os.Stderr, func(msg string) { Errorf("%s", msg) }, failGlyph + " "},
+		{"PersistentPrintf", &os.Stdout, func(msg string) { PersistentPrintf("%s", msg) }, stepGlyph + " "},
 	}
 
 	for _, tc := range cases {

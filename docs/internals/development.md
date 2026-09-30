@@ -39,7 +39,7 @@ go test ./internal/galaxy/solver -fuzz FuzzSolve -fuzztime 60s
   otherwise runs those tools whenever it finds them on `PATH`, so a check
   could fail on a machine that has them, such as GitHub's runner with
   shellcheck, and pass on one that does not.
-- The four fuzz targets run only their seed corpora under `go test`.
+- The six fuzz targets run only their seed corpora under `go test`.
 
 > [!WARNING]
 > Do not run the suite as root: tests asserting a permission refusal skip

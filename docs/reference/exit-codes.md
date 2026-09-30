@@ -27,6 +27,7 @@ code instead of parsing the log.
 | --- | --- |
 | Flags and arguments | an unknown flag, a bad value (`GO_GALAXY_WORKERS=abc`), `warm --no-cache`, a stray argument |
 | Requirements file | named other than `*.yml`, `*.yaml` or `*.toml` ([Which file is read](../guides/requirements.md#which-file-is-read)), missing, `requirements file is ...` (unreadable, not a regular file, not YAML or TOML), or an entry [refused as written](../guides/requirements.md#what-is-refused) |
+| `migrate` | its `-r` named other than `*.yml` or `*.yaml`, anything already where `galaxy.toml` goes, or an entry `galaxy.toml` cannot hold ([Moving to galaxy.toml](../guides/requirements.md#moving-to-galaxytoml)) |
 | `galaxy.toml` settings | off the schema, or `project file references unset environment variables` |
 | `ansible.cfg` | a missing `--ansible-config` file, or `ansible config file is unreadable` |
 | Servers | a malformed entry, a URL with a credential, two settings for one origin, a collection `source:` that names none of them and is no http(s) URL ([How a collection picks its server](../guides/servers-and-auth.md#how-a-collection-picks-its-server)) |
@@ -139,6 +140,9 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `corrupt project registry`, `corrupt cache state object`, `corrupt snapshot store`, `cache state object exceeds the maximum allowed size` | `9` | Delete the printed path or S3 key, or `go-galaxy.db` for the [snapshot](../guides/caching.md#what-the-directory-holds); `--clear-cache` keeps them |
 | `requirements file name must end in .yml, .yaml or .toml` | `2` | `-r` or its variable names another file, `/dev/stdin` included, or is exported empty; rename the file ([Which file is read](../guides/requirements.md#which-file-is-read)) |
 | `requirements file is not a regular file` | `2` | A directory or named pipe stands where the file should be; name the file itself |
+| `migrate reads a requirements file named *.yml or *.yaml` | `2` | `migrate`'s `-r` names a `galaxy.toml` or another extension; name the `requirements.yml` to migrate ([migrate](cli.md#migrate)) |
+| `galaxy.toml already exists` | `2` | A file, directory or symlink stands where `migrate` writes, and it never replaces one; compare with `go-galaxy migrate --dry-run`, or move it away |
+| `the migrated galaxy.toml does not read back as the requirements file` | `1` | A go-galaxy defect: `migrate` wrote nothing. Report it with the requirements file |
 | `unknown collection source` | `2` | A Galaxy entry's `source:` is neither an id of a server this run uses nor an http(s) URL; name a configured id or the server's URL ([How a collection picks its server](../guides/servers-and-auth.md#how-a-collection-picks-its-server)) |
 | `project requirements file is unreadable`, `recorded project has no requirements file or lockfile` | `2` | `cleanup` cannot tell what a recorded project keeps, so it deletes nothing; fix or restore the file the message names, or delete that project's entry from the registry it names ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)) |
 | `unsupported snapshot schema version` | `2` | A newer release wrote this cache, which is sound: [run one release](../guides/ci.md#pin-one-release). Deleting the snapshot helps only until the newer release saves again |
@@ -163,6 +167,8 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `install`, `warm`, `lock` | a server-supplied download URL with a credential | `5` |
 | `lock` | the snapshot save fails after `Lockfile written` | the save error's code; `galaxy.lock` is already written |
 | `install`, `warm`, `lock` (`tree` and `hash` without a lockfile too, from `galaxy.toml`) | a [constraint](../guides/requirements.md#stricter-than-requirementsyml) semver cannot parse | `2` from `galaxy.toml`, `1` from `requirements.yml` |
+| `migrate` | a [constraint](../guides/requirements.md#stricter-than-requirementsyml) semver cannot parse | `2`; nothing is written |
+| `migrate` | the file it rendered does not read back as the requirements file | `1`; nothing is written |
 | `cleanup` | a `galaxy.lock` read in place of a gone requirements file that does not load or is not a regular file | `6` |
 
 <details markdown>
