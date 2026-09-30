@@ -80,11 +80,6 @@ func shimCollectionItem(item any) (any, error) {
 			return nil, err
 		}
 		return v, nil
-	case []any:
-		// Refused by type alone: the shared %v refusal would print every
-		// string inside the array, a credential-bearing URL included.
-		return nil, fmt.Errorf("%w: a collections entry is a %T, not a string or a table",
-			helpers.ErrUnsupportedCollectionFormat, item)
 	default:
 		return item, nil
 	}
@@ -109,7 +104,7 @@ func splitCollectionSpec(spec string) (any, error) {
 	}
 	if rest[0] != ' ' && rest[0] != '\t' && !strings.ContainsRune(collectionSpecOperators, rune(rest[0])) {
 		return nil, fmt.Errorf("%w: %q: put a space or a version operator between the name and its constraint",
-			helpers.ErrInvalidCollectionName, helpers.TruncateForMessage(spec))
+			helpers.ErrInvalidCollectionName, valueForMessage(spec))
 	}
 	constraint := strings.TrimSpace(rest)
 	if err := checkConstraint(name, constraint); err != nil {
@@ -151,7 +146,7 @@ func checkConstraint(name, constraint string) error {
 	}
 	if _, err := semver.NewConstraint(normalized); err != nil {
 		return fmt.Errorf("%w: %q for %s", helpers.ErrInvalidCollectionConstraint,
-			helpers.TruncateForMessage(constraint), helpers.TruncateForMessage(name))
+			valueForMessage(constraint), valueForMessage(name))
 	}
 	return nil
 }

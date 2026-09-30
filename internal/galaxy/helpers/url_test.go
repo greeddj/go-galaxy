@@ -204,6 +204,41 @@ func TestDisplayCutsOnADelimiterInsideUserinfo(t *testing.T) {
 	}
 }
 
+// TestURLForMessageCutsEveryUserinfo pins that a quoted value loses the
+// userinfo of every URL it holds, as a caching proxy's upstream URL or a URL
+// after a comma or a prefix does, and that one URL keeps its display form.
+func TestURLForMessageCutsEveryUserinfo(t *testing.T) {
+	t.Parallel()
+
+	secret := "u:" + "p4ss@"
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"one URL", "https://" + secret + "h.example/x", "https://h.example/x"},
+		{"a second URL after a comma", "git+https://h.example/r.git,https://" + secret + "h.example/x,a,b",
+			"git+https://h.example/r.git,https://h.example/x,a,b"},
+		{"a URL after a prefix", "x/https://" + secret + "h.example/y", "x/https://h.example/y"},
+		{"a URL after a path and a comma", "/x,https://" + secret + "h.example/y", "/x,https://h.example/y"},
+		{"two URLs, both with userinfo", "https://" + secret + "a.example/x,ssh://" + secret + "b.example/y",
+			"https://a.example/x,ssh://b.example/y"},
+		{"a caching proxy's upstream URL", "http://front.example/https://" + secret + "up.example/a.tar.gz",
+			"http://front.example/https://up.example/a.tar.gz"},
+		{"a path with no URL", "./roles/web,v1.0", "./roles/web,v1.0"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := URLForMessage(tc.raw); got != tc.want {
+				t.Errorf("URLForMessage(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 // WithoutCredentials has no table of its own: it only composes the cuts pinned
 // above, and a body replacing one cut rather than composing both is caught by
 // collections.TestBuildGalaxyYAMLStripsUserinfoAndQueryTogether.

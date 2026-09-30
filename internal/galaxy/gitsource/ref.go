@@ -81,6 +81,11 @@ func parseHexRef(name string) (Ref, bool, error) {
 // parseNamedRef classifies a non-hex name as qualified or unqualified, after
 // git's check-ref-format rules.
 func parseNamedRef(name string) (Ref, error) {
+	// Refused unnamed: a URL typed as a ref sits behind "refs/heads/" in
+	// every message below, where helpers.URLForMessage cannot cut it.
+	if strings.Contains(name, "://") {
+		return Ref{}, fmt.Errorf("%w: a ref name cannot hold a URL", helpers.ErrInvalidGitRef)
+	}
 	if strings.HasPrefix(name, refsHeadsPrefix) || strings.HasPrefix(name, refsTagsPrefix) {
 		if err := checkRefFormat(name); err != nil {
 			return Ref{}, err

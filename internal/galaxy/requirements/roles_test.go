@@ -172,7 +172,7 @@ type roleRejectedCase struct {
 }
 
 func roleRejectedCases() []roleRejectedCase {
-	return []roleRejectedCase{
+	return append([]roleRejectedCase{
 		{name: "scalar roles value", input: "roles: yes\n", wantErr: helpers.ErrInvalidRolesList},
 		{name: "mapping roles value", input: "roles:\n  a: b\n", wantErr: helpers.ErrInvalidRolesList},
 		{name: "list entry", input: "roles:\n  - [a]\n", wantErr: helpers.ErrInvalidRoleEntry},
@@ -217,6 +217,51 @@ func roleRejectedCases() []roleRejectedCase {
 		{name: "duplicate install name", input: "roles:\n  - a.b\n  - src: git+https://example.com/a/r.git\n    name: a.b\n",
 			wantErr: helpers.ErrDuplicateRoleRequirement},
 		{name: "duplicate install name by case", input: "roles:\n  - a.b\n  - A.B\n", wantErr: helpers.ErrDuplicateRoleRequirement},
+	}, roleValueEchoRejectedCases()...)
+}
+
+// roleValueEchoRejectedCases are role entries whose refusal would quote a URL
+// typed into a key: the message must not carry its userinfo.
+func roleValueEchoRejectedCases() []roleRejectedCase {
+	return []roleRejectedCase{
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "URL install name", input: "roles:\n  - src: acme.role\n    name: https://u:s3cret@h.example/x\n",
+			wantErr: helpers.ErrInvalidRoleInstallName, mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "URL galaxy version", input: "roles:\n  - src: acme.role\n    version: https://u:s3cret@h.example/x\n",
+			wantErr: helpers.ErrInvalidRoleVersion, mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "URL in a string with too many commas", input: "roles:\n  - \"https://u:s3cret@h.example/x,a,b,c\"\n",
+			wantErr: helpers.ErrInvalidRoleEntry, mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "URL in an old style role with a comma", input: "roles:\n  - role: \"https://u:s3cret@h.example/x,1.0\"\n",
+			wantErr: helpers.ErrInvalidRoleEntry, mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:    "URL after a comma in a string with too many commas",
+			input:   "roles:\n  - \"git+https://h.example/r.git,https://u:s3cret@h.example/x,a,b\"\n",
+			wantErr: helpers.ErrInvalidRoleEntry, mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:    "URL after a comma in an old style role",
+			input:   "roles:\n  - role: \"git+https://h.example/r.git,https://u:s3cret@h.example/x\"\n",
+			wantErr: helpers.ErrInvalidRoleEntry, mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "URL url role version", input: "roles:\n  - src: https://h.example/r.tar.gz\n    version: https://u:s3cret@h.example/x\n",
+			wantErr: helpers.ErrInvalidRoleVersion, mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "URL scm", input: "roles:\n  - src: acme.role\n    scm: https://u:s3cret@h.example/x\n",
+			wantErr: helpers.ErrUnsupportedRoleScm, mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "URL git role version", input: "roles:\n  - src: https://github.com/acme/role\n    version: https://u:s3cret@h.example/x\n",
+			wantErr: helpers.ErrInvalidGitRef, mustNotContain: "s3cret",
+		},
 	}
 }
 

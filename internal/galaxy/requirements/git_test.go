@@ -129,7 +129,7 @@ func sameGitRequirement(got, want CollectionRequirement) bool {
 }
 
 func gitRejectedCases() []parseCollectionsRejectedCase {
-	return []parseCollectionsRejectedCase{
+	return append([]parseCollectionsRejectedCase{
 		{ //nolint:gosec // a fixture URL, not a credential
 			name: "credential in git url", input: "- git+https://ci:s3cret@github.com/acme/app.git\n",
 			wantErr: helpers.ErrGitURLUserinfo, mustNotContain: "s3cret",
@@ -186,6 +186,55 @@ func gitRejectedCases() []parseCollectionsRejectedCase {
 		},
 		{name: "type file", input: "- name: ./a.tar.gz\n  type: file\n", wantErr: helpers.ErrUnsupportedCollectionType},
 		{name: "type dir", input: "- name: ./a\n  type: dir\n", wantErr: helpers.ErrUnsupportedCollectionType},
+	}, gitValueEchoRejectedCases()...)
+}
+
+// gitValueEchoRejectedCases are git entries whose refusal would quote a URL
+// typed into a key: the message must not carry its userinfo.
+func gitValueEchoRejectedCases() []parseCollectionsRejectedCase {
+	return []parseCollectionsRejectedCase{
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL name beside a git source",
+			input:          "- type: git\n  source: https://h.example/r.git\n  name: https://u:s3cret@hexample/x\n",
+			wantErr:        helpers.ErrInvalidCollectionName,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "dotted URL name beside a git source",
+			input:          "- type: git\n  source: https://h.example/r.git\n  name: https://u:s3cret@h.example/x\n",
+			wantErr:        helpers.ErrInvalidCollectionName,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL name with a dotted user beside a git source",
+			input:          "- type: git\n  source: https://h.example/r.git\n  name: https://first.last:s3cret@hexample/x\n",
+			wantErr:        helpers.ErrInvalidCollectionName,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL name with a dotted password beside a git source",
+			input:          "- type: git\n  source: https://h.example/r.git\n  name: https://u:s3.cret@hexample/x\n",
+			wantErr:        helpers.ErrInvalidCollectionName,
+			mustNotContain: "cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL namespace beside a git source",
+			input:          "- type: git\n  source: https://h.example/r.git\n  namespace: https://u:s3cret@h.example/x\n  name: app\n",
+			wantErr:        helpers.ErrInvalidCollectionName,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL typed as a git ref",
+			input:          "- type: git\n  name: https://h.example/r.git\n  version: https://u:s3cret@h.example/x\n",
+			wantErr:        helpers.ErrInvalidGitRef,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL typed as a git pointer's ref",
+			input:          "- git+https://h.example/r.git,https://u:s3cret@h.example/x\n",
+			wantErr:        helpers.ErrInvalidGitRef,
+			mustNotContain: "s3cret",
+		},
 	}
 }
 

@@ -372,8 +372,8 @@ func parseCollectionsRejectedCases() []parseCollectionsRejectedCase {
 			mustNotContain: "tok3n-must-not-leak",
 		},
 		{
-			// A missing name echoes the raw entry in its error, so the userinfo
-			// check must run first or the entry would leak its credential.
+			// The credential checks run before the missing-name refusal, so a nameless
+			// entry with a userinfo source: is refused for the credential.
 			name: "invalid entry does not leak source credential",
 			// #nosec G101 -- test fixture literal, not a real credential
 			input:          "- source: https://user:tok3n-must-not-leak@hub.example/api/\n  version: \"*\"\n",
@@ -381,7 +381,140 @@ func parseCollectionsRejectedCases() []parseCollectionsRejectedCase {
 			wantErr:        helpers.ErrGalaxyServerURLUserinfo,
 			mustNotContain: "tok3n-must-not-leak",
 		},
-	}, galaxyTypeRejectedCases()...), signatureSourceRejectedCases()...)
+	}, append(galaxyTypeRejectedCases(), valueEchoRejectedCases()...)...), signatureSourceRejectedCases()...)
+}
+
+// valueEchoRejectedCases is the part of parseCollectionsRejectedCases whose
+// refusal quotes an entry value: a URL in it must lose its userinfo.
+func valueEchoRejectedCases() []parseCollectionsRejectedCase {
+	return append([]parseCollectionsRejectedCase{
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "namespace URL beside a dotted name",
+			input:          "- namespace: https://u:s3cret@h.example/x\n  name: a.b\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrConflictingNamespaceName,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL name beside a userinfo source",
+			input:          "- name: ssh://u:s3cret@h.example/x\n  source: https://a:b@galaxy.example/\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrGalaxyServerURLUserinfo,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL type",
+			input:          "- name: acme.app\n  type: https://u:s3cret@h.example/x\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrUnsupportedCollectionType,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL version on a url entry",
+			input:          "- name: https://dl.example/acme-app-1.0.0.tar.gz\n  version: https://u:s3cret@h.example/x\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrInvalidCollectionVersion,
+			mustNotContain: "s3cret",
+		},
+	}, laterURLEchoRejectedCases()...)
+}
+
+// laterURLEchoRejectedCases quote a value whose credential sits in a second URL,
+// after a prefix or a comma, which helpers.URLForMessage must cut as well.
+func laterURLEchoRejectedCases() []parseCollectionsRejectedCase {
+	return []parseCollectionsRejectedCase{
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL after a prefix in a namespace",
+			input:          "- namespace: x/https://u:s3cret@h.example/y\n  name: app\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrInvalidCollectionName,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL after a comma in a path entry",
+			input:          "- \"/x,https://u:s3cret@h.example/y\"\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrUnsupportedCollectionSource,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL after a comma in a path name",
+			input:          "- name: \"/x,https://u:s3cret@h.example/y\"\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrUnsupportedCollectionSource,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL after a comma in a git source",
+			input:          "- name: acme.app\n  source: \"git+https://h.example/r.git,https://u:s3cret@h.example/y\"\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrUnsupportedCollectionSource,
+			mustNotContain: "s3cret",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:           "URL after a comma in a signature source",
+			input:          "- name: acme.app\n  signatures: [\"/x,https://u:s3cret@h.example/y\"]\n",
+			source:         "https://default",
+			wantErr:        helpers.ErrUnsupportedSignatureSource,
+			mustNotContain: "s3cret",
+		},
+	}
+}
+
+// TestValueForMessageCutsEveryUserinfo pins that a quoted value loses the
+// userinfo of every URL it holds, the first or a later one, and that a value
+// that looks like no URL or path is quoted as written.
+func TestValueForMessageCutsEveryUserinfo(t *testing.T) {
+	t.Parallel()
+	secret := "u:" + "p4ss@"
+	cases := map[string]string{
+		"https://" + secret + "h.example/x":                                 "https://h.example/x",
+		"git+https://h.example/r.git,https://" + secret + "h.example/x":     "git+https://h.example/r.git,https://h.example/x",
+		"x/https://" + secret + "h.example/y":                               "x/https://h.example/y",
+		"https://" + secret + "a.example/x,ssh://" + secret + "b.example/y": "https://a.example/x,ssh://b.example/y",
+		"community.general@8.0.0":                                           "community.general@8.0.0",
+		">= 1.0":                                                            ">= 1.0",
+	}
+	for in, want := range cases {
+		if got := valueForMessage(in); got != want {
+			t.Errorf("valueForMessage(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestLoadRefusalsNameNoEntryValue pins whole refusal texts: the entry is named
+// by its index, a URL loses its userinfo, and a nameless mapping or a nested
+// list is named by what is missing or by its Go type, never printed.
+func TestLoadRefusalsNameNoEntryValue(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, input, want string
+	}{
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:  "namespace URL",
+			input: "- namespace: https://u:s3cret@h.example/x\n  name: app\n",
+			want:  `collections[0]: invalid collection name: "https://h.example/x"."app" must each match ^[a-z][a-z0-9_]*$`,
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:  "nameless mapping",
+			input: "- namespace: https://u:s3cret@h.example/x\n  extra: https://v:s3cret@h.example/y\n",
+			want:  "collections[0]: invalid collection entry: name is missing or empty",
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name:  "nested list",
+			input: "- - https://u:s3cret@h.example/x\n",
+			want:  "collections[0]: unsupported collection format: a collection entry is a name or a mapping, not a []interface {}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Parse([]byte(tc.input), "https://default")
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("Parse error = %v, want %s", err, tc.want)
+			}
+		})
+	}
 }
 
 // signatureSourceRejectedCases is the signatures: part of parseCollectionsRejectedCases:

@@ -116,7 +116,7 @@ func parseRoleString(value string) (roleSpec, error) {
 	}
 	if strings.Count(value, ",") > roleSpecMaxCommas {
 		return roleSpec{}, fmt.Errorf("%w: %q has more than %d commas; the format is src[,version[,name]]",
-			helpers.ErrInvalidRoleEntry, helpers.TruncateForMessage(value), roleSpecMaxCommas)
+			helpers.ErrInvalidRoleEntry, valueForMessage(value), roleSpecMaxCommas)
 	}
 	parts := strings.Split(value, ",")
 	spec := roleSpec{src: strings.TrimSpace(parts[roleSpecSrc])}
@@ -182,7 +182,7 @@ func roleMapSpec(value map[string]any) (roleSpec, error) {
 	if role := stringField(value, "role"); role != "" {
 		if strings.Contains(role, ",") {
 			return roleSpec{}, fmt.Errorf("%w: an old-style role: %q carries a comma",
-				helpers.ErrInvalidRoleEntry, helpers.TruncateForMessage(role))
+				helpers.ErrInvalidRoleEntry, valueForMessage(role))
 		}
 		spec.name = role
 		if spec.src == "" {
@@ -223,7 +223,7 @@ func splitScmPrefix(src string) (string, string) {
 // and the install name it ends up with.
 func finishRole(spec roleSpec) (RoleRequirement, error) {
 	if spec.scm != "" && spec.scm != TypeGit {
-		return RoleRequirement{}, fmt.Errorf("%w %q (only git is supported)", helpers.ErrUnsupportedRoleScm, spec.scm)
+		return RoleRequirement{}, fmt.Errorf("%w %q (only git is supported)", helpers.ErrUnsupportedRoleScm, valueForMessage(spec.scm))
 	}
 	if spec.version == "*" {
 		spec.version = ""
@@ -233,7 +233,7 @@ func finishRole(spec roleSpec) (RoleRequirement, error) {
 		return RoleRequirement{}, err
 	}
 	if !helpers.IsRoleInstallName(req.Name) {
-		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleInstallName, helpers.TruncateForMessage(req.Name))
+		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleInstallName, valueForMessage(req.Name))
 	}
 	return req, nil
 }
@@ -249,7 +249,7 @@ func classifyRole(spec roleSpec) (RoleRequirement, error) {
 		return urlRole(spec)
 	case looksLikeSourceName(spec.src) || strings.HasSuffix(strings.ToLower(spec.src), ".tar.gz"):
 		return RoleRequirement{}, fmt.Errorf("%w %q (only Galaxy roles, git and url sources are supported)",
-			helpers.ErrUnsupportedRoleSource, helpers.URLForMessage(spec.src))
+			helpers.ErrUnsupportedRoleSource, valueForMessage(spec.src))
 	default:
 		return galaxyRole(spec)
 	}
@@ -271,7 +271,7 @@ func urlRole(spec roleSpec) (RoleRequirement, error) {
 		return RoleRequirement{}, err
 	}
 	if spec.version != "" && !helpers.IsRoleVersion(spec.version) {
-		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleVersion, helpers.TruncateForMessage(spec.version))
+		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleVersion, valueForMessage(spec.version))
 	}
 	name := spec.name
 	if name == "" {
@@ -325,10 +325,10 @@ func gitRole(spec roleSpec) (RoleRequirement, error) {
 func galaxyRole(spec roleSpec) (RoleRequirement, error) {
 	if !helpers.IsRoleName(spec.src) {
 		return RoleRequirement{}, fmt.Errorf("%w: %q is not owner.role with each half matching ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
-			helpers.ErrInvalidRoleName, helpers.TruncateForMessage(spec.src))
+			helpers.ErrInvalidRoleName, valueForMessage(spec.src))
 	}
 	if spec.version != "" && !helpers.IsRoleVersion(spec.version) {
-		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleVersion, helpers.TruncateForMessage(spec.version))
+		return RoleRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidRoleVersion, valueForMessage(spec.version))
 	}
 	name := spec.name
 	if name == "" {

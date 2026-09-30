@@ -209,7 +209,7 @@ func parseCollectionItem(item any, defaultSource string) (CollectionRequirement,
 	}
 	if !helpers.IsCollectionNamePart(req.Namespace) || !helpers.IsCollectionNamePart(req.Name) {
 		return CollectionRequirement{}, fmt.Errorf("%w: %q.%q must each match ^[a-z][a-z0-9_]*$",
-			helpers.ErrInvalidCollectionName, req.Namespace, req.Name)
+			helpers.ErrInvalidCollectionName, valueForMessage(req.Namespace), valueForMessage(req.Name))
 	}
 	return req, nil
 }
@@ -228,7 +228,8 @@ func parseCollectionItemByShape(item any, defaultSource string) (CollectionRequi
 		}
 		return parseCollectionMapItem(v, defaultSource)
 	default:
-		return CollectionRequirement{}, fmt.Errorf("%w: %v", helpers.ErrUnsupportedCollectionFormat, item)
+		return CollectionRequirement{}, fmt.Errorf("%w: a collection entry is a name or a mapping, not a %T",
+			helpers.ErrUnsupportedCollectionFormat, item)
 	}
 }
 
@@ -252,7 +253,7 @@ func parseCollectionStringItem(value string, defaultSource string) (CollectionRe
 	}
 	namespace, collection, ok := helpers.SplitFQDN(name)
 	if !ok {
-		return CollectionRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, name)
+		return CollectionRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, valueForMessage(name))
 	}
 	return CollectionRequirement{
 		Namespace: namespace,
@@ -346,7 +347,8 @@ func checkNamespaceNameConflict(req CollectionRequirement) error {
 	if _, _, ok := helpers.SplitFQDN(req.Name); !ok {
 		return nil
 	}
-	return fmt.Errorf("%w: namespace %q with dotted name %q", helpers.ErrConflictingNamespaceName, req.Namespace, req.Name)
+	return fmt.Errorf("%w: namespace %q with dotted name %q", helpers.ErrConflictingNamespaceName,
+		valueForMessage(req.Namespace), valueForMessage(req.Name))
 }
 
 func normalizeCollectionName(req CollectionRequirement) CollectionRequirement {
@@ -377,22 +379,20 @@ func finalizeCollectionRequirement(req CollectionRequirement, defaultSource stri
 }
 
 func validateRequirement(req CollectionRequirement, raw any) error {
-	// Checked before the req.Name branch below, which echoes raw in its
-	// error, so a userinfo-bearing source: is refused before it can print.
+	// The credential checks come first, so an entry carrying one in source:
+	// or signatures: is refused as that, whatever else is wrong with it.
 	if err := checkSourceUserinfo(req); err != nil {
 		return err
 	}
-	// Second, and ahead of the raw-echoing branch below for the same reason
-	// checkSourceUserinfo is first: a signatures: entry can carry a credential
-	// of its own, and this check refuses one without printing it.
 	if err := checkSignatureSources(req, raw); err != nil {
 		return err
 	}
 	if req.Name == "" {
-		return fmt.Errorf("%w: %v", helpers.ErrInvalidCollectionEntry, raw)
+		return fmt.Errorf("%w: name is missing or empty", helpers.ErrInvalidCollectionEntry)
 	}
 	if req.Type != "" {
-		return fmt.Errorf("%w %q (only galaxy, git and url are supported)", helpers.ErrUnsupportedCollectionType, req.Type)
+		return fmt.Errorf("%w %q (only galaxy, git and url are supported)",
+			helpers.ErrUnsupportedCollectionType, valueForMessage(req.Type))
 	}
 	if looksLikeSourceName(req.Name) {
 		return fmt.Errorf("%w %q (only Galaxy API, git and url sources are supported)",
@@ -438,7 +438,7 @@ func parseURLMapItem(req CollectionRequirement, raw map[string]any) (CollectionR
 	}
 	if req.Version != "" && req.Version != "*" && !helpers.IsExactVersion(req.Version) {
 		return CollectionRequirement{}, fmt.Errorf("%w: url version %q is not an exact version",
-			helpers.ErrInvalidCollectionVersion, req.Version)
+			helpers.ErrInvalidCollectionVersion, valueForMessage(req.Version))
 	}
 	version := req.Version
 	if version == "*" {
@@ -499,9 +499,11 @@ func gitCollectionName(req CollectionRequirement) (string, string, error) {
 	case req.Namespace != "":
 		return req.Namespace, req.Name, nil
 	}
+	// A URL or path is refused whole: split at a dot in its userinfo, each
+	// half would be quoted apart and the one past the dot left uncut.
 	namespace, name, ok := helpers.SplitFQDN(req.Name)
-	if !ok {
-		return "", "", fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, req.Name)
+	if !ok || looksLikeSourceName(req.Name) {
+		return "", "", fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, valueForMessage(req.Name))
 	}
 	return namespace, name, nil
 }
@@ -595,7 +597,7 @@ func checkSourceUserinfo(req CollectionRequirement) error {
 		return nil
 	}
 	if parsed.User != nil {
-		return fmt.Errorf("%w: collection %q", helpers.ErrGalaxyServerURLUserinfo, req.Name)
+		return fmt.Errorf("%w: collection %q", helpers.ErrGalaxyServerURLUserinfo, valueForMessage(req.Name))
 	}
 	return nil
 }
@@ -616,7 +618,7 @@ func normalizeRequirementNamespace(req CollectionRequirement) (CollectionRequire
 	}
 	namespace, collection, ok := helpers.SplitFQDN(req.Name)
 	if !ok {
-		return CollectionRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, req.Name)
+		return CollectionRequirement{}, fmt.Errorf("%w: %q", helpers.ErrInvalidCollectionName, valueForMessage(req.Name))
 	}
 	req.Namespace = namespace
 	req.Name = collection
@@ -651,6 +653,16 @@ func parseStringList(value any) []string {
 		}
 		return []string{str}
 	}
+}
+
+// valueForMessage is how a refusal names an entry value: one that looks like
+// a URL or path as helpers.URLForMessage cuts it, any other as written,
+// bounded by helpers.TruncateForMessage.
+func valueForMessage(value string) string {
+	if looksLikeSourceName(value) {
+		return helpers.URLForMessage(value)
+	}
+	return helpers.TruncateForMessage(value)
 }
 
 // looksLikeSourceName reports whether the value looks like a URL or path.

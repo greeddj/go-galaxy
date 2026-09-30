@@ -84,6 +84,25 @@ func TestParseRef(t *testing.T) {
 	}
 }
 
+// TestParseRefNamesNoURL pins that a URL typed as a ref, bare or behind a
+// refs/ prefix, is refused without the message quoting it.
+func TestParseRefNamesNoURL(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		"https://u:s3cret@h.example/x",
+		"refs/heads/https://u:s3cret@h.example/x",
+		"refs/other/https://u:s3cret@h.example/x",
+	} {
+		_, err := ParseRef(raw)
+		if !errors.Is(err, helpers.ErrInvalidGitRef) {
+			t.Fatalf("ParseRef(%q) error = %v, want %v", raw, err, helpers.ErrInvalidGitRef)
+		}
+		if strings.Contains(err.Error(), "s3cret") {
+			t.Fatalf("ParseRef(%q) error %q quotes the URL", raw, err)
+		}
+	}
+}
+
 func TestIsCommitHash(t *testing.T) {
 	t.Parallel()
 	if !IsCommitHash(testCommit) {

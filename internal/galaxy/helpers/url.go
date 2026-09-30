@@ -77,9 +77,34 @@ func TruncateForMessage(value string) string {
 	return value[:MessageValueMaxLen] + fmt.Sprintf("... (%d bytes)", len(value))
 }
 
-// URLForMessage is the display form of a refused URL: query, fragment and
-// userinfo cut, then TruncateForMessage. Cutting first is load-bearing: a
-// credential whose "@" lies past the cap would otherwise survive.
+// URLForMessage is the display form of a refused URL: query, fragment and the
+// userinfo after every "://" cut, then TruncateForMessage. Cutting first is
+// load-bearing: a credential whose "@" lies past the cap would otherwise survive.
 func URLForMessage(raw string) string {
-	return TruncateForMessage(WithoutUserinfo(WithoutFragment(WithoutQuery(raw))))
+	return TruncateForMessage(withoutEveryUserinfo(WithoutUserinfo(WithoutFragment(WithoutQuery(raw)))))
+}
+
+// withoutEveryUserinfo cuts the userinfo after each "://" in raw, where
+// WithoutUserinfo cuts the first authority's alone: a quoted value can hold a
+// second URL, after a comma, a prefix or a caching proxy's own URL.
+func withoutEveryUserinfo(raw string) string {
+	const schemeEnd = "://"
+	var b strings.Builder
+	rest := raw
+	for {
+		i := strings.Index(rest, schemeEnd)
+		if i < 0 {
+			b.WriteString(rest)
+			return b.String()
+		}
+		b.WriteString(rest[:i+len(schemeEnd)])
+		rest = rest[i+len(schemeEnd):]
+		authority := rest
+		if j := strings.IndexAny(authority, "/?#"); j >= 0 {
+			authority = authority[:j]
+		}
+		if at := strings.LastIndex(authority, "@"); at >= 0 {
+			rest = rest[at+1:]
+		}
+	}
 }

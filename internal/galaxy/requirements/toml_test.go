@@ -359,6 +359,10 @@ func tomlStringRefusalCases() []tomlRefusalCase {
 			name: "nested array", toml: tomlCollections(`["https://u:hunter2@h/x.tar.gz"]`),
 			wantErr: helpers.ErrUnsupportedCollectionFormat, wantMsg: "[]interface {}", notMsg: "hunter2",
 		},
+		{
+			name: "integer entry", toml: tomlCollections("12"),
+			wantErr: helpers.ErrUnsupportedCollectionFormat, wantMsg: "not a int64", notMsg: "12",
+		},
 		{name: "collections is a string", toml: "[project]\ncollections = \"x\"\n", wantErr: helpers.ErrInvalidCollectionsList},
 		{name: "collections is one table", toml: "[project.collections]\nname = \"ns.name\"\n", wantErr: helpers.ErrInvalidCollectionsList},
 	}
@@ -424,7 +428,7 @@ func tomlTableRefusalCases() []tomlRefusalCase {
 			toml:    tomlCollections(`{ name = "ssh://deploy:hunter2@h/x", version = "1.0.0.0" }`),
 			wantErr: helpers.ErrUnsupportedCollectionSource, notMsg: "hunter2",
 		},
-	}, tomlTypedGalaxyRefusalCases()...)
+	}, append(tomlTypedGalaxyRefusalCases(), tomlValueEchoRefusalCases()...)...)
 }
 
 // tomlTypedGalaxyRefusalCases are table refusals that type = "galaxy" leaves
@@ -439,6 +443,39 @@ func tomlTypedGalaxyRefusalCases() []tomlRefusalCase {
 		{
 			name: "git pointer name in a typed galaxy table", toml: tomlCollections(`{ name = "git+https://h.example/a.git", type = "galaxy" }`),
 			wantErr: helpers.ErrUnsupportedCollectionSource,
+		},
+	}
+}
+
+// tomlValueEchoRefusalCases are table refusals that would quote a URL typed
+// into a key: the message must not carry its userinfo.
+func tomlValueEchoRefusalCases() []tomlRefusalCase {
+	return []tomlRefusalCase{
+		{
+			name:    "URL namespace",
+			toml:    tomlCollections(`{ namespace = "https://u:s3cret@h.example/x", name = "app" }`),
+			wantErr: helpers.ErrInvalidCollectionName, wantMsg: `"https://h.example/x"."app"`, notMsg: "s3cret",
+		},
+		{
+			name:    "URL namespace with no name",
+			toml:    tomlCollections(`{ namespace = "https://u:s3cret@h.example/x", type = "galaxy" }`),
+			wantErr: helpers.ErrInvalidCollectionEntry, wantMsg: "name is missing or empty", notMsg: "s3cret",
+		},
+		{
+			name:    "URL constraint",
+			toml:    tomlCollections(`{ name = "acme.app", version = "https://u:s3cret@h.example/x" }`),
+			wantErr: helpers.ErrInvalidCollectionConstraint, wantMsg: `"https://h.example/x" for acme.app`, notMsg: "s3cret",
+		},
+		{
+			name:    "URL type",
+			toml:    tomlCollections(`{ name = "acme.app", type = "https://u:s3cret@h.example/x" }`),
+			wantErr: helpers.ErrUnsupportedCollectionType, notMsg: "s3cret",
+		},
+		{
+			name: "git URL name with a dotted user",
+			toml: tomlCollections(
+				`{ type = "git", source = "https://h.example/r.git", name = "https://first.last:s3cret@hexample/x" }`),
+			wantErr: helpers.ErrInvalidCollectionName, wantMsg: `invalid collection name: "https://hexample/x"`, notMsg: "s3cret",
 		},
 	}
 }
@@ -477,6 +514,10 @@ func tomlRoleRefusalCases() []tomlRefusalCase {
 		{
 			name: "role integer scm", toml: withCollections(`{ src = "git+https://h/r.git", scm = 4 }`),
 			wantErr: helpers.ErrInvalidRoleEntry, wantMsg: "scm is a int64, not a string", wantRolesErr: true, wantCollections: 1,
+		},
+		{
+			name: "role URL install name", toml: withCollections(`{ src = "acme.role", name = "https://u:s3cret@h.example/x" }`),
+			wantErr: helpers.ErrInvalidRoleInstallName, notMsg: "s3cret", wantRolesErr: true, wantCollections: 1,
 		},
 		{
 			name: "role unknown key without collections", toml: tomlRoles(`{ src = "geerlingguy.docker", foo = "x" }`),

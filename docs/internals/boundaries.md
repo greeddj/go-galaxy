@@ -54,9 +54,16 @@ and [What is refused](../guides/requirements.md#what-is-refused).
 | A `galaxy.toml` | a syntax error, shown as line and last key; an unknown table or key | `projectfile.Decode` | `ErrInvalidRequirementsTOML`, `ErrUnsupportedRequirementsFormat` | 2 |
 | A `${VAR}` under `[tool.go-galaxy]` | unset; every name reported, sorted, never a value | `projectfile.LoadSettings` | `ErrProjectFileEnvUnset` | 2 |
 
-- Validation order is part of the boundary: `checkEntryValues` runs first,
-  then `checkSourceUserinfo` and `checkSignatureSources`, all before the
-  no-name refusal that echoes the entry, in both formats.
+- No load refusal prints an entry or a list whole: it names the index
+  (`collections[N]`, `roles[N]`), the key and, for a list or a mapping, the Go
+  type. A value it quotes goes through `requirements.valueForMessage`, which
+  cuts one that looks like a URL or path as `helpers.URLForMessage` does and
+  bounds any other, and `gitsource.ParseRef` refuses a URL typed as a ref
+  without naming it.
+- Validation order is part of the boundary: `checkEntryValues`, which names a
+  key and a type and never a value, runs first, then `checkSourceUserinfo` and
+  `checkSignatureSources`, so an entry carrying a credential is refused for
+  it, in both formats.
 - A server base or `source:` carrying a query never names an API root:
   `apiRootCandidates` concatenates strings, so `/api/v3` lands inside the
   query and every candidate misses. Built with `net/url`, such a base would
@@ -411,7 +418,7 @@ blocks at line-start opening lines, one packet ceiling per file.
 | Input | Treatment | Where |
 | :-- | :-- | :-- |
 | Text of external origin | C0 and C1 controls but `\n` and `\t`, DEL, U+2028, U+2029 and invalid UTF-8 become U+FFFD | `safeout.Clean` |
-| A refused URL | query, fragment and userinfo cut by string scan, then truncated | `helpers.URLForMessage` |
+| A refused URL | query, fragment and the userinfo after every `://` cut by string scan, so a second URL after a comma or a prefix loses its own too, then truncated | `helpers.URLForMessage` |
 | A URL rendered or persisted, not fetched | query and userinfo cut | `helpers.WithoutCredentials` |
 | A persisted signature source | query cut only | `helpers.WithoutQuery` |
 | A failed request | re-rendered over the cut URL the caller asked for | `helpers.CutTransportURL` |
