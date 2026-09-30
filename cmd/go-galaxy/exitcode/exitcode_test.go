@@ -447,6 +447,7 @@ var fromErrorCases = []exitCase{
 		err:      fmt.Errorf("%w: ctx", helpers.ErrConflictingNamespaceName),
 		wantCode: ExitUsage,
 	},
+	{name: "unknown collection source", err: fmt.Errorf("collections[0]: %w: ctx", helpers.ErrUnknownCollectionSource), wantCode: ExitUsage},
 	{
 		name:     "versions paging exceeded",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrVersionsPagingExceeded),

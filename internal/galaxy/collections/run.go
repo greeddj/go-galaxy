@@ -356,6 +356,9 @@ func resolveOrLoadLockfile(
 func loadRoots(cfg *config.Config, runtime *infra.Infra) ([]collection, []requirements.RoleRequirement, error) {
 	runtime.Output.Printf("Load collections from requirements file")
 	collectionsDirect, file, err := loadRequirements(cfg.RequirementsFile, "")
+	if err == nil {
+		err = checkRootSources(cfg, file.Collections)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load requirements file: %w", err)
 	}

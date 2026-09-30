@@ -49,6 +49,7 @@ and [What is refused](../guides/requirements.md#what-is-refused).
 | A `-r` value or its variable | it does not end in `.yml`, `.yaml` or `.toml`, any case; `""` included | `config.RequirementsPath` | `ErrRequirementsFileName` | 2 |
 | A requirements path | `Stat` finds no regular file, such as a directory or fifo; checked before any open | `helpers.CheckRegularRequirementsFile`, from `requirements.Read` and `projectfile.LoadSettings` | `ErrRequirementsNotRegular` | 2 |
 | A requirements `source:` | it carries userinfo | `requirements.checkSourceUserinfo` | `ErrGalaxyServerURLUserinfo` | 2 |
+| A Galaxy entry's `source:` | neither an id of a server the run uses nor an http(s) URL; the value is printed only when spelled as a server id | `collections.checkRootSources`, from `loadRoots` | `ErrUnknownCollectionSource` | 2 |
 | A `requirements.yml` | its aliases expand past yaml's budget; every number, bool, timestamp and binary scalar is first retagged as text, and the tree decoded in one `Decode` that keeps the budget | `requirements.decodeYAML` | `ErrInvalidRequirementsYAML` | 2 |
 | A key a requirements entry is read by | written with no value, or a list or a mapping where text belongs; named by key, Go type and index, never by value | `requirements.checkEntryValues` | `ErrInvalidCollectionEntry`, `ErrInvalidRoleEntry` | 2 |
 | A `galaxy.toml` | a syntax error, shown as line and last key; an unknown table or key | `projectfile.Decode` | `ErrInvalidRequirementsTOML`, `ErrUnsupportedRequirementsFormat` | 2 |

@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
@@ -830,5 +831,54 @@ func TestMultiServerSourceSwitchForcesReinstall(t *testing.T) {
 	}
 	if got := srvB.Total(); got == 0 {
 		t.Fatal("srvB.Total() = 0, want > 0 (a source switch must force a real reinstall from B, not a silent skip)")
+	}
+}
+
+// TestMultiServerUnknownSourceExitsUsageBeforeAnyRequest pins that a source:
+// naming no server of the run exits 2 from install, lock and install --frozen,
+// the last over a lock written with hub configured, before any request.
+func TestMultiServerUnknownSourceExitsUsageBeforeAnyRequest(t *testing.T) {
+	t.Parallel()
+	hub := fakegalaxy.New(t)
+	other := fakegalaxy.New(t)
+	hub.AddVersion("ns", "x", "1.0.0", nil)
+
+	req := buildMultiServerRequirements([]msReqSpec{{name: "ns.x", source: "hub"}})
+	locked := newMultiServerConfig(t, []config.Server{{ID: "hub", URL: hub.URL()}}, req)
+	msLockFile(t, locked, multiServerRuntime(locked))
+	if _, err := os.Stat(filepath.Join(locked.CacheDir, helpers.StoreDBProjects)); err != nil {
+		t.Fatalf("the lock run recorded no project registry: %v", err)
+	}
+	before := hub.Total()
+
+	for _, tc := range []struct {
+		run    func(context.Context, *config.Config, *infra.Infra) error
+		name   string
+		frozen bool
+	}{
+		{name: "install", run: collections.Start},
+		{name: "lock", run: collections.Lock},
+		{name: "install --frozen", run: collections.Start, frozen: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := newMultiServerConfig(t, []config.Server{{ID: "a", URL: other.URL()}}, req)
+			cfg.RequirementsFile = locked.RequirementsFile
+			cfg.Frozen = tc.frozen
+
+			err := tc.run(context.Background(), cfg, multiServerRuntime(cfg))
+			if !errors.Is(err, helpers.ErrUnknownCollectionSource) {
+				t.Fatalf("error = %v, want helpers.ErrUnknownCollectionSource", err)
+			}
+			if got := exitcode.FromError(err); got != exitcode.ExitUsage {
+				t.Fatalf("exit code = %d, want %d (usage)", got, exitcode.ExitUsage)
+			}
+			if got := other.Total() + hub.Total() - before; got != 0 {
+				t.Fatalf("%d requests reached a server, want 0", got)
+			}
+			if _, err := os.Stat(filepath.Join(cfg.CacheDir, helpers.StoreDBProjects)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("project registry stat = %v, want fs.ErrNotExist: a refused file must record nothing", err)
+			}
+		})
 	}
 }

@@ -147,7 +147,7 @@ roles:
 | `name` | `namespace.name`, each part `^[a-z][a-z0-9_]*$` | Repository URL, or `ns.name` when `source` holds the URL | Tarball URL |
 | `namespace` | Beside a one-part `name` | Beside `source` | Refused |
 | `version` | Constraint | Ref | Exact version |
-| `source` | Server id or URL | Repository URL (optional) | Refused |
+| `source` | Server id or http(s) URL | Repository URL (optional) | Refused |
 | `type` | `galaxy` or absent | `git`, or a `git+` or `git@` name | `url`, or an `http(s)://` name |
 | `signatures` | [Allowed](signatures.md#signatures-in-the-requirements-file) | Refused | Refused |
 

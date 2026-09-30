@@ -1,12 +1,15 @@
 package collections
 
 import (
+	"errors"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
+	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
+	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
 )
 
 // TestRootMetadataURLCandidatesEmptyMemoMatchesFullSet pins that an empty or
@@ -336,5 +339,79 @@ func unmatchedSourceCases() []unmatchedSourceCase {
 			source:       "https://attacker.example/api/",
 			wantWarnings: 1,
 		},
+	}
+}
+
+// TestCheckRootSources pins which Galaxy source: values a run refuses before
+// any request, that a git entry is skipped and the index is the entry's own,
+// and that only an id-shaped value is ever printed.
+func TestCheckRootSources(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range rootSourceCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			reqs := requirements.Collections{
+				{Type: requirements.TypeGit, Source: "ssh://git@git.example/acme/app.git"},
+				{Namespace: "acme", Name: "app", Source: tc.source},
+			}
+			err := checkRootSources(&config.Config{Servers: tc.servers}, reqs)
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("checkRootSources(%q) = %v, want nil", tc.source, err)
+				}
+				return
+			}
+			if !errors.Is(err, helpers.ErrUnknownCollectionSource) {
+				t.Fatalf("checkRootSources(%q) = %v, want helpers.ErrUnknownCollectionSource", tc.source, err)
+			}
+			for _, want := range tc.mustContain {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+			if tc.mustNotShow != "" && strings.Contains(err.Error(), tc.mustNotShow) {
+				t.Errorf("error %q shows %q", err, tc.mustNotShow)
+			}
+		})
+	}
+}
+
+// rootSourceCase is one row of TestCheckRootSources.
+type rootSourceCase struct {
+	name        string
+	source      string
+	mustNotShow string
+	servers     []config.Server
+	mustContain []string
+	wantErr     bool
+}
+
+// rootSourceCases pairs a named server list and an anonymous one with the
+// source: values a run requests and the ones it refuses.
+func rootSourceCases() []rootSourceCase {
+	listed := []config.Server{{ID: "a", URL: "https://a.example"}, {ID: "b", URL: "https://b.example/api/"}}
+	anonymous := []config.Server{{URL: "https://mirror.example"}}
+	return []rootSourceCase{
+		{name: "matched by id", source: "b", servers: listed},
+		{name: "matched by origin", source: "https://b.example/content/published/", servers: listed},
+		{name: "unmatched http URL", source: "http://elsewhere.example/", servers: listed},
+		{name: "unmatched upper-case https URL", source: "HTTPS://Elsewhere.example", servers: listed},
+		{
+			name: "id no server has", source: "hub", servers: listed, wantErr: true,
+			mustContain: []string{"collections[1]: ", `"hub" names no server`, "(server ids: a, b)"},
+		},
+		{name: "id in the wrong case", source: "A", servers: listed, wantErr: true, mustContain: []string{`"A"`}},
+		{
+			name: "id beside servers with no id", source: "hub", servers: anonymous, wantErr: true,
+			mustContain: []string{"(no server has an id)"},
+		},
+		{
+			name: "host name with no scheme", source: "galaxy.example.com", servers: listed, wantErr: true,
+			mustContain: []string{"the value names no server"}, mustNotShow: "galaxy.example.com",
+		},
+		{name: "ftp URL", source: "ftp://a.example.net/", servers: listed, wantErr: true, mustNotShow: "ftp://"},
+		{name: "credential-shaped value", source: "tok:s3cret@hub.example", servers: listed, wantErr: true, mustNotShow: "s3cret"},
 	}
 }

@@ -210,6 +210,10 @@ var (
 	ErrEmptyCollectionName = errors.New("empty collection name")
 	// ErrUnsupportedCollectionSource indicates a collection source is unsupported.
 	ErrUnsupportedCollectionSource = errors.New("unsupported collection source")
+	// ErrUnknownCollectionSource indicates a Galaxy entry's source: that is
+	// neither the id of a server the run uses nor an http(s) URL; it is refused
+	// once the run's servers are known, before any request.
+	ErrUnknownCollectionSource = errors.New("unknown collection source")
 	// ErrUnsupportedCollectionType indicates a collection type is unsupported.
 	ErrUnsupportedCollectionType = errors.New("unsupported collection type")
 	// ErrUnsupportedCollectionFormat indicates a collection format is unsupported.

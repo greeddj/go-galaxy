@@ -150,7 +150,7 @@ still fetched during resolution and its build discarded
 | Exit | Decided in | Cause |
 | --- | --- | --- |
 | 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, `--no-cache` (`ErrWarmCacheDisabled`), backend open, lock or snapshot load |
-| 2 | `loadRoots`, `newVerifyContext` | requirements file missing, unreadable or invalid; keyring or signature config |
+| 2 | `loadRoots`, `newVerifyContext` | requirements file missing, unreadable or invalid, or a Galaxy `source:` naming no server of the run; keyring or signature config |
 | 6 | `resolveFromLockfile`, `resolveRolesFromLockfile` | `--frozen`: lockfile missing, invalid, not covering the roots, `download_url` off its server |
 | 1, 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md#exits) |
 | 2 | `planCollections` | unsafe resolved name, inexact version, duplicate key |

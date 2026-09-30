@@ -205,7 +205,7 @@ failure would. The snapshot saves only if one already existed. Details:
 | 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, backend open, lock or snapshot load |
 | 5 | `openCollectionsRoot` | a symlinked `ansible_collections` |
 | 1 | `openCollectionsRoot` | an empty path or another OS error |
-| 2 | `loadRoots` | requirements file missing, unreadable or invalid |
+| 2 | `loadRoots` | requirements file missing, unreadable or invalid, or a Galaxy `source:` naming no server of the run |
 | 2 | `newVerifyContext` | keyring or signature config |
 | 6 | `--frozen` planning | lockfile missing, invalid, not covering a root, `download_url` off its server |
 | 2 | discovery | two roots for one collection; an invalid pin; a git repository that lacks the `name:` asked for, holds no collection or one declared twice, or has a `galaxy.yml` that is invalid or names an inexact version; no v1 API, or a v1 record refused |

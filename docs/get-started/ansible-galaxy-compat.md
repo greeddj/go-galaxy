@@ -86,6 +86,7 @@ test for non-zero or branch on the code.
 | Area | ansible-galaxy | go-galaxy | What you do |
 | --- | --- | --- | --- |
 | Several servers | Merges versions from all of them | The first server in [`server_list`](../guides/servers-and-auth.md#how-a-collection-picks-its-server) that has the collection owns it | Order `server_list`, or bind the collection with `source:` |
+| `source: default` or `source: cmd_arg` | Names the server built from `[galaxy] server` or `--server` | No server has that id: exit `2` ([How a collection picks its server](../guides/servers-and-auth.md#how-a-collection-picks-its-server)) | Write that server's URL |
 | A server fails | Skips it | Any error but `404` stops the run: exit `4`, or `5` at install ([When several things fail](../reference/exit-codes.md#when-several-things-fail)) | Fix the token or the server |
 | A token you export or pass, with the server's `url` or `validate_certs = false` set in `ansible.cfg` | Sends it | Refused, exit `2` | Export the same value as `ANSIBLE_GALAXY_SERVER_<ID>_URL` or `_VALIDATE_CERTS` ([Where a token may go](../guides/servers-and-auth.md#where-a-token-may-go)) |
 | `[galaxy_server.<id>] timeout` | Read | Ignored with a warning | Use `--timeout` or `server_timeout` |

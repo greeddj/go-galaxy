@@ -35,6 +35,7 @@ resolves roles, then warms instead of installing
 
 | Function | Why here |
 | --- | --- |
+| `checkRootSources`, in `loadRoots` | The first point holding both the parsed file and the run's servers, so an unknown `source:` fails before any request, under `--frozen` too |
 | `newVerifyContext` | A bad keyring fails before any background download |
 | `resolveOrLoadLockfile` | `--frozen` asks no API; the locked `download_url` stands in for metadata unless verifying |
 | `resolveOrLoadRoles` | A missing role fails before any background download |

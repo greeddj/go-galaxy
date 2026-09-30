@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
+	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
 )
 
 // serverCandidate is one server a root-metadata fetch may try: base is the
@@ -251,4 +253,47 @@ func apiRootCandidates(base string) []string {
 	}
 
 	return out
+}
+
+// checkRootSources refuses the first Galaxy entry whose source: matches no
+// server of the run by id or origin and is no http(s) URL: its requests could
+// only fail, and the remedy is an edit. i is the entry's list index.
+func checkRootSources(cfg *config.Config, reqs requirements.Collections) error {
+	for i, req := range reqs {
+		if req.IsGit() || req.IsURL() || req.Source == "" {
+			continue
+		}
+		if _, matched := pinnedServerCandidate(cfg, req.Source); matched || isHTTPSourceURL(req.Source) {
+			continue
+		}
+		value := "the value"
+		if config.IsServerID(req.Source) {
+			value = strconv.Quote(req.Source)
+		}
+		return fmt.Errorf("collections[%d]: %w: %s names no server of this run (%s) and is not an http(s) URL",
+			i, helpers.ErrUnknownCollectionSource, value, serverIDsText(cfg))
+	}
+	return nil
+}
+
+// isHTTPSourceURL reports whether source, normalized as a server base, is an
+// absolute http(s) URL, the one unmatched source: a run still requests.
+func isHTTPSourceURL(source string) bool {
+	u, err := url.Parse(normalizeServerBase(source))
+	return err == nil && u.Host != "" && (u.Scheme == "http" || u.Scheme == "https")
+}
+
+// serverIDsText lists the run's server ids in list order for the refusal
+// above; ids are held to the id alphabet, so each is safe to print.
+func serverIDsText(cfg *config.Config) string {
+	ids := make([]string, 0, len(cfg.Servers))
+	for _, srv := range cfg.Servers {
+		if srv.ID != "" {
+			ids = append(ids, srv.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return "no server has an id"
+	}
+	return "server ids: " + strings.Join(ids, ", ")
 }

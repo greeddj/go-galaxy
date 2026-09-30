@@ -110,7 +110,7 @@ save: the file stays valid if the save fails.
 | Exit | Decided in | Cause |
 | --- | --- | --- |
 | 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, backend open, lock or snapshot load |
-| 2 | `loadRoots` | requirements file missing, unreadable or invalid |
+| 2 | `loadRoots` | requirements file missing, unreadable or invalid, or a Galaxy `source:` naming no server of the run |
 | 1, 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md#exits) |
 | 2 | `buildLockfile` | inexact version; unpinned git, url or role locator |
 | 3 | `galaxyLockfileEntry` | a `404` for a collection or version the resolve named, often a replayed one: `ErrNoSemverCandidates` |

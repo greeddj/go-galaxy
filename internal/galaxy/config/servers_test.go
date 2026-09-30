@@ -1757,3 +1757,26 @@ func tokenTLSPolicyCasesGroupFour() []tokenTLSPolicyCase {
 		},
 	}
 }
+
+// TestIsServerID pins the id alphabet a refusal may print a source: in: a
+// dot, a scheme, userinfo or a slash makes a value something other than an id.
+func TestIsServerID(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]bool{
+		"hub":                 true,
+		"automation_hub":      true,
+		"rh-certified":        true,
+		"123":                 true,
+		"":                    false,
+		"hub.example":         false,
+		"https://hub.example": false,
+		"tok:s3cret@hub":      false,
+		"hub/x":               false,
+	}
+	for id, want := range cases {
+		if got := IsServerID(id); got != want {
+			t.Errorf("IsServerID(%q) = %v, want %v", id, got, want)
+		}
+	}
+}

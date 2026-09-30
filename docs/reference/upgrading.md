@@ -36,6 +36,7 @@ Update any CI step that branches on the old code for these cases
 | `cleanup` where a project's directory remains but no requirements file it remembers is left, and it holds no `galaxy.toml`, `requirements.yml` or `galaxy.lock` | `0`, removing what only those files reached | `2`, removing nothing, under `--dry-run` too |
 | `cleanup` where a remembered requirements file is gone and a `galaxy.toml` or `requirements.yml` beside it does not load | `0` | `2` |
 | `cleanup` where a remembered requirements file is gone and the `galaxy.lock` beside it does not load or is not a regular file | `0` | `6` |
+| A Galaxy collection's `source:` that is neither an id of a server the run uses nor an http(s) URL, such as an id no server list names, an id beside a `--server` URL, a host name with no scheme or an `ftp://` URL | `4` from `install`, `warm` and `lock`, after trying the value as a URL. `install --frozen` and `warm --frozen` ignored it and fetched from the URL `galaxy.lock` records, with no token: `0` where that server needs none. A number, such as an unquoted `source: 123`, was ignored and the collection taken from the default server: `0` | `2`, before any request, `--frozen` included |
 
 What to do about a new code:
 
@@ -51,6 +52,10 @@ What to do about a new code:
   names. For a directory no run uses any more, delete the project's entry from
   the registry the message names, `<cache_dir>/projects.json` or the
   `state/projects.json` object on S3.
+- `2` for `unknown collection source`: give the run a server with that id, or
+  write the server's URL in `source:`. Beside a `--server` URL no id matches:
+  pass the id itself to `--server`, or drop the `source:`
+  ([How a collection picks its server](../guides/servers-and-auth.md#how-a-collection-picks-its-server)).
 - `6` for `lockfile is invalid: <path> is not a regular file`: write what the
   pipe carries to a regular file and name that one with `--lock-file` or
   `lock_file`.

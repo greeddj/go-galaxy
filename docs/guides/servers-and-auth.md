@@ -122,10 +122,16 @@ collection and exits `5`
 
 A [`source:`](requirements.md#collections) binds one collection to one
 server. It names a server id, or a URL on a server's origin (scheme, host and
-port), and the collection gets that server's token and TLS setting. A
-`source:` that matches no server is still requested, with a warning and no
-token. `galaxy.lock` records the server's URL for an id and the `source:` URL
-for an origin match.
+port), and the collection gets that server's token and TLS setting. An id is
+matched exactly, case included, against the servers the run uses
+([Which servers a run uses](#which-servers-a-run-uses)): a `--server` URL
+leaves no id, and a `--server` id leaves only that one. An http(s) `source:`
+that matches no server is still requested, with a warning and no token. Any
+other `source:`, such as an id no server of the run has, a host name with no
+scheme or an `ftp://` URL, exits `2` before any request, `--frozen` included,
+naming the entry's place in the list. `tree`, `explain`, `hash` and `cleanup`
+do not judge it. `galaxy.lock` records the server's URL for an id and the
+`source:` URL for an origin match.
 
 > [!NOTE]
 > `source:` binds only that collection, not its dependencies: they walk the

@@ -142,6 +142,10 @@ var galaxyServerKnownKeys = map[string]bool{
 // ANSIBLE_GALAXY_SERVER_<ID>_* variable name.
 var serverIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// IsServerID reports whether id is spelled as a server_list id may be, so a
+// caller can tell an id-shaped value, safe to print, from anything else.
+func IsServerID(id string) bool { return serverIDPattern.MatchString(id) }
+
 // serverSections is the per-server configuration one file supplies: the
 // [galaxy_server.<id>] sections of an ansible.cfg, or the
 // [[tool.go-galaxy.servers]] entries of a galaxy.toml, never a mix of both.

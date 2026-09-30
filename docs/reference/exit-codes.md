@@ -29,7 +29,7 @@ code instead of parsing the log.
 | Requirements file | named other than `*.yml`, `*.yaml` or `*.toml` ([Which file is read](../guides/requirements.md#which-file-is-read)), missing, `requirements file is ...` (unreadable, not a regular file, not YAML or TOML), or an entry [refused as written](../guides/requirements.md#what-is-refused) |
 | `galaxy.toml` settings | off the schema, or `project file references unset environment variables` |
 | `ansible.cfg` | a missing `--ansible-config` file, or `ansible config file is unreadable` |
-| Servers | a malformed entry, a URL with a credential, two settings for one origin |
+| Servers | a malformed entry, a URL with a credential, two settings for one origin, a collection `source:` that names none of them and is no http(s) URL ([How a collection picks its server](../guides/servers-and-auth.md#how-a-collection-picks-its-server)) |
 | Tokens | over plain http, `--token` with several servers, or a token of yours beside an address or `validate_certs = false` set in `ansible.cfg` or `galaxy.toml` ([Where a token may go](../guides/servers-and-auth.md#where-a-token-may-go)) |
 | git and url sources | a credential in the URL, a bad ref or subdir, nothing usable fetched |
 | Roles | no v1 role API, an unusable v1 record, or no readable role meta |
@@ -139,6 +139,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `corrupt project registry`, `corrupt cache state object`, `corrupt snapshot store`, `cache state object exceeds the maximum allowed size` | `9` | Delete the printed path or S3 key, or `go-galaxy.db` for the [snapshot](../guides/caching.md#what-the-directory-holds); `--clear-cache` keeps them |
 | `requirements file name must end in .yml, .yaml or .toml` | `2` | `-r` or its variable names another file, `/dev/stdin` included, or is exported empty; rename the file ([Which file is read](../guides/requirements.md#which-file-is-read)) |
 | `requirements file is not a regular file` | `2` | A directory or named pipe stands where the file should be; name the file itself |
+| `unknown collection source` | `2` | A Galaxy entry's `source:` is neither an id of a server this run uses nor an http(s) URL; name a configured id or the server's URL ([How a collection picks its server](../guides/servers-and-auth.md#how-a-collection-picks-its-server)) |
 | `project requirements file is unreadable`, `recorded project has no requirements file or lockfile` | `2` | `cleanup` cannot tell what a recorded project keeps, so it deletes nothing; fix or restore the file the message names, or delete that project's entry from the registry it names ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)) |
 | `unsupported snapshot schema version` | `2` | A newer release wrote this cache, which is sound: [run one release](../guides/ci.md#pin-one-release). Deleting the snapshot helps only until the newer release saves again |
 | `collection signature verification failed` | `10` | The signatures do not meet the [required count](../guides/signatures.md#required-count-and-the-vacuous-pass); check the keyring and the count |

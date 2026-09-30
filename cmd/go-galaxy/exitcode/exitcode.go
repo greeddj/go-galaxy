@@ -557,6 +557,7 @@ func isCollectionNameUsageError(err error) bool {
 		errors.Is(err, helpers.ErrInvalidCollectionName) ||
 		errors.Is(err, helpers.ErrInvalidCollectionKey) ||
 		errors.Is(err, helpers.ErrUnsupportedCollectionSource) ||
+		errors.Is(err, helpers.ErrUnknownCollectionSource) ||
 		errors.Is(err, helpers.ErrUnsupportedCollectionType) ||
 		errors.Is(err, helpers.ErrUnsupportedCollectionFormat) ||
 		errors.Is(err, helpers.ErrConflictingNamespaceName)
