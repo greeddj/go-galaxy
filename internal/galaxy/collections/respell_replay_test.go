@@ -6,11 +6,14 @@ package collections
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/infra"
+	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
@@ -228,5 +231,57 @@ func TestBuildRequirementsSpecKeysCanonicalConstraint(t *testing.T) {
 	releasesOnly := collection{Namespace: "acme", Name: "app", Constraint: "==*", Type: typeGalaxy}
 	if got := specOf(releasesOnly).Constraint; got != "=*" {
 		t.Fatalf("spec constraint of %q = %q, want %q, apart from match-all", releasesOnly.Constraint, got, "=*")
+	}
+}
+
+// respelledKeys writes content under name in a directory of its own and
+// returns the replay key a deps-mode run with no servers takes from it and
+// the go-galaxy hash key, both from the file as the loader reads it.
+func respelledKeys(t *testing.T, name, content string) (string, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(content), helpers.FileMod); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	roots, _, err := loadRequirements(path, "")
+	if err != nil {
+		t.Fatalf("loadRequirements(%s): %v", name, err)
+	}
+	if roots, err = prepareRoots(roots); err != nil {
+		t.Fatalf("prepareRoots(%s): %v", name, err)
+	}
+	file, err := requirements.Load(path, "")
+	if err != nil {
+		t.Fatalf("requirements.Load(%s): %v", name, err)
+	}
+	return requirementsSignatureFromSpec(buildRequirementsSpec(roots), false, ""), file.Hash()
+}
+
+// TestRespelledConstraintKeepsBothKeys pins that a constraint respelled across
+// requirements.yml and galaxy.toml keeps the replay key and the hash key
+// alike, while a changed operand moves both.
+func TestRespelledConstraintKeepsBothKeys(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name, yaml, toml string
+		same             bool
+	}{
+		{name: "spaced range", yaml: ">= 1.0.0, < 2.0.0", toml: "acme.app >=1.0.0,<2.0.0", same: true},
+		{name: "== exact version", yaml: "==1.0.0", toml: "acme.app 1.0.0", same: true},
+		{name: "1.0 and 1.0.0", yaml: "1.0", toml: "acme.app 1.0.0"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			yamlReplay, yamlHash := respelledKeys(t, helpers.RequirementsYAMLName,
+				"collections:\n  - name: acme.app\n    version: \""+tt.yaml+"\"\n")
+			tomlReplay, tomlHash := respelledKeys(t, helpers.RequirementsTOMLName,
+				"[project]\ncollections = [\""+tt.toml+"\"]\n")
+			if (yamlReplay == tomlReplay) != tt.same {
+				t.Errorf("replay keys equal = %t, want %t", yamlReplay == tomlReplay, tt.same)
+			}
+			if (yamlHash == tomlHash) != tt.same {
+				t.Errorf("hash keys equal = %t, want %t", yamlHash == tomlHash, tt.same)
+			}
+		})
 	}
 }

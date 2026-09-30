@@ -39,19 +39,23 @@ flowchart TD
     LP["lockfilePath"] -->|"fails"| X2(["exit 2"])
     LP --> LD{"lockfile.Load"}
     LD -->|"exists, unreadable<br/>or invalid"| X6(["exit 6"])
-    LD -->|"loaded"| H["File.Hash: canonical copy,<br/>two-space YAML, SHA256"]
-    LD -->|"does not exist"| RQ["requirements.Read:<br/>raw bytes, never parsed"]
-    RQ --> SH["SHA256 of the bytes"]
-    RQ -->|"missing, not regular<br/>or unreadable"| X2R(["exit 2"])
+    LD -->|"loaded"| H["lockfile File.Hash: canonical<br/>copy, two-space YAML, SHA256"]
+    LD -->|"does not exist"| RQ["requirements.Load:<br/>TOML by extension, else YAML"]
+    RQ --> SH["requirements File.Hash: domain line,<br/>sorted collections, roles in order"]
+    RQ -->|"missing, not regular,<br/>unreadable or refused"| X2R(["exit 2"])
     H --> PR["print sha256:hex"]
     SH --> PR
     PR --> X0(["exit 0"])
 ```
 
-`File.Hash` canonicalizes before encoding, so the key ignores entry order and
-the written `schema_version` ([Lockfile format](lockfile-format.md)). A
-`requirements.yml` that is not YAML still hashes, while a `galaxy.toml` that
-is not TOML exits 2 in `lockfilePath` unless `--lock-file` is set.
+The lockfile's `File.Hash` canonicalizes before encoding, so the key ignores
+entry order and the written `schema_version` ([Lockfile format](lockfile-format.md)).
+Without a lockfile, the key is `requirements.File.Hash` over the file parsed
+with no default server, as `tree` parses it: a domain line no lockfile YAML
+starts with, one length-prefixed record per collection, sorted, with a Galaxy
+constraint through `helpers.CanonicalConstraint`, then one per role in file
+order, since role order decides first-wins. No setting enters it, and a file
+that does not load exits 2, under `--lock-file` too.
 
 The action ignores its context, so a caught signal can still print the key
 while the exit reports the interrupt.
@@ -63,8 +67,8 @@ Where `hash` exits:
 | 2 | `config.RequirementsPath` | `ErrRequirementsFileName` |
 | 2 | `lockfilePath` | `galaxy.toml` settings refused |
 | 6 | `lockfile.Load` | lockfile exists but is unreadable or invalid |
-| 2 | `requirements.Read` | fallback file missing, `ErrRequirementsNotRegular` or `ErrRequirementsUnreadable` |
-| 1 | `File.Hash` | encoder error, unreachable in practice |
+| 2 | `requirements.Load` | fallback file missing, `ErrRequirementsNotRegular`, `ErrRequirementsUnreadable`, or a format or entry refused |
+| 1 | lockfile `File.Hash` | encoder error, unreachable in practice |
 
 ## tree
 
@@ -151,5 +155,5 @@ Where `explain` exits:
 
 | Flag | Diagram | Effect |
 | --- | --- | --- |
-| `-r` | The lockfile path, hash, tree, explain | the default lockfile's directory; `hash`: the file hashed without a lockfile; `tree`: the roots; `explain`: the roots and the `(root)` label |
-| `--lock-file` | The lockfile path, hash, tree, explain | the lockfile read; `hash`: a path that does not exist falls back to hashing `-r` |
+| `-r` | The lockfile path, hash, tree, explain | the default lockfile's directory; `hash`: the file whose entries are digested without a lockfile; `tree`: the roots; `explain`: the roots and the `(root)` label |
+| `--lock-file` | The lockfile path, hash, tree, explain | the lockfile read; `hash`: a path that does not exist falls back to the digest of `-r` |

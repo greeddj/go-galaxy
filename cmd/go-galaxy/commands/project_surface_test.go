@@ -3,8 +3,6 @@ package commands
 import (
 	"bufio"
 	"cmp"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -549,8 +547,8 @@ func projLockfileHash(t *testing.T, path string) string {
 }
 
 // projCommandRows returns the rows. With --lock-file set a galaxy.toml is never
-// loaded for its lock_file, so neither an unset variable nor bytes that are not
-// TOML stop hash, and tree and explain read their roots without expanding.
+// loaded for its lock_file, so an unset variable does not stop hash, and tree
+// and explain read their roots without expanding.
 func projCommandRows() []projCommandRow {
 	locks := []string{"--lock-file", filepath.Join("locks", lockfile.DefaultName)}
 	return []projCommandRow{
@@ -570,8 +568,8 @@ func projCommandRows() []projCommandRow {
 			args: locks, check: projCheckTreeReadsLockFile},
 		{name: "explain --lock-file passes over an unset variable", command: Explain, toml: projUnsetTOML,
 			args: append(slices.Clone(locks), "acme.widgets"), check: projCheckExplainReadsLockFile},
-		{name: "hash --lock-file naming no file keys a galaxy.toml that is not TOML", command: Hash, toml: notTOMLContent,
-			args: []string{"--lock-file", filepath.Join("absent", lockfile.DefaultName)}, check: projCheckHashIsRawBytes},
+		{name: "hash --lock-file naming no file refuses a galaxy.toml that is not TOML", command: Hash, toml: notTOMLContent,
+			args: []string{"--lock-file", filepath.Join("absent", lockfile.DefaultName)}, check: projCheckHashRefusesNotTOML},
 	}
 }
 
@@ -615,15 +613,14 @@ func projCheckHashIsFlagLockfile(t *testing.T, dir, stdout string, err error) {
 	assertConfigField(t, "hash stdout", stdout, projLockfileHash(t, filepath.Join(dir, "other", lockfile.DefaultName)))
 }
 
-// projCheckHashIsRawBytes pins the fallback key over the requirements bytes as
-// they are: with no lockfile at the flag's path, hash never parses the file.
-func projCheckHashIsRawBytes(t *testing.T, _, stdout string, err error) {
+// projCheckHashRefusesNotTOML pins that with no lockfile at the flag's path
+// hash parses the file it keys on, so bytes that are not TOML yield no key.
+func projCheckHashRefusesNotTOML(t *testing.T, _, stdout string, err error) {
 	t.Helper()
-	if err != nil {
-		t.Fatalf("hash: %v", err)
+	projAssertUsageError(t, err, helpers.ErrInvalidRequirementsTOML, "load requirements galaxy.toml")
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing printed", stdout)
 	}
-	sum := sha256.Sum256([]byte(notTOMLContent))
-	assertConfigField(t, "hash stdout", stdout, "sha256:"+hex.EncodeToString(sum[:])+"\n")
 }
 
 func projCheckTreeReadsLockFile(t *testing.T, _, stdout string, err error) {

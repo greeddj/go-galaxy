@@ -191,13 +191,14 @@ show how the tree is built and checked.
 Every other form admits a prerelease only when it names one, as `>=1.0.0-0`
 does ([Prereleases](../get-started/ansible-galaxy-compat.md#prereleases)).
 
-A rerun [replays the last resolution](caching.md#what-a-rerun-reuses) across
+A rerun [replays the last resolution](caching.md#what-a-rerun-reuses), and
+[`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) keeps its key, across
 spellings of one constraint: whitespace, `,` or a space between AND clauses,
 `=`, `==` or nothing before an exact version, `=>`, `=<` and `~>` for `>=`,
 `<=` and `~`, and a hyphen range written as its two bounds, `1.2 - 1.4` as
 `>=1.2,<=1.4`. Without its spaces, `1.2-1.4` is a prerelease, not a range. Any
 other change, such as `1.0` for `1.0.0` or clauses in another order, resolves
-again.
+again and changes the key.
 
 > [!TIP]
 > An unquoted value reads as the text written, so `version: 1.10` asks for
@@ -340,6 +341,11 @@ Each role's `meta` dependencies install too, unless `--no-deps` is set. A
 local role (no dot) is skipped. A collection's role (two or more dots) is
 skipped with a warning. One run resolves at most 1000 roles, dependencies
 included, and exits `2` past that.
+
+Roles are taken level by level, in the order the file lists them, and the
+first role to take an install name keeps it: a later one with that name is
+skipped, with a warning when it asks for another source or version, as in
+ansible-galaxy.
 
 ### An existing role directory
 
@@ -533,7 +539,7 @@ Each exits `2` before anything installs, naming the entry.
       as `== 1.0.0`, and still replays the last resolution.
 - [ ] Delete `requirements.yml`, or every run that names no file warns.
 - [ ] With a lockfile, run `go-galaxy lock --check`: the same entries give
-      the same `galaxy.lock`. Without one, expect a new
-      [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) key.
+      the same `galaxy.lock`. Without one,
+      [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) keeps its key.
 - [ ] Optionally move `cache_dir` and the whole server list from `ansible.cfg`
       into [`[tool.go-galaxy]`](../reference/configuration.md#the-toolgo-galaxy-table).

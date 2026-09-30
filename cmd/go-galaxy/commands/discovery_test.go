@@ -20,12 +20,12 @@ import (
 // through the real commands, pinning that they pick galaxy.toml over
 // requirements.yml, warn when both exist, and fall back without a Stat.
 
-// discoveryTOML is the galaxy.toml fixture; discoveryTOMLSHA256 is the
-// sha256 of exactly these bytes, spelled out so hash's fallback key is pinned
-// against a literal rather than re-derived from the constant.
+// discoveryTOML is the galaxy.toml fixture; discoveryTOMLSHA256 is its
+// requirements digest, spelled out so the record layout hash's fallback key
+// digests is pinned against a literal rather than re-derived.
 const (
 	discoveryTOML       = "[project]\nname = \"infra\"\ncollections = [\"acme.widgets\"]\n"
-	discoveryTOMLSHA256 = "6bc1930e0ea48b90d8fad00afee84a8d98dca37b549686d67bb135769a0c57b0"
+	discoveryTOMLSHA256 = "8493034d51bf8cc8d9aac74a4e4db74856b5ef8e18eaa4f13aa559775d28f493"
 	discoveryYAML       = "collections:\n  - name: acme.other\n    version: \"*\"\n"
 	bothPresentWarning  = "galaxy.toml and requirements.yml are both present in the current directory; " +
 		"using galaxy.toml and ignoring requirements.yml (name one with --requirements-file to choose)"
@@ -175,9 +175,9 @@ func discoveryCases() []discoveryCase {
 			check: checkExplainRootIsTOML,
 		},
 		{
-			name: "hash keys galaxy.toml's bytes with no lockfile", command: Hash,
+			name: "hash keys galaxy.toml's requirements with no lockfile", command: Hash,
 			files: map[string]string{helpers.RequirementsTOMLName: discoveryTOML},
-			check: checkHashIsTOMLBytes,
+			check: checkHashIsTOMLDigest,
 		},
 		{
 			name: "both present: tree reads galaxy.toml and warns", command: Tree, lock: true,
@@ -238,7 +238,7 @@ func checkExplainRootIsTOML(t *testing.T, stdout, stderr string, err error) {
 	}
 }
 
-func checkHashIsTOMLBytes(t *testing.T, stdout, stderr string, err error) {
+func checkHashIsTOMLDigest(t *testing.T, stdout, stderr string, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("hash: %v", err)

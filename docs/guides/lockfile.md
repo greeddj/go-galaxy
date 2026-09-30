@@ -218,9 +218,9 @@ sha256:cd042c8bf64fc5315301eb10613e03a61b699c35bac3942d1d50ce5627d823f0
 | Case | Key or exit |
 | --- | --- |
 | A valid lockfile | sha256 of the lockfile as `lock` writes it, so reformatting changes nothing |
-| No lockfile | sha256 of the requirements file's bytes, comments and whitespace included |
+| No lockfile | sha256 of the collections and roles the requirements file asks for. Comments, formatting, collection order, a [respelled constraint](requirements.md#version-constraints) and a move between `requirements.yml` and `galaxy.toml` keep it; role order [counts](requirements.md#roles). `[tool.go-galaxy]`, `ansible.cfg` and the environment never enter it |
 | A lockfile that fails to load | Exit `6`, never the fallback |
-| No lockfile and no readable requirements file | Exit `2` |
+| No lockfile, and a requirements file that is missing or does not load | Exit `2` |
 | A `galaxy.toml` that does not load or names an unset `${VAR}`, without `--lock-file` | Exit `2` |
 | A `-r` or variable value not ending in `.yml`, `.yaml` or `.toml`, an exported-empty one included | Exit `2`, even beside a valid lockfile ([Which file is read](requirements.md#which-file-is-read)) |
 

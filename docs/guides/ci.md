@@ -113,7 +113,7 @@ back only within the same release, so the first job after an upgrade runs cold
 
 A failing `go-galaxy hash` fails the action at the step that computes the
 key, before anything installs, frozen or not: exit `6` for a lockfile that
-does not load, `2` for a `galaxy.toml` that does not load
+does not load, `2` for a requirements file that does not load
 ([every case](lockfile.md#a-cache-key-for-ci)). `cache: false` skips `hash`.
 
 With `@v1`, a branch or a commit SHA and no `version` input, the action takes

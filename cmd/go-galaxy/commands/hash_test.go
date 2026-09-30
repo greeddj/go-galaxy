@@ -2,8 +2,6 @@ package commands
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,6 +10,7 @@ import (
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/exitcode"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
+	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
 )
 
 // writeTestFile writes content to path, failing the test on error. It exists
@@ -95,15 +94,18 @@ func setupLockfileAbsent(t *testing.T, dir string) (string, string) {
 	return reqPath, lockPath
 }
 
-// checkLockfileAbsentFallback asserts the returned hash matches a direct
-// SHA256 of the requirements file content.
+// checkLockfileAbsentFallback asserts the returned hash is the digest of the
+// parsed requirements, not of their bytes.
 func checkLockfileAbsentFallback(t *testing.T, got string, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatalf("computeHash() error = %v, want nil", err)
 	}
-	sum := sha256.Sum256([]byte(reqOnlyContent))
-	if want := "sha256:" + hex.EncodeToString(sum[:]); got != want {
+	file, parseErr := requirements.Parse([]byte(reqOnlyContent), "")
+	if parseErr != nil {
+		t.Fatalf("requirements.Parse: %v", parseErr)
+	}
+	if want := "sha256:" + file.Hash(); got != want {
 		t.Errorf("computeHash() = %q, want %q", got, want)
 	}
 }
@@ -160,7 +162,7 @@ func checkAnyError(t *testing.T, got string, err error) {
 }
 
 // notYAMLContent is a requirements file whose bytes are not YAML, which the
-// fallback hashes as it is.
+// fallback refuses as every command reading it does.
 const notYAMLContent = "collections:\n  - name: [unclosed\n"
 
 // setupRequirementsNotYAML writes only a requirements file that is not YAML.
@@ -171,27 +173,58 @@ func setupRequirementsNotYAML(t *testing.T, dir string) (string, string) {
 	return reqPath, filepath.Join(dir, lockfile.DefaultName)
 }
 
-// checkRequirementsNotYAMLHashed asserts the fallback key is the SHA256 of
-// the raw bytes: hash never parses the file it keys on.
-func checkRequirementsNotYAMLHashed(t *testing.T, got string, err error) {
+// checkRequirementsNotYAMLRefused asserts a file that does not parse yields
+// no key: ErrInvalidRequirementsYAML, exit 2.
+func checkRequirementsNotYAMLRefused(t *testing.T, got string, err error) {
 	t.Helper()
-	if err != nil {
-		t.Fatalf("computeHash() error = %v, want nil", err)
+	if !errors.Is(err, helpers.ErrInvalidRequirementsYAML) {
+		t.Fatalf("computeHash() = %q, error = %v, want errors.Is helpers.ErrInvalidRequirementsYAML", got, err)
 	}
-	sum := sha256.Sum256([]byte(notYAMLContent))
-	if want := "sha256:" + hex.EncodeToString(sum[:]); got != want {
-		t.Errorf("computeHash() = %q, want %q", got, want)
+	if code := exitcode.FromError(err); code != exitcode.ExitUsage {
+		t.Errorf("exitcode.FromError(err) = %d, want ExitUsage (%d)", code, exitcode.ExitUsage)
 	}
 }
 
-// notTOMLContent is a .toml requirements file whose bytes are not TOML. The
-// not-YAML row is its control: those bytes still hash, while a .toml is decoded
-// for its lock_file before any key is computed, so these are refused.
+// fileSourceContent names a type: file source, and refusedRoleContent a role
+// the loader refuses; both parse as YAML, so only the loader stops them.
+const (
+	fileSourceContent  = "collections:\n  - name: acme.app\n    type: file\n"
+	refusedRoleContent = "collections:\n  - acme.app\nroles:\n  - name: \"bad name!\"\n    src: \"not a role\"\n"
+)
+
+// setupRequirements returns a setup writing content as the only file.
+func setupRequirements(content string) func(t *testing.T, dir string) (string, string) {
+	return func(t *testing.T, dir string) (string, string) {
+		t.Helper()
+		reqPath := filepath.Join(dir, "requirements.yml")
+		writeTestFile(t, reqPath, []byte(content))
+		return reqPath, filepath.Join(dir, lockfile.DefaultName)
+	}
+}
+
+// checkRefusedWithUsage returns a check that the loader refused the file with
+// want: no key, and exit 2 as install gives the same file.
+func checkRefusedWithUsage(want error) func(t *testing.T, got string, err error) {
+	return func(t *testing.T, got string, err error) {
+		t.Helper()
+		if !errors.Is(err, want) {
+			t.Fatalf("computeHash() error = %v, want errors.Is %v", err, want)
+		}
+		if got != "" {
+			t.Errorf("computeHash() = %q, want no key", got)
+		}
+		if code := exitcode.FromError(err); code != exitcode.ExitUsage {
+			t.Errorf("exitcode.FromError(err) = %d, want ExitUsage (%d)", code, exitcode.ExitUsage)
+		}
+	}
+}
+
+// notTOMLContent is a .toml requirements file whose bytes are not TOML, which
+// is decoded for its lock_file before any key is computed and so refused.
 const notTOMLContent = "[project]\ncollections = [\n"
 
 // TestHashRefusesRequirementsNotTOML runs the command over a broken.toml with
-// no lockfile beside it: ErrInvalidRequirementsTOML and exit 2, where the same
-// bytes under a .yml name would have yielded a key.
+// no lockfile beside it: ErrInvalidRequirementsTOML and exit 2.
 func TestHashRefusesRequirementsNotTOML(t *testing.T) {
 	t.Parallel()
 	reqPath := filepath.Join(t.TempDir(), "broken.toml")
@@ -234,7 +267,17 @@ func TestComputeHash(t *testing.T) {
 	tests := []hashTestCase{
 		{name: "valid lockfile present", setup: setupValidLockfile, check: checkValidLockfile},
 		{name: "lockfile absent, requirements present falls back", setup: setupLockfileAbsent, check: checkLockfileAbsentFallback},
-		{name: "lockfile absent, requirements not YAML still hashed", setup: setupRequirementsNotYAML, check: checkRequirementsNotYAMLHashed},
+		{name: "lockfile absent, requirements not YAML refused", setup: setupRequirementsNotYAML, check: checkRequirementsNotYAMLRefused},
+		{
+			name:  "lockfile absent, requirements naming a type: file source refused",
+			setup: setupRequirements(fileSourceContent),
+			check: checkRefusedWithUsage(helpers.ErrUnsupportedCollectionType),
+		},
+		{
+			name:  "lockfile absent, a refused role refused",
+			setup: setupRequirements(refusedRoleContent),
+			check: checkRefusedWithUsage(helpers.ErrInvalidRoleName),
+		},
 		{
 			name:  "lockfile absent, requirements a directory surfaces ErrRequirementsNotRegular",
 			setup: setupRequirementsDirectory,
@@ -257,5 +300,65 @@ func TestComputeHash(t *testing.T) {
 			got, err := computeHash(reqPath, lockPath)
 			tt.check(t, got, err)
 		})
+	}
+}
+
+// hashTwinYAML and hashTwinTOML ask for the same collections and roles in
+// two formats, with comments, respelled constraints, reordered collections,
+// a project name and a [tool.go-galaxy] table that no key may see.
+const (
+	hashTwinYAML = `---
+# reviewed quarterly
+collections:
+  - community.general
+  - name: ansible.utils
+    version: ">= 6.0.0, <7.0.0"
+  - name: acme.app
+    version: "==1.4.0"
+    source: https://hub.example.com/api/galaxy/
+  - name: git+https://github.com/acme/mono.git#collections/app,main
+roles:
+  - name: geerlingguy.docker
+    version: 8.0.0
+  - src: https://github.com/acme/ansible-role-base.git
+    scm: git
+    version: v1.2.0
+    name: base
+`
+	hashTwinTOML = `[project]
+name = "infra"
+collections = [
+  "git+https://github.com/acme/mono.git#collections/app,main",
+  "ansible.utils >=6.0.0,<7.0.0",
+  { name = "acme.app", version = "1.4.0", source = "https://hub.example.com/api/galaxy/" },
+  "community.general",
+]
+roles = [
+  "geerlingguy.docker,8.0.0",
+  { src = "git+https://github.com/acme/ansible-role-base.git", version = "v1.2.0", name = "base" },
+]
+
+[tool.go-galaxy]
+workers = 8
+`
+)
+
+// TestHashIsTheSameForRequirementsYAMLAndItsGalaxyTOML runs hash in two
+// directories holding the two files: the keys must be equal.
+func TestHashIsTheSameForRequirementsYAMLAndItsGalaxyTOML(t *testing.T) {
+	t.Parallel()
+	yamlDir, tomlDir := t.TempDir(), t.TempDir()
+	writeTestFile(t, filepath.Join(yamlDir, helpers.RequirementsYAMLName), []byte(hashTwinYAML))
+	writeTestFile(t, filepath.Join(tomlDir, helpers.RequirementsTOMLName), []byte(hashTwinTOML))
+	fromYAML, err := computeHash(filepath.Join(yamlDir, helpers.RequirementsYAMLName), filepath.Join(yamlDir, lockfile.DefaultName))
+	if err != nil {
+		t.Fatalf("hash requirements.yml: %v", err)
+	}
+	fromTOML, err := computeHash(filepath.Join(tomlDir, helpers.RequirementsTOMLName), filepath.Join(tomlDir, lockfile.DefaultName))
+	if err != nil {
+		t.Fatalf("hash galaxy.toml: %v", err)
+	}
+	if fromYAML != fromTOML {
+		t.Errorf("hash of requirements.yml = %q, of its galaxy.toml = %q, want them equal", fromYAML, fromTOML)
 	}
 }

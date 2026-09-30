@@ -159,7 +159,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `install`, `warm`, `lock`, `outdated` | a server-supplied metadata URL with a credential | `5` |
 | `install`, `warm`, `lock` | a server-supplied download URL with a credential | `5` |
 | `lock` | the snapshot save fails after `Lockfile written` | the save error's code; `galaxy.lock` is already written |
-| `install`, `warm`, `lock` (`tree` too, from `galaxy.toml`) | a [constraint](../guides/requirements.md#stricter-than-requirementsyml) semver cannot parse | `2` from `galaxy.toml`, `1` from `requirements.yml` |
+| `install`, `warm`, `lock` (`tree` and `hash` without a lockfile too, from `galaxy.toml`) | a [constraint](../guides/requirements.md#stricter-than-requirementsyml) semver cannot parse | `2` from `galaxy.toml`, `1` from `requirements.yml` |
 
 <details markdown>
 <summary>Missing or broken lockfile</summary>
@@ -167,7 +167,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | Command | No lockfile | Unreadable or invalid |
 | --- | --- | --- |
 | `install --frozen`, `warm --frozen`, `lock --check` (after resolving), `tree`, `explain` | `6` | `6` |
-| `hash` | hashes the requirements file (`2` if unreadable) | `6` |
+| `hash` | the digest of what the requirements file asks for (`2` if it does not load) | `6` |
 | `outdated` | reads the collections path (`6` if missing) | `6` |
 
 </details>

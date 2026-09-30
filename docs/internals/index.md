@@ -142,7 +142,7 @@ span packages are under [Rules a change must keep](#rules-a-change-must-keep).
 | [`internal/galaxy/cleanup`](flow-cleanup.md) | reachability over every recorded project, then removal | deletes through an `os.Root` per project |
 | [`internal/galaxy/config`](config-loading.md) | one `*Config` from every source | precedence; every secret a `Secret`; no network |
 | `internal/galaxy/infra` | `Infra`, the per-run container | test-only deadlines behind accessors |
-| `internal/galaxy/requirements` | requirements.yml and galaxy.toml entries | every name, URL and signature source judged here |
+| `internal/galaxy/requirements` | requirements.yml and galaxy.toml entries, and the digest `hash` keys on without a lockfile (`File.Hash`) | every name, URL and signature source judged here |
 | `internal/galaxy/projectfile` | galaxy.toml schema, `[tool.go-galaxy]`, `${VAR}` expansion | - |
 | [`internal/galaxy/lockfile`](lockfile-format.md) | galaxy.lock `Load`, `Save`, `Hash`, `Compare` | `Load` judges it as repository content |
 | [`internal/galaxy/solver`](solver.md) | the version solver | metadata only through `Provider` |

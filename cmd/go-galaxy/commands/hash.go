@@ -2,8 +2,6 @@ package commands
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/cliflags"
@@ -15,8 +13,8 @@ import (
 )
 
 // Hash returns the CLI command that prints a deterministic CI cache key,
-// `sha256:<hex>` on one line: the canonical lockfile hash, or the requirements
-// file's SHA256 when there is no lockfile.
+// `sha256:<hex>` on one line: the canonical lockfile hash, or the digest of
+// what the requirements file asks for when there is no lockfile.
 func Hash() *cli.Command {
 	return &cli.Command{
 		Name:    "hash",
@@ -46,8 +44,8 @@ func Hash() *cli.Command {
 }
 
 // computeHash prefers the lockfile's canonical hash and falls back to the
-// requirements file only when the lockfile is missing: one that fails to load is
-// an error, since a fallback would hide it behind a plausible key.
+// requirements digest only when the lockfile is missing: one that fails to load
+// is an error, since a fallback would hide it behind a plausible key.
 func computeHash(requirementsFile, lockPath string) (string, error) {
 	lf, err := lockfile.Load(lockPath)
 	switch {
@@ -63,12 +61,11 @@ func computeHash(requirementsFile, lockPath string) (string, error) {
 		return "", err
 	}
 
-	// Read, not Load: the key covers the bytes as they are, so a file that is
-	// not YAML still hashes, and only a missing, unreadable or non-regular one fails.
-	data, err := requirements.Read(requirementsFile)
+	// Parsed with no default server, as tree parses it: the key covers what the
+	// file asks for, never a setting, so a file no command can load has no key.
+	file, err := requirements.Load(requirementsFile, "")
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("load requirements %s: %w", requirementsFile, err)
 	}
-	sum := sha256.Sum256(data)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return "sha256:" + file.Hash(), nil
 }
