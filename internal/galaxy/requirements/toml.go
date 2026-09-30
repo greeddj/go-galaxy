@@ -201,8 +201,8 @@ func isGalaxyTable(table map[string]any) bool {
 }
 
 // checkStringKey refuses a scalar key holding a non-string, naming the key
-// and the Go type and never the value: a TOML float 1.0 would otherwise
-// render as "1" and read as a 1.x range.
+// and the Go type and never the value: a TOML float such as 1.10 has already
+// lost the text written.
 func checkStringKey(sentinel error, key string, value any, scalar bool) error {
 	if !scalar {
 		return nil

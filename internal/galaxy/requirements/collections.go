@@ -216,9 +216,14 @@ func parseCollectionItem(item any, defaultSource string) (CollectionRequirement,
 // apart so the alphabet check in parseCollectionItem covers both branches.
 func parseCollectionItemByShape(item any, defaultSource string) (CollectionRequirement, error) {
 	switch v := item.(type) {
+	case nil:
+		return CollectionRequirement{}, fmt.Errorf("%w: the entry has no value", helpers.ErrInvalidCollectionEntry)
 	case string:
 		return parseCollectionStringItem(v, defaultSource)
 	case map[string]any:
+		if err := checkEntryValues(helpers.ErrInvalidCollectionEntry, v, collectionTableKeys(), "signatures"); err != nil {
+			return CollectionRequirement{}, err
+		}
 		return parseCollectionMapItem(v, defaultSource)
 	default:
 		return CollectionRequirement{}, fmt.Errorf("%w: %v", helpers.ErrUnsupportedCollectionFormat, item)
@@ -281,8 +286,8 @@ func parseCollectionMapFields(value map[string]any) CollectionRequirement {
 	if raw, ok := value["namespace"].(string); ok {
 		req.Namespace = strings.TrimSpace(raw)
 	}
-	if raw, ok := value["name"]; ok {
-		req.Name = strings.TrimSpace(fmt.Sprint(raw))
+	if raw, ok := value["name"].(string); ok {
+		req.Name = strings.TrimSpace(raw)
 	}
 	if raw, ok := value["source"].(string); ok {
 		req.Source = strings.TrimSpace(raw)
@@ -293,10 +298,28 @@ func parseCollectionMapFields(value map[string]any) CollectionRequirement {
 	if raw, ok := value["signatures"]; ok {
 		req.Signatures = parseStringList(raw)
 	}
-	if raw, ok := value["version"]; ok {
-		req.Version = strings.TrimSpace(fmt.Sprint(raw))
+	if raw, ok := value["version"].(string); ok {
+		req.Version = strings.TrimSpace(raw)
 	}
 	return req
+}
+
+// checkEntryValues refuses a key the entry is read by that was written with
+// no value or holds no string, in sorted key order, naming the key and never
+// the value; list names the one key a list of strings may fill.
+func checkEntryValues(sentinel error, entry map[string]any, known map[string]struct{}, list string) error {
+	for _, key := range sortedKeys(entry) {
+		if _, ok := known[key]; !ok {
+			continue
+		}
+		if entry[key] == nil {
+			return fmt.Errorf("%w: %s has no value; write one or leave the key out", sentinel, key)
+		}
+		if err := checkStringKey(sentinel, key, entry[key], key != list); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkNamespaceNameConflict refuses an explicit namespace beside a dotted
@@ -384,7 +407,7 @@ func checkGalaxySourceShape(req CollectionRequirement) error {
 // http(s) URL in name:). signatures:, source: and namespace: are refused, and
 // version: must be exact, as it is asserted against the MANIFEST.json.
 func parseURLMapItem(req CollectionRequirement, raw map[string]any) (CollectionRequirement, error) {
-	if value, ok := raw["signatures"]; ok && value != nil {
+	if _, ok := raw["signatures"]; ok {
 		return CollectionRequirement{}, fmt.Errorf("%w: a signatures key is not supported on a url requirement",
 			helpers.ErrInvalidCollectionEntry)
 	}
@@ -429,7 +452,7 @@ func parseURLRequirement(rawURL, version string) (CollectionRequirement, error) 
 // pointer in name:). With the URL in source:, name: may pick one collection;
 // signatures: is refused, since nobody signed an artifact built here.
 func parseGitMapItem(req CollectionRequirement, raw map[string]any) (CollectionRequirement, error) {
-	if value, ok := raw["signatures"]; ok && value != nil {
+	if _, ok := raw["signatures"]; ok {
 		return CollectionRequirement{}, fmt.Errorf("%w: a signatures key is not supported on a git requirement",
 			helpers.ErrInvalidCollectionEntry)
 	}
@@ -526,7 +549,7 @@ func checkSignatureSourceShape(raw any) error {
 		return nil
 	}
 	value, ok := item["signatures"]
-	if !ok || value == nil {
+	if !ok {
 		return nil
 	}
 	switch v := value.(type) {

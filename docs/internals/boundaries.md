@@ -50,12 +50,13 @@ and [What is refused](../guides/requirements.md#what-is-refused).
 | A requirements path | `Stat` finds no regular file, such as a directory or fifo; checked before any open | `helpers.CheckRegularRequirementsFile`, from `requirements.Read` and `projectfile.LoadSettings` | `ErrRequirementsNotRegular` | 2 |
 | A requirements `source:` | it carries userinfo | `requirements.checkSourceUserinfo` | `ErrGalaxyServerURLUserinfo` | 2 |
 | A `requirements.yml` | its aliases expand past yaml's budget; every number, bool, timestamp and binary scalar is first retagged as text, and the tree decoded in one `Decode` that keeps the budget | `requirements.decodeYAML` | `ErrInvalidRequirementsYAML` | 2 |
+| A key a requirements entry is read by | written with no value, or a list or a mapping where text belongs; named by key, Go type and index, never by value | `requirements.checkEntryValues` | `ErrInvalidCollectionEntry`, `ErrInvalidRoleEntry` | 2 |
 | A `galaxy.toml` | a syntax error, shown as line and last key; an unknown table or key | `projectfile.Decode` | `ErrInvalidRequirementsTOML`, `ErrUnsupportedRequirementsFormat` | 2 |
 | A `${VAR}` under `[tool.go-galaxy]` | unset; every name reported, sorted, never a value | `projectfile.LoadSettings` | `ErrProjectFileEnvUnset` | 2 |
 
-- Validation order is part of the boundary: `checkSourceUserinfo` and
-  `checkSignatureSources` run before the no-name refusal that echoes the
-  entry, in both formats.
+- Validation order is part of the boundary: `checkEntryValues` runs first,
+  then `checkSourceUserinfo` and `checkSignatureSources`, all before the
+  no-name refusal that echoes the entry, in both formats.
 - A server base or `source:` carrying a query never names an API root:
   `apiRootCandidates` concatenates strings, so `/api/v3` lands inside the
   query and every candidate misses. Built with `net/url`, such a base would

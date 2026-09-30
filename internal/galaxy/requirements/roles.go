@@ -92,6 +92,8 @@ func parseRoleItem(item any) (RoleRequirement, []string, error) {
 		}
 		req, err := finishRole(spec)
 		return req, nil, err
+	case nil:
+		return RoleRequirement{}, nil, fmt.Errorf("%w: the entry has no value", helpers.ErrInvalidRoleEntry)
 	case map[string]any:
 		spec, warnings, err := parseRoleMap(v)
 		if err != nil {
@@ -157,6 +159,9 @@ func parseRoleMap(value map[string]any) (roleSpec, []string, error) {
 			warnings = append(warnings, "ignoring unknown key "+helpers.TruncateForMessage(key)+" on a role entry")
 		}
 	}
+	if err := checkEntryValues(helpers.ErrInvalidRoleEntry, value, roleMapKeys(), ""); err != nil {
+		return roleSpec{}, nil, err
+	}
 	spec, err := roleMapSpec(value)
 	if err != nil {
 		return roleSpec{}, nil, err
@@ -196,14 +201,11 @@ func roleMapSpec(value map[string]any) (roleSpec, error) {
 	return spec, nil
 }
 
-// stringField reads one key of a mapping as a trimmed string: a scalar is
-// the text written, a missing or null key is "", a list or mapping rendered.
+// stringField reads one key checkEntryValues passed as a trimmed string; a
+// missing key is "".
 func stringField(value map[string]any, key string) string {
-	raw, ok := value[key]
-	if !ok || raw == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(raw))
+	raw, _ := value[key].(string)
+	return strings.TrimSpace(raw)
 }
 
 // splitScmPrefix cuts ansible's "scm+url" spelling: the text before the

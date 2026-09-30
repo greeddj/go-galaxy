@@ -106,19 +106,13 @@ func parseCollectionsAcceptedCases() []parseCollectionsAcceptedCase {
 }
 
 // signatureShapeAcceptedCases is the positive control for the signatures:
-// refusals: an empty, absent or blank value, a single string, and exactly
+// refusals: an empty list, blank sources, a single string, and exactly
 // helpers.MaxSignaturesPerCollection sources must all be accepted.
 func signatureShapeAcceptedCases() []parseCollectionsAcceptedCase {
 	return []parseCollectionsAcceptedCase{
 		{
 			name:   "signatures empty list",
 			input:  "- name: ns.name\n  signatures: []\n",
-			source: "https://default",
-			check:  checkAcceptedNoSignatures,
-		},
-		{
-			name:   "signatures absent",
-			input:  "- name: ns.name\n  signatures:\n",
 			source: "https://default",
 			check:  checkAcceptedNoSignatures,
 		},

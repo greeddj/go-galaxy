@@ -1070,3 +1070,22 @@ func TestUnquotedPartialVersionInstallsItsOwnMinor(t *testing.T) {
 		t.Fatalf("installed acme.app %s, want %s", got, testVersion100)
 	}
 }
+
+// TestKeyWithNoValueExitsUsageAtLoad pins that version: written with no value
+// is refused at load, exit 2, before any request, where it once reached the
+// resolve as the constraint "<nil>" and exited 1.
+func TestKeyWithNoValueExitsUsageAtLoad(t *testing.T) {
+	t.Parallel()
+	f := newE2EFixture(t)
+	content := "collections:\n  - name: acme.app\n    version:\n"
+	if err := os.WriteFile(f.cfg.RequirementsFile, []byte(content), helpers.FileMod); err != nil {
+		t.Fatalf("write requirements.yml: %v", err)
+	}
+	err := collections.Start(context.Background(), f.cfg, f.runtime)
+	if !errors.Is(err, helpers.ErrInvalidCollectionEntry) || exitcode.FromError(err) != exitcode.ExitUsage {
+		t.Fatalf("Start = %v (exit %d), want ErrInvalidCollectionEntry, exit %d", err, exitcode.FromError(err), exitcode.ExitUsage)
+	}
+	if got := f.server.Total(); got != 0 {
+		t.Fatalf("server saw %d requests, want none", got)
+	}
+}

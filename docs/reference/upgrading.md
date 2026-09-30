@@ -16,6 +16,7 @@ its result, except an input that used to be refused and is now accepted.
 | Change | What you do | If you do not |
 | --- | --- | --- |
 | An unquoted value in `requirements.yml` reads as the text written, as a role's `meta/main.yml` already did: `version: 1.10` asks for `1.10`, not `1.1`, and `version: 1.0` for `1.0.x`, not every `1.x`. A number, `true` or a date under a collection's `namespace:`, `source:` or `type:`, ignored before, is read and judged ([Version constraints](../guides/requirements.md#version-constraints)) | Before the new release runs `install`, `lock` or `cleanup` over a project, quote each unquoted numeric value as the text you mean: `"1.1"` and `"1"` keep what `1.10` and `1.0` asked for. Then relock: run `go-galaxy lock` and commit `galaxy.lock` ([Create the lockfile](../guides/lockfile.md#create-the-lockfile)) | `--frozen` runs and `lock --check` exit `6` where `galaxy.lock` no longer matches, such as a role locked at `1.1`. A plain `install` takes another version, a lower one for `1.0`, and `cleanup` removes an installed version the new reading no longer reaches |
+| A key an entry is read by, written with no value, such as `version:`, `name: ~` or `signatures: null`, and a list or a mapping under a key that takes text, such as `type: [git]`, exit `2` at load. Before, a collection's `version:` with no value read as the text `<nil>`, and most other such keys, a list under `type:` included, read as absent ([What is refused](../guides/requirements.md#what-is-refused)) | Write the value, or delete the key. `version: ""` still means no version | `install`, `warm`, `lock` and, beside a `galaxy.lock`, `tree` exit `2` before anything installs. `cleanup` exits `2` and deletes nothing while a recorded project's file holds such a collection entry. One in `roles:` keeps that project's roles, with a warning |
 
 ### Exit codes that changed
 
@@ -25,6 +26,14 @@ Update any CI step that branches on the old code for these cases
 | Situation | Was | Now |
 | --- | --- | --- |
 | A number, `true` or a date under a collection's `namespace:` or `type:`, such as `type: 1` | `0`, the key ignored | `2`, at load |
+| A Galaxy collection entry whose `version:` has no value, or holds a list or a mapping | `1`, at the resolve | `2`, at load |
+| A git collection entry whose `version:` has no value | `3`, no ref named `<nil>` | `2`, at load |
+| A role entry key, or a collection's `namespace:`, `source:`, `type:` or `signatures:`, written with no value, or a list or a mapping under a collection's `namespace:`, `source:` or `type:` | `0`, read as absent | `2`, at load |
+
+What to do about a new code:
+
+- `2` for `has no value` or `not a string` on a requirements entry: write the
+  value the named key needs, or delete the key.
 
 ## From v1.2.x
 

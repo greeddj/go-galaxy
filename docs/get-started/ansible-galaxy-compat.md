@@ -2,8 +2,8 @@
 
 go-galaxy reads your files and variables as `ansible-galaxy` does, apart from
 the differences below, measured against ansible-core 2.21.2 (the `~`, `$VAR`,
-`{{CWD}}` and `ANSIBLE_CONFIG` rows, the `-r` file name and an unquoted version
-against 2.21.3).
+`{{CWD}}` and `ANSIBLE_CONFIG` rows, the `-r` file name, an unquoted version and
+a key written with no value against 2.21.3).
 
 | Surface | go-galaxy |
 | --- | --- |
@@ -39,6 +39,9 @@ against 2.21.3).
 >   exit `2` before any request
 > - A requirements file not named `*.yml`, `*.yaml` or `*.toml`, such as
 >   `/dev/stdin`, [exits `2`](#command-and-flag-cheat-sheet)
+> - An entry key [written with no value](#versions-and-resolution), such as a
+>   bare `version:`, exits `2`, where ansible reads it as absent on a git
+>   collection or a role
 
 ### Command and flag cheat sheet
 
@@ -98,6 +101,7 @@ test for non-zero or branch on the code.
 | Constraint grammar | Comparison operators, comma-joined; `1.0` means `1.0.0` | Adds `1.x`, `~1.2`, `^1.2`, `1.2 - 1.4`, <code>&#124;&#124;</code>; `1.0` means `1.0.x` | Use [ansible's operators](../guides/requirements.md#version-constraints) and full `X.Y.Z` in a shared file |
 | `requires_ansible` | Skips versions that exclude the running core | Not read | Pin a version your ansible-core supports |
 | An unquoted version, such as `1.10` | Read as a YAML number and written back, so `1.10` becomes `1.1`: a git collection checks out `1.1`, a Galaxy role asks for `1.1`, and a Galaxy collection or a git role fails with exit `250` | The text written, `1.10`, in the requirements file and in a role's `meta/main.yml` and `meta/requirements.yml` | [Quote versions](../guides/requirements.md#version-constraints) in a file both tools read |
+| A key written with no value, such as `version:` | A Galaxy collection fails with exit `250`; a git collection or a role reads it as absent | Refused, exit `2` ([What is refused](../guides/requirements.md#what-is-refused)). In a role's `meta` files it reads as absent, as in ansible | Write the value, or leave the key out |
 
 ### Prereleases
 

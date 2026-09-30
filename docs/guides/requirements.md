@@ -513,6 +513,8 @@ Each exits `2` before anything installs, naming the entry.
 | `#subdir` on a git role | The repository root is the role | One repository per role |
 | `source:`, `signatures:` or `type:` on a role | It would change the entry's meaning | The entry without it |
 | Two roles with one install name, case ignored | Both would land in one directory | Distinct `name:` values |
+| A key an entry is read by, written with no value, such as `version:`, `name: ~` or `source: null`, or a list item that is only `-` | Nothing says what was meant: ansible reads some as absent and fails on others | The value, or the entry without the key |
+| A list or a mapping under a key that takes text, such as `type: [git]` | The key holds one string; only `signatures:` takes a list | That string |
 
 ## Moving to galaxy.toml
 

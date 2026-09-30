@@ -370,6 +370,11 @@ func tomlTableRefusalCases() []tomlRefusalCase {
 			wantErr: helpers.ErrInvalidCollectionEntry, wantMsg: "version is a float64, not a string", notMsg: "1",
 		},
 		{
+			// TOML has no null, so the no-value refusal has no TOML half.
+			name: "null version", toml: tomlCollections(`{ name = "ns.name", version = null }`),
+			wantErr: helpers.ErrInvalidRequirementsTOML,
+		},
+		{
 			name: "integer name", toml: tomlCollections(`{ name = 3 }`),
 			wantErr: helpers.ErrInvalidCollectionEntry, wantMsg: "name is a int64, not a string", notMsg: "3",
 		},
