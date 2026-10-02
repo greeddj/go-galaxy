@@ -802,7 +802,7 @@ func TestLoadAnsibleConfigFromCLIDiscovery(t *testing.T) {
 
 	t.Run("world-writable cwd is skipped with a warning", subtestWorldWritableCwdSkipped)
 	t.Run("non-world-writable cwd is discovered", subtestNonWorldWritableCwdDiscovered)
-	t.Run("world-writable cwd: a relative ANSIBLE_CONFIG still reads that file", subtestWorldWritableCwdEnvPathStillRead)
+	t.Run("world-writable cwd: a relative ANSIBLE_CONFIG reads that file unwarned", subtestWorldWritableCwdEnvPathReadUnwarned)
 
 	t.Run("nothing found in cwd or ANSIBLE_CONFIG: falls through cleanly", func(t *testing.T) {
 		// Whether ~/.ansible.cfg or /etc/ansible/ansible.cfg exists is up to
@@ -853,6 +853,9 @@ func subtestWorldWritableCwdSkipped(t *testing.T) {
 	if !warningMentions(warnings, "world-writable", dir) {
 		t.Fatalf("warnings = %v, want one naming %q as world-writable", warnings, dir)
 	}
+	if !warningMentions(warnings, "$ANSIBLE_CONFIG") {
+		t.Fatalf("warnings = %v, want one naming $ANSIBLE_CONFIG as a path still read", warnings)
+	}
 }
 
 // subtestNonWorldWritableCwdDiscovered is subtestWorldWritableCwdSkipped's
@@ -874,10 +877,10 @@ func subtestNonWorldWritableCwdDiscovered(t *testing.T) {
 	}
 }
 
-// subtestWorldWritableCwdEnvPathStillRead pins that the skip covers only the
+// subtestWorldWritableCwdEnvPathReadUnwarned pins that the skip covers only the
 // cwd candidate: a relative $ANSIBLE_CONFIG naming the same file still loads
-// it, and the world-writable warning names $ANSIBLE_CONFIG as still read.
-func subtestWorldWritableCwdEnvPathStillRead(t *testing.T) {
+// it, and with no warning, since the file read is the one the operator named.
+func subtestWorldWritableCwdEnvPathReadUnwarned(t *testing.T) {
 	dir := t.TempDir()
 	writeAnsibleCfg(t, filepath.Join(dir, "ansible.cfg"), "https://cwd.example")
 	chmodDir(t, dir, 0o777)
@@ -889,11 +892,8 @@ func subtestWorldWritableCwdEnvPathStillRead(t *testing.T) {
 	c := newAnsibleConfigCmd(t, nil)
 	cfg, gotPath, warnings, err := loadAnsibleConfigFromCLI(c)
 	assertAnsibleConfigLoaded(t, cfg, gotPath, err, filepath.Join(physicalDir(t, dir), "ansible.cfg"), "https://cwd.example")
-	if !warningMentions(warnings, "world-writable", dir) {
-		t.Fatalf("warnings = %v, want one naming %q as world-writable", warnings, dir)
-	}
-	if !warningMentions(warnings, "$ANSIBLE_CONFIG") {
-		t.Fatalf("warnings = %v, want one naming $ANSIBLE_CONFIG as a path still read", warnings)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %v, want none", warnings)
 	}
 }
 

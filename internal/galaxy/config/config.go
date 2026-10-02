@@ -433,9 +433,9 @@ func loadAnsibleConfigFromCLI(c *cli.Command) (ansibleConfig, string, []string, 
 	return cfg, loadedPath, warnings, nil
 }
 
-// maxAnsibleConfigCandidates bounds the discovery candidate list: env var,
-// cwd, home, and the system-wide path.
-const maxAnsibleConfigCandidates = 4
+// maxAnsibleConfigCandidates bounds the candidate list $ANSIBLE_CONFIG falls
+// through to: cwd, home, and the system-wide path.
+const maxAnsibleConfigCandidates = 3
 
 // ansibleCfgName is the file name discovery looks for in the working
 // directory, and inside a directory $ANSIBLE_CONFIG names.
@@ -455,13 +455,17 @@ const worldWritablePerm = 0o002
 // search order, or "", plus discovery warnings; like ansible it skips
 // ./ansible.cfg when the current directory is world-writable.
 func discoverAnsibleConfigPath() (string, []string) {
-	var warnings []string
-	candidates := make([]string, 0, maxAnsibleConfigCandidates)
 	// A value empty before or after expansion stays skipped: ansible would read
 	// ./ansible.cfg for it, even in the world-writable directory cwdCandidate declines.
 	if envPath := helpers.ExpandAnsiblePath(os.Getenv("ANSIBLE_CONFIG")); envPath != "" {
-		candidates = append(candidates, resolveAnsibleConfigEnv(envPath))
+		// A found $ANSIBLE_CONFIG wins before the cwd is judged, as in ansible:
+		// the world-writable warning is for a run the skip can change.
+		if path := resolveAnsibleConfigEnv(envPath); fileExists(path) {
+			return path, nil
+		}
 	}
+	var warnings []string
+	candidates := make([]string, 0, maxAnsibleConfigCandidates)
 	cwdPath, cwdWarning := cwdCandidate()
 	if cwdPath != "" {
 		candidates = append(candidates, cwdPath)

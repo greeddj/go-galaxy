@@ -179,7 +179,9 @@ server_timeout = 60
 > In a world-writable working directory, sticky bit included (`/tmp`, a `0777`
 > CI workspace), go-galaxy skips `./ansible.cfg` and warns, whether or not one
 > exists, since any user could plant one. Name the file with `ANSIBLE_CONFIG`
-> or `--ansible-config`, or remove the world-writable bit.
+> or `--ansible-config`, or remove the world-writable bit. A file named that
+> way is read with no warning, `./ansible.cfg` itself included. An
+> `ANSIBLE_CONFIG` that is empty or names no file leaves the warning.
 
 ### Where it is found
 

@@ -242,7 +242,7 @@ GitLab's Docker executor leaves the checkout world-writable by default, so
 go-galaxy, like ansible, skips `./ansible.cfg` there
 ([ansible.cfg](../reference/configuration.md#ansiblecfg)). A project that reads
 servers or paths from it sets `ANSIBLE_CONFIG: "$CI_PROJECT_DIR/ansible.cfg"`
-under `variables:`.
+under `variables:`, which also ends the warning.
 
 Keep secrets in masked CI/CD variables, not in `.gitlab-ci.yml`. GitLab exports
 each into the job's environment under its own name, so name it as go-galaxy
