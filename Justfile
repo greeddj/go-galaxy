@@ -9,8 +9,8 @@ LDFLAGS := "-s -w" \
   + " -X main.Date=" + DATE \
   + " -X main.BuiltBy=just"
 
-GOLANGCI_LINT_VERSION := "v2.13.2"
-ZENSICAL_VERSION := "0.0.65"
+GOLANGCI_LINT_VERSION := "v2.14.0"
+ZENSICAL_VERSION := "0.0.67"
 BENCH_LDFLAGS := "-s -w"
 
 deps:

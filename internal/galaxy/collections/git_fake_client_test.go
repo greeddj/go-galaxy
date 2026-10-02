@@ -209,9 +209,9 @@ func subdirMatches(collectionSubdir, requested string) bool {
 	if collectionSubdir == requested {
 		return true
 	}
-	parent := ""
-	if i := strings.LastIndex(collectionSubdir, "/"); i >= 0 {
-		parent = collectionSubdir[:i]
+	parent, _, found := strings.CutLast(collectionSubdir, "/")
+	if !found {
+		parent = ""
 	}
 	return parent == requested
 }
