@@ -14,7 +14,7 @@ fetch and none to lose.
 signature and one hash cover whichever asset you downloaded:
 
 ```bash
-tag=v1.3.1
+tag=v1.4.0
 asset=go-galaxy-linux-amd64   # the file you install
 base="https://github.com/greeddj/go-galaxy/releases/download/$tag"
 curl -sSLf -O "$base/$asset" -O "$base/checksums.txt" \
@@ -71,7 +71,7 @@ quarantined copy of this binary does not start. The cask therefore clears the
 attribute in a post-install hook (`xattr -dr com.apple.quarantine`). That hook
 skips a Gatekeeper check on your behalf. To check what the cask installs,
 set `asset` above to its release archive, such as
-`go-galaxy_1.3.1_Darwin_arm64.tar.gz`.
+`go-galaxy_1.4.0_Darwin_arm64.tar.gz`.
 
 Nothing else the release publishes clears the attribute: raw binaries,
 archives and images ship exactly as built. A `curl` download carries no

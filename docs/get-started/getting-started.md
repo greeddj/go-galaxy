@@ -59,7 +59,7 @@ versions, and run the same install in CI.
 
     ```dockerfile
     FROM ghcr.io/astral-sh/uv:0.12.17-python3.14-alpine
-    COPY --from=ghcr.io/greeddj/go-galaxy:1.3.1 /go-galaxy /usr/local/bin/go-galaxy
+    COPY --from=ghcr.io/greeddj/go-galaxy:1.4.0 /go-galaxy /usr/local/bin/go-galaxy
     ```
 
     The binary is static, so any Linux base takes it, Alpine or glibc, and
@@ -73,7 +73,7 @@ versions, and run the same install in CI.
 === "GitHub Actions"
 
     ```yaml
-    - uses: greeddj/go-galaxy@v1.3.1
+    - uses: greeddj/go-galaxy@v1.4.0
     ```
 
     The job is under [Run it in CI](#run-it-in-ci).
@@ -198,7 +198,7 @@ to its version, download URL and sha256, and the role to a git commit.
         runs-on: ubuntu-latest
         steps:
           - uses: actions/checkout@v7
-          - uses: greeddj/go-galaxy@v1.3.1 # (1)!
+          - uses: greeddj/go-galaxy@v1.4.0 # (1)!
             with:
               frozen: true
     ```
@@ -219,12 +219,12 @@ to its version, download URL and sha256, and the role to a git commit.
 
     install:
       image:
-        name: ghcr.io/greeddj/go-galaxy:1.3.1-alpine # (1)!
+        name: ghcr.io/greeddj/go-galaxy:1.4.0-alpine # (1)!
         entrypoint: [""]
       cache:
         key:
           files: [galaxy.lock]
-          prefix: go-galaxy-1.3.1
+          prefix: go-galaxy-1.4.0
         paths: [.cache/go-galaxy]
       script:
         - go-galaxy install --frozen
