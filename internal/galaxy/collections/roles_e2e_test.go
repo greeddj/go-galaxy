@@ -993,3 +993,80 @@ func TestRoleUnquotedVersionLocksAsWritten(t *testing.T) {
 	f.mustInstall(t)
 	assertFileContains(t, filepath.Join(f.rolePath("acme.tagged"), "COMMIT"), c2)
 }
+
+// assertLockedRole fails unless lf holds want, field for field, under its
+// name.
+func assertLockedRole(t *testing.T, lf *lockfile.File, want lockfile.RoleEntry) {
+	t.Helper()
+	if got := findLockRole(t, lf, want.Name); fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
+		t.Fatalf("role entry %s = %+v, want %+v", want.Name, got, want)
+	}
+}
+
+// TestRoleRefreshLabelsAMovedHEADWithItsBranch pins that lock --refresh of a
+// role taken at HEAD, once HEAD moved, labels the new commit with the branch
+// HEAD points at, as a fresh lock does, in the lockfile, cache and install.
+func TestRoleRefreshLabelsAMovedHEADWithItsBranch(t *testing.T) {
+	t.Parallel()
+	f := newRoleFixture(t)
+	f.writeRequirements(t, "roles:\n  - src: git+"+roleAppURL+"\n    name: app\n")
+	assertLockedRole(t, f.lockfile(t), lockfile.RoleEntry{
+		Name: "app", Type: lockfile.RoleTypeGit, Version: "main", Source: roleAppURL, Ref: "HEAD", Commit: fakeCommit("role-app-1"),
+		Deps: []string{"base"},
+	})
+
+	moved := fakeCommit("role-app-2")
+	f.git.repos[roleAppURL].refs["HEAD"] = moved
+	f.git.repos[roleAppURL].refs[roleMainRef] = moved
+	f.cfg.Refresh = true
+	assertLockedRole(t, f.lockfile(t), lockfile.RoleEntry{
+		Name: "app", Type: lockfile.RoleTypeGit, Version: "main", Source: roleAppURL, Ref: "HEAD", Commit: moved,
+	})
+	locator := gitsource.Locator{URL: roleAppURL, Commit: moved}.String()
+	assertArtifactFilePresent(t, f.cacheDir, locator, helpers.RoleArtifactFilename("app", "main"))
+
+	f.cfg.Refresh = false
+	f.mustInstall(t)
+	assertFileContains(t, filepath.Join(f.rolePath("app"), "meta", ".galaxy_install_info"), "version: main")
+}
+
+// TestRoleRefreshRelabelsAPinRecordedAsHEAD pins that lock --refresh with
+// HEAD unmoved replaces a pin and artifact recorded under the label HEAD by
+// the branch's, then replays that pin on one advertisement and no fetch.
+func TestRoleRefreshRelabelsAPinRecordedAsHEAD(t *testing.T) {
+	t.Parallel()
+	f := newRoleFixture(t)
+	f.writeRequirements(t, "roles:\n  - src: git+"+roleAppURL+"\n    name: app\n")
+	f.lockfile(t)
+	locator := gitsource.Locator{URL: roleAppURL, Commit: fakeCommit("role-app-1")}.String()
+	built, err := os.ReadFile(roleArtifactPath(f, locator, "app", "main"))
+	if err != nil {
+		t.Fatalf("read cached artifact: %v", err)
+	}
+	//nolint:gosec // path is built from this test's own temp dirs.
+	if err := os.WriteFile(roleArtifactPath(f, locator, "app", "HEAD"), built, 0o600); err != nil {
+		t.Fatalf("write the HEAD-labeled artifact: %v", err)
+	}
+	pinKey := gitsource.PinKey(roleAppURL, "HEAD", "")
+	mutateStoreSnapshot(t, f.gitFixture, func(st *store.Store) {
+		pin, ok := st.GetRolePin(pinKey)
+		if !ok {
+			t.Fatalf("no git role pin recorded under %q", pinKey)
+		}
+		pin.Version = "HEAD"
+		st.SetRolePin(pinKey, pin)
+	})
+
+	f.cfg.Refresh = true
+	want := lockfile.RoleEntry{
+		Name: "app", Type: lockfile.RoleTypeGit, Version: "main", Source: roleAppURL, Ref: "HEAD", Commit: fakeCommit("role-app-1"),
+		Deps: []string{"base"},
+	}
+	assertLockedRole(t, f.lockfile(t), want)
+	f.git.resetCounts()
+	before := f.git.roleAcquireCount()
+	assertLockedRole(t, f.lockfile(t), want)
+	if adv, _ := f.git.counts(); adv != 2 || f.git.roleAcquireCount() != before {
+		t.Fatalf("relabeled pin: advertises=%d role acquires=%d, want 2 (app, base) and 0", adv, f.git.roleAcquireCount()-before)
+	}
+}

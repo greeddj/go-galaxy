@@ -165,24 +165,36 @@ func buildIfRequested(ctx context.Context, req gitsource.Request, fc fakeGitColl
 	return built, true, nil
 }
 
-// resolve records the credential offered for u and maps ref to a commit and
-// a full ref name the way an advertisement would.
+// resolve is repoFor plus ref mapped to a commit and a full ref name the
+// way an advertisement would.
 func (c *fakeGitClient) resolve(u gitsource.URL, ref gitsource.Ref, auth gitsource.Credential) (*fakeGitRepo, string, string, error) {
+	repo, err := c.repoFor(u, auth)
+	if err != nil {
+		return nil, "", "", err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.seenAuth[u.String()] = auth
-	if c.failWith != nil {
-		return nil, "", "", c.failWith
-	}
-	repo, ok := c.repos[u.String()]
-	if !ok {
-		return nil, "", "", fmt.Errorf("%w: %s: repository not found", helpers.ErrGitTransportFailed, u.String())
-	}
 	commit, refName, err := repo.lookup(ref)
 	if err != nil {
 		return nil, "", "", err
 	}
 	return repo, commit, refName, nil
+}
+
+// repoFor records the credential offered for u and returns the repository
+// served there, failing as an unreachable remote would.
+func (c *fakeGitClient) repoFor(u gitsource.URL, auth gitsource.Credential) (*fakeGitRepo, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.seenAuth[u.String()] = auth
+	if c.failWith != nil {
+		return nil, c.failWith
+	}
+	repo, ok := c.repos[u.String()]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s: repository not found", helpers.ErrGitTransportFailed, u.String())
+	}
+	return repo, nil
 }
 
 func (c *fakeGitClient) add(url string, repo *fakeGitRepo) {

@@ -322,12 +322,12 @@ func resolveGitRoleRequest(ctx context.Context, deps collectionDeps, greq gitRol
 	if refreshed, ok, err := refreshRolePin(ctx, deps, greq, policy, galaxySHA); ok || err != nil {
 		return refreshed, err
 	}
-	return acquireRole(ctx, deps, greq, policy, "", galaxySHA)
+	return acquireRole(ctx, deps, greq, policy, "", "", galaxySHA)
 }
 
 // refreshRolePin is the cheap half of --refresh for a branch or tag pin: one
-// advertisement, and if the commit is unchanged and the artifact is still
-// cached, the pin stands. ok=false when there is no pin to refresh.
+// advertisement, and if the commit and its label are unchanged and the
+// artifact is still cached, the pin stands. ok=false when there is no pin.
 func refreshRolePin(
 	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, galaxySHA string,
 ) (rolePin, bool, error) {
@@ -338,24 +338,37 @@ func refreshRolePin(
 	if !ok {
 		return rolePin{}, false, nil
 	}
-	commit, _, err := deps.runtime.Git.Advertise(ctx, greq.url, greq.ref, greq.cred)
+	commit, refName, err := deps.runtime.Git.Advertise(ctx, greq.url, greq.ref, greq.cred)
 	if err != nil {
 		return rolePin{}, false, err
 	}
-	if commit == pin.Commit {
-		replayed, err := replayRolePin(ctx, deps, greq, pin)
-		if err != nil {
-			return rolePin{}, true, err
-		}
-		if replayed.locator != "" {
-			if policy.Write {
-				deps.st.SetRolePin(greq.pinKey, pin)
-			}
-			return replayed, true, nil
-		}
+	// A fetch by commit reaches no ref name, so HEAD's label is the branch
+	// this advertisement names, the one a fetch with no commit would reach.
+	label := roleVersionFor(greq.ref, refName)
+	if replayed, ok, err := standingRolePin(ctx, deps, greq, policy, pin, commit, label); ok || err != nil {
+		return replayed, true, err
 	}
-	refreshed, err := acquireRole(ctx, deps, greq, policy, commit, galaxySHA)
+	refreshed, err := acquireRole(ctx, deps, greq, policy, commit, label, galaxySHA)
 	return refreshed, true, err
+}
+
+// standingRolePin replays pin when the advertisement left its commit and
+// label as recorded and its artifact is still cached; ok=false sends the
+// caller to acquire what the advertisement named.
+func standingRolePin(
+	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, pin store.RolePinEntry, commit, label string,
+) (rolePin, bool, error) {
+	if commit != pin.Commit {
+		return rolePin{}, false, nil
+	}
+	replayed, err := replayRolePin(ctx, deps, greq, pin)
+	if err != nil || replayed.locator == "" || replayed.version != label {
+		return rolePin{}, false, err
+	}
+	if policy.Write {
+		deps.st.SetRolePin(greq.pinKey, pin)
+	}
+	return replayed, true, nil
 }
 
 // replayRolePin re-validates a recorded pin, which is cache state, and
@@ -414,10 +427,10 @@ func sourceDepsToPin(deps []gitsource.RoleDependency) []store.RolePinDep {
 }
 
 // acquireRole fetches the repository, builds the role, stores the artifact
-// and records the pin. A non-empty commit is the tip an advertisement just
-// resolved, so exactly that commit is fetched.
+// and records the pin. A non-empty commit is fetched exactly; a non-empty
+// label is the version it installs as, else the ref name reached decides.
 func acquireRole(
-	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, commit, galaxySHA string,
+	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, commit, label, galaxySHA string,
 ) (rolePin, error) {
 	runtime := deps.runtime
 	runtime.Output.Printf("Fetching role %s from %s@%s", greq.name, greq.display, greq.ref.Name)
@@ -443,7 +456,10 @@ func acquireRole(
 		runtime.Output.Warnf("%s: Galaxy recorded commit %s for %s but the repository advertises %s; "+
 			"the repository wins, as it does for ansible-galaxy", greq.display, galaxySHA, greq.ref.Name, result.Commit)
 	}
-	version := roleVersionFor(greq.ref, result.RefName)
+	version := label
+	if version == "" {
+		version = roleVersionFor(greq.ref, result.RefName)
+	}
 	pin := rolePin{
 		deps:       result.Dependencies,
 		locator:    gitsource.Locator{URL: greq.url.String(), Commit: result.Commit}.String(),

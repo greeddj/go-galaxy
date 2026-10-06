@@ -119,7 +119,7 @@ flowchart TD
   P4 -->|"yes"| P5["advertise the ref once"]
   P5 -->|"moved"| P6
   P5 -->|"failed"| XF1(["exit 2, 3, 4,<br/>5 or 7 by cause"])
-  P5 -->|"same commit,<br/>artifacts cached"| P2
+  P5 -->|"same commit, artifacts cached,<br/>a role's label unchanged"| P2
   P6 -->|"failed"| XF(["exit 2, 3, 4,<br/>5 or 7 by cause"])
   P6 --> P7["commit to artifact cache;<br/>--no-cache hands it on"]
   P7 -->|"commit failed"| XF

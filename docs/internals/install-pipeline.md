@@ -135,6 +135,10 @@ first-wins follows declaration order (`dedupeRoleLevel`). Past
 
 - A git or url role pin replays only while its artifact is stored
   (`roleArtifactCached`).
+- A git role at `HEAD` is labeled with the branch the remote says `HEAD`
+  points at, else `HEAD`. A fetch by commit reaches no ref name, so under
+  `--refresh` `refreshRolePin` hands `acquireRole` the label its
+  advertisement gave, and keeps a pin at an unchanged commit only under it.
 - `lookupGalaxyRole` tries servers in order, skipping one without v1 or the
   role. The first that lists the role owns it: `galaxyv1.Resolve` lists its
   versions from the v1 root that listed it and reads a `404` there as

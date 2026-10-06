@@ -60,7 +60,7 @@ func (r *fakeGitRepo) addRole(commit string, role fakeGitRole) {
 	r.roles[commit] = role
 }
 
-// AcquireRole resolves the ref like Acquire and builds the commit's role
+// AcquireRole picks the commit as roleTarget does and builds its role
 // through the real rolebuild.Build, so the cached artifact is byte for byte
 // what production would build from the same tree.
 func (c *fakeGitClient) AcquireRole(ctx context.Context, req gitsource.RoleRequest) (gitsource.RoleResult, error) {
@@ -73,12 +73,9 @@ func (c *fakeGitClient) AcquireRole(ctx context.Context, req gitsource.RoleReque
 	if req.TempFile == nil {
 		return gitsource.RoleResult{}, errFakeGitNoTempFile
 	}
-	repo, commit, refName, err := c.resolve(req.URL, req.Ref, req.Auth)
+	repo, commit, refName, err := c.roleTarget(req)
 	if err != nil {
 		return gitsource.RoleResult{}, err
-	}
-	if req.Commit != "" {
-		commit = req.Commit
 	}
 	role, ok := repo.roles[commit]
 	if !ok {
@@ -102,6 +99,24 @@ func (c *fakeGitClient) AcquireRole(ctx context.Context, req gitsource.RoleReque
 		Warnings:       built.Warnings,
 		BytesFetched:   2048,
 	}, nil
+}
+
+// roleTarget mirrors gitfetch's chooseTarget: a set Commit is taken with no
+// ref resolved and named by the request's ref (the commit when that is
+// empty), else the ref resolves as an advertisement would.
+func (c *fakeGitClient) roleTarget(req gitsource.RoleRequest) (*fakeGitRepo, string, string, error) {
+	if req.Commit == "" {
+		return c.resolve(req.URL, req.Ref, req.Auth)
+	}
+	repo, err := c.repoFor(req.URL, req.Auth)
+	if err != nil {
+		return nil, "", "", err
+	}
+	name := req.Ref.Name
+	if name == "" {
+		name = req.Commit
+	}
+	return repo, req.Commit, name, nil
 }
 
 // roleAcquireCount reports how many role acquisitions the client served.
