@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -15,13 +17,13 @@ const (
 	gitTestCommit = "0123456789abcdef0123456789abcdef01234567"
 )
 
-// canonicalGitSource runs a fixture URL through the same grammar lockfile.Load
+// canonicalGitSource runs gitTestSource through the same grammar lockfile.Load
 // applies, so a git entry built from it is accepted on the way back in.
-func canonicalGitSource(t *testing.T, raw string) string {
+func canonicalGitSource(t *testing.T) string {
 	t.Helper()
-	u, err := gitsource.ParseURL(raw)
+	u, err := gitsource.ParseURL(gitTestSource)
 	if err != nil {
-		t.Fatalf("ParseURL(%q): %v", raw, err)
+		t.Fatalf("ParseURL(%q): %v", gitTestSource, err)
 	}
 	return u.String()
 }
@@ -46,60 +48,34 @@ func gitRootFQDNsCases(source string) []gitRootFQDNsCase {
 		gitEntry("acme.two", source, "collections/two"),
 		gitEntry("other.thing", "https://git.example/other/repo.git", "collections/three"),
 	}}
-	req := requirements.CollectionRequirement{Type: requirements.TypeGit, Source: source, Subdir: "collections"}
+	req := requirements.CollectionRequirement{Type: requirements.TypeGit, Source: source, Subdir: "collections", Ref: "main"}
 	locator := gitsource.Locator{URL: source, Subdir: "collections"}.String()
 	return []gitRootFQDNsCase{
 		{name: "every entry under the subdir", req: req, lf: monorepo, want: []string{"acme.one", "acme.two"}},
 		{name: "explicit name narrows to one", req: requirements.CollectionRequirement{
-			Type: requirements.TypeGit, Source: source, Subdir: "collections", Namespace: "acme", Name: "two",
+			Type: requirements.TypeGit, Source: source, Subdir: "collections", Ref: "main", Namespace: "acme", Name: "two",
 		}, lf: monorepo, want: []string{"acme.two"}},
+		{name: "entries from another ref, charged to it", req: requirements.CollectionRequirement{
+			Type: requirements.TypeGit, Source: source, Subdir: "collections", Ref: "dev",
+		}, lf: monorepo, want: []string{"acme.one", "acme.two"}},
 		{name: "unrelated source only", req: req, lf: &lockfile.File{Collections: []lockfile.Entry{
 			gitEntry("other.thing", "https://git.example/other/repo.git", "collections/one"),
 		}}, want: []string{locator}},
 		{name: "nil lockfile", req: req, want: []string{locator}},
 		{name: "nil lockfile with an explicit name", req: requirements.CollectionRequirement{
-			Type: requirements.TypeGit, Source: source, Namespace: "acme", Name: "one",
+			Type: requirements.TypeGit, Source: source, Ref: "main", Namespace: "acme", Name: "one",
 		}, want: []string{"acme.one"}},
 	}
 }
 
 func TestGitRootFQDNs(t *testing.T) {
 	t.Parallel()
-	for _, tc := range gitRootFQDNsCases(canonicalGitSource(t, gitTestSource)) {
+	for _, tc := range gitRootFQDNsCases(canonicalGitSource(t)) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := gitRootFQDNs(tc.req, tc.lf)
+			got := gitRootFQDNs(gitRootMatches([]requirements.CollectionRequirement{tc.req}, tc.lf)[0])
 			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
 				t.Fatalf("gitRootFQDNs() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-type gitSubdirWithinCase struct {
-	entry string
-	root  string
-	want  bool
-}
-
-func gitSubdirWithinCases() []gitSubdirWithinCase {
-	return []gitSubdirWithinCase{
-		{entry: "collections/one", root: "collections", want: true},
-		{entry: "collections", root: "collections", want: true},
-		{entry: "collections/a/b", root: "collections", want: false},
-		{entry: "", root: "", want: true},
-		{entry: "x", root: "", want: true},
-		{entry: "", root: "x", want: false},
-	}
-}
-
-func TestGitSubdirWithin(t *testing.T) {
-	t.Parallel()
-	for _, tc := range gitSubdirWithinCases() {
-		t.Run(tc.entry+" in "+tc.root, func(t *testing.T) {
-			t.Parallel()
-			if got := gitSubdirWithin(tc.entry, tc.root); got != tc.want {
-				t.Fatalf("gitSubdirWithin(%q, %q) = %t, want %t", tc.entry, tc.root, got, tc.want)
 			}
 		})
 	}
@@ -135,7 +111,7 @@ func testDownloadURL(name, version string) string {
 // shown under its locator text as missing.
 func TestPrintTreeGitOrigin(t *testing.T) {
 	t.Parallel()
-	source := canonicalGitSource(t, gitTestSource)
+	source := canonicalGitSource(t)
 	lf := saveAndLoad(t, &lockfile.File{Collections: []lockfile.Entry{
 		gitEntry("acme.one", source, "collections/one"),
 		{Name: "ansible.utils", Version: "6.0.2", DownloadURL: testDownloadURL("ansible.utils", "6.0.2")},
@@ -161,7 +137,7 @@ func TestPrintTreeGitOrigin(t *testing.T) {
 // pins a commit rather than an artifact digest.
 func TestPrintExplainGitEntry(t *testing.T) {
 	t.Parallel()
-	source := canonicalGitSource(t, gitTestSource)
+	source := canonicalGitSource(t)
 	lf := saveAndLoad(t, &lockfile.File{Collections: []lockfile.Entry{gitEntry("acme.one", source, "collections/one")}})
 
 	var buf strings.Builder
@@ -184,5 +160,96 @@ func TestPrintExplainGitEntry(t *testing.T) {
 	}
 	if strings.Contains(out, "sha256") || strings.Contains(out, "download_url") {
 		t.Fatalf("printExplain() printed a sha256 or download_url line for a git entry; got:\n%s", out)
+	}
+}
+
+// TestTreeListsEachSharedGitEntryOnce pins tree over a root at collections
+// from main beside one at collections/three from dev, both holding that
+// directory: each locked entry is one root and prints once.
+func TestTreeListsEachSharedGitEntryOnce(t *testing.T) {
+	t.Parallel()
+	source := canonicalGitSource(t)
+	three := gitEntry("acme.three", source, "collections/three")
+	three.Ref = "dev"
+	lf := saveAndLoad(t, &lockfile.File{Collections: []lockfile.Entry{
+		gitEntry("acme.one", source, "collections/one"), gitEntry("acme.trois", source, "collections/three"), three,
+	}})
+	reqPath := filepath.Join(t.TempDir(), "requirements.yml")
+	body := "collections:\n" +
+		"  - name: " + gitTestSource + "#collections\n    type: git\n    version: main\n" +
+		"  - name: " + gitTestSource + "#collections/three\n    type: git\n    version: dev\n"
+	if err := os.WriteFile(reqPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	roots, _, err := loadRootFQDNs(reqPath, lf)
+	if err != nil {
+		t.Fatalf("loadRootFQDNs: %v", err)
+	}
+	if got := strings.Join(slices.Sorted(slices.Values(roots)), ","); got != "acme.one,acme.three,acme.trois" {
+		t.Fatalf("roots = %s, want acme.one,acme.three,acme.trois", got)
+	}
+	var buf strings.Builder
+	printTree(&buf, reqPath, lf, roots)
+	for _, row := range []string{"acme.one 1.0.0 (git", "acme.three 1.0.0 (git", "acme.trois 1.0.0 (git"} {
+		if n := strings.Count(buf.String(), row); n != 1 {
+			t.Fatalf("printTree() printed %q %d times, want once; got:\n%s", row, n, buf.String())
+		}
+	}
+}
+
+// TestGitRootFQDNsListsAnEntryUnderOneRequirement pins which of two requirements
+// sharing collections/three lists each entry: the nearest asking for its ref,
+// else the nearest it could come from, so no entry is listed twice.
+func TestGitRootFQDNsListsAnEntryUnderOneRequirement(t *testing.T) {
+	t.Parallel()
+	source := canonicalGitSource(t)
+	at := func(fqdn, subdir, ref string) lockfile.Entry {
+		e := gitEntry(fqdn, source, subdir)
+		e.Ref = ref
+		return e
+	}
+	lf := &lockfile.File{Collections: []lockfile.Entry{
+		at("acme.one", "collections/one", "main"), at("acme.trois", "collections/three", "main"),
+		at("acme.three", "collections/three", "dev"), at("acme.four", "collections/three", "feature"),
+	}}
+	reqs := []requirements.CollectionRequirement{
+		{Type: requirements.TypeGit, Source: source, Subdir: "collections", Ref: "main"},
+		{Type: requirements.TypeGit, Source: source, Subdir: "collections/three", Ref: "dev"},
+	}
+	matches := gitRootMatches(reqs, lf)
+	for i, want := range []string{"acme.one,acme.trois", "acme.three,acme.four"} {
+		if got := strings.Join(gitRootFQDNs(matches[i]), ","); got != want {
+			t.Fatalf("requirement %d lists %s, want %s", i, got, want)
+		}
+	}
+}
+
+// TestTreeListsANamedRequirementsCollectionOnce pins tree over a named root at
+// collections beside one at collections/three, both from main, where the child
+// owns the named collection's entry: tree prints that collection once.
+func TestTreeListsANamedRequirementsCollectionOnce(t *testing.T) {
+	t.Parallel()
+	source := canonicalGitSource(t)
+	lf := saveAndLoad(t, &lockfile.File{Collections: []lockfile.Entry{
+		gitEntry("acme.three", source, "collections/three"), gitEntry("acme.trois", source, "collections/three"),
+	}})
+	reqPath := filepath.Join(t.TempDir(), "requirements.yml")
+	body := "collections:\n" +
+		"  - name: acme.three\n    source: " + gitTestSource + "#collections\n    type: git\n    version: main\n" +
+		"  - name: " + gitTestSource + "#collections/three\n    type: git\n    version: main\n"
+	if err := os.WriteFile(reqPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	roots, _, err := loadRootFQDNs(reqPath, lf)
+	if err != nil {
+		t.Fatalf("loadRootFQDNs: %v", err)
+	}
+	if got := strings.Join(slices.Sorted(slices.Values(roots)), ","); got != "acme.three,acme.trois" {
+		t.Fatalf("roots = %s, want acme.three,acme.trois", got)
+	}
+	var buf strings.Builder
+	printTree(&buf, reqPath, lf, roots)
+	if n := strings.Count(buf.String(), "acme.three 1.0.0 (git"); n != 1 {
+		t.Fatalf("printTree() printed acme.three %d times, want once; got:\n%s", n, buf.String())
 	}
 }

@@ -93,7 +93,7 @@ never expanded. `loadRootFQDNs` picks the roots, shared with `explain`:
 | Requirement | Root |
 | --- | --- |
 | Galaxy | `namespace.name` |
-| git (`gitRootFQDNs`) | locked git entries from its URL at its subdir or a child, filtered by name; else name or locator |
+| git (`gitRootFQDNs`) | the git entries [`lockfile.MatchGitRequirements`](lockfile-format.md#git-requirements-and-their-entries) gives it, owned or charged to it, so each is listed once; else name or locator |
 | url (`urlRootFQDNs`) | the first locked url entry from its URL; else its `url+` locator |
 | role | its install name |
 

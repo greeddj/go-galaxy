@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
-	"path"
 	"slices"
 	"strings"
 
@@ -283,36 +282,45 @@ func indexLockfile(lf *lockfile.File, cfg *config.Config) (map[string]lockfile.E
 }
 
 func verifyRootsAgainstLockfile(roots []collection, byFQDN map[string]lockfile.Entry) error {
-	for _, root := range roots {
-		if root.isGit() {
-			if err := verifyGitRootAgainstLockfile(root, byFQDN); err != nil {
-				return err
-			}
-			continue
+	gitMatches, err := matchGitRoots(roots, slices.Collect(maps.Values(byFQDN)))
+	if err != nil {
+		return err
+	}
+	for i, root := range roots {
+		switch {
+		case root.isGit():
+			err = gitMatches[i].Err()
+		case root.isURL():
+			err = verifyURLRootAgainstLockfile(root, byFQDN)
+		default:
+			err = verifyGalaxyRootAgainstLockfile(root, byFQDN)
 		}
-		if root.isURL() {
-			if err := verifyURLRootAgainstLockfile(root, byFQDN); err != nil {
-				return err
-			}
-			continue
-		}
-		fqdn := fmt.Sprintf("%s.%s", root.Namespace, root.Name)
-		entry, ok := byFQDN[fqdn]
-		if !ok {
-			return fmt.Errorf("%w: root %s missing", helpers.ErrLockfileMismatch, fqdn)
-		}
-		constraint := root.Constraint
-		if constraint == "" {
-			constraint = root.Version
-		}
-		ok, err := constraintSatisfied(entry.Version, constraint)
 		if err != nil {
-			return fmt.Errorf("%w: root %s: %s", helpers.ErrLockfileMismatch, fqdn, err.Error())
+			return err
 		}
-		if !ok {
-			return fmt.Errorf("%w: root %s constraint %q not satisfied by lockfile %s",
-				helpers.ErrLockfileMismatch, fqdn, constraint, entry.Version)
-		}
+	}
+	return nil
+}
+
+// verifyGalaxyRootAgainstLockfile requires the Galaxy root's entry and a locked
+// version its constraint, or else its version, allows.
+func verifyGalaxyRootAgainstLockfile(root collection, byFQDN map[string]lockfile.Entry) error {
+	fqdn := fmt.Sprintf("%s.%s", root.Namespace, root.Name)
+	entry, ok := byFQDN[fqdn]
+	if !ok {
+		return fmt.Errorf("%w: root %s missing", helpers.ErrLockfileMismatch, fqdn)
+	}
+	constraint := root.Constraint
+	if constraint == "" {
+		constraint = root.Version
+	}
+	ok, err := constraintSatisfied(entry.Version, constraint)
+	if err != nil {
+		return fmt.Errorf("%w: root %s: %s", helpers.ErrLockfileMismatch, fqdn, err.Error())
+	}
+	if !ok {
+		return fmt.Errorf("%w: root %s constraint %q not satisfied by lockfile %s",
+			helpers.ErrLockfileMismatch, fqdn, constraint, entry.Version)
 	}
 	return nil
 }
@@ -348,51 +356,32 @@ func materializeLockfile(byFQDN map[string]lockfile.Entry, lockedURLs bool) (map
 	return resolved, graph, nil
 }
 
-// verifyGitRootAgainstLockfile requires a git entry from the root's repository
-// under its subdir, every such entry locked from the root's ref (a changed ref
-// is a mismatch even at the same commit), and a named root's own fqdn.
-func verifyGitRootAgainstLockfile(root collection, byFQDN map[string]lockfile.Entry) error {
-	loc, err := root.gitLocator()
-	if err != nil {
-		return err
-	}
-	display := helpers.URLForMessage(loc.URL)
-	matched := 0
-	for fqdn, entry := range byFQDN {
-		if !lockedFromGitRoot(entry, loc) {
+// matchGitRoots matches the git roots of roots to the git entries among entries
+// by lockfile.MatchGitRequirements, the one place a git root finds its entries;
+// the result is aligned with roots, a root that is not git left zero.
+func matchGitRoots(roots []collection, entries []lockfile.Entry) ([]lockfile.GitMatch, error) {
+	reqs := make([]lockfile.GitRequirement, 0, len(roots))
+	at := make([]int, 0, len(roots))
+	for i, root := range roots {
+		if !root.isGit() {
 			continue
 		}
-		if entry.Ref != root.Ref {
-			return fmt.Errorf("%w: git root %s locked from ref %q, requirements ask for %q",
-				helpers.ErrLockfileMismatch, display, entry.Ref, root.Ref)
+		loc, err := root.gitLocator()
+		if err != nil {
+			return nil, err
 		}
-		matched++
-		if root.Namespace != "" && fqdn == root.Namespace+"."+root.Name {
-			return nil
+		req := lockfile.GitRequirement{URL: loc.URL, Subdir: loc.Subdir, Ref: root.Ref}
+		if root.Namespace != "" || root.Name != "" {
+			req.FQDN = root.fqdn()
 		}
+		reqs = append(reqs, req)
+		at = append(at, i)
 	}
-	return gitRootUnmatched(root, display, matched)
-}
-
-// lockedFromGitRoot reports whether entry is a git entry locked from loc's
-// repository under loc's subdir (itself or an immediate child).
-func lockedFromGitRoot(entry lockfile.Entry, loc gitsource.Locator) bool {
-	return entry.IsGit() && entry.Source == loc.URL && subdirWithin(entry.Subdir, loc.Subdir)
-}
-
-// gitRootUnmatched decides a git root whose own fqdn no entry carried: no entry
-// from the repository is a mismatch, so is a named root, and an unnamed root is
-// satisfied by any matched entry.
-func gitRootUnmatched(root collection, display string, matched int) error {
-	switch {
-	case matched == 0:
-		return fmt.Errorf("%w: git root %s has no lockfile entry", helpers.ErrLockfileMismatch, display)
-	case root.Namespace != "":
-		return fmt.Errorf("%w: git root %s has no lockfile entry for %s.%s",
-			helpers.ErrLockfileMismatch, display, root.Namespace, root.Name)
-	default:
-		return nil
+	matches := make([]lockfile.GitMatch, len(roots))
+	for k, match := range lockfile.MatchGitRequirements(reqs, entries) {
+		matches[at[k]] = match
 	}
+	return matches, nil
 }
 
 // verifyURLRootAgainstLockfile requires the entry locked from the root's URL,
@@ -415,19 +404,6 @@ func verifyURLRootAgainstLockfile(root collection, byFQDN map[string]lockfile.En
 		return nil
 	}
 	return fmt.Errorf("%w: url root %s has no lockfile entry", helpers.ErrLockfileMismatch, display)
-}
-
-// subdirWithin reports whether a locked entry's subdir is the root's own
-// subdir or an immediate child of it.
-func subdirWithin(entrySubdir, rootSubdir string) bool {
-	if entrySubdir == rootSubdir {
-		return true
-	}
-	parent := path.Dir(entrySubdir)
-	if parent == "." {
-		parent = ""
-	}
-	return parent == rootSubdir
 }
 
 func lockfileDepsToKeys(deps []string, byFQDN map[string]lockfile.Entry) []string {

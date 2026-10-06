@@ -138,7 +138,7 @@ every lockfile change.
 
 | What | Checked against | On mismatch |
 | --- | --- | --- |
-| Each entry of your requirements file | Its `galaxy.lock` entry exists and still matches: a Galaxy collection's constraint, a git collection's repository and ref, a url collection's URL and `version`, a role's source and version (for a git role, its ref) | `6` |
+| Each entry of your requirements file | Its `galaxy.lock` entry exists and still matches: a Galaxy collection's constraint, a git collection's repository and ref (each locked git collection counts for the entry at its directory, else the one above it, that asks for its ref), a url collection's URL and `version`, a role's source and version (for a git role, its ref) | `6` |
 | `galaxy.lock` itself | Present, valid, each `download_url` on its server's origin | `6` |
 | Galaxy or url collection bytes | The `sha256` pin, after one re-download of a bad cached copy (not under `--offline`) | `7` |
 | Galaxy collection bytes from a locked `download_url` | The entry's namespace, name and version, against the `MANIFEST.json` they carry | `7` |

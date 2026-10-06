@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"slices"
 
 	"github.com/greeddj/go-galaxy/cmd/go-galaxy/cliflags"
@@ -64,16 +63,23 @@ func loadRootFQDNs(reqPath string, lf *lockfile.File) ([]string, []string, error
 		return nil, nil, fmt.Errorf("load requirements %s: %w", reqPath, err)
 	}
 	out := make([]string, 0, len(file.Collections))
+	matches := gitRootMatches(file.Collections, lf)
+	held := heldGitEntries(matches)
+	for _, match := range matches {
+		// A named requirement owning nothing would list, by its name, an entry
+		// another requirement already lists, printing that collection twice.
+		if len(match.Owned)+len(match.Mismatched) == 0 && held[match.Requirement.FQDN] {
+			continue
+		}
+		out = append(out, gitRootFQDNs(match)...)
+	}
 	for _, r := range file.Collections {
-		if r.IsGit() {
-			out = append(out, gitRootFQDNs(r, lf)...)
-			continue
-		}
-		if r.IsURL() {
+		switch {
+		case r.IsURL():
 			out = append(out, urlRootFQDNs(r, lf)...)
-			continue
+		case !r.IsGit():
+			out = append(out, fmt.Sprintf("%s.%s", r.Namespace, r.Name))
 		}
-		out = append(out, fmt.Sprintf("%s.%s", r.Namespace, r.Name))
 	}
 	roles := make([]string, 0, len(file.Roles))
 	for _, r := range file.Roles {
@@ -82,24 +88,53 @@ func loadRootFQDNs(reqPath string, lf *lockfile.File) ([]string, []string, error
 	return out, roles, nil
 }
 
-func gitRootFQDNs(r requirements.CollectionRequirement, lf *lockfile.File) []string {
-	var out []string
+// gitRootMatches matches the git requirements among reqs to lf's git entries
+// by lockfile.MatchGitRequirements, the rule --frozen judges them by, in their
+// order; a nil lf holds no entry.
+func gitRootMatches(reqs []requirements.CollectionRequirement, lf *lockfile.File) []lockfile.GitMatch {
+	git := make([]lockfile.GitRequirement, 0, len(reqs))
+	for _, r := range reqs {
+		if !r.IsGit() {
+			continue
+		}
+		req := lockfile.GitRequirement{URL: r.Source, Subdir: r.Subdir, Ref: r.Ref}
+		if r.Name != "" {
+			req.FQDN = r.Namespace + "." + r.Name
+		}
+		git = append(git, req)
+	}
+	var entries []lockfile.Entry
 	if lf != nil {
-		for _, e := range lf.Collections {
-			if !e.IsGit() || e.Source != r.Source || !gitSubdirWithin(e.Subdir, r.Subdir) {
-				continue
-			}
-			if r.Name != "" && e.Name != r.Namespace+"."+r.Name {
-				continue
-			}
-			out = append(out, e.Name)
+		entries = lf.Collections
+	}
+	return lockfile.MatchGitRequirements(git, entries)
+}
+
+// heldGitEntries is the set of entry names some git requirement owns or is
+// charged with in matches.
+func heldGitEntries(matches []lockfile.GitMatch) map[string]bool {
+	held := make(map[string]bool)
+	for _, match := range matches {
+		for _, e := range slices.Concat(match.Owned, match.Mismatched) {
+			held[e.Name] = true
 		}
 	}
+	return held
+}
+
+// gitRootFQDNs lists the entries a git requirement owns or is charged with, so
+// each locked entry is one requirement's; with none, the name or locator it
+// asks for, so the tree shows it as missing.
+func gitRootFQDNs(match lockfile.GitMatch) []string {
+	out := make([]string, 0, len(match.Owned)+len(match.Mismatched))
+	for _, e := range slices.Concat(match.Owned, match.Mismatched) {
+		out = append(out, e.Name)
+	}
 	if len(out) == 0 {
-		if r.Name != "" {
-			return []string{r.Namespace + "." + r.Name}
+		if match.Requirement.FQDN != "" {
+			return []string{match.Requirement.FQDN}
 		}
-		return []string{gitsource.Locator{URL: r.Source, Subdir: r.Subdir}.String()}
+		return []string{gitsource.Locator{URL: match.Requirement.URL, Subdir: match.Requirement.Subdir}.String()}
 	}
 	return out
 }
@@ -115,19 +150,6 @@ func urlRootFQDNs(r requirements.CollectionRequirement, lf *lockfile.File) []str
 		}
 	}
 	return []string{urlsource.Locator{URL: r.Source}.String()}
-}
-
-// gitSubdirWithin reports whether a locked entry's subdir is the requirement's
-// own subdir or an immediate child of it.
-func gitSubdirWithin(entrySubdir, rootSubdir string) bool {
-	if entrySubdir == rootSubdir {
-		return true
-	}
-	parent := path.Dir(entrySubdir)
-	if parent == "." {
-		parent = ""
-	}
-	return parent == rootSubdir
 }
 
 // printTree writes the requirements path as the header, then one tree per

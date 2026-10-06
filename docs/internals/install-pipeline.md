@@ -44,11 +44,13 @@ resolves roles, then warms instead of installing
 | `buildInstallLevels` | A cycle fails before any prefetch worker; levels order the queue |
 
 Under `--frozen`, `resolveFromLockfile` holds each root to its entry
-(`verifyRootsAgainstLockfile`, `ErrLockfileMismatch`) and builds the graph
-from the file. On a cache miss, `versionMetadata` then hands over the locked
-`download_url` and `sha256` without a request. A verifying run passes
-`lockedURLs` false and fetches the version metadata, since a server's
-signatures ride on it.
+(`verifyRootsAgainstLockfile`, `ErrLockfileMismatch`), a git root to the
+entries `lockfile.MatchGitRequirements` gives it
+([Git requirements and their entries](lockfile-format.md#git-requirements-and-their-entries)),
+and builds the graph from the file. On a cache miss, `versionMetadata` then
+hands over the locked `download_url` and `sha256` without a request. A
+verifying run passes `lockedURLs` false and fetches the version metadata,
+since a server's signatures ride on it.
 
 `planCollections` bundles the last three rows. A replay of the `resolved`
 bucket refuses only an empty version (`collectionFromResolvedEntry`), so

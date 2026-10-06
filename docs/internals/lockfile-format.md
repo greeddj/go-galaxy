@@ -81,6 +81,42 @@ A new failure arm in `Load` must wrap `ErrLockfileInvalid`, never
 `fs.ErrNotExist`: callers read that as absence, and a bare one reaching the
 exit-code classifier exits 2.
 
+## Git requirements and their entries
+
+`MatchGitRequirements` decides which git requirement answers for each git
+entry, so one entry is never judged by two: `--frozen` holds each git root to
+its share (`GitMatch.Err`), and `tree` and `explain` list it.
+
+- A requirement is a candidate for a git entry locked from its repository at
+  its subdir or an immediate child of it, and, when it names a collection,
+  for that collection's entry alone.
+- Of the candidates asking for the entry's ref, the one at the entry's own
+  subdir owns it before the one at its parent. `prepareRoots` refuses two
+  requirements at one repository and subdir, so no tie is left.
+- An entry with candidates but no owner is a ref mismatch charged to its
+  nearest candidate. An entry with no candidate answers to no requirement,
+  and `--frozen` still installs it.
+- A requirement fails on its first mismatch by entry name, else when it owns
+  no entry. So a ref change is refused when the changed requirement owns no
+  entry at its new ref, even when a new requirement at the old ref takes every
+  entry it locked.
+
+The rule reads the lockfile alone, so two edits still pass: a changed
+requirement that owns, at its new ref, an entry another requirement locked
+(a file a plain `lock` refuses as one collection asked for twice), and
+requirements that exchange refs over one directory, which a file `lock` wrote
+can look exactly like. `lock --check` compares such a file with what `lock`
+writes for the new requirements.
+
+The rule cannot see commits either. Two overlapping requirements of one ref
+can have pins at different commits. When the child's directory changed
+between them, to another collection or to a directory holding collections one
+level down, the child owns every entry there, and a parent that locked nothing
+else owns none: `--frozen` refuses that file, exit 6, though `lock` wrote it.
+`lock --refresh` locks both at one commit, and the file then passes, or `lock`
+refuses the requirements: one collection asked for twice, nothing under the
+parent's subdir, or a named parent's collection no longer there.
+
 ## Canonical bytes
 
 `Save` and `Hash` share `marshal` over `canonicalClone`: two-space indent,
