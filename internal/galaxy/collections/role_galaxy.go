@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"slices"
+	"time"
 
 	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
 	"github.com/greeddj/go-galaxy/internal/galaxy/galaxyv1"
@@ -56,7 +59,7 @@ func resolveGalaxyRole(ctx context.Context, deps collectionDeps, req requirement
 	pin.server = server
 	pin.version = res.Version
 	if policy.Write {
-		deps.st.SetRolePin(key, store.RolePinEntry{
+		recordGalaxyRolePin(deps.st, key, store.RolePinEntry{
 			Repository: res.RepoURL.String(),
 			Commit:     pin.commit,
 			Version:    res.Version,
@@ -66,6 +69,27 @@ func resolveGalaxyRole(ctx context.Context, deps collectionDeps, req requirement
 		})
 	}
 	return pin, nil
+}
+
+// recordGalaxyRolePin records entry under key unless the pin there already
+// says the same: a rewrite would only restamp FetchedAt and mark the store
+// dirty, so no run replaying a Galaxy role could skip its snapshot save.
+func recordGalaxyRolePin(st *store.Store, key string, entry store.RolePinEntry) {
+	if recorded, ok := st.GetRolePin(key); ok && sameRolePin(recorded, entry) {
+		return
+	}
+	st.SetRolePin(key, entry)
+}
+
+// sameRolePin reports whether two pins agree in every field but FetchedAt,
+// a nil and an empty Deps alike.
+func sameRolePin(a, b store.RolePinEntry) bool {
+	if !slices.Equal(a.Deps, b.Deps) {
+		return false
+	}
+	a.FetchedAt, a.Deps = time.Time{}, nil
+	b.FetchedAt, b.Deps = time.Time{}, nil
+	return reflect.DeepEqual(a, b)
 }
 
 // replayGalaxyPin rebuilds the v1 answer from the Galaxy pin unless the run

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/collections"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
@@ -1069,4 +1070,84 @@ func TestRoleRefreshRelabelsAPinRecordedAsHEAD(t *testing.T) {
 	if adv, _ := f.git.counts(); adv != 2 || f.git.roleAcquireCount() != before {
 		t.Fatalf("relabeled pin: advertises=%d role acquires=%d, want 2 (app, base) and 0", adv, f.git.roleAcquireCount()-before)
 	}
+}
+
+// TestGalaxyRoleRefreshRewritesAChangedPin pins that a Galaxy pin whose
+// answer changed is rewritten: once --refresh installs a newer tag, a plain
+// install replays that tag's pin, with no v1 request and no fetch.
+func TestGalaxyRoleRefreshRewritesAChangedPin(t *testing.T) {
+	t.Parallel()
+	f := newGalaxyRoleFixture(t)
+	f.writeRequirements(t, "roles:\n  - geerlingguy.docker\n")
+	f.mustInstall(t)
+
+	newer := fakeCommit("docker-4")
+	repo := f.git.repos[galaxyRoleURL]
+	repo.refs["refs/tags/1.11.0"] = newer
+	repo.addRole(newer, fakeGitRole{roleName: "docker", files: map[string]string{"COMMIT": newer + "\n"}})
+	f.galaxy.AddRole("geerlingguy", "docker", "geerlingguy", "ansible-role-docker", "master", []fakegalaxy.RoleVersion{
+		{Name: "1.0.0"}, {Name: "1.10.0", CommitSHA: fakeCommit("docker-3")}, {Name: "1.9.0"}, {Name: "1.11.0", CommitSHA: newer},
+	})
+	f.cfg.Refresh = true
+	f.mustInstall(t)
+	installed := filepath.Join(f.rolePath("geerlingguy.docker"), "COMMIT")
+	assertFileContains(t, installed, newer)
+
+	f.cfg.Refresh = false
+	f.galaxy.ResetCounts()
+	before := f.git.roleAcquireCount()
+	f.mustInstall(t)
+	if f.galaxy.Total() != 0 || f.git.roleAcquireCount() != before {
+		t.Fatalf("install after the refresh reached the network: galaxy=%d role acquires=%d",
+			f.galaxy.Total(), f.git.roleAcquireCount()-before)
+	}
+	assertFileContains(t, installed, newer)
+	pin, ok := loadStoreSnapshot(t, f.cfg, f.runtime).GetRolePin("galaxy\ngeerlingguy.docker\n")
+	if !ok || pin.Version != "1.11.0" || pin.Ref != "refs/tags/1.11.0" || pin.Commit != newer {
+		t.Fatalf("Galaxy pin after the refresh = %+v (recorded: %t), want version 1.11.0 at refs/tags/1.11.0, commit %s",
+			pin, ok, newer)
+	}
+}
+
+// galaxyRolePinFetchedAt returns when the Galaxy pin under key was last
+// written, failing the test when none is recorded.
+func galaxyRolePinFetchedAt(t *testing.T, f *roleFixture, key string) time.Time {
+	t.Helper()
+	pin, ok := loadStoreSnapshot(t, f.cfg, f.runtime).GetRolePin(key)
+	if !ok {
+		t.Fatalf("no Galaxy role pin recorded under %q", key)
+	}
+	return pin.FetchedAt
+}
+
+// TestGalaxyRoleReplayKeepsItsPin pins that a rerun replaying a Galaxy
+// role's pin leaves the pin as written: an idle install beside a collection
+// skips its snapshot save, and a warm, which always saves, keeps FetchedAt.
+func TestGalaxyRoleReplayKeepsItsPin(t *testing.T) {
+	t.Parallel()
+	f := newGalaxyRoleFixture(t)
+	f.writeRequirements(t, "collections:\n  - acme.lib\nroles:\n  - geerlingguy.docker\n")
+	const key = "galaxy\ngeerlingguy.docker\n"
+	f.mustInstall(t)
+	stamp := reloadLastSnapshot(t, f.cacheDir)
+	written := galaxyRolePinFetchedAt(t, f, key)
+
+	f.mustInstall(t)
+	if got := reloadLastSnapshot(t, f.cacheDir); !got.Equal(stamp) {
+		t.Fatalf("LastSnapshot after an idle rerun = %v, want unchanged %v", got, stamp)
+	}
+	if err := collections.Warm(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("Warm: %v", err)
+	}
+	if got := galaxyRolePinFetchedAt(t, f, key); !got.Equal(written) {
+		t.Fatalf("Galaxy pin FetchedAt after a warm = %v, want unchanged %v", got, written)
+	}
+
+	// Positive control: another version is another pin, and its run saves.
+	f.writeRequirements(t, "collections:\n  - acme.lib\nroles:\n  - src: geerlingguy.docker\n    version: 1.9.0\n")
+	f.mustInstall(t)
+	if got := reloadLastSnapshot(t, f.cacheDir); !got.After(stamp) {
+		t.Fatalf("LastSnapshot after a version change = %v, want after %v", got, stamp)
+	}
+	galaxyRolePinFetchedAt(t, f, "galaxy\ngeerlingguy.docker\n1.9.0")
 }
