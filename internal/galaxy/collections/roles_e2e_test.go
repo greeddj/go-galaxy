@@ -1151,3 +1151,33 @@ func TestGalaxyRoleReplayKeepsItsPin(t *testing.T) {
 	}
 	galaxyRolePinFetchedAt(t, f, "galaxy\ngeerlingguy.docker\n1.9.0")
 }
+
+// TestRoleNoCacheRefreshReadsNoPin is TestGitNoCacheRefreshReadsNoPin for a
+// git role and a Galaxy role's repository: lock --no-cache --refresh fetches
+// both, where plain --refresh keeps each pin on one advertisement.
+func TestRoleNoCacheRefreshReadsNoPin(t *testing.T) {
+	t.Parallel()
+	f := newGalaxyRoleFixture(t)
+	f.writeRequirements(t, "roles:\n  - geerlingguy.docker\n  - src: git+"+roleBaseURL+"\n    name: base\n")
+	f.mustInstall(t)
+	for _, tc := range []struct {
+		flags                string
+		noCache, refresh     bool
+		advertises, acquires int
+	}{
+		{flags: "--refresh", refresh: true, advertises: 2},
+		{flags: "--no-cache", noCache: true, acquires: 2},
+		{flags: "--no-cache --refresh", noCache: true, refresh: true, acquires: 2},
+	} {
+		f.cfg.NoCache, f.cfg.Refresh = tc.noCache, tc.refresh
+		f.git.resetCounts()
+		before := f.git.roleAcquireCount()
+		lf := f.lockfile(t)
+		findLockRole(t, lf, "geerlingguy.docker")
+		findLockRole(t, lf, "base")
+		if adv, _ := f.git.counts(); adv != tc.advertises || f.git.roleAcquireCount()-before != tc.acquires {
+			t.Fatalf("lock %s on unmoved refs: advertises=%d role acquires=%d, want %d and %d",
+				tc.flags, adv, f.git.roleAcquireCount()-before, tc.advertises, tc.acquires)
+		}
+	}
+}

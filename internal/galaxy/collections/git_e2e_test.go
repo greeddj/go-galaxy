@@ -560,3 +560,30 @@ func TestGitLockFromAnSSHRemoteLoadsBack(t *testing.T) {
 		t.Fatalf("frozen install reached the remote: advertises=%d acquires=%d", adv, acq)
 	}
 }
+
+// TestGitNoCacheRefreshReadsNoPin pins that --no-cache --refresh reads no
+// recorded pin, as --no-cache alone reads none: lock on an unmoved branch
+// fetches it, where plain --refresh keeps the pin on one advertisement.
+func TestGitNoCacheRefreshReadsNoPin(t *testing.T) {
+	t.Parallel()
+	f := newGitFixture(t)
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",main\n")
+	f.mustInstall(t)
+	for _, tc := range []struct {
+		flags                string
+		noCache, refresh     bool
+		advertises, acquires int
+	}{
+		{flags: "--refresh", refresh: true, advertises: 1},
+		{flags: "--no-cache", noCache: true, acquires: 1},
+		{flags: "--no-cache --refresh", noCache: true, refresh: true, acquires: 1},
+	} {
+		f.cfg.NoCache, f.cfg.Refresh = tc.noCache, tc.refresh
+		f.git.resetCounts()
+		assertGitLockEntries(t, f.lockfile(t))
+		if adv, acq := f.git.counts(); adv != tc.advertises || acq != tc.acquires {
+			t.Fatalf("lock %s on an unmoved branch: advertises=%d acquires=%d, want %d and %d",
+				tc.flags, adv, acq, tc.advertises, tc.acquires)
+		}
+	}
+}

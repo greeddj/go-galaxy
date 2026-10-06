@@ -114,7 +114,7 @@ flowchart TD
   P2 -->|"asserted version differs,<br/>bad dependency key"| X3(["exit 3"])
   P2 -->|"a role whose artifact<br/>is not cached"| P3
   P3 -->|"yes"| X4(["exit 4"])
-  P3 -->|"no"| P4{"--refresh on a git<br/>branch or tag pin?"}
+  P3 -->|"no"| P4{"--refresh, no --no-cache,<br/>on a git branch or tag pin?"}
   P4 -->|"no"| P6["git: fetch, build; url:<br/>download, read or repack"]
   P4 -->|"yes"| P5["advertise the ref once"]
   P5 -->|"moved"| P6

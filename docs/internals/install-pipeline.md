@@ -81,7 +81,7 @@ commit, not just the ref ([Resolution replay](cache.md#resolution-replay)).
 | --- | --- |
 | Policy allows a read, pin exists | `replayGitPin`: re-validates commit and identities, no network |
 | `--offline`, no pin | Fails with `ErrOfflineMode` |
-| `--refresh`, branch or tag pinned | One `Advertise`; an unchanged commit with its artifacts cached keeps the pin |
+| `--refresh` without `--no-cache`, branch or tag pinned | One `Advertise`; an unchanged commit with its artifacts cached keeps the pin |
 | Otherwise | `acquireGitRoot`: fetch, build, commit, record the pin |
 
 A fetch goes through `gitsource.Client`, which `gitfetch` implements; under

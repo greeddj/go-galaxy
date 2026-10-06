@@ -341,7 +341,7 @@ func resolveGitRoleRequest(ctx context.Context, deps collectionDeps, greq gitRol
 func refreshRolePin(
 	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, galaxySHA string,
 ) (rolePin, bool, error) {
-	if deps.cfg == nil || !deps.cfg.Refresh || greq.ref.IsCommit() {
+	if !refreshReadsPin(deps, greq.ref) {
 		return rolePin{}, false, nil
 	}
 	pin, ok := deps.st.GetRolePin(greq.pinKey)

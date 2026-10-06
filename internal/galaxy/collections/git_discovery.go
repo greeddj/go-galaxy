@@ -231,7 +231,7 @@ func expandGitRoot(ctx context.Context, deps collectionDeps, root collection) ([
 // advertisement keeps the pin if the commit is unchanged and every artifact is
 // cached, else acquires the new tip. ok=false means there was no pin to refresh.
 func refreshGitPin(ctx context.Context, deps collectionDeps, req gitRootRequest, policy cacheManager.Policy) ([]collection, bool, error) {
-	if deps.cfg == nil || !deps.cfg.Refresh || req.ref.IsCommit() {
+	if !refreshReadsPin(deps, req.ref) {
 		return nil, false, nil
 	}
 	pin, ok := deps.st.GetGitPin(req.pinKey)
@@ -251,6 +251,13 @@ func refreshGitPin(ctx context.Context, deps collectionDeps, req gitRootRequest,
 	}
 	expanded, err := replayGitPin(deps, req, pin)
 	return expanded, true, err
+}
+
+// refreshReadsPin reports whether --refresh reads a branch or tag pin its
+// policy skips, to keep an unmoved one on one advertisement; never with
+// --no-cache, which reads no pin, so the run acquires as --no-cache does.
+func refreshReadsPin(deps collectionDeps, ref gitsource.Ref) bool {
+	return deps.cfg != nil && deps.cfg.Refresh && !deps.cfg.NoCache && !ref.IsCommit()
 }
 
 func gitArtifactsCached(ctx context.Context, deps collectionDeps, req gitRootRequest, pin store.GitPinEntry) bool {
