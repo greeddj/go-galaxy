@@ -14,6 +14,7 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/requirements"
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
+	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
 // resolvedRole is one role the run installs. Source is its locator, the one
@@ -122,7 +123,8 @@ func dedupeRoleLevel(deps collectionDeps, taken map[string]resolvedRole, level [
 		}
 		if prior.Src != rr.req.Src || prior.Version != rr.req.Version {
 			deps.runtime.Output.Warnf("Role %s: already requested as %s@%s; ignoring %s@%s asked for by %s (first wins, as in ansible-galaxy)",
-				rr.req.Name, prior.Src, displayRoleVersion(prior.Version), rr.req.Src, displayRoleVersion(rr.req.Version), rr.declaredBy)
+				rr.req.Name, helpers.ValueForMessage(prior.Src), displayRoleVersion(prior.Version),
+				helpers.ValueForMessage(rr.req.Src), displayRoleVersion(rr.req.Version), rr.declaredBy)
 		}
 	}
 	return out
@@ -130,12 +132,20 @@ func dedupeRoleLevel(deps collectionDeps, taken map[string]resolvedRole, level [
 
 // roleSrcOf renders what a resolved role was asked for as, the way the
 // requirement spelled it: the Galaxy name for a Galaxy role, the repository
-// for a git role.
+// for a git role, the URL its locator carries for a url role.
 func roleSrcOf(r resolvedRole) string {
-	if r.GalaxyName != "" {
+	switch {
+	case r.GalaxyName != "":
 		return r.GalaxyName
+	case urlsource.IsLocator(r.Source):
+		loc, err := urlsource.ParseLocator(r.Source)
+		if err != nil {
+			return r.Source
+		}
+		return loc.URL
+	default:
+		return r.Repository
 	}
-	return r.Repository
 }
 
 func displayRoleVersion(v string) string {

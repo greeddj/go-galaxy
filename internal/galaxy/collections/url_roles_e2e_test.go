@@ -323,3 +323,40 @@ func TestURLRoleAmbiguousLayoutRefused(t *testing.T) {
 		t.Fatalf("install error = %v, want ErrRoleTarballLayout", err)
 	}
 }
+
+// TestURLRoleFirstWinsComparesTheURL pins first-wins for a url role asked
+// for again by another role's meta: the same URL and label is the request
+// already taken and draws no warning, another label warns naming the URL.
+func TestURLRoleFirstWinsComparesTheURL(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		rootLabel string
+		warning   string
+	}{
+		"same request":  {},
+		"another label": {rootLabel: "1.0.0", warning: "@1.0.0; ignoring "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newURLRoleFixture(t)
+			depData, _ := buildRoleTarGz(t, "", map[string]string{"tasks/main.yml": "- debug: msg=dep\n"})
+			depURL := f.galaxy.AddTarball("dl/dep-role.tar.gz", depData)
+			mainData, _ := buildRoleTarGz(t, "", map[string]string{
+				"meta/main.yml":  "dependencies:\n  - src: " + depURL + "\n    name: deprole\n",
+				"tasks/main.yml": "- debug: msg=main\n",
+			})
+			mainURL := f.galaxy.AddTarball("dl/main-role.tar.gz", mainData)
+			f.writeRequirements(t, urlRoleRequirements(depURL, "deprole", tc.rootLabel)+"  - src: "+mainURL+"\n    name: mainrole\n")
+			f.mustInstall(t)
+			assertFileContains(t, filepath.Join(f.rolePath("deprole"), "tasks", "main.yml"), "dep")
+			warned := f.printer.hasWarnContaining("Role deprole: already requested")
+			if tc.warning == "" && warned {
+				t.Fatalf("an identical request drew a first-wins warning: %q", f.printer.warns)
+			}
+			if want := "Role deprole: already requested as " + depURL + tc.warning + depURL + "@latest"; tc.warning != "" &&
+				!f.printer.hasWarnContaining(want) {
+				t.Fatalf("expected a first-wins warning containing %q, got %q", want, f.printer.warns)
+			}
+		})
+	}
+}
