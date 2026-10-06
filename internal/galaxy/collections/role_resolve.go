@@ -2,6 +2,7 @@ package collections
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -303,15 +304,63 @@ func newGitRoleRequest(deps collectionDeps, req requirements.RoleRequirement) (g
 	}, nil
 }
 
-// resolveGitRole resolves a git role the way expandGitRoot resolves a git
-// collection: replay the pin, refuse a miss under --offline, re-advertise
-// under --refresh, else fetch the repository and build the role.
+// resolveGitRole resolves a git role as expandGitRoot resolves a git
+// collection, after the lockfile's pin under lock: replay the pin, refuse a
+// miss under --offline, re-advertise under --refresh, else fetch and build.
 func resolveGitRole(ctx context.Context, deps collectionDeps, req requirements.RoleRequirement) (rolePin, error) {
 	greq, err := newGitRoleRequest(deps, req)
 	if err != nil {
 		return rolePin{}, err
 	}
+	if locked, ok := deps.lockPrefs.role(req); ok {
+		if pin, kept, err := resolveLockedGitRole(ctx, deps, greq, locked.Commit, locked.Version); kept || err != nil {
+			return pin, err
+		}
+	}
 	return resolveGitRoleRequest(ctx, deps, greq, "")
+}
+
+// resolveLockedGitRole is the git path for a role the lockfile pins at commit
+// under label: a recorded pin of both replays, --offline refuses a miss, else that
+// commit is fetched, its pin recorded as lockedPinPolicy allows. kept=false: gone.
+func resolveLockedGitRole(
+	ctx context.Context, deps collectionDeps, greq gitRoleRequest, commit, label string,
+) (rolePin, bool, error) {
+	policy := cacheManager.PolicyForConstraint(deps.cfg, greq.ref.IsCommit())
+	if replayed, ok, err := replayLockedRolePin(ctx, deps, greq, policy, commit, label); ok {
+		return replayed, true, err
+	}
+	if deps.cfg != nil && deps.cfg.Offline {
+		return rolePin{}, true, fmt.Errorf("%w: role source %s@%s: locked commit %s is not recorded in the cache",
+			helpers.ErrOfflineMode, greq.display, greq.ref.Name, commit)
+	}
+	policy, err := lockedPinPolicy(ctx, deps, policy, greq.url, greq.ref, greq.cred, commit, label)
+	if err != nil {
+		return rolePin{}, true, err
+	}
+	pin, err := acquireRole(ctx, deps, greq, policy, commit, label, "")
+	if errors.Is(err, helpers.ErrGitCommitNotFound) {
+		deps.lockPrefs.warnRolef(deps.runtime.Output, greq.name, "Locked role %s: commit %s is no longer served by %s; resolving the role anew",
+			greq.name, commit, greq.display)
+		return rolePin{}, false, nil
+	}
+	return pin, true, err
+}
+
+// replayLockedRolePin replays the pin recorded for greq when it holds commit
+// under label and its artifact is cached; ok=false sends the caller to fetch.
+func replayLockedRolePin(
+	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, commit, label string,
+) (rolePin, bool, error) {
+	if !policy.Read {
+		return rolePin{}, false, nil
+	}
+	pin, ok := deps.st.GetRolePin(greq.pinKey)
+	if !ok || pin.Commit != commit || pin.Version != label {
+		return rolePin{}, false, nil
+	}
+	replayed, err := replayRolePin(ctx, deps, greq, pin)
+	return replayed, err != nil || replayed.locator != "", err
 }
 
 // resolveGitRoleRequest is the git path shared by an scm role and a mapped
@@ -439,9 +488,9 @@ func sourceDepsToPin(deps []gitsource.RoleDependency) []store.RolePinDep {
 	return out
 }
 
-// acquireRole fetches the repository, builds the role, stores the artifact
-// and records the pin. A non-empty commit is fetched exactly; a non-empty
-// label is the version it installs as, else the ref name reached decides.
+// acquireRole fetches the repository, builds the role, stores the artifact and
+// records the pin when policy writes. A non-empty commit is fetched exactly; a
+// non-empty label is the version it installs as, else the ref name reached decides.
 func acquireRole(
 	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, commit, label, galaxySHA string,
 ) (rolePin, error) {

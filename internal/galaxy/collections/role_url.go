@@ -28,6 +28,9 @@ type urlRoleRequest struct {
 	requested string
 	pinKey    string
 	display   string
+	// lockedSHA is the lockfile's sha256 when lock keeps the pin, else "". The
+	// label stays the request's, so lock and install record one pin.
+	lockedSHA string
 }
 
 func newURLRoleRequest(req requirements.RoleRequirement) (urlRoleRequest, error) {
@@ -44,15 +47,19 @@ func newURLRoleRequest(req requirements.RoleRequirement) (urlRoleRequest, error)
 	}, nil
 }
 
-// resolveURLRole resolves a url role as expandURLRoot does a url collection:
-// replay the pin while its label and artifact match, unless --refresh without
-// --offline forces a download; refuse a miss under --offline.
+// resolveURLRole resolves a url role as expandURLRoot does a url collection,
+// after the lockfile's pin under lock: replay the pin while its label and
+// artifact match, unless --refresh downloads; --offline refuses a miss.
 func resolveURLRole(ctx context.Context, deps collectionDeps, req requirements.RoleRequirement) (rolePin, error) {
 	ureq, err := newURLRoleRequest(req)
 	if err != nil {
 		return rolePin{}, err
 	}
 	policy := cacheManager.PolicyForConstraint(deps.cfg, false)
+	if locked, ok := deps.lockPrefs.role(req); ok {
+		ureq.lockedSHA = locked.SHA256
+		return resolveLockedURLRole(ctx, deps, ureq, policy)
+	}
 	if policy.Read {
 		if pin, ok := deps.st.GetRolePin(ureq.pinKey); ok {
 			if replayed, err := replayURLRolePin(ctx, deps, ureq, pin); err != nil || replayed.locator != "" {
@@ -64,6 +71,30 @@ func resolveURLRole(ctx context.Context, deps collectionDeps, req requirements.R
 		return rolePin{}, fmt.Errorf("%w: role source %s is not recorded in the cache", helpers.ErrOfflineMode, ureq.display)
 	}
 	return acquireURLRole(ctx, deps, ureq, policy)
+}
+
+// resolveLockedURLRole keeps the lockfile's sha256 for a url role: a recorded
+// pin of those bytes replays, --offline refuses a miss, else the URL is
+// downloaded, and other bytes than the locked ones warn once and are kept.
+func resolveLockedURLRole(ctx context.Context, deps collectionDeps, ureq urlRoleRequest, policy cacheManager.Policy) (rolePin, error) {
+	if policy.Read {
+		if pin, ok := deps.st.GetRolePin(ureq.pinKey); ok && pin.SHA256 == ureq.lockedSHA {
+			if replayed, err := replayURLRolePin(ctx, deps, ureq, pin); err != nil || replayed.locator != "" {
+				return replayed, err
+			}
+		}
+	}
+	if deps.cfg != nil && deps.cfg.Offline {
+		return rolePin{}, fmt.Errorf("%w: role source %s: locked sha256 %s is not recorded in the cache",
+			helpers.ErrOfflineMode, ureq.display, ureq.lockedSHA)
+	}
+	pin, err := acquireURLRole(ctx, deps, ureq, policy)
+	if err == nil && pin.sha256 != ureq.lockedSHA {
+		deps.lockPrefs.warnRolef(deps.runtime.Output, ureq.name,
+			"Locked role %s: sha256 %s is no longer served by %s, which now serves %s; keeping the new bytes",
+			ureq.name, ureq.lockedSHA, ureq.display, pin.sha256)
+	}
+	return pin, err
 }
 
 // replayURLRolePin is replayRolePin for a url pin: re-validated, and

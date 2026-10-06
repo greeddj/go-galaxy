@@ -115,15 +115,12 @@ func (c *fakeGitClient) Acquire(ctx context.Context, req gitsource.Request) (git
 	if err := ctx.Err(); err != nil {
 		return gitsource.Result{}, err
 	}
-	repo, commit, refName, err := c.resolve(req.URL, req.Ref, req.Auth)
+	repo, commit, refName, err := c.target(req.URL, req.Ref, req.Commit, req.Auth)
 	if err != nil {
 		return gitsource.Result{}, err
 	}
-	if req.Commit != "" {
-		commit = req.Commit
-		if _, ok := repo.commits[commit]; !ok {
-			return gitsource.Result{}, fmt.Errorf("%w: %s", helpers.ErrGitCommitNotFound, commit)
-		}
+	if req.Commit != "" && !repo.hasCommit(commit) {
+		return gitsource.Result{}, fmt.Errorf("%w: %s", helpers.ErrGitCommitNotFound, commit)
 	}
 	result := gitsource.Result{Commit: commit, RefName: refName}
 	for _, fc := range repo.commits[commit] {
@@ -163,6 +160,26 @@ func buildIfRequested(ctx context.Context, req gitsource.Request, fc fakeGitColl
 		return gitsource.Collection{}, false, err
 	}
 	return built, true, nil
+}
+
+// target mirrors gitfetch's chooseTarget: a set commit is taken with no ref
+// resolved and named by the ref (the commit when that is empty), so a deleted
+// branch still serves the commits the repository holds; else ref resolves.
+func (c *fakeGitClient) target(
+	u gitsource.URL, ref gitsource.Ref, commit string, auth gitsource.Credential,
+) (*fakeGitRepo, string, string, error) {
+	if commit == "" {
+		return c.resolve(u, ref, auth)
+	}
+	repo, err := c.repoFor(u, auth)
+	if err != nil {
+		return nil, "", "", err
+	}
+	name := ref.Name
+	if name == "" {
+		name = commit
+	}
+	return repo, commit, name, nil
 }
 
 // resolve is repoFor plus ref mapped to a commit and a full ref name the

@@ -122,7 +122,8 @@ Behavior: [Moving to galaxy.toml](../guides/requirements.md#moving-to-galaxytoml
 
 ## Loading the lockfile
 
-Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-lockfile).
+Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-lockfile)
+and [Create the lockfile](../guides/lockfile.md#create-the-lockfile).
 
 | Input | Refused when | Where | Sentinel | Exit |
 | :-- | :-- | :-- | :-- | :-- |
@@ -135,6 +136,8 @@ Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-loc
 | A Galaxy entry's `sha256` | neither empty nor 64 lowercase hex digits | `lockfile.validateGalaxyEntry` | `ErrLockfileInvalid` | 6 |
 | A git collection, git role or Galaxy role entry's `ref` | a commit other than the entry's `commit` | `lockfile.refCommitProblem` | `ErrLockfileInvalid` | 6 |
 | Two url collection entries | one `source`, never printed | `lockfile.checkURLSourcesUnique` | `ErrLockfileInvalid` | 6 |
+| A Galaxy role entry, under `lock` | its repository is not `https://github.com/<user>/<repo>`, its ref not `refs/tags/` or `refs/heads/`, or its server none the run asks: not kept, one warning, resolved as if unlocked (a recorded Galaxy pin, else the v1 API) | `collections.usableGalaxyRoleEntry` | none | 0 |
+| A commit or Galaxy role entry `lock` keeps | recorded as a pin only as a resolve records it: a commit while one advertisement shows its ref naming it, at the locked label for a role; a Galaxy role entry's repository never as a Galaxy pin. The recorded resolution names a kept commit's locator, which only a run whose own root expanded into it replays ([Resolution replay](cache.md#resolution-replay)) | `collections.lockedPinPolicy`, `resolveLockedGalaxyRole`, `sourcesMatchRoots` | none | 0 |
 
 - `lock` and `--frozen` hold `download_url` to its server's origin, because
   its bytes fill the
@@ -155,6 +158,31 @@ Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-loc
   installs what the entry pins, so `Load` refuses a commit `ref` at another
   `commit` and two url collection entries with one `source`
   ([Loading](lockfile-format.md#loading)).
+- `lock` keeps a Galaxy role entry without asking the v1 API, so the entry
+  must pass the check a replayed Galaxy pin passes (`galaxyPinResolution`)
+  and name a server the run asks. That holds its repository to the shape a v1
+  answer composes, a GitHub repository, not to one a v1 answer named;
+  `--frozen` takes any canonical git repository there.
+- A cache can be shared, and a pull request can edit `galaxy.lock`, so
+  `lock`, under `--check` and `--dry-run` too, records no pin the file alone
+  decided: another project's plain install would replay it with no request.
+  The commit is still fetched and its artifact committed under its locator,
+  which only a request for that commit reads. The resolution `lock` records
+  names that locator too, so a replay holds a git or url collection only where
+  a root of its own run expanded into it
+  ([Resolution replay](cache.md#resolution-replay)). A url pin is the sha256 of
+  bytes the URL served, and a Galaxy version one its server publishes within
+  the constraints ([What a rerun reuses](../guides/caching.md#what-a-rerun-reuses)).
+- `lock` keeps a pin only for what the resolve already reaches: a Galaxy
+  version its constraints allow, or a source a requirement or a role's
+  dependency names, matched as `--frozen` matches a root. So the file adds no
+  source and redirects none, a Galaxy role's repository aside. A kept pin is checked as a fetched one is:
+  a Galaxy version's `sha256` and `download_url` come from its server again,
+  under the `download_url` refusals above, a commit is fetched by hash and its
+  tree validated, and url bytes are hashed. Nothing tells whether a pin is the
+  newest, so a hand edit to another version or commit the sources still serve
+  passes `lock --check`
+  ([Residual risks](../guides/security.md#residual-risks)).
 
 ## Credentials and the token pairing rule
 

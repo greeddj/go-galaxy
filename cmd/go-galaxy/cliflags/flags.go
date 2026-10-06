@@ -50,8 +50,8 @@ func CollectionFlags() []cli.Flag {
 }
 
 // LockFlags is CollectionFlags for the lock command, with --check in place of
-// --frozen: lock resolves fresh on every run, so its only lockfile-reading
-// mode is the comparison --check asks for.
+// --frozen: lock resolves on every run, keeping the lockfile's pins, and
+// --check compares the result with the file instead of writing it.
 func LockFlags() []cli.Flag {
 	flags := collectionPathFlags()
 	flags = append(flags, collectionBehaviorFlags()...)
@@ -143,8 +143,8 @@ func collectionBehaviorFlags() []cli.Flag {
 			Name: "refresh",
 			Usage: "Re-resolve against the Galaxy servers instead of reusing cached metadata or the previous " +
 				"resolution; a cached artifact and its own version-specific metadata are still reused even " +
-				"if the server changed them - use --no-cache to force those too. Ignored with --offline, " +
-				"and wherever resolution comes from the lockfile rather than the servers",
+				"if the server changed them - use --no-cache to force those too. For lock, also set aside " +
+				"the pins the existing lockfile holds. Ignored with --offline and under --frozen",
 			Sources: cli.EnvVars("GO_GALAXY_REFRESH"),
 		},
 		&cli.BoolFlag{

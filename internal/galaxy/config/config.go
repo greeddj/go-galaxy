@@ -74,8 +74,8 @@ type Config struct {
 	ClearCache      bool
 	Offline         bool
 	Frozen          bool
-	// Check makes lock compare its fresh resolution with the lockfile on disk
-	// instead of writing it; only the lock command registers the flag.
+	// Check makes lock compare the lockfile it would write with the one on
+	// disk instead of writing it; only the lock command registers the flag.
 	Check                      bool
 	AnsibleCollectionsPathUsed bool
 	AnsibleRolesPathUsed       bool

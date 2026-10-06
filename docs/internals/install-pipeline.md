@@ -53,8 +53,8 @@ verifying run passes `lockedURLs` false and fetches the version metadata,
 since a server's signatures ride on it.
 
 `planCollections` bundles the last three rows. A replay of the `resolved`
-bucket refuses only an empty version (`collectionFromResolvedEntry`), so
-skipping the fold lets a poisoned `*` reach a worker.
+bucket refuses no version but an empty one (`collectionFromResolvedEntry`),
+so skipping the fold lets a poisoned `*` reach a worker.
 
 ## Two pools, two resources
 
@@ -81,6 +81,7 @@ commit, not just the ref ([Resolution replay](cache.md#resolution-replay)).
 
 | Case | `expandGitRoot` does |
 | --- | --- |
+| `lock`, a lockfile entry pins the root's commit | `expandLockedGitRoot` first: [Keeping the lockfile's pins](flow-lock.md#keeping-the-lockfiles-pins) |
 | Policy allows a read, pin exists | `replayGitPin`: re-validates commit (under a commit ref, that one) and identities, no network |
 | `--offline`, no pin | Fails with `ErrOfflineMode` |
 | `--refresh` without `--no-cache`, branch or tag pinned | One `Advertise`; an unchanged commit with its artifacts cached keeps the pin |
@@ -111,7 +112,7 @@ unexpanded root has none.
 | | Git root | Url root |
 | --- | --- | --- |
 | Pin bucket, key | `git_pins`, `url\nref\nsubdir` | `url_pins`, the URL |
-| Pin replayed | Whenever the policy reads; never aged out | Same |
+| Pin replayed | Whenever the policy reads, never aged out. Under `lock`, one at the commit a matching lockfile entry pins first; once that commit is gone or ruled out, the root resolves as install does, never replaying a pin at a ruled-out commit | Whenever the policy reads; under `lock`, only one of the sha256 a matching entry pins |
 | Fetched by | `Infra.Git` | `Infra.URLHTTP`, the artifact retry policy |
 | Identity from | `galaxy.yml` | `MANIFEST.json`, via `collectionbuild.ParseManifestInfo` |
 | Name check | `helpers.IsCollectionNamePart` | `helpers.IsURLCollectionNamePart`, mixed case allowed |
@@ -151,6 +152,9 @@ first-wins follows declaration order (`dedupeRoleLevel`). Past
 - A url role's version label is not in the pin key, so another `version:`
   re-downloads. The label's default is under
   [Roles](../guides/requirements.md#roles).
+- Under `lock`, a request the existing lockfile's entry matches first tries
+  that entry's pin, ahead of the recorded one:
+  [Keeping the lockfile's pins](flow-lock.md#keeping-the-lockfiles-pins).
 
 ## Prefetch and handoff
 
@@ -233,7 +237,7 @@ either arm, after the sha256 and before the commit or `Promote`: their
 | --- | --- | --- |
 | `--timeout` | `ResponseHeaderTimeout`, and each gap between body reads (the `fetch` watchdog) | No response or `ErrReadStalled`, both retried |
 | `Infra.ArtifactDeadline`, 15 min | Attempts, backoffs, extraction, commit; a cache-hit `Fetch` too | `ErrArtifactDownloadDeadline`, terminal |
-| `Infra.GitDeadline` | One git acquisition; also the advertisement `--refresh` makes for a recorded git or role pin (`refreshGitPin`, `refreshRolePin`) and each one `outdated` makes | The same sentinel |
+| `Infra.GitDeadline` | One git acquisition; also the advertisement `lock` makes before a locked commit (`lockedPinPolicy`), the one `--refresh` makes for a recorded git or role pin (`refreshGitPin`, `refreshRolePin`) and each one `outdated` makes | The same sentinel |
 
 Of up to four attempts, `downloadRetryable` retries a stall, a retryable
 status or a transport failure with no response. An API GET

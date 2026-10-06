@@ -167,12 +167,7 @@ func (p *MetadataProvider) Dependencies(ctx context.Context, fqdn string, v solv
 		return canonicalizeDependencies(fqdn, raw)
 	}
 
-	root, err := resolveRootMetadata(ctx, p.deps, col, policy, fqdn)
-	if err != nil {
-		return nil, notPublishedError(err, fqdn, v.Original())
-	}
-	p.recordBinding(fqdn, root.base)
-	info, err := fetchVersionMetadataCached(ctx, p.deps, root.base, root.versionsURL, v.Original(), policy)
+	info, err := p.versionDocument(ctx, col, fqdn, v.Original(), policy, policy)
 	if err != nil {
 		return nil, notPublishedError(err, fqdn, v.Original())
 	}
@@ -182,6 +177,63 @@ func (p *MetadataProvider) Dependencies(ctx context.Context, fqdn string, v solv
 	}
 	cacheDeps(p.deps.st, policy, cacheKey, raw)
 	return canonicalizeDependencies(fqdn, raw)
+}
+
+// Preferred implements solver.Preferrer: the version galaxy.lock pins fqdn's
+// Galaxy entry to, read from the file alone, so a version the constraints
+// exclude costs nothing. A git or url pin and an unlocked fqdn have none.
+func (p *MetadataProvider) Preferred(_ context.Context, fqdn string) (solver.Version, bool, error) {
+	if _, pinned := p.pins[fqdn]; pinned {
+		return solver.Version{}, false, nil
+	}
+	locked, ok := p.deps.lockPrefs.galaxyVersion(fqdn)
+	if !ok {
+		return solver.Version{}, false, nil
+	}
+	v, err := solver.NewVersion(locked)
+	if err != nil {
+		// Unreachable: lockfile.Load holds every version to
+		// helpers.IsExactVersion, which is this same parse.
+		return solver.Version{}, false, nil
+	}
+	return v, true, nil
+}
+
+// Confirm implements solver.Preferrer: v is still published when the server
+// fqdn binds to, by its collection document read as Highest reads it, serves
+// v's document, the exact read Dependencies then makes from the cache.
+func (p *MetadataProvider) Confirm(ctx context.Context, fqdn string, v solver.Version) (bool, error) {
+	ns, name, err := splitFQDN(fqdn)
+	if err != nil {
+		return false, err
+	}
+	col := collection{Namespace: ns, Name: name, Source: p.sourceOf(fqdn)}
+	_, err = p.versionDocument(ctx, col, fqdn, v.Original(),
+		cacheManager.PolicyForConstraint(p.deps.cfg, false), cacheManager.PolicyForConstraint(p.deps.cfg, true))
+	if err == nil {
+		return true, nil
+	}
+	if !isUnknownPackageError(err) {
+		return false, err
+	}
+	// Gone from its server: recorded without output, since being asked is no
+	// decision; lockWithState warns once the result is known.
+	p.deps.lockPrefs.recordUnpublished(fqdn)
+	return false, nil
+}
+
+// versionDocument reads col's root document under rootPolicy, binding fqdn to
+// the server that answered, then that server's document for version under
+// versionPolicy: what Dependencies reads on a deps-cache miss, and Confirm.
+func (p *MetadataProvider) versionDocument(
+	ctx context.Context, col collection, fqdn, version string, rootPolicy, versionPolicy cacheManager.Policy,
+) (*types.GalaxyCollectionVersionInfo, error) {
+	root, err := resolveRootMetadata(ctx, p.deps, col, rootPolicy, fqdn)
+	if err != nil {
+		return nil, err
+	}
+	p.recordBinding(fqdn, root.base)
+	return fetchVersionMetadataCached(ctx, p.deps, root.base, root.versionsURL, version, versionPolicy)
 }
 
 // boundBaseFor returns the server base fqdn's deps-cache key is scoped to and
@@ -347,8 +399,8 @@ func compareRankedVersionsDescending(a, b rankedVersion) int {
 	}
 }
 
-// noDepsProvider wraps a solver.Provider for a --no-deps run: Highest and
-// Universe delegate unchanged, while Dependencies always reports none.
+// noDepsProvider wraps a solver.Provider for a --no-deps run: Highest,
+// Universe and Preferred delegate unchanged, while Dependencies reports none.
 type noDepsProvider struct {
 	solver.Provider
 }
@@ -360,7 +412,7 @@ type serverBinder interface {
 }
 
 // NewNoDepsProvider wraps p so its Dependencies never contributes an edge,
-// leaving Highest/Universe delegated to p unchanged.
+// leaving Highest, Universe and Preferred delegated to p unchanged.
 func NewNoDepsProvider(p solver.Provider) solver.Provider {
 	return noDepsProvider{Provider: p}
 }
@@ -374,6 +426,25 @@ func (p noDepsProvider) Dependencies(ctx context.Context, fqdn string, v solver.
 		}
 	}
 	return map[string]solver.Constraint{}, nil
+}
+
+// Preferred forwards the wrapped provider's solver.Preferrer, which the
+// embedded interface would hide from the solver's type assertion; a wrapped
+// provider without one prefers nothing.
+func (p noDepsProvider) Preferred(ctx context.Context, fqdn string) (solver.Version, bool, error) {
+	if preferrer, ok := p.Provider.(solver.Preferrer); ok {
+		return preferrer.Preferred(ctx, fqdn)
+	}
+	return solver.Version{}, false, nil
+}
+
+// Confirm forwards the wrapped provider's solver.Preferrer as Preferred does;
+// the solver never asks it without a preference, which needs one.
+func (p noDepsProvider) Confirm(ctx context.Context, fqdn string, v solver.Version) (bool, error) {
+	if preferrer, ok := p.Provider.(solver.Preferrer); ok {
+		return preferrer.Confirm(ctx, fqdn, v)
+	}
+	return false, nil
 }
 
 // bindServer binds fqdn as Dependencies does: no request for one candidate, else

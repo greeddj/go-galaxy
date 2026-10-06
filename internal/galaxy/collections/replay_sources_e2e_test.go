@@ -6,13 +6,14 @@ package collections_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"errors"
 	"testing"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/collections"
 	"github.com/greeddj/go-galaxy/internal/galaxy/config"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
+	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
+	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 	"github.com/greeddj/go-galaxy/internal/testing/fakegalaxy"
 )
@@ -32,9 +33,6 @@ const (
 	galaxyKafkaVersion = "0.10.0"
 	// appFQDN is the collection both the git requirement and Galaxy supply.
 	appFQDN = "acme.app"
-	// appLockedVersion is acme.app's version at app-1, where the git fixture
-	// locks it: the commit its main names.
-	appLockedVersion = "1.2.3"
 )
 
 // newReplayFixture is the git fixture plus Galaxy's acme.base, which depends
@@ -48,35 +46,6 @@ func newReplayFixture(t *testing.T) *gitFixture {
 	return f
 }
 
-// sharedCacheProject is another project on cfg's cache: its own requirements
-// file holding body and its own install paths, with no galaxy.lock, as another
-// pipeline on one runner or one S3 bucket.
-func sharedCacheProject(t *testing.T, cfg *config.Config, body string) *config.Config {
-	t.Helper()
-	dir := t.TempDir()
-	req := filepath.Join(dir, "requirements.yml")
-	if err := os.WriteFile(req, []byte(body), 0o600); err != nil {
-		t.Fatalf("write the other project's requirements: %v", err)
-	}
-	other := *cfg
-	other.RequirementsFile = req
-	other.DownloadPath = filepath.Join(dir, "install")
-	other.RolesPath = filepath.Join(dir, "roles")
-	other.Check, other.DryRun, other.Refresh = false, false, false
-	return &other
-}
-
-// installAsAnotherProject runs a plain install of body as a project sharing f's
-// cache and returns its configuration.
-func installAsAnotherProject(t *testing.T, f *gitFixture, body string) *config.Config {
-	t.Helper()
-	other := sharedCacheProject(t, f.cfg, body)
-	if err := collections.Start(context.Background(), other, f.runtime); err != nil {
-		t.Fatalf("the other project's install: %v", err)
-	}
-	return other
-}
-
 // assertAppFromGalaxy fails unless cfg's project installed Galaxy's acme.app
 // and no git remote was reached since the last count reset.
 func assertAppFromGalaxy(t *testing.T, f *gitFixture, cfg *config.Config) {
@@ -87,6 +56,29 @@ func assertAppFromGalaxy(t *testing.T, f *gitFixture, cfg *config.Config) {
 	if adv, acq := f.git.counts(); adv != 0 || acq != 0 {
 		t.Fatalf("the install reached a git remote: advertises=%d acquires=%d", adv, acq)
 	}
+}
+
+// assertAppLockedFromGalaxy fails unless lock, run for cfg's project, writes
+// acme.app as Galaxy's testVersion100.
+func assertAppLockedFromGalaxy(t *testing.T, f *gitFixture, cfg *config.Config) {
+	t.Helper()
+	if err := collections.Lock(context.Background(), cfg, f.runtime); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	lf, err := lockfile.Load(lockfile.ResolveDefaultPath(cfg.RequirementsFile, ""))
+	if err != nil {
+		t.Fatalf("load lockfile: %v", err)
+	}
+	for _, e := range lf.Collections {
+		if e.Name != appFQDN {
+			continue
+		}
+		if !e.IsGalaxy() || e.Version != testVersion100 {
+			t.Fatalf("lock wrote acme.app as %+v, want Galaxy's %s", e, testVersion100)
+		}
+		return
+	}
+	t.Fatalf("lock wrote no acme.app entry: %+v", lf.Collections)
 }
 
 // renameGraphNode returns graph with the node from renamed to, as a key and
@@ -109,9 +101,48 @@ func renameGraphNode(graph map[string][]string, from, to string) map[string][]st
 	return out
 }
 
-// TestReplayHandsNoProjectAnotherProjectsGitSource pins that once a project
-// installs acme.base beside its own git requirement for acme.app, another on
-// the same cache asking Galaxy installs Galaxy's acme.app.
+// TestReplayHandsNoProjectACommitAnotherProjectLocked pins that once a lock
+// keeps dev's commit for main, passing or failing, previewed or uncached, a
+// project asking Galaxy for acme.base installs and locks Galaxy's acme.app.
+func TestReplayHandsNoProjectACommitAnotherProjectLocked(t *testing.T) {
+	t.Parallel()
+	devLocator := gitsource.Locator{URL: gitAppURL, Commit: fakeCommit("app-2")}.String()
+	for name, tc := range map[string]struct {
+		want                   error
+		version                string
+		check, dryRun, noCache bool
+	}{
+		"passing lock --check":    {version: appMovedVersion, check: true},
+		"failing lock --check":    {version: appLockedVersion, check: true, want: helpers.ErrLockfileDrift},
+		"lock --dry-run":          {version: appMovedVersion, dryRun: true},
+		"lock --check --no-cache": {version: appMovedVersion, check: true, noCache: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newReplayFixture(t)
+			f.writeRequirements(t, withGitApp)
+			relockAppAt(t, f, fakeCommit("app-2"), tc.version)
+
+			f.cfg.Check, f.cfg.DryRun, f.cfg.NoCache = tc.check, tc.dryRun, tc.noCache
+			if err := lockGitRun(f); !errors.Is(err, tc.want) {
+				t.Fatalf("lock over a galaxy.lock naming dev's commit for main: %v, want %v", err, tc.want)
+			}
+			f.cfg.Check, f.cfg.DryRun, f.cfg.NoCache = false, false, false
+			if got := loadStoreSnapshot(t, f.cfg, f.runtime).ResolvedSnapshot()[appFQDN].Source; got != devLocator {
+				t.Fatalf("the lock recorded acme.app from %q, want dev's commit %q", got, devLocator)
+			}
+
+			f.git.resetCounts()
+			other := installAsAnotherProject(t, f, withoutGitApp)
+			assertAppFromGalaxy(t, f, other)
+			assertAppLockedFromGalaxy(t, f, other)
+		})
+	}
+}
+
+// TestReplayHandsNoProjectAnotherProjectsGitSource pins the same with no
+// galaxy.lock anywhere: once a project installs acme.base beside its own git
+// requirement for acme.app, another asking Galaxy installs Galaxy's acme.app.
 func TestReplayHandsNoProjectAnotherProjectsGitSource(t *testing.T) {
 	t.Parallel()
 	f := newReplayFixture(t)

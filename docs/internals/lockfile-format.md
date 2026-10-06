@@ -68,9 +68,9 @@ version with `helpers.IsExactVersion` and keys entries by fqdn.
 
 | Outcome | Error | Callers |
 | --- | --- | --- |
-| Absent | Bare `fs.ErrNotExist` (`IsNotExist`) | `hash` and `outdated` fall back; `lock --dry-run` diffs against nothing |
-| Absent, required | `LoadRequired` returns `ErrLockfileMissing` naming the path, exit 6 | `--frozen`, `lock --check`, `tree`, `explain` |
-| Any other failure | Wraps `helpers.ErrLockfileInvalid`, exit 6 | Fatal; `lock --dry-run` warns, the metrics report omits the hash |
+| Absent | Bare `fs.ErrNotExist` (`IsNotExist`) | `hash` and `outdated` fall back; `lock` keeps no pin, and `lock --dry-run` diffs against nothing |
+| Absent, required | `LoadRequired`, or `RequiredError` over a `Load` already made, returns `ErrLockfileMissing` naming the path, exit 6 | `--frozen`, `lock --check`, `tree`, `explain` |
+| Any other failure | Wraps `helpers.ErrLockfileInvalid`, exit 6 | Fatal, `lock --check` included; a plain `lock` and `lock --dry-run` warn and keep no pin, the metrics report omits the hash |
 
 `Load` `Stat`s the path first, following a symlink, and refuses anything but
 a regular file, a directory or fifo included, as `ErrLockfileInvalid` before
@@ -85,7 +85,8 @@ exit-code classifier exits 2.
 
 `MatchGitRequirements` decides which git requirement answers for each git
 entry, so one entry is never judged by two: `--frozen` holds each git root to
-its share (`GitMatch.Err`), and `tree` and `explain` list it.
+its share (`GitMatch.Err`), `lock` keeps the commit the entries it owns share,
+and `tree` and `explain` list it.
 
 - A requirement is a candidate for a git entry locked from its repository at
   its subdir or an immediate child of it, and, when it names a collection,

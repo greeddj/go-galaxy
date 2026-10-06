@@ -29,9 +29,31 @@ go-galaxy lock
 `lock` resolves the collections and roles of your
 [requirements file](requirements.md) and writes `galaxy.lock` beside it, or at
 the path [`--lock-file` or `lock_file`](../reference/cli.md#lockfile) names. Commit the
-file. While the requirements are unchanged, `lock` replays the
-[last resolution](caching.md#what-a-rerun-reuses), so run
-`go-galaxy lock --refresh` to take newer releases your constraints allow.
+file.
+
+Over an existing `galaxy.lock`, `lock` keeps each pin the file holds that the
+requirements still allow ([What each entry is pinned
+by](#what-each-entry-is-pinned-by)) and its source still serves, and resolves
+the rest, such as an entry you added. A dependency keeps its pin while the
+entries it is reached through keep theirs: an entry that resolves anew takes
+its highest allowed version, and what it alone reaches can move to what that
+version needs ([The loop](../internals/solver.md#the-loop), in the internals).
+The file outranks the cache: a cold cache, `--no-cache`, `--clear-cache` and a
+newer pin that `install --refresh` recorded move none of its pins. A replayed
+resolution asks the servers nothing; a run that solves, as after an edit, reads
+a kept collection's metadata as any solve does
+([Freshness and retention](caching.md#freshness-and-retention)). Run
+`go-galaxy lock --refresh` to set the file aside and take newer releases your
+constraints allow, moved git refs and new role tags.
+
+| When | `lock` |
+| --- | --- |
+| The requirements no longer allow a pin, as after you tighten a constraint past it | Resolves that entry anew, as `--dry-run` shows |
+| The requirements rule out a git commit: it holds a collection they ask for from another source, or no resolution fits its collections' dependencies | Resolves that git requirement anew, with one warning. `lock --check` then reports drift |
+| A source no longer serves a pin: a Galaxy version answers `404`, a repository no longer serves a commit, a URL serves other bytes, or a Galaxy role's repository cannot be fetched while the v1 API names another | Resolves that entry anew, with one warning. `lock --check` then reports drift |
+| `--offline`, and the cache lacks a pin: a Galaxy version's metadata, a commit, or the bytes of a URL | Exits [`4`](../reference/exit-codes.md). A plain `lock` without `--offline` records them, a commit only while its branch or tag still names it ([What a rerun reuses](caching.md#what-a-rerun-reuses)) |
+| No `galaxy.lock` | Resolves with no pins to keep |
+| A `galaxy.lock` that does not load, or a path that is not a regular file | `lock` and `lock --dry-run` warn that it cannot be read and resolve with no pins to keep. `lock --check` exits `6` |
 
 `lock` exits [`5`](../reference/exit-codes.md) when a server names a `download_url` that
 carries a query string or leaves the server's origin. Such a server works only
@@ -42,13 +64,14 @@ without a lockfile. Any path on that origin locks, such as a caching proxy's
 
 ### What each entry is pinned by
 
-| Entry | Pinned by |
-| --- | --- |
-| Galaxy collection | `version`, `sha256` and `download_url` |
-| git collection | `commit`, with `ref` and `subdir` |
-| url collection | `sha256` of the tarball |
-| Galaxy or git role | `commit`, with `ref` |
-| url role | `sha256` of the tarball |
+| Entry | Pinned by | `lock` keeps it while |
+| --- | --- | --- |
+| Galaxy collection | `version`, `sha256` and `download_url` | Every constraint on it allows `version`. `sha256` and `download_url` come from its server again |
+| git collection | `commit`, with `ref` and `subdir` | Its requirement still asks for that repository and `ref`, matched as a [frozen install](#what-a-frozen-install-checks) matches it, and every entry matched to that requirement shares one `commit` |
+| url collection | `sha256` of the tarball | Its requirement still asks for that URL, and for that `version` if it names one |
+| Galaxy role | `commit`, with `repository` and `ref` | Its requirement still asks for that Galaxy name, and for that `version` if it names one, the entry names a server the run uses, and its `repository` is on GitHub |
+| git role | `commit`, with `ref` | Its requirement still asks for that repository and `ref` |
+| url role | `sha256` of the tarball | Its requirement still asks for that URL, and for that `version` if it names one |
 
 A Galaxy server that publishes no digest leaves its entries without `sha256`,
 so a frozen install cannot check their bytes.
@@ -161,8 +184,8 @@ still install. `lock --check` catches those.
 | --- | --- | --- |
 | `lock` | Nothing: it rewrites `galaxy.lock` | `0` |
 | `lock --dry-run` | As `lock --check` | `0` |
-| `lock --check` | Requirements edited without relocking, and on a cold cache all that `--refresh` catches | `6` |
-| `lock --check --refresh` | Also newer releases your constraints allow, moved git refs, changed url bytes | `6` |
+| `lock --check` | Requirements edited without relocking, and a pin its source no longer serves | `6` |
+| `lock --check --refresh` | Also newer releases your constraints allow, moved git refs, a Galaxy role's new tag, changed url bytes | `6` |
 
 Preview a change without writing it, here capping `community.general` below
 13.0.0 and swapping `ansible.utils` for `ansible.posix`:
@@ -196,11 +219,13 @@ go-galaxy lock --check
 removed or repinned, a changed role or default server. A missing or
 unloadable lockfile also exits `6`.
 
-Plain `lock --check` replays the [last resolution](caching.md#what-a-rerun-reuses)
-when the cache holds one for the same requirements. `lock` saves one, and so
-do `install` and `warm` without `--frozen`. A frozen install saves none. With
-no saved resolution, `lock --check` asks the servers, so a newer upstream
-release fails it too.
+Plain `lock --check` keeps the pins `galaxy.lock` holds, as `lock` does
+([Create the lockfile](#create-the-lockfile)), so a newer upstream release, a
+moved git ref or a Galaxy role's new tag does not fail it, on a cold cache or
+a warm one. A pin its source no longer serves fails it only where the run has
+to fetch that pin: a cache that still holds the pin answers for it.
+`lock --check --refresh` sets `galaxy.lock` aside, so those upstream changes
+fail it too.
 
 Fix drift with `go-galaxy lock` (`--refresh` for an upstream release) and
 commit `galaxy.lock`. The CI job: [Lockfile drift gate](ci.md#lockfile-drift-gate).

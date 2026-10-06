@@ -35,6 +35,9 @@ const (
 	// re-solve: a subset of the requirements, so it neither replays the snapshot
 	// nor records its partial result; the caller records the merged graph.
 	resolveNestedPartial
+	// resolveTopLevelAnew is resolveTopLevel without the replay, for lock once
+	// a replayed version proved gone: it records its result as resolveTopLevel.
+	resolveTopLevelAnew
 )
 
 // resolveCollectionsInternal resolves versions and dependencies for roots.
@@ -51,6 +54,32 @@ func resolveCollectionsInternal(
 	if len(roots) == 0 {
 		return map[string]collection{}, map[string][]string{}, nil
 	}
+	for {
+		resolved, graph, err := resolveRoots(ctx, deps, roots, mode)
+		if err == nil || mode == resolveNestedPartial || !deps.lockPrefs.releaseRuledOutGitRoots(deps, err) {
+			return resolved, graph, err
+		}
+		// lock kept a git commit the requirements rule out: the roots holding it
+		// resolve again as if unlocked, from discovery forgotten, not replayed.
+		forgetDiscoveries(deps)
+	}
+}
+
+// forgetDiscoveries drops every git and url discovery of the run, removing
+// the --no-cache builds nobody took, for a resolve that discovers again.
+func forgetDiscoveries(deps collectionDeps) {
+	deps.gitMemo.reset()
+	deps.urlMemo.reset()
+}
+
+// resolveRoots is one attempt of resolveCollectionsInternal over roots, which
+// are not empty: discovery, then the snapshot replay or the solve.
+func resolveRoots(
+	ctx context.Context,
+	deps collectionDeps,
+	roots []collection,
+	mode resolveMode,
+) (map[string]collection, map[string][]string, error) {
 	cfg := deps.cfg
 	st := deps.st
 	allowSnapshot := mode == resolveTopLevel
@@ -83,7 +112,7 @@ func resolveCollectionsInternal(
 	if err != nil {
 		return nil, nil, err
 	}
-	recordResolutionIfNeeded(st, mode == resolveTopLevel, resolved, graph, reqHash, cfg.Server, reqSpec)
+	recordResolutionIfNeeded(st, mode != resolveNestedPartial, resolved, graph, reqHash, cfg.Server, reqSpec)
 	return resolved, graph, nil
 }
 
@@ -124,6 +153,11 @@ func resolveFromSnapshots(
 	st := deps.st
 
 	if resolved, graph, ok := loadResolvedFromSnapshot(cfg, st, roots, reqHash); ok {
+		// A replay that moved a galaxy.lock pin loses to the file: lock solves
+		// anew, preferring it. Every root matched, so no incremental one applies.
+		if !deps.lockPrefs.agreesWith(roots, resolved) {
+			return nil, nil, false, nil
+		}
 		return resolved, graph, true, nil
 	}
 	resolved, graph, ok, err := tryIncrementalResolve(ctx, deps, roots, reqSpec, reqHash)
@@ -638,6 +672,11 @@ func tryIncrementalResolveWithSnapshot(
 		return nil, nil, false, nil
 	}
 	stampGitRootRefs(mergedResolved, unchangedRoots)
+	// The preserved part is replayed, so a merge that moved a galaxy.lock pin
+	// is dropped before it is recorded, and the caller's full solve prefers it.
+	if !deps.lockPrefs.agreesWith(roots, mergedResolved) {
+		return nil, nil, false, nil
+	}
 
 	if deps.st != nil {
 		recordResolution(deps.st, mergedResolved, mergedGraph, reqHash, deps.cfg.Server, currentSpec)

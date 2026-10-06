@@ -63,8 +63,9 @@ per-level copy is kept.
 
 | Decision step | Rule |
 | --- | --- |
-| Pick | Exact pins, then highest conflict count, then fewest allowed among fetched packages, then name |
+| Pick | Exact pins, then the first by name whose `Preferred` version passes `accum` and is confirmed, then highest conflict count, then fewest allowed among fetched packages, then name |
 | Exact-pin fast path | Decides without `Universe` when the pin passes `accum` |
+| Preferred fast path | Decides the `Preferred` version when it passes `accum` and is confirmed, asking neither `Highest` nor `Universe`; once a declined decision or a conflict excludes it, or `Confirm` refuses it, the next steps pick |
 | Probe fast path | An unfetched positive package is decided at `Highest` when that passes |
 | Otherwise | `Universe`, then the highest allowed version, else a no-versions or unknown-package leaf |
 | Commit | Declined when a new dependency incompatibility is already satisfied (`decideVersion`) |
@@ -74,6 +75,18 @@ Every path still asks `Dependencies`, once per package and version
 solve, since a decided parent's requirement is always positive.
 `extractResult` fails closed on an undecided package reachable from root.
 
+A preference orders the search and constrains nothing. A package whose
+preference passes `accum` and is confirmed is picked before any unpreferred
+one except an exact pin, which every valid resolution consistent with the
+decisions shares. So for
+any valid resolution that agrees with every preference for a package it holds,
+the result keeps each preferred package the roots reach through preferred
+packages of that resolution. A valid resolution preferred whole therefore
+comes back unchanged, and after a requirement is added it is kept whole
+whenever some valid resolution still contains it. A preference reached only
+through an unpreferred package can still move: that package is decided
+first, at its highest allowed version.
+
 ## The Provider seam
 
 | Method | Answers | Contract |
@@ -81,6 +94,8 @@ solve, since a decided parent's requirement is always positive.
 | `Highest(ctx, pkg)` | The registry's highest version, unchecked | `ok` false sends the core to `Universe`; an error aborts |
 | `Universe(ctx, pkg)` | Every published version | Any order; an unknown package is an empty slice and nil error |
 | `Dependencies(ctx, pkg, v)` | fqdn to canonical constraint | Refuses a malformed key or constraint itself |
+| `Preferred(ctx, pkg)`, optional (`Preferrer`) | The version the caller wants kept | Asked at most once per package per solve, never for root, while picking: possibly about a package the result leaves out, or when `accum` already excludes the answer, so it answers from what the caller holds, with no side effect a caller could take for a decision (no warning, no output). `ok` false means none; an error aborts |
+| `Confirm(ctx, pkg, v)`, with `Preferred` | Whether the preferred `v` may be decided, such as that it is still published | Asked at most once per package, only once `v` passes `accum`, so a version the constraints exclude is never checked; the result may still leave `pkg` out, so it must not print either. False drops the preference; an error aborts. The core asks `Dependencies` for a confirmed version, and a failure there aborts the solve |
 
 `Solve` calls every method from its caller's goroutine and checks `ctx` once
 per iteration. An implementation carries `ctx` into every I/O and keeps
@@ -96,7 +111,8 @@ misclassified.
 | `deps_cache` | Keyed per bound server (`helpers.ScopedDepsCacheKey`): two servers may publish different deps for one version |
 | Version list | 100 per page, `ErrVersionsPagingExceeded` past 100 requests, one `MetadataDeadline` for all pages |
 | A `404` the core cannot model | An exact pin's root, a versions page or a version document gone: `notPublishedError` returns `ErrNoSemverCandidates`, exit 3 |
-| `--no-deps` | `NewNoDepsProvider` answers no dependencies without asking, after `bindServer` binds an exact pin's server as `Dependencies` would |
+| `Preferred`, `Confirm` | Under `lock`, `Preferred` answers the version the lockfile pins a Galaxy entry to, from the file alone. `Confirm` reads the root document as `Highest` reads it, so past its window it is revalidated and a server that dropped the collection gives way to the next, then the version document as `Dependencies` reads it; a `404` is recorded, never printed ([Keeping the lockfile's pins](flow-lock.md#keeping-the-lockfiles-pins)). Every other command prefers nothing |
+| `--no-deps` | `NewNoDepsProvider` answers no dependencies without asking, after `bindServer` binds an exact pin's server as `Dependencies` would, and forwards `Preferred` and `Confirm` |
 | Prewarm | `prewarmRootMetadata` makes the solve's own calls ahead, on `--workers` |
 
 > [!WARNING]
@@ -109,7 +125,7 @@ misclassified.
 
 | Rule | Why |
 | --- | --- |
-| Calls `Highest` or `Dependencies`, never `Universe` | The same call on both sides makes a warmed document a cache hit |
+| Calls `Highest` or `Dependencies`, never `Universe` | The same call on both sides makes a warmed document a cache hit; under `lock`, `Confirm` reads the root document `Highest` warms, under the same policy |
 | Needs a store, two roots, a read-write policy | Else it saves nothing or pays twice; `--offline` and `--no-cache` disable it |
 | `--refresh` warms exact pins only | Only their policy still reads back |
 | Skips git and url roots; under `--no-deps` warms only an exact pin's server binding | As with dependencies: the solve then reuses the documents and the 404s the warm met |
@@ -168,7 +184,11 @@ answers.
 
 `TestDeterminism` runs every fixture 100 times on a shuffling provider.
 `FuzzSolve` and `TestOracleMembership` hold results to a brute-force oracle
-in both directions.
+in both directions. `TestOracleMembershipWithPreferences` adds random
+preferences and checks that each one conflicting with nothing else is honored.
+`TestOracleReproducesAPreferredResolution` prefers each valid resolution whole,
+and `TestOracleKeepsALockfileWhenARootIsAdded` prefers each whole or in part
+after a root is added, which pins the pick order.
 
 ## How Solve fails
 
@@ -219,4 +239,7 @@ How to read one: [When no version fits](../guides/requirements.md#when-no-versio
 
 A term reads opposite to its polarity, because the terms cannot all hold;
 `TestDescribePhrasesEveryShape` pins each shape. `collectHints` adds one
-prerelease hint per package from the no-versions leaves.
+prerelease hint per package from the no-versions leaves. `Packages` lists
+every package a term of the derivation names, root aside, which `lock` reads
+to release a git commit it kept from the lockfile
+([Keeping the lockfile's pins](flow-lock.md#keeping-the-lockfiles-pins)).

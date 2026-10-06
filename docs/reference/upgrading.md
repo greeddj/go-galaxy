@@ -13,6 +13,10 @@ Start here from v1.4.0. From an older release, follow
 The tables below list every change since v1.4.0 that can break a job or change
 its result, except an input that used to be refused and is now accepted.
 
+| Change | What you do | If you do not |
+| --- | --- | --- |
+| `lock`, `lock --check` and `lock --dry-run` keep the pins `galaxy.lock` holds, on a cold cache and under `--no-cache` too, moving only those [Create the lockfile](../guides/lockfile.md#create-the-lockfile) lists. Before, they replayed what the cache recorded, from `install --refresh` too, and with nothing recorded, as on a fresh CI runner, or under `--no-cache`, resolved as if no lockfile existed, so newer releases, moved git refs and new role tags were locked, or reported as drift | Take upgrades with `go-galaxy lock --refresh`. A scheduled job or a gate that relied on a cold cache to pick up or report upstream releases adds `--refresh` ([Lockfile drift gate](../guides/ci.md#lockfile-drift-gate)) | A job meant to take upgrades keeps the versions and commits already locked, and a gate meant to report them passes |
+
 ### Exit codes that changed
 
 Update any CI step that branches on the old code for these cases
@@ -20,16 +24,28 @@ Update any CI step that branches on the old code for these cases
 
 | Situation | Was | Now |
 | --- | --- | --- |
+| `lock --check` without `--offline`, after a release your constraints allow, a moved git branch or tag, or a Galaxy role's new tag, on a cold cache or over a cache where `install --refresh` recorded it | `6` | `0`: only `lock --check --refresh` reports these |
+| `lock`, `lock --dry-run` or `lock --check` with `--offline`, over a cache that recorded another version, commit or sha256 than `galaxy.lock` pins and the requirements still allow, such as after `install --refresh` | `0` from `lock` and `lock --dry-run`, which wrote or previewed the cache's pin; `6` from `lock --check`, which reported it as drift | `4` where the cache lacks what `galaxy.lock` pins: a Galaxy version's metadata, a commit or the bytes of a URL. Else `0`, the pin kept |
 | A git collection or role whose `version:` is a commit the remote does not serve, on a remote that allows fetching by hash, outside `--frozen` | `4`, a git transport failure naming `not our ref` | `3`, as on a remote that does not fetch by hash |
 | A `galaxy.lock` git collection, git role or Galaxy role entry whose `ref` is a commit other than its `commit`, or two url collection entries with one `source` | `0` in most cases: `install --frozen` installed the entry's `commit`, not the one its `ref` names, and with two url entries a `version:` matching only one of them passed or failed at random | `6`, as for any `galaxy.lock` that does not load |
 | A git collection or git role whose `version:` is a commit, while the cache's recorded pin for it names another commit, which only a writer other than go-galaxy can leave, such as one sharing an S3 bucket | `0`, the other commit installed and locked | `2`, from `install`, `warm` and `lock` |
 | `lock --check` over a `galaxy.lock` written before a git collection's ref was respelled onto the commit it already resolved to, such as `main` to a tag at that commit, on a cache that recorded the old spelling | `0`, although `install --frozen` refused that file | `6`, the drift `install --frozen` refuses |
 | `install --frozen` or `warm --frozen` over a `galaxy.lock` that `lock` wrote from two pins of one git ref, for a requirement at a directory beside one at its child directory, where the child's directory changed between the two commits | `0` | `6`, `git root ... has no lockfile entry` |
+| `lock --check` over a cache whose last resolution holds a Galaxy version `galaxy.lock` pins and its server no longer serves, once the cache has dropped that version's metadata, as `--clear-cache` or 30 days do | `3`, from the replayed version | `6`, after one warning that it `is no longer published`. A plain `lock` resolves it anew, exit `0` |
 | A `galaxy.lock` whose `server`, or a Galaxy collection or Galaxy role entry's `source`, carries a control character or a line break, which `lock` never writes | `0`, the value printed as written | `6`, as for any `galaxy.lock` that does not load |
 | A project whose requirements name no git or url source for a collection a Galaxy dependency needs, on a cache whose last resolution took that collection from one, such as a resolution recorded for another project sharing the cache and some of these requirements, or for this project before an edit that dropped that source and changed another entry | `0`: `install` and `warm` took that git or url collection, and `lock` locked it | As on an empty cache: the collection resolves from the servers, so `3` where none has a version that fits, and `4` under `--offline` where its metadata is not cached. `lock --check` over a `galaxy.lock` locked so: `6` |
 
 What to do about a new code:
 
+- `0` from `lock --check` where it reported an upstream release: run
+  `go-galaxy lock --check --refresh` on a schedule to report those
+  ([Lockfile drift gate](../guides/ci.md#lockfile-drift-gate)).
+- `4` from `lock` under `--offline` naming a `locked commit`, a
+  `locked sha256` or `asking preferred version`: run `go-galaxy lock` once
+  without `--offline`, which records what `galaxy.lock` pins in the cache, a
+  commit only while its branch or tag still names it. A commit its ref has
+  moved past stays unrecorded, so lock that project without `--offline`
+  ([What a rerun reuses](../guides/caching.md#what-a-rerun-reuses)).
 - `3` for `does not hold commit`: point `version:` at a commit the repository
   holds, or at a branch or tag.
 - `6` for `is a commit and differs from commit`,
@@ -42,6 +58,8 @@ What to do about a new code:
 - `6` for `has no lockfile entry` on such a pair of git requirements: run
   `go-galaxy lock --refresh`, which locks both at one commit. If `lock` then
   refuses the requirements, drop or narrow one of the two.
+- `6` from `lock --check` after a version `is no longer published`: run
+  `go-galaxy lock`, review the version it writes instead, and commit it.
 - `3`, `4` or `6` for a collection only a git or url requirement this project
   does not have supplied: add that requirement if the project needs that
   source. Otherwise the collection now comes from the servers: run once
@@ -118,9 +136,10 @@ before step 3. Upgrade in four steps:
    Galaxy entries without `download_url`, and the new release refuses such a
    file.
 3. In the same change, run `go-galaxy lock` with the new release, review the
-   diff and commit `galaxy.lock`. `lock` never reads the old file, so on a
-   cold cache it resolves against the servers and can move versions. On
-   v1.1.0 to v1.2.2, the default lockfile was `requirements.lock.yml`. No
+   diff and commit `galaxy.lock`. The new release cannot load an old file
+   that holds a Galaxy collection, so `lock` warns, keeps none of its pins
+   and, on a cold cache, resolves against the servers and can move versions.
+   On v1.1.0 to v1.2.2, the default lockfile was `requirements.lock.yml`. No
    later release looks for it, so delete it.
 4. In the same change, replace `lock --frozen` with
    [`lock --check`](../guides/lockfile.md#catch-drift) and
@@ -145,7 +164,7 @@ its result, except an input that used to be refused and is now accepted.
 | An extra word on the command line exits `2`. Before, it was ignored, so `go-galaxy help` and `install --no-deps true` ran `install`. So did `go-galaxy -r requirements.yml lock`, since a command's own option written before the command word sends the whole line to `install` | Drop the extra words, and write a command's options after its name ([Commands](cli.md#commands)) | The step exits `2` before doing anything |
 | An `ansible.cfg` header with spaces inside its brackets, such as `[ galaxy ]`, names another section, as in ansible ([What go-galaxy reads](configuration.md#what-go-galaxy-reads)) | Write `[galaxy]` and `[galaxy_server.<id>]` with no inner spaces | Keys under `[ galaxy ]` are ignored with no warning, so a `server_list` there is lost and the run falls back to galaxy.ansible.com. A `server_list` id whose section is spaced exits `2` |
 | A relative `collections_path`, `roles_path` or `[galaxy] cache_dir` in `ansible.cfg` resolves from the file's directory, not the working directory. `~` and `$VAR` expand in these keys, in their `ANSIBLE_*` variables and in `ANSIBLE_CONFIG`, and an `ANSIBLE_CONFIG` naming a directory reads the `ansible.cfg` in it, as in ansible ([ansible.cfg paths](configuration.md#ansiblecfg-paths)) | Where a job runs outside its `ansible.cfg`'s directory, or a path holds `~` or `$VAR`: delete the trees the old paths made, such as `.collections` and `.roles` in the working directory, or the directory `./~` the old release created (`rm -rf -- ./~`, never a bare `~`), and move CI cache and artifact paths to the new places | The first run installs again into the new place, and a cache moved this way starts cold. A step still reading the old place, such as a CI cache or a playbook pointed there, finds stale content or none |
-| `install --no-cache` and `lock --no-cache` resolve again instead of replaying the [last resolution](../guides/caching.md#what-a-rerun-reuses), so they can take newer versions | Where versions must not move, drop `--no-cache`, or install from `galaxy.lock` with `--frozen` | A `--no-cache` run installs or locks newer versions than the last run did |
+| `install --no-cache` resolves again instead of replaying the [last resolution](../guides/caching.md#what-a-rerun-reuses), so it can take newer versions. `lock --no-cache` resolves again too, but keeps the pins `galaxy.lock` holds ([Create the lockfile](../guides/lockfile.md#create-the-lockfile)) | Where versions must not move, drop `--no-cache`, or install from `galaxy.lock` with `--frozen` | An `install --no-cache` installs newer versions than the last run did |
 | `--no-deps` with several servers binds an exact pin to the first server that has the collection. Before, it took the first server without asking | Nothing. The first `--no-deps` run after the upgrade resolves again instead of replaying the last resolution | - |
 | The action fails at its cache-key step when `go-galaxy hash` fails. Before, it keyed the cache on an empty hash and went on, so two kinds of job newly fail: `frozen: false` over a lockfile that does not load, which at this release is every v1.2.x lockfile holding a Galaxy collection, and a requirements file named only through `args` where neither the [discovered](../guides/requirements.md#which-file-is-read) file nor a `galaxy.lock` beside it exists | Relock, as step 3 says, name the file with the `requirements` input, or set `cache: false` ([Inputs and outputs](../guides/ci.md#inputs-and-outputs)) | The action fails before anything installs |
 | `cleanup` scans only the collections and roles paths a project's latest `install` resolved from its working directory ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)). Before, a relative path was resolved from the requirements file's directory, so a project installed from outside it, as with `-r sub/requirements.yml`, was never found, and `lock` and `warm` rewrote the paths too. Where that collections path was missing or held no `ansible_collections`, or none was recorded, `cleanup` scanned `.collections`, then `collections`, beside the requirements file, so a vendored `collections/` there lost every collection no project reached | Run `install` once with the new release in each project whose installs `cleanup` should prune, which rewrites its record | `cleanup` scans only the path the old record names, if any: it removes none of that project's unused installs anywhere else, and on a shared cache it can delete cached artifacts that project still uses |
@@ -198,9 +217,9 @@ What to do about a new code:
   `<cache_dir>/projects.json`, or from the `state/projects.json` object on S3,
   once ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)).
 - `3` for a collection: fix its name, or pin a version its server publishes.
-- `3` from `lock` for a version gone from its server: the run has usually
-  replayed the last resolution. Run `go-galaxy lock --refresh` to ask the
-  servers again.
+- `3` from `lock` for a version gone from its server that `galaxy.lock` does
+  not pin: the run has usually replayed the last resolution. Run
+  `go-galaxy lock --no-cache` to ask the servers again.
 - `3` for a role whose versions answer `404`: fix its server, or list the
   server that serves the role first
   ([Roles and the v1 role API](../guides/servers-and-auth.md#roles-and-the-v1-role-api)).

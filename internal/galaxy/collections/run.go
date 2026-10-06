@@ -101,7 +101,7 @@ func initInstall(ctx context.Context, cfg *config.Config, runtime *infra.Infra) 
 	// environment. cfg.Check is deliberately not read, since lock --check
 	// --refresh still honors --refresh.
 	if cfg.Refresh && cfg.Offline {
-		runtime.Output.Warnf("--offline: skipping --refresh; cached state is the only source of truth offline")
+		runtime.Output.Warnf("--offline: skipping --refresh, since an offline run asks no server")
 	}
 	runtime.Output.Printf("Init cache backend")
 	backend, err := cacheBackend.New(cfg, runtime)

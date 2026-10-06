@@ -40,6 +40,10 @@ type collectionDeps struct {
 	// install; url artifacts share gitStore, since both source kinds commit
 	// during discovery rather than at install time.
 	urlMemo *urlDiscoveryMemo
+	// lockPrefs holds the pins a lock run keeps from galaxy.lock. Only
+	// withLockPreferences sets it: every other command and every hand-built
+	// deps keep nil, which prefers nothing.
+	lockPrefs *lockPreferences
 }
 
 // withSources returns d with the run's discovery-side artifact store and the
@@ -51,6 +55,13 @@ func (d collectionDeps) withSources(
 	d.gitMemo = memo
 	d.roleMemo = roles
 	d.urlMemo = urls
+	return d
+}
+
+// withLockPreferences returns d carrying prefs, the galaxy.lock pins lock's
+// resolve keeps; lockWithState is its one caller.
+func (d collectionDeps) withLockPreferences(prefs *lockPreferences) collectionDeps {
+	d.lockPrefs = prefs
 	return d
 }
 

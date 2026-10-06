@@ -140,9 +140,9 @@ func assertLockMetricsDescribeFile(t *testing.T, cfg *config.Config, lf *lockfil
 	}
 }
 
-// TestLockOverwritesAnExistingLockfile pins that a stale lockfile at the
-// default path is replaced wholesale by a fresh resolve: none of its entries
-// is merged in or consulted.
+// TestLockOverwritesAnExistingLockfile pins that a stale lockfile, one Load
+// refuses for its 61-digit sha256, is replaced wholesale rather than merged:
+// acme.legacy, which no root reaches, is dropped.
 func TestLockOverwritesAnExistingLockfile(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
@@ -318,8 +318,8 @@ func TestLockCheckFailsOnDrift(t *testing.T) {
 }
 
 // TestLockCheckFailsOnAMissingLockfile pins that a never-written lockfile is
-// helpers.ErrLockfileMissing, not an all-Added drift, and that the gate does
-// not create it: --check consumes a lockfile, it never bootstraps one.
+// helpers.ErrLockfileMissing, not an all-Added drift, once the resolve ran, and
+// that the gate creates no file and reports, saves and measures nothing.
 func TestLockCheckFailsOnAMissingLockfile(t *testing.T) {
 	t.Parallel()
 	f := newLockRun(t)
@@ -338,6 +338,15 @@ func TestLockCheckFailsOnAMissingLockfile(t *testing.T) {
 	path := lockfile.ResolveDefaultPath(f.cfg.RequirementsFile, f.cfg.LockFile)
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 		t.Fatalf("expected the gate to create no lockfile, stat err = %v", statErr)
+	}
+	if len(f.printer.oks) != 0 || len(f.printer.persists) != 0 {
+		t.Errorf("oks = %v, persists = %v; want no report for a missing file", f.printer.oks, f.printer.persists)
+	}
+	if _, statErr := os.Stat(f.cfg.MetricsFile); !os.IsNotExist(statErr) {
+		t.Errorf("stat %s = %v, want no metrics report", f.cfg.MetricsFile, statErr)
+	}
+	if got := f.server.Count(fakegalaxy.EndpointRootMetadata); got != 1 {
+		t.Errorf("root metadata requests = %d, want 1: --check resolves before it judges the file", got)
 	}
 }
 

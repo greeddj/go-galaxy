@@ -86,6 +86,21 @@ func pinnedServerCandidate(cfg *config.Config, source string) (serverCandidate, 
 	return serverCandidate{base: normalized}, false
 }
 
+// lockedRoleServerAsked reports whether source, the server a locked Galaxy
+// role names, is one lookupGalaxyRole asks: pinnedServerCandidate's match, or
+// with no server list, cfg.Server's origin, the one server asked then.
+func lockedRoleServerAsked(cfg *config.Config, source string) bool {
+	if cfg == nil {
+		return false
+	}
+	if _, matched := pinnedServerCandidate(cfg, source); matched || len(cfg.Servers) > 0 {
+		return matched
+	}
+	origin, ok := parsedOrigin(normalizeServerBase(source))
+	server, serverOK := parsedOrigin(normalizeServerBase(cfg.Server))
+	return ok && serverOK && origin == server
+}
+
 // unmatchedSourceMemo remembers which unmatched sources one collectionDeps has
 // warned about; nil-tolerant, as a hand-built collectionDeps carries none.
 type unmatchedSourceMemo struct {

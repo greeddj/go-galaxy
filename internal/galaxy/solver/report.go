@@ -2,6 +2,7 @@ package solver
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 type ConflictError struct {
 	proofLines []string
 	hints      []string
+	packages   []string
 }
 
 // Error renders the proof followed by any hints, one per line.
@@ -47,6 +49,13 @@ func (e *ConflictError) ProofLines() []string {
 // Hints returns the deterministic, package-name-ordered hint texts.
 func (e *ConflictError) Hints() []string {
 	return e.hints
+}
+
+// Packages returns, sorted, every package a term of the proof's derivation
+// names, the synthetic root aside: what a caller that pinned one of them may
+// relax before solving again.
+func (e *ConflictError) Packages() []string {
+	return e.packages
 }
 
 // isDerivedInc reports whether inc is a conflict-resolution-derived
@@ -313,7 +322,33 @@ func (b *reportBuilder) outcome(s *solveState, inc *incompatibility) error {
 	return &ConflictError{
 		proofLines: b.lines,
 		hints:      s.collectHints(inc),
+		packages:   derivationPackages(inc),
 	}
+}
+
+// derivationPackages walks inc's derivation graph and returns, sorted and
+// once each, the package of every term in it but the synthetic root.
+func derivationPackages(inc *incompatibility) []string {
+	seen := make(map[string]bool)
+	visited := make(map[*incompatibility]bool)
+	var walk func(*incompatibility)
+	walk = func(n *incompatibility) {
+		if visited[n] {
+			return
+		}
+		visited[n] = true
+		for _, t := range n.Terms {
+			if t.Package != rootPkg {
+				seen[t.Package] = true
+			}
+		}
+		if cause, ok := n.Cause.(causeConflict); ok {
+			walk(cause.Left)
+			walk(cause.Right)
+		}
+	}
+	walk(inc)
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // collectHints walks inc's derivation graph for causeNoVersions leaves and

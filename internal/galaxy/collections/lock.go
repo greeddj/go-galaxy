@@ -48,7 +48,7 @@ func buildLockfile(
 		}
 		entry, err := galaxyLockfileEntry(ctx, deps, fqdn, col, graph)
 		if err != nil {
-			return nil, fmt.Errorf("lockfile: %s: %w", fqdn, err)
+			return nil, &galaxyEntryError{fqdn: fqdn, err: err}
 		}
 		entries = append(entries, entry)
 	}
@@ -58,6 +58,22 @@ func buildLockfile(
 		Collections:   entries,
 		Roles:         roleEntries,
 	}, nil
+}
+
+// galaxyEntryError is buildLockfile failing to render fqdn's Galaxy entry. It
+// carries fqdn so lock can tell a kept pin its server no longer serves, which
+// a solve resolves anew, from every other failure.
+type galaxyEntryError struct {
+	err  error
+	fqdn string
+}
+
+func (e *galaxyEntryError) Error() string {
+	return "lockfile: " + e.fqdn + ": " + e.err.Error()
+}
+
+func (e *galaxyEntryError) Unwrap() error {
+	return e.err
 }
 
 // galaxyLockfileEntry renders a Galaxy collection's pin from its version
@@ -419,20 +435,6 @@ func lockfileDepsToKeys(deps []string, byFQDN map[string]lockfile.Entry) []strin
 		out = append(out, fmt.Sprintf("%s@%s", dep, entry.Version))
 	}
 	return out
-}
-
-// lockDryRunBaseline loads the lockfile at path as a dry run's "before" side,
-// or nil when it is absent or unloadable (warned, never fatal, since a real
-// lock only overwrites it). lockCheck, whose verdict is that file, fails closed.
-func lockDryRunBaseline(runtime *infra.Infra, path string) *lockfile.File {
-	lf, err := lockfile.Load(path)
-	if err == nil {
-		return lf
-	}
-	if !lockfile.IsNotExist(err) {
-		runtime.Output.Warnf("Existing lockfile %s cannot be read (%v); reporting every collection as added", path, err)
-	}
-	return nil
 }
 
 // dryRunDiffPrefix and checkDiffPrefix lead reportLockfileDiff's summary line

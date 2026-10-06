@@ -282,32 +282,22 @@ takes `$CI_JOB_TOKEN`, bound as in
         steps:
           - uses: actions/checkout@v7
           - uses: greeddj/go-galaxy@v1.4.0
-            id: gg
             with:
               install: false # (2)!
-          - id: key
-            run: |
-              hash=$(go-galaxy hash)
-              echo "hash=$hash" >> "$GITHUB_OUTPUT"
-          - uses: actions/cache@v6 # (3)!
-            with:
-              path: ~/.cache/go-galaxy
-              key: go-galaxy-drift-${{ runner.os }}-${{ runner.arch }}-${{ steps.gg.outputs.version }}-${{ steps.key.outputs.hash }}
-          - run: go-galaxy lock --check # (4)!
+          - run: go-galaxy lock --check # (3)!
           - if: github.event_name == 'schedule'
-            run: go-galaxy lock --check --refresh # (5)!
+            run: go-galaxy lock --check --refresh # (4)!
     ```
 
     1. Starts a weekly run, the only one that takes the last step.
     2. Only puts go-galaxy on PATH.
-    3. Its own key, saved by the run on `main`: plain `lock --check` replays
-       the [last resolution](caching.md#what-a-rerun-reuses) saved there,
-       which an install cache written by `--frozen` lacks.
-    4. Fails on requirements edited without relocking. On a cold cache, it
-       also fails on a newer upstream release.
-    5. On the schedule only. A newer release your constraints allow, a moved
-       git ref or changed url bytes would otherwise fail every open pull
-       request, whatever it changes.
+    3. Fails on requirements edited without relocking, or on a pin its
+       source no longer serves. It needs no cache: `lock` keeps the pins
+       `galaxy.lock` holds on a cold runner too
+       ([Catch drift](lockfile.md#catch-drift)).
+    4. On the schedule only. A newer release your constraints allow, a moved
+       git ref or a Galaxy role's new tag would otherwise fail every open
+       pull request, whatever it changes.
 
 === "GitLab CI"
 
@@ -317,14 +307,23 @@ takes `$CI_JOB_TOKEN`, bound as in
         name: ghcr.io/greeddj/go-galaxy:1.4.0-alpine
         entrypoint: [""]
       script:
-        - go-galaxy lock --check --refresh # (1)!
+        - go-galaxy lock --check # (1)!
+
+    lockfile-upstream:
+      extends: lockfile-drift
+      rules:
+        - if: $CI_PIPELINE_SOURCE == "schedule" # (2)!
+      script:
+        - go-galaxy lock --check --refresh
     ```
 
-    1. One step and no cache: by default GitLab keeps a protected branch's
-       cache from unprotected ones, so a merge request cannot replay the
-       last resolution saved on `main`. This step catches both kinds of
-       drift, so a newer upstream release fails every merge request. If the
-       gate is required for merging, run it from a pipeline schedule instead.
+    1. In every pipeline. Fails on requirements edited without relocking, or
+       on a pin its source no longer serves. It needs no cache: `lock` keeps
+       the pins `galaxy.lock` holds on a cold runner too
+       ([Catch drift](lockfile.md#catch-drift)).
+    2. Only in a pipeline schedule you set up for the project. A newer release
+       your constraints allow, a moved git ref or a Galaxy role's new tag
+       would otherwise fail every merge request, whatever it changes.
 
 On drift a step exits `6`: run `go-galaxy lock` (with `--refresh` for an
 upstream release) and commit. [Catch drift](lockfile.md#catch-drift) explains

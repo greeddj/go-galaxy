@@ -68,30 +68,53 @@ func (s *solveState) candidatePackages() []string {
 	return names
 }
 
-// pickPackage chooses the next package by the frozen priority: exact pins,
+// pickPackage chooses the next package: exact pins, then passing preferences,
 // then highest conflict count, then fetched packages with the fewest allowed
 // candidates, then the rest, ties broken by candidatePackages' name order.
-func (s *solveState) pickPackage() (string, bool) {
+func (s *solveState) pickPackage(ctx context.Context) (string, bool, error) {
 	names := s.candidatePackages()
 	if len(names) == 0 {
-		return "", false
+		return "", false, nil
 	}
 
 	for _, n := range names {
 		if _, ok := s.packageIsExactPin(n); ok {
-			return n, true
+			return n, true, nil
 		}
 	}
 
+	if pkg, ok, err := s.pickByPreference(ctx, names); err != nil || ok {
+		return pkg, ok, err
+	}
+
 	if pkg, ok := s.pickByConflictCount(names); ok {
-		return pkg, true
+		return pkg, true, nil
 	}
 
 	if pkg, ok := s.pickByFewestCandidates(names); ok {
-		return pkg, true
+		return pkg, true, nil
 	}
 
-	return names[0], true
+	return names[0], true, nil
+}
+
+// pickByPreference returns the first of names whose preferred version passes
+// its accumulation and is confirmed, so that no unpreferred package is decided
+// first and moves a preference; an error asking about one ends the pick.
+func (s *solveState) pickByPreference(ctx context.Context, names []string) (string, bool, error) {
+	if s.preferrer == nil {
+		return "", false, nil
+	}
+	for _, n := range names {
+		_, ok, err := s.passingPreference(ctx, n)
+		if err != nil {
+			return "", false, err
+		}
+		if ok {
+			return n, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 func (s *solveState) pickByConflictCount(names []string) (string, bool) {
@@ -145,11 +168,14 @@ type decisionOutcome struct {
 	done bool
 }
 
-// makeDecision picks a package and decides it, via the exact-pin and probe
-// fast paths when they apply. An empty pool means the solve is complete: a
+// makeDecision picks a package and decides it, via the exact-pin, preferred
+// and probe fast paths when they apply. An empty pool completes the solve: a
 // decided parent's requirement is positive, so it is pooled or decided.
 func (s *solveState) makeDecision(ctx context.Context) (string, bool, error) {
-	pkg, ok := s.pickPackage()
+	pkg, ok, err := s.pickPackage(ctx)
+	if err != nil {
+		return "", false, err
+	}
 	if !ok {
 		return "", true, nil
 	}
@@ -159,13 +185,16 @@ func (s *solveState) makeDecision(ctx context.Context) (string, bool, error) {
 	return s.decideFromAllowed(ctx, pkg)
 }
 
-// tryFastDecide tries the exact-pin then the provider.Highest probe fast
-// path, fetching the universe when neither can be confirmed cheaply; nil
-// means fall through to decideFromAllowed.
+// tryFastDecide tries the exact-pin, preferred and provider.Highest probe fast
+// paths in that order, fetching the universe when none can be confirmed
+// cheaply; nil means fall through to decideFromAllowed.
 func (s *solveState) tryFastDecide(ctx context.Context, pkg string) *decisionOutcome {
 	u := s.uniFor(pkg)
 	if vp, isPin := s.packageIsExactPin(pkg); isPin {
 		return s.tryDecidePin(ctx, pkg, u, vp)
+	}
+	if out := s.tryDecidePreferred(ctx, pkg); out != nil {
+		return out
 	}
 	if !u.fetched && s.probeWorthTrying(pkg) {
 		return s.tryDecideByProbe(ctx, pkg)
@@ -190,6 +219,59 @@ func (s *solveState) tryDecidePin(ctx context.Context, pkg string, u *packageUni
 		return &decisionOutcome{err: err}
 	}
 	return nil
+}
+
+// tryDecidePreferred decides pkg at its preferred version while that passes
+// the accumulation and is confirmed. nil means none applies, as once a declined
+// decision or a backjump has excluded it, and the probe and the universe pick.
+func (s *solveState) tryDecidePreferred(ctx context.Context, pkg string) *decisionOutcome {
+	v, ok, err := s.passingPreference(ctx, pkg)
+	if err != nil {
+		return &decisionOutcome{err: err}
+	}
+	if !ok {
+		return nil
+	}
+	decidedPkg, done, decErr := s.decideVersion(ctx, pkg, v)
+	return &decisionOutcome{pkg: decidedPkg, done: done, err: decErr}
+}
+
+// passingPreference returns pkg's preferred version while it passes the
+// accumulation and the Preferrer confirms it. Confirm is asked only then, so
+// a version the constraints exclude costs the provider nothing.
+func (s *solveState) passingPreference(ctx context.Context, pkg string) (Version, bool, error) {
+	v, ok, err := s.preferredVersion(ctx, pkg)
+	if err != nil || !ok || !s.versionPassesAccum(pkg, v) {
+		return Version{}, false, err
+	}
+	memo := s.preferences[pkg]
+	if !memo.checked {
+		confirmed, err := s.preferrer.Confirm(ctx, pkg, v)
+		if err != nil {
+			return Version{}, false, fmt.Errorf("confirming preferred version of %s: %w", pkg, err)
+		}
+		memo.checked, memo.confirmed = true, confirmed
+		s.preferences[pkg] = memo
+	}
+	return v, memo.confirmed, nil
+}
+
+// preferredVersion returns pkg's preferred version, asking the Preferrer at
+// most once per Solve and never about the synthetic root; a provider without
+// the extension has no preference.
+func (s *solveState) preferredVersion(ctx context.Context, pkg string) (Version, bool, error) {
+	if s.preferrer == nil || pkg == rootPkg {
+		return Version{}, false, nil
+	}
+	if memo, asked := s.preferences[pkg]; asked {
+		return memo.version, memo.ok, nil
+	}
+	v, ok, err := s.preferrer.Preferred(ctx, pkg)
+	if err != nil {
+		return Version{}, false, fmt.Errorf("asking preferred version of %s: %w", pkg, err)
+	}
+	s.preferences[pkg] = preference{version: v, ok: ok}
+	return v, ok, nil
 }
 
 // tryDecideByProbe decides pkg at the provider.Highest version when it

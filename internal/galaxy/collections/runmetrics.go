@@ -41,7 +41,7 @@ func writeRunMetrics(
 		return
 	}
 	// A report cannot mark a dry run, and would pair the on-disk lockfile's
-	// hash with a fresh resolve's counts, so a dry run writes none.
+	// hash with the counts of a resolve it never wrote, so a dry run writes none.
 	if cfg.DryRun {
 		runtime.Output.Warnf("--dry-run: skipping metrics report to %s", cfg.MetricsFile)
 		return

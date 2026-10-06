@@ -564,9 +564,9 @@ nothing.
       ([From v1.3.x](../reference/upgrading.md#from-v13x)).
 - [ ] Run `go-galaxy migrate`, and read each warning and the new file.
 - [ ] Check it. With a lockfile, `go-galaxy lock --check -r galaxy.toml`
-      exits `0`: the same entries give the same `galaxy.lock`, replaying the
-      [last resolution](caching.md#what-a-rerun-reuses) when the cache holds
-      it. Offline, `go-galaxy tree -r galaxy.toml` prints no
+      exits `0`: the same entries keep the pins `galaxy.lock` holds, on a
+      cold cache too ([Create the lockfile](lockfile.md#create-the-lockfile)).
+      Offline, `go-galaxy tree -r galaxy.toml` prints no
       `(missing in lockfile)`. Without a lockfile, run
       `go-galaxy install --dry-run -r galaxy.toml`. Either way,
       [`go-galaxy hash`](lockfile.md#a-cache-key-for-ci) prints the key it

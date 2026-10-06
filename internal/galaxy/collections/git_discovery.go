@@ -2,6 +2,7 @@ package collections
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -95,6 +96,19 @@ func (m *gitDiscoveryMemo) cleanup() {
 	}
 }
 
+// reset is cleanup that also forgets every pin, for a resolve that starts
+// its discovery again: a collection only the old discovery found must not
+// stay a git pin in the solver.
+func (m *gitDiscoveryMemo) reset() {
+	if m == nil {
+		return
+	}
+	m.cleanup()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.pins)
+}
+
 // expandGitRoots replaces every unpinned git root with the collections its
 // repository holds at the resolved commit, on the download-worker pool and in
 // input order. It is the only place resolution contacts a git remote.
@@ -105,6 +119,9 @@ func expandGitRoots(ctx context.Context, deps collectionDeps, roots []collection
 	if deps.runtime == nil || deps.runtime.Git == nil {
 		return nil, fmt.Errorf("%w: no git client is wired into this run", helpers.ErrConfigIsNil)
 	}
+	// One match over every root, as --frozen makes it: a root's entries depend
+	// on the roots beside it, which no single expansion sees.
+	locked := deps.lockPrefs.gitRoots(roots)
 	results := make([][]collection, len(roots))
 	errs := make([]error, len(roots))
 	var wg sync.WaitGroup
@@ -117,7 +134,7 @@ func expandGitRoots(ctx context.Context, deps collectionDeps, roots []collection
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			results[i], errs[i] = expandGitRoot(ctx, deps, root)
+			results[i], errs[i] = expandGitRoot(ctx, deps, root, locked[i])
 		})
 	}
 	wg.Wait()
@@ -126,6 +143,7 @@ func expandGitRoots(ctx context.Context, deps collectionDeps, roots []collection
 			return nil, err
 		}
 	}
+	deps.lockPrefs.noteKeptGitRoots(roots, locked, results)
 	expanded := make([]collection, 0, len(roots))
 	for _, group := range results {
 		expanded = append(expanded, group...)
@@ -152,12 +170,28 @@ func checkExpandedDuplicates(roots []collection) ([]collection, error) {
 	for _, root := range roots {
 		fqdn := fmt.Sprintf("%s.%s", root.Namespace, root.Name)
 		if other, dup := seen[fqdn]; dup {
-			return nil, fmt.Errorf("%w for %s (%s and %s)", helpers.ErrDuplicateCollectionRequirement, fqdn,
-				helpers.URLForMessage(other), helpers.URLForMessage(root.Source))
+			return nil, &duplicateRootError{fqdn: fqdn, first: other, second: root.Source}
 		}
 		seen[fqdn] = root.Source
 	}
 	return roots, nil
+}
+
+// duplicateRootError is checkExpandedDuplicates refusing fqdn, which two roots
+// expand into; it carries fqdn so lock can find a kept git commit holding it.
+type duplicateRootError struct {
+	fqdn   string
+	first  string
+	second string
+}
+
+func (e *duplicateRootError) Error() string {
+	return fmt.Sprintf("%v for %s (%s and %s)", helpers.ErrDuplicateCollectionRequirement, e.fqdn,
+		helpers.URLForMessage(e.first), helpers.URLForMessage(e.second))
+}
+
+func (e *duplicateRootError) Unwrap() error {
+	return helpers.ErrDuplicateCollectionRequirement
 }
 
 // gitRootRequest is one unpinned git root taken apart: the parsed URL and
@@ -206,17 +240,19 @@ func gitCredentialsOf(deps collectionDeps) []gitsource.Credential {
 	return deps.runtime.GitCredentials
 }
 
-// expandGitRoot resolves one unpinned git root into its collections.
-func expandGitRoot(ctx context.Context, deps collectionDeps, root collection) ([]collection, error) {
+// expandGitRoot resolves one unpinned git root into its collections, first at
+// the commit galaxy.lock pins it to under lock (locked), else as install does.
+func expandGitRoot(ctx context.Context, deps collectionDeps, root collection, locked lockedGitRoot) ([]collection, error) {
 	req, err := newGitRootRequest(deps, root)
 	if err != nil {
 		return nil, err
 	}
 	policy := cacheManager.PolicyForConstraint(deps.cfg, req.ref.IsCommit())
-	if policy.Read {
-		if pin, ok := deps.st.GetGitPin(req.pinKey); ok {
-			return replayGitPin(deps, req, pin)
-		}
+	if expanded, kept, err := expandLockedGitRoot(ctx, deps, req, policy, locked); kept || err != nil {
+		return expanded, err
+	}
+	if pin, ok := recordedGitPin(deps, req, policy, locked); ok {
+		return replayGitPin(deps, req, pin)
 	}
 	if deps.cfg != nil && deps.cfg.Offline {
 		return nil, fmt.Errorf("%w: git source %s@%s is not recorded in the cache", helpers.ErrOfflineMode, req.display, req.ref.Name)
@@ -225,6 +261,65 @@ func expandGitRoot(ctx context.Context, deps collectionDeps, root collection) ([
 		return refreshed, err
 	}
 	return acquireGitRoot(ctx, deps, req, policy, "")
+}
+
+// recordedGitPin returns the pin recorded for req when the policy reads one,
+// unless it names the commit the requirements ruled out (locked.released),
+// which would only fail again.
+func recordedGitPin(deps collectionDeps, req gitRootRequest, policy cacheManager.Policy, locked lockedGitRoot) (store.GitPinEntry, bool) {
+	if !policy.Read {
+		return store.GitPinEntry{}, false
+	}
+	pin, ok := deps.st.GetGitPin(req.pinKey)
+	if !ok || (locked.released != "" && pin.Commit == locked.released) {
+		return store.GitPinEntry{}, false
+	}
+	return pin, true
+}
+
+// expandLockedGitRoot is the git path for a root galaxy.lock pins: a recorded
+// pin at the locked commit replays, --offline refuses a miss, else that commit is
+// fetched, its pin recorded as lockedPinPolicy allows. kept=false: none, or gone.
+func expandLockedGitRoot(
+	ctx context.Context, deps collectionDeps, req gitRootRequest, policy cacheManager.Policy, locked lockedGitRoot,
+) ([]collection, bool, error) {
+	if locked.commit == "" {
+		return nil, false, nil
+	}
+	if policy.Read {
+		if pin, ok := deps.st.GetGitPin(req.pinKey); ok && pin.Commit == locked.commit {
+			expanded, err := replayGitPin(deps, req, pin)
+			return expanded, true, err
+		}
+	}
+	if deps.cfg != nil && deps.cfg.Offline {
+		return nil, true, fmt.Errorf("%w: git source %s@%s: locked commit %s is not recorded in the cache",
+			helpers.ErrOfflineMode, req.display, req.ref.Name, locked.commit)
+	}
+	policy, err := lockedPinPolicy(ctx, deps, policy, req.url, req.ref, req.cred, locked.commit, "")
+	if err != nil {
+		return nil, true, err
+	}
+	expanded, err := acquireGitRoot(ctx, deps, req, policy, locked.commit)
+	if errors.Is(err, helpers.ErrGitCommitNotFound) {
+		warnLockedCommitGone(deps, req, locked)
+		return nil, false, nil
+	}
+	return expanded, true, err
+}
+
+// warnLockedCommitGone warns once that a git root's locked commit is gone,
+// naming the one collection the root owns, else its source and ref; the
+// first owned entry keys it, since every entry has at most one owner.
+func warnLockedCommitGone(deps collectionDeps, req gitRootRequest, locked lockedGitRoot) {
+	out, first := deps.runtime.Output, locked.names[0]
+	if len(locked.names) == 1 {
+		deps.lockPrefs.warnCollectionf(out, first, "Locked %s: commit %s is no longer served by %s; resolving the collection anew",
+			first, locked.commit, req.display)
+		return
+	}
+	deps.lockPrefs.warnCollectionf(out, first, "Locked git source %s@%s: commit %s is no longer served; resolving its collections anew",
+		req.display, req.ref.Name, locked.commit)
 }
 
 // refreshGitPin is the cheap half of --refresh for a branch or tag pin: one
@@ -260,6 +355,41 @@ func refreshGitPin(ctx context.Context, deps collectionDeps, req gitRootRequest,
 // --no-cache, which reads no pin, so the run acquires as --no-cache does.
 func refreshReadsPin(deps collectionDeps, ref gitsource.Ref) bool {
 	return deps.cfg != nil && deps.cfg.Refresh && !deps.cfg.NoCache && !ref.IsCommit()
+}
+
+// lockedPinPolicy is policy for fetching commit, which galaxy.lock pins ref at:
+// one advertisement (no pack), under the git deadline, keeps Write only while
+// ref names commit under a role's label ("" for a collection), as a resolve records.
+func lockedPinPolicy(
+	ctx context.Context, deps collectionDeps, policy cacheManager.Policy,
+	u gitsource.URL, ref gitsource.Ref, cred gitsource.Credential, commit, label string,
+) (cacheManager.Policy, error) {
+	if !policy.Write {
+		return policy, nil
+	}
+	runtime := deps.runtime
+	gitCtx, cancel := context.WithTimeout(ctx, runtime.GitDeadline())
+	defer cancel()
+	tip, refName, err := runtime.Git.Advertise(gitCtx, u, ref, cred)
+	if err != nil && !errors.Is(err, helpers.ErrGitRefNotFound) {
+		return policy, artifactDeadlineError(ctx, gitCtx, runtime.GitDeadline(), err)
+	}
+	display, version := helpers.URLForMessage(u.String()), roleVersionFor(ref, refName)
+	switch {
+	case err != nil:
+		runtime.Output.Debugf("%s@%s is not advertised; fetching commit %s, which galaxy.lock pins, without recording a pin",
+			display, ref.Name, commit)
+	case tip != commit:
+		runtime.Output.Debugf("%s@%s names commit %s; fetching commit %s, which galaxy.lock pins, without recording a pin",
+			display, ref.Name, tip, commit)
+	case label != "" && version != label:
+		runtime.Output.Debugf("%s@%s names commit %s as version %s; fetching it as version %s, which galaxy.lock pins, "+
+			"without recording a pin", display, ref.Name, commit, version, label)
+	default:
+		return policy, nil
+	}
+	policy.Write = false
+	return policy, nil
 }
 
 func gitArtifactsCached(ctx context.Context, deps collectionDeps, req gitRootRequest, pin store.GitPinEntry) bool {
@@ -299,8 +429,8 @@ func replayGitPin(deps collectionDeps, req gitRootRequest, pin store.GitPinEntry
 }
 
 // acquireGitRoot fetches the repository, builds and stores its collections,
-// records the pin and returns the expanded roots. A non-empty commit is the
-// tip a --refresh advertisement just resolved, and exactly that is fetched.
+// records the pin when policy writes and returns the expanded roots. A non-empty
+// commit, a tip --refresh advertised or galaxy.lock's pin, is fetched exactly.
 func acquireGitRoot(
 	ctx context.Context, deps collectionDeps, req gitRootRequest, policy cacheManager.Policy, commit string,
 ) ([]collection, error) {

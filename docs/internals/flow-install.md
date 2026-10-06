@@ -81,12 +81,14 @@ flowchart TD
   R1 -->|"two roots,<br/>one collection"| RX2(["exit 2"])
   R2 --> R3{"--refresh or --no-cache<br/>without --offline?"}
   R3 -->|"no"| R4{"recorded signature, or recorded<br/>spec made canonical, equal; every<br/>root satisfied; each git or url<br/>collection one a root expanded into?"}
-  R4 -->|"yes"| R5["replay the snapshot,<br/>no metadata request"]
+  R4 -->|"yes"| R4L{"lock: a Galaxy version<br/>the lockfile pins moved?"}
+  R4L -->|"no"| R5["replay the snapshot,<br/>no metadata request"]
+  R4L -->|"yes"| R8
   R5 --> R11A(["resolved set and graph"])
   R4 -->|"no"| R6{"only some roots changed,<br/>same mode and servers?"}
   R6 -->|"no"| R8["prewarmRootMetadata<br/>on --workers"]
   R6 -->|"yes"| R7["re-solve changed roots,<br/>merge preserved subgraph"]
-  R7 -->|"merge unusable, or a git or url<br/>collection no root expanded into"| R8
+  R7 -->|"merge unusable, a git or url<br/>collection no root expanded into,<br/>or lock: a pinned version moved"| R8
   R7 -->|"solve failed"| RXD2(["exit 1, 2, 3, 4,<br/>5 or 7 by cause"])
   R7 -->|"merged graph valid"| R10
   R3 -->|"yes"| R8
@@ -99,7 +101,9 @@ flowchart TD
 ```
 
 `resolveCollectionsInternal` is shared by install, warm and lock. A cycle is
-refused later, in `planCollections`, which `lock` never runs. Why
+refused later, in `planCollections`, which `lock` never runs. Only lock carries
+the lockfile's pins, which drop a replay that moved one and steer the solve:
+[Keeping the lockfile's pins](flow-lock.md#keeping-the-lockfiles-pins). Why
 roots expand before the signature, why a replay restamps each git root's ref
 and holds no git or url collection the run's roots did not expand into, and
 why a file with no collections records nothing:
@@ -152,6 +156,10 @@ flowchart TD
   G2 -->|"request failed"| GXF(["exit 2, 3, 4,<br/>5 or 7 by cause"])
   G2 --> G3
 ```
+
+Under `lock`, a git or url root or a role request that a lockfile entry
+matches takes that entry's pin before either diagram:
+[Keeping the lockfile's pins](flow-lock.md#keeping-the-lockfiles-pins).
 
 ## Collection install
 

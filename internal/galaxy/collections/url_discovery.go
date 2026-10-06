@@ -14,6 +14,7 @@ import (
 	cacheManager "github.com/greeddj/go-galaxy/internal/galaxy/cache"
 	"github.com/greeddj/go-galaxy/internal/galaxy/collectionbuild"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
+	"github.com/greeddj/go-galaxy/internal/galaxy/lockfile"
 	"github.com/greeddj/go-galaxy/internal/galaxy/manifest"
 	"github.com/greeddj/go-galaxy/internal/galaxy/store"
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
@@ -118,6 +119,18 @@ func (m *urlDiscoveryMemo) cleanup() {
 	}
 }
 
+// reset is cleanup that also forgets every pin, for a resolve that starts
+// its discovery again.
+func (m *urlDiscoveryMemo) reset() {
+	if m == nil {
+		return
+	}
+	m.cleanup()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	clear(m.pins)
+}
+
 // expandURLRoots replaces each unpinned url root with the collection its
 // tarball holds; it is resolution's only contact with a url origin. Roots run
 // on the download pool and merge in input order, so the result is stable.
@@ -191,14 +204,17 @@ func newURLRootRequest(root collection) (urlRootRequest, error) {
 }
 
 // expandURLRoot resolves one unpinned url root into its collection. A pin is
-// keyed by its URL and replayed whenever the policy allows a read, TTL ignored:
-// it never ages out, and only --refresh or --clear-cache replaces it.
+// keyed by its URL and never ages out: it replays whenever the policy reads,
+// unless lock finds galaxy.lock pinning other bytes (expandLockedURLRoot).
 func expandURLRoot(ctx context.Context, deps collectionDeps, root collection) ([]collection, error) {
 	req, err := newURLRootRequest(root)
 	if err != nil {
 		return nil, err
 	}
 	policy := cacheManager.PolicyForConstraint(deps.cfg, false)
+	if locked, ok := deps.lockPrefs.urlEntry(req.rawURL, req.requested); ok {
+		return expandLockedURLRoot(ctx, deps, req, policy, locked)
+	}
 	if policy.Read {
 		if pin, ok := deps.st.GetURLPin(req.pinKey); ok {
 			return replayURLPin(deps, req, pin)
@@ -208,6 +224,30 @@ func expandURLRoot(ctx context.Context, deps collectionDeps, root collection) ([
 		return nil, fmt.Errorf("%w: url source %s is not recorded in the cache", helpers.ErrOfflineMode, req.display)
 	}
 	return acquireURLRoot(ctx, deps, req, policy)
+}
+
+// expandLockedURLRoot keeps galaxy.lock's sha256 for a url root: a recorded pin
+// of those bytes replays, another never, --offline refuses a miss, else the URL
+// is downloaded, and bytes other than the locked ones warn once and are kept.
+func expandLockedURLRoot(
+	ctx context.Context, deps collectionDeps, req urlRootRequest, policy cacheManager.Policy, locked lockfile.Entry,
+) ([]collection, error) {
+	if policy.Read {
+		if pin, ok := deps.st.GetURLPin(req.pinKey); ok && pin.SHA256 == locked.SHA256 {
+			return replayURLPin(deps, req, pin)
+		}
+	}
+	if deps.cfg != nil && deps.cfg.Offline {
+		return nil, fmt.Errorf("%w: url source %s: locked sha256 %s is not recorded in the cache",
+			helpers.ErrOfflineMode, req.display, locked.SHA256)
+	}
+	expanded, err := acquireURLRoot(ctx, deps, req, policy)
+	if err == nil && expanded[0].SHA256 != locked.SHA256 {
+		deps.lockPrefs.warnCollectionf(deps.runtime.Output, locked.Name,
+			"Locked %s: sha256 %s is no longer served by %s, which now serves %s; keeping the new bytes",
+			locked.Name, locked.SHA256, req.display, expanded[0].SHA256)
+	}
+	return expanded, err
 }
 
 // replayURLPin turns a recorded pin into an expanded root, re-validating

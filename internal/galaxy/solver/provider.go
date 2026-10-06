@@ -123,3 +123,17 @@ type Provider interface {
 	// here, never left for the core to guess at.
 	Dependencies(ctx context.Context, pkg string, v Version) (map[string]Constraint, error)
 }
+
+// Preferrer is an optional Provider extension, found by type assertion: a
+// package whose preference passes its accumulation and is confirmed is picked
+// before all but exact pins and decided there.
+type Preferrer interface {
+	// Preferred returns the version the caller wants kept for pkg, or ok false,
+	// asked at most once per package per Solve; an error ends the solve. Being
+	// asked is no decision, so neither method may warn or print.
+	Preferred(ctx context.Context, pkg string) (Version, bool, error)
+	// Confirm reports whether pkg's preferred version v may be decided, such as
+	// that it is still published: asked once v passes pkg's accumulation, at most
+	// once per package. False drops the preference; an error ends the solve.
+	Confirm(ctx context.Context, pkg string, v Version) (bool, error)
+}

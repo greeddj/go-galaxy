@@ -150,6 +150,7 @@ These risks stay open. Each has a mitigation you apply:
 | A `signatures:` `file://` path | Read a local absolute path the repository chose | Run untrusted branches as a user who can read nothing sensitive |
 | A local writer to the cache directory | Swap artifact bytes between the three reads of a verifying run | Keep the cache writable by the run's user only |
 | A `file://` source on a network mount | Stall the run: the read has no deadline | Keep signature files on local disk |
+| A hand edit to `galaxy.lock` | Pin another version the constraints allow, another commit the repository serves or another GitHub repository for a Galaxy role, and still pass `lock --check`. It vouches that the file matches the requirements and that each pin is still served, by its source or the cache, not that a pin is the newest. `install --frozen` installs such a pin too. On a shared cache only such a version reaches another project, through a replayed resolution: `lock` records no pin for a commit or Galaxy role repository the file alone names, and a replay hands a project no git or url collection its own requirements do not resolve to ([What a rerun reuses](caching.md#what-a-rerun-reuses)) | Review `galaxy.lock` diffs like code. To see newer releases, run `lock --check --refresh` on a schedule ([Lockfile drift gate](ci.md#lockfile-drift-gate)) |
 
 A `signatures:` URL or `file://` path can also leak through a message. A
 failed connection can name the resolved address, the port and a certificate's

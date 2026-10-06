@@ -305,7 +305,7 @@ var (
 	// ErrLockfileInvalid indicates the lockfile is malformed or unsupported.
 	ErrLockfileInvalid = errors.New("lockfile is invalid")
 	// ErrLockfileDrift indicates lock --check found the lockfile on disk differs
-	// from what a fresh lock would write. Unlike ErrLockfileMismatch, the file covers
+	// from what lock would write now. Unlike ErrLockfileMismatch, the file covers
 	// the roots but is out of date.
 	ErrLockfileDrift = errors.New("lockfile is out of date")
 

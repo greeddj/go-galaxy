@@ -75,11 +75,11 @@ lockfile](../guides/lockfile.md#install-from-the-lockfile).
 go-galaxy lock --check
 ```
 
-`lock` resolves from the requirements file, not the existing lockfile, and pins
-every entry. Unchanged requirements replay the [last
-resolution](../guides/caching.md#what-a-rerun-reuses) unless `--refresh` or
-`--no-cache` is set. `lock` takes the `install` options except `--frozen` and
-the signature flags.
+`lock` resolves the requirements file and pins every entry, keeping the
+existing lockfile's pins as [Create the
+lockfile](../guides/lockfile.md#create-the-lockfile) describes. Only
+`--refresh` sets that file aside. `lock` takes the `install` options except
+`--frozen` and the signature flags.
 
 `--check` compares instead of writing and exits `6` on drift. `--dry-run`
 prints the difference. Workflow: [Create the
@@ -283,13 +283,14 @@ resources](../internals/install-pipeline.md#two-pools-two-resources).
 
 | Flag | Variable | Effect |
 | --- | --- | --- |
-| `--no-cache` | `GO_GALAXY_NO_CACHE` | Bypasses the artifact cache and extracted store, and resolves afresh |
-| `--refresh` | `GO_GALAXY_REFRESH` | Re-asks version-free answers: version lists, branches, tags, the v1 role API, url sources |
-| `--clear-cache` | `GO_GALAXY_CLEAR_CACHE` | Before the run, deletes cached metadata, the commits and sha256s the cache recorded, and artifacts, S3 included. `galaxy.lock` is untouched |
+| `--no-cache` | `GO_GALAXY_NO_CACHE` | Bypasses the artifact cache and extracted store, and resolves again. `lock` still keeps the pins `galaxy.lock` holds |
+| `--refresh` | `GO_GALAXY_REFRESH` | Re-asks version-free answers: version lists, branches, tags, the v1 role API, url sources. `lock` also sets aside the pins `galaxy.lock` holds |
+| `--clear-cache` | `GO_GALAXY_CLEAR_CACHE` | Before the run, deletes cached metadata, the commits and sha256s the cache recorded, and artifacts, S3 included. `galaxy.lock` is untouched, so `lock` still keeps its pins |
 | `--offline` | `GO_GALAXY_OFFLINE` | Uses cached state only; any network access fails |
 | `--no-deps` | `GO_GALAXY_NO_DEPS` | Installs only the requirements file's own entries |
 
-`--offline` beats `--refresh` with a warning. `--refresh` and `--no-deps` do
+`--offline` beats `--refresh` with a warning, so `lock --offline --refresh`
+keeps the pins `galaxy.lock` holds. `--refresh` and `--no-deps` do
 nothing under `--frozen`: pass them to `lock` instead ([What a frozen install
 checks](../guides/lockfile.md#what-a-frozen-install-checks)). Compared: [Cache
 flags](../guides/caching.md#cache-flags).
@@ -311,9 +312,9 @@ The path is the first of:
 
 A path that exists but is not a regular file, such as a directory or a named
 pipe, `<(...)` included, is refused before it is opened: exit `6` from every
-command that reads the lockfile, and a warning from `lock --dry-run`, which
-then reports every collection as added. A symlink to a regular file is read as
-that file.
+command that reads the lockfile but `lock` and `lock --dry-run`, which warn
+and resolve with no pins to keep. `lock --dry-run` then reports every entry as
+added. A symlink to a regular file is read as that file.
 
 `lock --frozen` exits `2`, and `GO_GALAXY_FROZEN` never reaches `lock`. What
 the pins enforce: [What a frozen install

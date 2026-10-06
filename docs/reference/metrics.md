@@ -81,7 +81,7 @@ what the run installed or resolved.
 | Command | `collections`, `roles` | `failures` |
 | :-- | :-- | :-- |
 | `install`, `warm` | Planned entries, dependencies and already-installed ones included | Failed collections plus failed roles |
-| `lock` | Entries in the fresh resolve | Always `0` |
+| `lock` | Entries in the lockfile the run built | Always `0` |
 | `outdated` | [Entries compared](../guides/lockfile.md#find-newer-versions) | Failed lookups |
 
 ## When a report is written

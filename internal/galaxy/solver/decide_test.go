@@ -190,9 +190,9 @@ func TestPickPackagePinFirst(t *testing.T) {
 	s.ps.derive(term{Package: "alpha", Set: mustSet(t, "^1.0.0"), Positive: true}, mustDummyCause(t, s))
 	s.ps.derive(term{Package: "zed", Set: mustSet(t, "=1.0.0"), Positive: true}, mustDummyCause(t, s))
 
-	pkg, ok := s.pickPackage()
-	if !ok || pkg != "zed" {
-		t.Fatalf("pickPackage = (%q, %v), want (\"zed\", true): the exact pin must win over name order", pkg, ok)
+	pkg, ok, err := s.pickPackage(t.Context())
+	if err != nil || !ok || pkg != "zed" {
+		t.Fatalf("pickPackage = (%q, %v, %v), want (\"zed\", true, nil): the exact pin must win over name order", pkg, ok, err)
 	}
 }
 

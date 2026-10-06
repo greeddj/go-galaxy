@@ -127,7 +127,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | Message | Exit | Meaning and first step |
 | --- | --- | --- |
 | `network read stalled`, `artifact download deadline exceeded`, `galaxy metadata fetch deadline exceeded`, `cache state object deadline exceeded` | `4` | A transfer stalled or a [fixed budget](cli.md#timeouts-and-fixed-limits) ran out; retry |
-| `offline mode is enabled, network access is forbidden` | `4` | Not cached: [warm the cache](cli.md#warm) without `--offline`, or drop `--offline` |
+| `offline mode is enabled, network access is forbidden` | `4` | Not cached: drop `--offline`, or first fill the cache without it: with [`warm`](cli.md#warm), or for `lock` with a plain `lock`, which records what `galaxy.lock` pins, a commit only while its branch or tag names it ([Create the lockfile](../guides/lockfile.md#create-the-lockfile)) |
 | `cache backend cannot be used as configured` | `2` | A host-less S3 endpoint, a bucket without conditional writes, or [cache directory permissions](../guides/ci.md#container-image-bake) |
 | `galaxy server unavailable` | `4` | The server was unreachable (connection, DNS, TLS) or answered a metadata request with a status other than success, `401`, `403` or `404`; retry, then check its URL |
 | `galaxy server authentication failed` | `4` | The server answered a metadata request with `401` or `403`; check the token ([Where a token may go](../guides/servers-and-auth.md#where-a-token-may-go)) |
@@ -177,6 +177,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | Command | No lockfile | Unreadable, invalid or not a regular file ([Lockfile](cli.md#lockfile)) |
 | --- | --- | --- |
 | `install --frozen`, `warm --frozen`, `lock --check` (after resolving), `tree`, `explain` | `6` | `6` |
+| `lock`, `lock --dry-run` | resolves with no pins to keep | a warning, then resolves with no pins to keep |
 | `hash` | the digest of what the requirements file asks for (`2` if it does not load) | `6` |
 | `outdated` | reads the collections path (`6` if missing) | `6` |
 

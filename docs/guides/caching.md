@@ -74,13 +74,21 @@ re-resolves it, but adding or dropping `type: galaxy` on a Galaxy entry
 ([Collections](requirements.md#collections)) or respelling its constraint
 ([Version constraints](requirements.md#version-constraints)) does not. The
 cache records these commits and sha256s in the snapshot, not in
-`galaxy.lock`. An [S3 cache](#s3-cache-optional) reuses the same way, and
+`galaxy.lock`. `lock` keeps the pins `galaxy.lock` holds ahead of all of this,
+and of the refreshes above only `--refresh` moves them
+([Create the lockfile](lockfile.md#create-the-lockfile)). It records in the
+cache only the pins a resolve would record: a commit it keeps only while its
+branch or tag still names it, and a Galaxy role's repository and tag only from
+the v1 API, never from its `galaxy.lock` entry. So every `lock` run fetches a
+kept commit its ref no longer names again, after one advertisement of the ref,
+and `--offline` fails on it unless the cache recorded it before the ref moved. An
+[S3 cache](#s3-cache-optional) reuses the same way, and
 [Cache flags](#cache-flags) compares the flags that refresh it.
 
 A cache keeps one last resolution, shared by every project on it. A project
 whose requirements changed reuses what its unchanged entries reached there. No
 reuse hands a project a git or url collection that none of its own entries
-resolves to, such as one another project's entry, or an entry
+resolves to, such as one another project's entry or `galaxy.lock`, or an entry
 this project dropped, brought in: such a collection resolves from the servers
 again ([Resolution replay](../internals/cache.md#resolution-replay), in the
 internals).
@@ -126,12 +134,15 @@ in the internals).
 | `--refresh` | Re-asks servers, git refs, the v1 role API and url sources | Used only for exact collection versions and commit refs | Not replayed | As usual |
 | `--no-cache` | Resolves and downloads everything | Neither read nor written | Not replayed | Resolution, install records, project registry; no artifacts or extracted trees |
 | `--clear-cache` | Refetches what it dropped | Emptied first, as are the artifacts | Replayed if requirements are unchanged | As usual |
-| `--offline` | None: a miss exits `4` at resolve, `5` at install; warm the cache rather than retry | Read at any age | Replayed | Install records, extracted trees, project registry, a changed resolution |
+| `--offline` | None: a miss exits `4` at resolve, `5` at install; fill the cache rather than retry, with `warm`, or for `lock` with a plain `lock`, which records a commit only while its ref names it ([What a rerun reuses](#what-a-rerun-reuses)) | Read at any age | Replayed | Install records, extracted trees, project registry, a changed resolution |
 
 `--offline` wins over `--refresh`, with a warning. Beside `--no-cache`, it
 still reads cached metadata, commits and sha256s, but anything it must install
-fails. `warm` refuses `--no-cache` (exit `2`). The variables are under
-[Cache behavior](../reference/cli.md#cache-behavior).
+fails. `warm` refuses `--no-cache` (exit `2`). `galaxy.lock` is no cache:
+`lock` keeps its pins under every flag here but `--refresh`, so
+`lock --offline --refresh` keeps them too
+([Create the lockfile](lockfile.md#create-the-lockfile)). The variables are
+under [Cache behavior](../reference/cli.md#cache-behavior).
 
 ## Clearing and cleanup
 

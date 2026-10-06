@@ -19,16 +19,29 @@ var fuelLimit = 1_000_000
 var errSolverBug = errors.New("solver: internal invariant violated")
 
 // solveState is one Solve call's mutable state: incompatibility store, partial
-// solution, per-package universes and decision bookkeeping. It is never shared
-// across goroutines and never persisted between calls.
+// solution, per-package universes and preferences, and decision bookkeeping.
+// It is never shared across goroutines and never persisted between calls.
 type solveState struct {
-	provider       Provider
+	provider Provider
+	// preferrer is provider's Preferrer extension, nil when it has none.
+	preferrer      Preferrer
 	store          *incompatStore
 	ps             *partialSolution
 	universes      map[string]*packageUniverse
+	preferences    map[string]preference
 	conflictCounts map[string]int
 	depsAdded      map[string]bool
 	rootDeps       map[string]Constraint
+}
+
+// preference is one package's memoized Preferred answer, kept when ok is
+// false too, and its Confirm answer once checked, so the provider is asked
+// each question once per package per Solve.
+type preference struct {
+	version   Version
+	ok        bool
+	checked   bool
+	confirmed bool
 }
 
 // Solve resolves reqs against p, or returns a *ConflictError when no selection
@@ -74,10 +87,13 @@ func newSolveState(p Provider, reqs []Requirement) *solveState {
 		rootDeps[r.Package] = r.Constraint
 	}
 
+	preferrer, _ := p.(Preferrer)
 	s := &solveState{
 		provider:       p,
+		preferrer:      preferrer,
 		store:          newIncompatStore(),
 		universes:      make(map[string]*packageUniverse),
+		preferences:    make(map[string]preference),
 		conflictCounts: make(map[string]int),
 		depsAdded:      make(map[string]bool),
 		rootDeps:       rootDeps,

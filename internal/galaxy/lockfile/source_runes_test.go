@@ -10,7 +10,7 @@ import (
 )
 
 // forgedLine is a source carrying a line that reads like lock's own success
-// line, the shape a crafted galaxy.lock would print through a diff line.
+// line, the shape a crafted galaxy.lock would print through a warning.
 const forgedLine = "https://evil.example/\n✔ Lockfile written to galaxy.lock (0 collections, 1 role)"
 
 // sourceRunesGalaxyEntry is a loadable Galaxy collection entry from source.

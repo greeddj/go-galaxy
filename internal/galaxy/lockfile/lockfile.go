@@ -134,7 +134,7 @@ func ResolveDefaultPath(requirementsFile, override string) string {
 
 // Load parses and validates a lockfile. Every error either satisfies
 // IsNotExist or wraps helpers.ErrLockfileInvalid, never both and never neither:
-// LoadRequired, outdated and lock --dry-run tell absence from breakage by it.
+// LoadRequired, RequiredError, outdated and lock tell absence from breakage by it.
 func Load(path string) (*File, error) {
 	// Stat, following a symlink, refuses a fifo before an open that would block
 	// with no writer; a failed Stat passes, so the read reports absence as before.
@@ -238,7 +238,7 @@ func (f *File) canonicalClone() *File {
 // character in a source, a bad or contradictory pin, an entry its schema predates.
 func (f *File) validate() error {
 	// The server and a Galaxy source are printed as written, in the --check
-	// and --dry-run diff lines, so a line break or terminal control in one
+	// diff and lock's warnings, so a line break or terminal control in one
 	// would forge output; neither is ever printed in the refusal.
 	if hasUnsafeRune(f.Server) {
 		return fmt.Errorf("%w: server carries a control character", helpers.ErrLockfileInvalid)
@@ -484,14 +484,20 @@ func IsNotExist(err error) bool {
 // fs.ErrNotExist exits 2. A caller that falls back on absence uses Load.
 func LoadRequired(path string) (*File, error) {
 	f, err := Load(path)
-	switch {
-	case err == nil:
-		return f, nil
-	case IsNotExist(err):
-		return nil, fmt.Errorf("%w: %s", helpers.ErrLockfileMissing, path)
-	default:
-		return nil, err
+	if err != nil {
+		return nil, RequiredError(path, err)
 	}
+	return f, nil
+}
+
+// RequiredError is the error LoadRequired returns for Load's err at path, for
+// a caller that read the file once with Load and only later needs it; a nil
+// err stays nil.
+func RequiredError(path string, err error) error {
+	if IsNotExist(err) {
+		return fmt.Errorf("%w: %s", helpers.ErrLockfileMissing, path)
+	}
+	return err
 }
 
 // canonicalize sorts the entries, roles and their deps, and sets the schema
