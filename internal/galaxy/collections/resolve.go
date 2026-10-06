@@ -46,6 +46,11 @@ func resolveCollectionsInternal(
 	roots []collection,
 	mode resolveMode,
 ) (map[string]collection, map[string][]string, error) {
+	// No collection means nothing to solve, and recording an empty resolution
+	// would dirty every such run and evict the one another project replays.
+	if len(roots) == 0 {
+		return map[string]collection{}, map[string][]string{}, nil
+	}
 	cfg := deps.cfg
 	st := deps.st
 	allowSnapshot := mode == resolveTopLevel

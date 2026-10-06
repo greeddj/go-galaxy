@@ -74,7 +74,9 @@ paths, made absolute as it opens them ([Project registry](cache.md#project-regis
 
 ```mermaid
 flowchart TD
-  R1["expandSourceRoots: git,<br/>then url, see Source discovery"] -->|"failed"| RXD(["exit 1, 2, 3, 4,<br/>5 or 7 by cause"])
+  R0{"any collection root?"} -->|"no"| R0E(["empty set and graph,<br/>nothing recorded"])
+  R0 -->|"yes"| R1["expandSourceRoots: git,<br/>then url, see Source discovery"]
+  R1 -->|"failed"| RXD(["exit 1, 2, 3, 4,<br/>5 or 7 by cause"])
   R1 --> R2["requirements signature: canonical<br/>roots, --no-deps, servers"]
   R1 -->|"two roots,<br/>one collection"| RX2(["exit 2"])
   R2 --> R3{"--refresh or --no-cache<br/>without --offline?"}
@@ -98,7 +100,8 @@ flowchart TD
 
 `resolveCollectionsInternal` is shared by install, warm and lock. A cycle is
 refused later, in `planCollections`, which `lock` never runs. Why roots
-expand before the signature: [Resolution replay](cache.md#resolution-replay).
+expand before the signature, and why a file with no collections records
+nothing: [Resolution replay](cache.md#resolution-replay).
 Why the prewarm sits below the replay: [The Provider seam](solver.md#the-provider-seam).
 
 ## Source discovery
