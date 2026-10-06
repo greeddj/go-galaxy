@@ -26,6 +26,7 @@ Update any CI step that branches on the old code for these cases
 | `lock --check` over a `galaxy.lock` written before a git collection's ref was respelled onto the commit it already resolved to, such as `main` to a tag at that commit, on a cache that recorded the old spelling | `0`, although `install --frozen` refused that file | `6`, the drift `install --frozen` refuses |
 | `install --frozen` or `warm --frozen` over a `galaxy.lock` that `lock` wrote from two pins of one git ref, for a requirement at a directory beside one at its child directory, where the child's directory changed between the two commits | `0` | `6`, `git root ... has no lockfile entry` |
 | A `galaxy.lock` whose `server`, or a Galaxy collection or Galaxy role entry's `source`, carries a control character or a line break, which `lock` never writes | `0`, the value printed as written | `6`, as for any `galaxy.lock` that does not load |
+| A project whose requirements name no git or url source for a collection a Galaxy dependency needs, on a cache whose last resolution took that collection from one, such as a resolution recorded for another project sharing the cache and some of these requirements, or for this project before an edit that dropped that source and changed another entry | `0`: `install` and `warm` took that git or url collection, and `lock` locked it | As on an empty cache: the collection resolves from the servers, so `3` where none has a version that fits, and `4` under `--offline` where its metadata is not cached. `lock --check` over a `galaxy.lock` locked so: `6` |
 
 What to do about a new code:
 
@@ -41,6 +42,11 @@ What to do about a new code:
 - `6` for `has no lockfile entry` on such a pair of git requirements: run
   `go-galaxy lock --refresh`, which locks both at one commit. If `lock` then
   refuses the requirements, drop or narrow one of the two.
+- `3`, `4` or `6` for a collection only a git or url requirement this project
+  does not have supplied: add that requirement if the project needs that
+  source. Otherwise the collection now comes from the servers: run once
+  without `--offline`, then run `go-galaxy lock`, review `galaxy.lock` and
+  commit it.
 
 ## From v1.3.x
 

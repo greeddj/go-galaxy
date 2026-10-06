@@ -77,6 +77,14 @@ cache records these commits and sha256s in the snapshot, not in
 `galaxy.lock`. An [S3 cache](#s3-cache-optional) reuses the same way, and
 [Cache flags](#cache-flags) compares the flags that refresh it.
 
+A cache keeps one last resolution, shared by every project on it. A project
+whose requirements changed reuses what its unchanged entries reached there. No
+reuse hands a project a git or url collection that none of its own entries
+resolves to, such as one another project's entry, or an entry
+this project dropped, brought in: such a collection resolves from the servers
+again ([Resolution replay](../internals/cache.md#resolution-replay), in the
+internals).
+
 ## Freshness and retention
 
 | Cached thing | Fresh for | Then | Dropped |

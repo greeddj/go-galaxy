@@ -80,13 +80,13 @@ flowchart TD
   R1 --> R2["requirements signature: canonical<br/>roots, --no-deps, servers"]
   R1 -->|"two roots,<br/>one collection"| RX2(["exit 2"])
   R2 --> R3{"--refresh or --no-cache<br/>without --offline?"}
-  R3 -->|"no"| R4{"recorded signature, or recorded<br/>spec made canonical, equal;<br/>every root satisfied?"}
+  R3 -->|"no"| R4{"recorded signature, or recorded<br/>spec made canonical, equal; every<br/>root satisfied; each git or url<br/>collection one a root expanded into?"}
   R4 -->|"yes"| R5["replay the snapshot,<br/>no metadata request"]
   R5 --> R11A(["resolved set and graph"])
   R4 -->|"no"| R6{"only some roots changed,<br/>same mode and servers?"}
   R6 -->|"no"| R8["prewarmRootMetadata<br/>on --workers"]
   R6 -->|"yes"| R7["re-solve changed roots,<br/>merge preserved subgraph"]
-  R7 -->|"merge unusable"| R8
+  R7 -->|"merge unusable, or a git or url<br/>collection no root expanded into"| R8
   R7 -->|"solve failed"| RXD2(["exit 1, 2, 3, 4,<br/>5 or 7 by cause"])
   R7 -->|"merged graph valid"| R10
   R3 -->|"yes"| R8
@@ -99,8 +99,9 @@ flowchart TD
 ```
 
 `resolveCollectionsInternal` is shared by install, warm and lock. A cycle is
-refused later, in `planCollections`, which `lock` never runs. Why roots
-expand before the signature, why a replay restamps each git root's ref, and
+refused later, in `planCollections`, which `lock` never runs. Why
+roots expand before the signature, why a replay restamps each git root's ref
+and holds no git or url collection the run's roots did not expand into, and
 why a file with no collections records nothing:
 [Resolution replay](cache.md#resolution-replay).
 Why the prewarm sits below the replay: [The Provider seam](solver.md#the-provider-seam).

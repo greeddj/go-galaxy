@@ -270,6 +270,7 @@ and [URL sources and credentials](../guides/servers-and-auth.md#url-sources-and-
 | Its URL | both: a rune outside the alphabet, an empty or dot segment, a fragment; git also: a path opening with `-`, or a query | `ParseURL` in each | `ErrInvalidGitURL`, `ErrInvalidURLRequirement` | 2 |
 | A persisted locator | not canonical: the URL must round-trip, the pin be lowercase hex | `ParseLocator` in each | `ErrInvalidGitLocator`, `ErrInvalidURLLocator` | 2 |
 | A recorded git or role pin | its commit is not lowercase hex, or, under a commit ref, is any other commit (`gitsource.Ref.Admits`) | `collections.replayGitPin`, `replayRolePin` | `ErrInvalidGitLocator` | 2 |
+| A git or url collection in a replayed resolution | no root of the run expanded into it at that locator, or a git or url root's collection is replayed from another source: the replay is dropped and the run solves ([Resolution replay](cache.md#resolution-replay)) | `collections.sourcesMatchRoots` | none | 0 |
 | A Galaxy entry's `source:` | a git pointer, or a git or url locator, which consumers would dispatch unjudged | `requirements.checkGalaxySourceShape` | `ErrUnsupportedCollectionSource` | 2 |
 | An ssh host key | not in known_hosts | `gitfetch.sshAuthFor`, `classifyTransportError` | `ErrGitAuthFailed` | 4 |
 | A tree entry | a bad name, `.git` in any case, or a case-folded duplicate | `gitfetch.validateEntries` | `ErrGitTreeEntryInvalid`, `ErrGitTreeDuplicateEntry` | 5 |

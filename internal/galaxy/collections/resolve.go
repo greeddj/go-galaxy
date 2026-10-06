@@ -633,7 +633,8 @@ func tryIncrementalResolveWithSnapshot(
 	if !expandGraphFromSnapshot(deps.cfg, mergedResolved, mergedGraph, resolvedSnap, graphSnap) {
 		return nil, nil, false, nil
 	}
-	if !validateMergedGraph(mergedResolved, mergedGraph) {
+	roots := slices.Concat(unchangedRoots, changedRoots)
+	if !validateMergedGraph(mergedResolved, mergedGraph) || !sourcesMatchRoots(roots, mergedResolved) {
 		return nil, nil, false, nil
 	}
 	stampGitRootRefs(mergedResolved, unchangedRoots)
@@ -926,7 +927,7 @@ func loadResolvedFromSnapshot(
 	if !ok {
 		return nil, nil, false
 	}
-	if !rootsMatchSnapshot(roots, resolved, graphSnapshot) {
+	if !rootsMatchSnapshot(roots, resolved, graphSnapshot) || !sourcesMatchRoots(roots, resolved) {
 		return nil, nil, false
 	}
 	stampGitRootRefs(resolved, roots)
@@ -1062,6 +1063,25 @@ func rootsMatchSnapshot(roots []collection, resolved map[string]collection, grap
 			return false
 		}
 		if _, ok := graphSnapshot[col.key()]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// sourcesMatchRoots reports whether resolved holds a git or url collection
+// exactly where roots, as expanded this run, hold one, at the same locator: a
+// replayed closure may hold another project's sources, or a dropped root's.
+func sourcesMatchRoots(roots []collection, resolved map[string]collection) bool {
+	expanded := make(map[string]string, len(roots))
+	for _, root := range roots {
+		if root.isGit() || root.isURL() {
+			expanded[root.fqdn()] = root.Source
+		}
+	}
+	for fqdn, col := range resolved {
+		locator, asked := expanded[fqdn]
+		if (asked || col.isGit() || col.isURL()) && col.Source != locator {
 			return false
 		}
 	}
