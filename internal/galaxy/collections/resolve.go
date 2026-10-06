@@ -636,6 +636,7 @@ func tryIncrementalResolveWithSnapshot(
 	if !validateMergedGraph(mergedResolved, mergedGraph) {
 		return nil, nil, false, nil
 	}
+	stampGitRootRefs(mergedResolved, unchangedRoots)
 
 	if deps.st != nil {
 		recordResolution(deps.st, mergedResolved, mergedGraph, reqHash, deps.cfg.Server, currentSpec)
@@ -928,8 +929,23 @@ func loadResolvedFromSnapshot(
 	if !rootsMatchSnapshot(roots, resolved, graphSnapshot) {
 		return nil, nil, false
 	}
+	stampGitRootRefs(resolved, roots)
 	filtered := filterGraphSnapshot(graphSnapshot, resolved)
 	return resolved, filtered, true
+}
+
+// stampGitRootRefs gives each replayed collection a git root expanded into
+// that root's ref: the requirements signature covers the locator, commit
+// included, but not the ref, so a ref respelled onto one commit replays.
+func stampGitRootRefs(resolved map[string]collection, roots []collection) {
+	for _, root := range roots {
+		col, ok := resolved[root.fqdn()]
+		if !ok || !root.isGit() || col.Source != root.Source {
+			continue
+		}
+		col.Ref = root.Ref
+		resolved[root.fqdn()] = col
+	}
 }
 
 // snapshotMatchesRequirements reports whether the snapshot was resolved for

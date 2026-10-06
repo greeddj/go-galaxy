@@ -138,6 +138,7 @@ having asked it.
 | Constraint | `helpers.CanonicalConstraint`; a recorded spec is made canonical before it is compared (`snapshotMatchesRequirements`, `tryIncrementalResolve`), only when its signature in this run's mode and server list is the recorded hash (`recordedRequirementsSpec`) | A respelling replays, and so does a snapshot an older release recorded as spelled; the solver still reads the constraint as written |
 | Unpinned root's source | Stays empty | "No preference" differs from "the default server" |
 | Git and url roots | Expanded first (`expandSourceRoots`) | Else `--clear-cache`, dropping pins, replays the old graph |
+| Git root's ref | Not in the signature; a full or incremental replay gives each collection a git root expanded into that root's ref (`stampGitRootRefs`) | The locator carries the commit, so a ref respelled onto that commit replays, and `lock` must still write the ref asked or `--frozen` refuses the file |
 | No collection root | Nothing is replayed, solved or recorded | The one recorded resolution serves every project on the cache; an empty one would evict another project's and dirty every such run, so none could skip its save |
 | Signature source | Query cut by `normalizeSignatures` and again on save | Else hash and stored spec disagree and the incremental path stops |
 | `--offline` | Outranks the veto | Metadata ages out after 30 days; the resolution does not |

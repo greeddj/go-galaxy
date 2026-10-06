@@ -100,8 +100,9 @@ flowchart TD
 
 `resolveCollectionsInternal` is shared by install, warm and lock. A cycle is
 refused later, in `planCollections`, which `lock` never runs. Why roots
-expand before the signature, and why a file with no collections records
-nothing: [Resolution replay](cache.md#resolution-replay).
+expand before the signature, why a replay restamps each git root's ref, and
+why a file with no collections records nothing:
+[Resolution replay](cache.md#resolution-replay).
 Why the prewarm sits below the replay: [The Provider seam](solver.md#the-provider-seam).
 
 ## Source discovery

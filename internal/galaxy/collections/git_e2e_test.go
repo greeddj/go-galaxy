@@ -587,3 +587,63 @@ func TestGitNoCacheRefreshReadsNoPin(t *testing.T) {
 		}
 	}
 }
+
+// TestGitRefRespelledOntoTheSameCommitLocksTheRefAsked pins that a git root's
+// ref respelled onto the commit it resolved to is what lock writes, after a
+// full replay and after an incremental one, so install --frozen accepts it.
+func TestGitRefRespelledOntoTheSameCommitLocksTheRefAsked(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, sibling string
+		incremental   bool
+	}{
+		{name: "full replay"},
+		{name: "incremental replay", sibling: "  - acme.tool\n", incremental: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			checkRespelledGitRefLocked(t, tc.sibling, tc.incremental)
+		})
+	}
+
+	// Control: a ref moved onto another commit re-resolves, as before.
+	f := newGitFixture(t)
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",main\n")
+	f.lockfile(t)
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",dev\n")
+	if entry := findLockEntry(t, f.lockfile(t), "acme.app"); entry.Ref != "dev" || entry.Commit != fakeCommit("app-2") {
+		t.Fatalf("acme.app locked from ref %q at %s, want dev at %s", entry.Ref, entry.Commit, fakeCommit("app-2"))
+	}
+	f.cfg.Frozen = true
+	f.mustInstall(t)
+	assertInstalledProvenance(t, f.downloadPath, "app", "1.3.0", gitAppURL, "git_commit: "+fakeCommit("app-2"))
+}
+
+// checkRespelledGitRefLocked locks acme.app at main, respells its ref to v1,
+// the same commit, beside sibling, and checks the entry lock writes, the
+// replay, the ref recorded by an incremental one, and install --frozen.
+func checkRespelledGitRefLocked(t *testing.T, sibling string, incremental bool) {
+	t.Helper()
+	f := newGitFixture(t)
+	f.galaxy.AddVersion("acme", "tool", testVersion100, nil)
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",main\n")
+	f.lockfile(t)
+
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+",v1\n"+sibling)
+	f.galaxy.ResetCounts()
+	entry := findLockEntry(t, f.lockfile(t), "acme.app")
+	if entry.Ref != "v1" || entry.Commit != fakeCommit("app-1") {
+		t.Errorf("acme.app locked from ref %q at %s, want v1 at %s", entry.Ref, entry.Commit, fakeCommit("app-1"))
+	}
+	if !incremental && f.galaxy.Total() != 0 {
+		t.Errorf("lock after the respelling asked Galaxy %d times, want a replay with none", f.galaxy.Total())
+	}
+	recorded := loadStoreSnapshot(t, f.cfg, f.runtime).ResolvedSnapshot()["acme.app"].Ref
+	if incremental && recorded != "v1" {
+		t.Errorf("acme.app recorded with ref %q after the incremental replay, want v1", recorded)
+	}
+	f.cfg.Frozen = true
+	if err := f.install(t); err != nil {
+		t.Fatalf("install --frozen after the respelling: %v (exit %d)", err, exitcode.FromError(err))
+	}
+}
