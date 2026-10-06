@@ -5,10 +5,32 @@ go-galaxy release. One rule holds at every upgrade. Every job and machine that
 shares a cache or a lockfile runs the same release, since an older binary
 refuses what a newer one writes ([Pin one release](../guides/ci.md#pin-one-release)).
 
+## From v1.4.x
+
+Start here from v1.4.0. From an older release, follow
+[From v1.3.x](#from-v13x) first.
+
+The tables below list every change since v1.4.0 that can break a job or change
+its result, except an input that used to be refused and is now accepted.
+
+### Exit codes that changed
+
+Update any CI step that branches on the old code for these cases
+([Using exit codes in CI](exit-codes.md#using-exit-codes-in-ci)).
+
+| Situation | Was | Now |
+| --- | --- | --- |
+| A git collection or role whose `version:` is a commit the remote does not serve, on a remote that allows fetching by hash, outside `--frozen` | `4`, a git transport failure naming `not our ref` | `3`, as on a remote that does not fetch by hash |
+
+What to do about a new code:
+
+- `3` for `does not hold commit`: point `version:` at a commit the repository
+  holds, or at a branch or tag.
+
 ## From v1.3.x
 
-Start here from v1.3.0 or v1.3.1. From an older release, follow
-[From v1.2.x](#from-v12x) first.
+Start here from v1.3.0 or v1.3.1, and follow [From v1.4.x](#from-v14x) next.
+From an older release, follow [From v1.2.x](#from-v12x) first.
 
 The tables below list every change since v1.3.1 that can break a job or change
 its result, except an input that used to be refused and is now accepted.

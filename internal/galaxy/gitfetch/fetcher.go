@@ -30,6 +30,9 @@ const (
 	// shallowDepth is the only depth this tool ever asks for: the one commit
 	// it builds from. Anything deeper would be history nobody reads.
 	shallowDepth = 1
+	// notOurRef is git's wording for refusing a want it does not hold or reach.
+	// go-git passes the remote's ERR line on as text alone, so the phrase is matched.
+	notOurRef = "not our ref"
 )
 
 // Fetcher implements gitsource.Client. One value serves a whole run; it holds
@@ -375,9 +378,9 @@ func chooseTarget(adv *advertisement, spec fetchSpec, display string) (plumbing.
 	return resolve(adv, spec.ref, display)
 }
 
-// fetchCommit wants target directly, shallow when allowed, if it is an
-// advertised tip or the remote serves it by hash, else searches; one still
-// missing is ErrGitCommitNotFound if never advertised, else ErrGitCommitMismatch.
+// fetchCommit wants target directly, shallow when allowed, if it is an advertised
+// tip or the remote serves it by hash, else searches. Never advertised, it is
+// ErrGitCommitNotFound when refused or missing; advertised, ErrGitCommitMismatch when missing.
 func (f *Fetcher) fetchCommit(ctx context.Context, sess transport.UploadPackSession, adv *advertisement,
 	store *objectStore, target plumbing.Hash, spec fetchSpec, display string,
 ) (*object.Commit, error) {
@@ -385,6 +388,9 @@ func (f *Fetcher) fetchCommit(ctx context.Context, sess transport.UploadPackSess
 	advertised := adv.advertised(want)
 	if advertised || adv.shaInWant {
 		if err := fetchPack(ctx, sess, adv, store, []plumbing.Hash{want}, shallowDepthIf(adv.shallow), display); err != nil {
+			if !advertised && isRefusedWant(err) {
+				return nil, commitNotHeld(display, target)
+			}
 			return nil, err
 		}
 	} else if err := f.fetchBySearch(ctx, sess, adv, store, target, spec, display); err != nil {
@@ -393,11 +399,23 @@ func (f *Fetcher) fetchCommit(ctx context.Context, sess transport.UploadPackSess
 	commit, err := object.GetCommit(store.storer, target)
 	if err != nil {
 		if errors.Is(err, plumbing.ErrObjectNotFound) && !advertised {
-			return nil, fmt.Errorf("%w: %s does not hold commit %s", helpers.ErrGitCommitNotFound, display, target)
+			return nil, commitNotHeld(display, target)
 		}
 		return nil, fmt.Errorf("%w: %s advertised %s but did not ship it: %w", helpers.ErrGitCommitMismatch, display, target, err)
 	}
 	return commit, nil
+}
+
+// commitNotHeld is the error for a commit never advertised that the remote does
+// not hand over, whether refused as a want or missing after a search.
+func commitNotHeld(display string, target plumbing.Hash) error {
+	return fmt.Errorf("%w: %s does not hold commit %s", helpers.ErrGitCommitNotFound, display, target)
+}
+
+// isRefusedWant reports whether err is the remote refusing the hash wanted. Only
+// a transport failure qualifies: an auth refusal's text carries the server's body.
+func isRefusedWant(err error) bool {
+	return errors.Is(err, helpers.ErrGitTransportFailed) && strings.Contains(err.Error(), notOurRef)
 }
 
 // fetchBySearch fetches the hinted ref's full history and, if that missed,

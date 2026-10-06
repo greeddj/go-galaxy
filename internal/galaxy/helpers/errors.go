@@ -566,8 +566,8 @@ var (
 	ErrGitSSHNoCredential = errors.New("no ssh credential for git repository")
 
 	// ErrGitTransportFailed wraps a go-git transport failure: connection, TLS or
-	// protocol errors, a remote ERR, an origin-changing redirect, or an unloadable
-	// host-key database. Network class.
+	// protocol errors, a remote ERR other than refusing an unadvertised commit, an
+	// origin-changing redirect, or an unloadable host-key database. Network class.
 	ErrGitTransportFailed = errors.New("git transport failure")
 	// ErrGitAuthFailed reports the remote refused this run's credential, or its
 	// host key is not the one known_hosts vouches for. Network class, like a
@@ -579,7 +579,7 @@ var (
 	// has no candidate for what requirements.yml asked for.
 	ErrGitRefNotFound = errors.New("git ref not found on the remote")
 	// ErrGitCommitNotFound reports that a commit named by its hash is not
-	// reachable on the remote, or that the remote did not ship it.
+	// reachable on the remote: refused when wanted by hash, or not shipped.
 	ErrGitCommitNotFound = errors.New("git commit not found on the remote")
 
 	// ErrGitCommitMismatch reports the remote shipped a pack without the commit it
