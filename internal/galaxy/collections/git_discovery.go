@@ -238,9 +238,11 @@ func refreshGitPin(ctx context.Context, deps collectionDeps, req gitRootRequest,
 	if !ok {
 		return nil, false, nil
 	}
-	commit, _, err := deps.runtime.Git.Advertise(ctx, req.url, req.ref, req.cred)
+	gitCtx, cancel := context.WithTimeout(ctx, deps.runtime.GitDeadline())
+	defer cancel()
+	commit, _, err := deps.runtime.Git.Advertise(gitCtx, req.url, req.ref, req.cred)
 	if err != nil {
-		return nil, false, err
+		return nil, false, artifactDeadlineError(ctx, gitCtx, deps.runtime.GitDeadline(), err)
 	}
 	if commit != pin.Commit || !gitArtifactsCached(ctx, deps, req, pin) {
 		expanded, err := acquireGitRoot(ctx, deps, req, policy, commit)

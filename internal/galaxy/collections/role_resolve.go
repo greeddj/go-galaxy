@@ -348,9 +348,11 @@ func refreshRolePin(
 	if !ok {
 		return rolePin{}, false, nil
 	}
-	commit, refName, err := deps.runtime.Git.Advertise(ctx, greq.url, greq.ref, greq.cred)
+	gitCtx, cancel := context.WithTimeout(ctx, deps.runtime.GitDeadline())
+	defer cancel()
+	commit, refName, err := deps.runtime.Git.Advertise(gitCtx, greq.url, greq.ref, greq.cred)
 	if err != nil {
-		return rolePin{}, false, err
+		return rolePin{}, false, artifactDeadlineError(ctx, gitCtx, deps.runtime.GitDeadline(), err)
 	}
 	// A fetch by commit reaches no ref name, so HEAD's label is the branch
 	// this advertisement names, the one a fetch with no commit would reach.

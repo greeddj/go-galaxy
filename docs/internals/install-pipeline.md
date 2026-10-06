@@ -231,7 +231,7 @@ either arm, after the sha256 and before the commit or `Promote`: their
 | --- | --- | --- |
 | `--timeout` | `ResponseHeaderTimeout`, and each gap between body reads (the `fetch` watchdog) | No response or `ErrReadStalled`, both retried |
 | `Infra.ArtifactDeadline`, 15 min | Attempts, backoffs, extraction, commit; a cache-hit `Fetch` too | `ErrArtifactDownloadDeadline`, terminal |
-| `Infra.GitDeadline` | One git acquisition | The same sentinel |
+| `Infra.GitDeadline` | One git acquisition; also the advertisement `--refresh` makes for a recorded git or role pin (`refreshGitPin`, `refreshRolePin`) and each one `outdated` makes | The same sentinel |
 
 Of up to four attempts, `downloadRetryable` retries a stall, a retryable
 status or a transport failure with no response. An API GET
