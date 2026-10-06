@@ -523,3 +523,40 @@ func TestGitWarmOfflineMissNeverReachesTheRemote(t *testing.T) {
 	f.goOffline()
 	assertOfflineGitMiss(t, f, collections.Warm(context.Background(), f.cfg, f.runtime))
 }
+
+// gitSSHAppURL serves acme.app over ssh, spelled as gitsource requires and
+// lock records it: the scheme form names its user and keeps its port.
+const gitSSHAppURL = "ssh://git@git.example:2222/acme/app.git"
+
+// TestGitLockFromAnSSHRemoteLoadsBack pins that the galaxy.lock lock writes for
+// an ssh git collection is one its readers accept: it loads, lock --check
+// passes, and install --frozen installs the locked commit without the remote.
+func TestGitLockFromAnSSHRemoteLoadsBack(t *testing.T) {
+	t.Parallel()
+	f := newGitFixture(t)
+	appC1 := fakeCommit("app-1")
+	f.git.add(gitSSHAppURL, &fakeGitRepo{
+		refs: map[string]string{"HEAD": appC1, gitMainRef: appC1},
+		commits: map[string][]fakeGitCollection{
+			appC1: {{namespace: "acme", name: "app", version: "1.2.3", deps: map[string]string{"acme.lib": ">=1.0.0"}}},
+		},
+	})
+	f.writeRequirements(t, "collections:\n  - git+"+gitSSHAppURL+",main\n")
+	if entry := findLockEntry(t, f.lockfile(t), "acme.app"); entry.Source != gitSSHAppURL || entry.Commit != appC1 {
+		t.Fatalf("git lock entry = %+v, want source %s at commit %s", entry, gitSSHAppURL, appC1)
+	}
+
+	f.cfg.Check = true
+	if err := collections.Lock(context.Background(), f.cfg, f.runtime); err != nil {
+		t.Fatalf("lock --check: %v", err)
+	}
+	f.cfg.Check = false
+
+	f.git.resetCounts()
+	f.cfg.Frozen = true
+	f.mustInstall(t)
+	assertManifestInstalled(t, f.downloadPath, "app")
+	if adv, acq := f.git.counts(); adv != 0 || acq != 0 {
+		t.Fatalf("frozen install reached the remote: advertises=%d acquires=%d", adv, acq)
+	}
+}

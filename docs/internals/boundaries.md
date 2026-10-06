@@ -127,7 +127,8 @@ Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-loc
 | Input | Refused when | Where | Sentinel | Exit |
 | :-- | :-- | :-- | :-- | :-- |
 | A lockfile path | `Stat` finds no regular file, such as a directory or fifo; checked before any open | `lockfile.Load` | `ErrLockfileInvalid` | 6 |
-| A lockfile `source` or `name` | userinfo, never printed; a name outside its alphabet | `lockfile.File.validate` | `ErrLockfileInvalid` | 6 |
+| A lockfile `source` or `name` | userinfo in a Galaxy or url source, never printed; a name outside its alphabet | `lockfile.File.validate` | `ErrLockfileInvalid` | 6 |
+| A git collection or git role entry's `source`, a Galaxy role's `repository` | not as `gitsource.ParseURL` spells it, which refuses a credential and requires an ssh URL's user; never printed | `lockfile.gitEntryProblem`, `gitRoleEntryProblem`, `galaxyRoleEntryProblem` | `ErrLockfileInvalid` | 6 |
 | A Galaxy entry's `download_url` | not canonical `http(s)`, or with userinfo, query or fragment | `lockfile.downloadURLProblem` | `ErrLockfileInvalid` | 6 |
 | A Galaxy entry's `download_url`, under `--frozen` | off its server's origin | `checkLockedDownloadURLs` | `ErrLockfileInvalid` | 6 |
 | The artifact a locked `download_url` serves | its `MANIFEST.json` names another namespace, name or version | `checkLockedArtifactIdentity` | `ErrLockedArtifactIdentityMismatch` | 7 |

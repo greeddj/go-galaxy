@@ -233,8 +233,8 @@ func (f *File) canonicalClone() *File {
 }
 
 // validate rejects a duplicate or malformed name, a non-exact version (a
-// --frozen install would then take the server's highest), a source with
-// userinfo, a malformed or contradictory pin, and an entry its schema predates.
+// --frozen install would then take the server's highest), userinfo in a Galaxy
+// or url source, a malformed or contradictory pin, an entry its schema predates.
 func (f *File) validate() error {
 	seen := make(map[string]struct{}, len(f.Collections))
 	for _, e := range f.Collections {
@@ -250,10 +250,10 @@ func (f *File) validate() error {
 		if !helpers.IsExactVersion(e.Version) {
 			return fmt.Errorf("%w: %s: version %q is not an exact version", helpers.ErrLockfileInvalid, e.Name, e.Version)
 		}
-		// The source itself is never printed: it is what carries the password,
-		// and this message reaches stderr and a CI log. The name is safe to
-		// print by the check above.
-		if sourceHasUserinfo(e.Source) {
+		// gitEntryProblem alone judges a git source, since an ssh URL names its
+		// user. No source is printed: it is what carries the password, and this
+		// message reaches a CI log. The name is safe to print by the check above.
+		if !e.IsGit() && sourceHasUserinfo(e.Source) {
 			return fmt.Errorf("%w: %s: %w", helpers.ErrLockfileInvalid, e.Name, helpers.ErrGalaxyServerURLUserinfo)
 		}
 		if err := validateEntryType(e, f.SchemaVersion); err != nil {
@@ -386,7 +386,8 @@ func downloadURLPartProblem(u *url.URL, raw string) string {
 }
 
 // gitEntryProblem returns why a git entry's source, ref, commit, subdir or
-// sha256 is refused, or "" when every field is canonical.
+// sha256 is refused, or "" when every field is canonical. The source answers to
+// gitsource.ParseURL alone, which refuses a credential and requires an ssh user.
 func gitEntryProblem(e Entry) string {
 	if u, err := gitsource.ParseURL(e.Source); err != nil || u.String() != e.Source {
 		return "source is not a canonical git repository URL"

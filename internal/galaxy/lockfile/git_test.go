@@ -296,3 +296,105 @@ func TestLoadRefusesACommitRefLockedAtAnotherCommit(t *testing.T) {
 		t.Fatalf("Load of a commit ref locked at that commit: %v", err)
 	}
 }
+
+// gitSSHSource is how lock records an ssh remote: gitsource requires the
+// scheme form to name its user, and keeps a port other than 22.
+const gitSSHSource = "ssh://git@git.example.com:2222/acme/app.git"
+
+// TestLoadAcceptsAnSSHGitSourceNamingItsUser pins that the file lock writes
+// for a git collection and a git role fetched over ssh loads back: the user
+// such a URL must name is no credential, and gitsource's grammar judges it.
+func TestLoadAcceptsAnSSHGitSourceNamingItsUser(t *testing.T) {
+	t.Parallel()
+	collection := gitEntry()
+	collection.Source = gitSSHSource
+	role := gitRoleEntry()
+	role.Source = gitSSHSource
+	loaded := saveAndLoad(t, filepath.Join(t.TempDir(), DefaultName),
+		&File{Collections: []Entry{collection}, Roles: []RoleEntry{role}})
+	if got := loaded.Collections[0].Source; got != gitSSHSource {
+		t.Fatalf("collection source = %q, want %q", got, gitSSHSource)
+	}
+	if got := loaded.Roles[0].Source; got != gitSSHSource {
+		t.Fatalf("role source = %q, want %q", got, gitSSHSource)
+	}
+}
+
+// credentialSourceCase is a source carrying a credential, written by write
+// onto the entry kind that must refuse it, and the exact refusal Load returns.
+type credentialSourceCase struct {
+	write    func(t *testing.T, source string) string
+	name     string
+	source   string
+	want     string
+	userinfo bool
+}
+
+const (
+	userinfoRefusal  = "galaxy server url must not contain userinfo"
+	gitSourceRefusal = "lockfile is invalid: acme.app: source is not a canonical git repository URL"
+)
+
+func credentialSourceCases() []credentialSourceCase {
+	return []credentialSourceCase{
+		{
+			name: "user in a Galaxy source", write: writeSourceLockfile, source: "https://git@hub.example.invalid/",
+			want: "lockfile is invalid: acme.widgets: " + userinfoRefusal, userinfo: true,
+		},
+		{
+			name: "ssh git spelling as a Galaxy source", write: writeSourceLockfile, source: gitSSHSource,
+			want: "lockfile is invalid: acme.widgets: " + userinfoRefusal, userinfo: true,
+		},
+		{
+			name: "user in a url source", write: writeURLSourceLockfile, source: "https://git@example.com/dl/acme-app-1.2.3.tar.gz",
+			want: "lockfile is invalid: acme.app: " + userinfoRefusal, userinfo: true,
+		},
+		{
+			name: "user in an https git source", write: writeGitSourceLockfile,
+			source: "https://git@github.com/acme/app.git", want: gitSourceRefusal,
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "password in an https git source", write: writeGitSourceLockfile,
+			source: "https://u:hunter2@github.com/acme/app.git", want: gitSourceRefusal,
+		},
+		{ //nolint:gosec // a fixture URL, not a credential
+			name: "password in an ssh git source", write: writeGitSourceLockfile,
+			source: "ssh://git:hunter2@git.example.com:2222/acme/app.git", want: gitSourceRefusal,
+		},
+	}
+}
+
+// TestLoadStillRefusesACredentialInASource is the control for
+// TestLoadAcceptsAnSSHGitSourceNamingItsUser: only a git entry's ssh user is
+// let through, and the exact text pins that no refusal prints the source.
+func TestLoadStillRefusesACredentialInASource(t *testing.T) {
+	t.Parallel()
+	for _, tt := range credentialSourceCases() {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := Load(tt.write(t, tt.source))
+			if !errors.Is(err, helpers.ErrLockfileInvalid) || err.Error() != tt.want {
+				t.Fatalf("Load = %v, want ErrLockfileInvalid reading %q", err, tt.want)
+			}
+			if got := errors.Is(err, helpers.ErrGalaxyServerURLUserinfo); got != tt.userinfo {
+				t.Fatalf("errors.Is(err, ErrGalaxyServerURLUserinfo) = %t, want %t", got, tt.userinfo)
+			}
+		})
+	}
+}
+
+// writeGitSourceLockfile writes gitEntry with source in place of its own.
+func writeGitSourceLockfile(t *testing.T, source string) string {
+	t.Helper()
+	e := gitEntry()
+	e.Source = source
+	return writeRawLockfile(t, SchemaVersionGit, e)
+}
+
+// writeURLSourceLockfile writes urlEntry with source in place of its own.
+func writeURLSourceLockfile(t *testing.T, source string) string {
+	t.Helper()
+	e := urlEntry()
+	e.Source = source
+	return writeRawLockfile(t, SchemaVersionURL, e)
+}
