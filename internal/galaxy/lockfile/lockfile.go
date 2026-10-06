@@ -19,6 +19,7 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
+	"github.com/greeddj/go-galaxy/internal/safeout"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -233,9 +234,15 @@ func (f *File) canonicalClone() *File {
 }
 
 // validate rejects a duplicate or malformed name, a non-exact version (a
-// --frozen install would then take the server's highest), userinfo in a Galaxy
-// or url source, a malformed or contradictory pin, an entry its schema predates.
+// --frozen install would take the server's highest), userinfo or a control
+// character in a source, a bad or contradictory pin, an entry its schema predates.
 func (f *File) validate() error {
+	// The server and a Galaxy source are printed as written, in the --check
+	// and --dry-run diff lines, so a line break or terminal control in one
+	// would forge output; neither is ever printed in the refusal.
+	if hasUnsafeRune(f.Server) {
+		return fmt.Errorf("%w: server carries a control character", helpers.ErrLockfileInvalid)
+	}
 	seen := make(map[string]struct{}, len(f.Collections))
 	for _, e := range f.Collections {
 		if _, dup := seen[e.Name]; dup {
@@ -250,11 +257,9 @@ func (f *File) validate() error {
 		if !helpers.IsExactVersion(e.Version) {
 			return fmt.Errorf("%w: %s: version %q is not an exact version", helpers.ErrLockfileInvalid, e.Name, e.Version)
 		}
-		// gitEntryProblem alone judges a git source, since an ssh URL names its
-		// user. No source is printed: it is what carries the password, and this
-		// message reaches a CI log. The name is safe to print by the check above.
-		if !e.IsGit() && sourceHasUserinfo(e.Source) {
-			return fmt.Errorf("%w: %s: %w", helpers.ErrLockfileInvalid, e.Name, helpers.ErrGalaxyServerURLUserinfo)
+		// The name is safe to print by the check above; the source never is.
+		if err := checkEntrySource(e); err != nil {
+			return err
 		}
 		if err := validateEntryType(e, f.SchemaVersion); err != nil {
 			return err
@@ -448,6 +453,25 @@ func sourceHasUserinfo(source string) bool {
 		return false
 	}
 	return parsed.User != nil
+}
+
+// checkEntrySource refuses userinfo in a Galaxy or url source, gitEntryProblem
+// alone judging a git one since an ssh URL names its user, and a control
+// character in any; no source is printed, as it may carry the password.
+func checkEntrySource(e Entry) error {
+	if !e.IsGit() && sourceHasUserinfo(e.Source) {
+		return fmt.Errorf("%w: %s: %w", helpers.ErrLockfileInvalid, e.Name, helpers.ErrGalaxyServerURLUserinfo)
+	}
+	if hasUnsafeRune(e.Source) {
+		return fmt.Errorf("%w: %s: source carries a control character", helpers.ErrLockfileInvalid, e.Name)
+	}
+	return nil
+}
+
+// hasUnsafeRune reports whether s carries a rune safeout would not print, a
+// line break included: a value printed as written must hold none.
+func hasUnsafeRune(s string) bool {
+	return strings.ContainsFunc(s, safeout.IsUnsafeRune)
 }
 
 // IsNotExist reports whether err indicates the lockfile is missing.

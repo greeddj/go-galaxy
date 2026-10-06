@@ -22,14 +22,15 @@ Update any CI step that branches on the old code for these cases
 | --- | --- | --- |
 | A git collection or role whose `version:` is a commit the remote does not serve, on a remote that allows fetching by hash, outside `--frozen` | `4`, a git transport failure naming `not our ref` | `3`, as on a remote that does not fetch by hash |
 | A `galaxy.lock` git collection, git role or Galaxy role entry whose `ref` is a commit other than its `commit`, or two url collection entries with one `source` | `0` in most cases: `install --frozen` installed the entry's `commit`, not the one its `ref` names, and with two url entries a `version:` matching only one of them passed or failed at random | `6`, as for any `galaxy.lock` that does not load |
+| A `galaxy.lock` whose `server`, or a Galaxy collection or Galaxy role entry's `source`, carries a control character or a line break, which `lock` never writes | `0`, the value printed as written | `6`, as for any `galaxy.lock` that does not load |
 
 What to do about a new code:
 
 - `3` for `does not hold commit`: point `version:` at a commit the repository
   holds, or at a branch or tag.
-- `6` for `is a commit and differs from commit` or
-  `url entry locked from the same source as`: run `go-galaxy lock` to rewrite
-  `galaxy.lock`, then review and commit it.
+- `6` for `is a commit and differs from commit`,
+  `url entry locked from the same source as` or `carries a control character`:
+  run `go-galaxy lock` to rewrite `galaxy.lock`, then review and commit it.
 
 ## From v1.3.x
 

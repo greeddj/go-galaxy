@@ -173,6 +173,9 @@ func galaxyRoleEntryProblem(e RoleEntry) string {
 	if sourceHasUserinfo(e.Source) {
 		return helpers.ErrGalaxyServerURLUserinfo.Error()
 	}
+	if hasUnsafeRune(e.Source) {
+		return "source carries a control character"
+	}
 	return ""
 }
 

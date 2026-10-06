@@ -50,8 +50,9 @@ Every entry also has a `name`, a `version` and optional `deps`.
 `File.validate` and `validateRoles` re-parse each repository, tarball and
 download URL, ref and subdir, which must round-trip unchanged, and hold names,
 versions, commits and url digests to their alphabets: a lockfile is
-repository content. A name is checked before any message prints it, since a
-newline could forge an output line.
+repository content. A name is checked before any message prints it, and the
+server and a Galaxy source, which lock prints as written, may carry no control
+character, since a newline could forge an output line.
 
 They also refuse pins that contradict each other. A git collection, git role
 or Galaxy role entry whose `ref` is a commit must pin that same commit, since

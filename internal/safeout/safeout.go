@@ -46,8 +46,8 @@ func isLineTerminator(r rune) bool {
 }
 
 // IsUnsafeRune reports whether r is isControl or isLineTerminator, the set Clean
-// replaces apart from \n and \t. It is the one place to add a codepoint class:
-// Clean, NewWriter, helpers.IsPathElement and projectfile.Encode all consult it.
+// replaces apart from \n and \t: the one place to add a codepoint class, read by
+// Clean, NewWriter, helpers.IsPathElement, projectfile.Encode and lockfile.Load.
 func IsUnsafeRune(r rune) bool {
 	return isControl(r) || isLineTerminator(r)
 }
