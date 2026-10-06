@@ -385,8 +385,9 @@ func standingRolePin(
 // replays it only while its artifact is still stored; otherwise it returns
 // the zero rolePin so discovery fetches now, while it holds the ref.
 func replayRolePin(ctx context.Context, deps collectionDeps, greq gitRoleRequest, pin store.RolePinEntry) (rolePin, error) {
-	if !gitsource.IsCommitHash(pin.Commit) {
-		return rolePin{}, fmt.Errorf("%w: recorded role pin for %s names commit %q", helpers.ErrInvalidGitLocator, greq.display, pin.Commit)
+	if !greq.ref.Admits(pin.Commit) {
+		return rolePin{}, fmt.Errorf("%w: recorded role pin for %s@%s names commit %q",
+			helpers.ErrInvalidGitLocator, greq.display, greq.ref.Name, helpers.TruncateForMessage(pin.Commit))
 	}
 	if !helpers.IsRoleVersion(pin.Version) {
 		return rolePin{}, fmt.Errorf("%w: recorded role pin for %s names version %q",

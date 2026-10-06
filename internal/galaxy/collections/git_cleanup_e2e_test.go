@@ -144,3 +144,32 @@ func TestGitCleanupNarrowsToTheNamedCollection(t *testing.T) {
 		t.Fatalf("acme.one artifact after cleanup: %v", err)
 	}
 }
+
+// TestGitCleanupReadsAPinAtAnotherCommitAsNone pins that a pin recorded under
+// a commit ref that names another commit keeps nothing of its own: cleanup
+// falls back to the installed records and keeps the copy at the commit asked.
+func TestGitCleanupReadsAPinAtAnotherCommitAsNone(t *testing.T) {
+	t.Parallel()
+	f := newGitFixture(t)
+	asked, foreign := fakeCommit("app-1"), fakeCommit("app-2")
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+","+foreign+"\n")
+	f.mustInstall(t)
+	f.writeRequirements(t, "collections:\n  - git+"+gitAppURL+","+asked+"\n")
+	f.mustInstall(t)
+	mutateStoreSnapshot(t, f, func(st *store.Store) {
+		pin, ok := st.GetGitPin(gitsource.PinKey(gitAppURL, foreign, ""))
+		if !ok {
+			t.Fatalf("no git pin recorded at %s", foreign)
+		}
+		st.SetGitPin(gitsource.PinKey(gitAppURL, asked, ""), pin)
+	})
+
+	mustCleanup(t, f)
+	assertManifestInstalled(t, f.downloadPath, "app")
+	assertManifestInstalled(t, f.downloadPath, "lib")
+	assertInstalledProvenance(t, f.downloadPath, "app", "1.2.3", gitAppURL, "git_commit: "+asked)
+	artifact := gitArtifactPath(f, gitsource.Locator{URL: gitAppURL, Commit: asked}.String(), "app", "1.2.3")
+	if _, err := os.Stat(artifact); err != nil {
+		t.Fatalf("artifact of the copy at %s after cleanup: %v", asked, err)
+	}
+}

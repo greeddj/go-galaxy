@@ -215,7 +215,7 @@ recorded project, even one still in use.
 | A `galaxy.lock` read in place of a gone file does not load, or is not a regular file | Exits `6` before deleting anything, naming it and its project |
 | A remembered requirements file, or one read in place of a gone one, fails to load | Exits `2` before deleting anything, naming the file, its project and the registry file or S3 object. Fix or restore the file, move it away if no run uses it any more, or delete the project's entry from the registry |
 | Its `roles:` list is refused, such as an `include:` | Warns; keeps the roles under that project's `roles_path` and their dependencies |
-| A git or url requirement whose commit or sha256 the cache never recorded | Keeps every install from that repository or URL |
+| A git or url requirement whose commit or sha256 the cache never recorded, or a git requirement by commit whose recorded pin names another commit | Keeps every install from that repository or URL |
 | `ansible_collections` escapes its path or loops | Warns; skips scanning that project |
 | A `MANIFEST.json` that is not a file, does not parse or is unsafe | Warns; skips that collection |
 | No `install` or `warm` has saved its records to this cache yet | Warns; sweeps no extracted tree |

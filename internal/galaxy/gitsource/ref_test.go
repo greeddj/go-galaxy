@@ -114,3 +114,33 @@ func TestIsCommitHash(t *testing.T) {
 		}
 	}
 }
+
+// TestRefAdmits pins which commit a pin recorded under a ref may name: any
+// canonical hash under HEAD, a branch or a tag, under a commit ref that
+// commit alone, and never a malformed one.
+func TestRefAdmits(t *testing.T) {
+	t.Parallel()
+	const other = "fedcba9876543210fedcba9876543210fedcba98"
+	for _, tc := range []struct {
+		raw, commit string
+		want        bool
+	}{
+		{raw: "HEAD", commit: testCommit, want: true},
+		{raw: "main", commit: other, want: true},
+		{raw: "refs/tags/1.0", commit: testCommit, want: true},
+		{raw: testCommit, commit: testCommit, want: true},
+		{raw: strings.ToUpper(testCommit), commit: testCommit, want: true},
+		{raw: testCommit, commit: other, want: false},
+		{raw: testCommit, commit: strings.ToUpper(testCommit), want: false},
+		{raw: "main", commit: testCommit[:39], want: false},
+		{raw: "main", commit: "", want: false},
+	} {
+		ref, err := ParseRef(tc.raw)
+		if err != nil {
+			t.Fatalf("ParseRef(%q): %v", tc.raw, err)
+		}
+		if got := ref.Admits(tc.commit); got != tc.want {
+			t.Fatalf("ParseRef(%q).Admits(%q) = %t, want %t", tc.raw, tc.commit, got, tc.want)
+		}
+	}
+}

@@ -191,10 +191,11 @@ func roleRootNames(file requirements.File) []string {
 }
 
 // gitRootKeys returns the installed keys a git requirement keeps alive: those
-// its store pin records, or, with no pin, every record from its repository at
-// its subdir or a child, whatever the commit, the safe direction for a sweep.
+// its store pin records, or, with no pin its ref admits, every record from its
+// repository at its subdir or a child, any commit: the safe direction for a sweep.
 func gitRootKeys(st *store.Store, installedByKey map[string][]installedCollection, root requirements.CollectionRequirement) []string {
-	if pin, ok := st.GetGitPin(gitsource.PinKey(root.Source, root.Ref, root.Subdir)); ok {
+	ref, err := gitsource.ParseRef(root.Ref)
+	if pin, ok := st.GetGitPin(gitsource.PinKey(root.Source, root.Ref, root.Subdir)); ok && err == nil && ref.Admits(pin.Commit) {
 		return pinnedGitKeys(pin, installedByKey, root)
 	}
 	return installedGitKeys(st, installedByKey, root)
@@ -219,9 +220,9 @@ func pinnedGitKeys(pin store.GitPinEntry, installedByKey map[string][]installedC
 	return keys
 }
 
-// installedGitKeys is gitRootKeys' no-pin fallback: installed records from the
-// root's repository under its subdir or an immediate child, narrowed to the
-// named collection, sorted.
+// installedGitKeys is gitRootKeys' fallback without a pin its ref admits:
+// installed records from the root's repository under its subdir or an
+// immediate child, narrowed to the named collection, sorted.
 func installedGitKeys(st *store.Store, installedByKey map[string][]installedCollection,
 	root requirements.CollectionRequirement,
 ) []string {

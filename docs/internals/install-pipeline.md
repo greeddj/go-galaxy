@@ -79,7 +79,7 @@ commit, not just the ref ([Resolution replay](cache.md#resolution-replay)).
 
 | Case | `expandGitRoot` does |
 | --- | --- |
-| Policy allows a read, pin exists | `replayGitPin`: re-validates commit and identities, no network |
+| Policy allows a read, pin exists | `replayGitPin`: re-validates commit (under a commit ref, that one) and identities, no network |
 | `--offline`, no pin | Fails with `ErrOfflineMode` |
 | `--refresh` without `--no-cache`, branch or tag pinned | One `Advertise`; an unchanged commit with its artifacts cached keeps the pin |
 | Otherwise | `acquireGitRoot`: fetch, build, commit, record the pin |
@@ -134,7 +134,9 @@ first-wins follows declaration order (`dedupeRoleLevel`). Past
 `helpers.RoleGraphMaxRoles` (1000) it fails with `ErrInvalidRoleEntry`.
 
 - A git or url role pin replays only while its artifact is stored
-  (`roleArtifactCached`).
+  (`roleArtifactCached`). Under a commit ref, `replayRolePin` refuses a git
+  pin naming another commit, as `replayGitPin` does
+  ([Git and url sources](boundaries.md#git-and-url-sources)).
 - A git role at `HEAD` is labeled with the branch the remote says `HEAD`
   points at, else `HEAD`. A fetch by commit reaches no ref name, so under
   `--refresh` `refreshRolePin` hands `acquireRole` the label its

@@ -22,6 +22,7 @@ Update any CI step that branches on the old code for these cases
 | --- | --- | --- |
 | A git collection or role whose `version:` is a commit the remote does not serve, on a remote that allows fetching by hash, outside `--frozen` | `4`, a git transport failure naming `not our ref` | `3`, as on a remote that does not fetch by hash |
 | A `galaxy.lock` git collection, git role or Galaxy role entry whose `ref` is a commit other than its `commit`, or two url collection entries with one `source` | `0` in most cases: `install --frozen` installed the entry's `commit`, not the one its `ref` names, and with two url entries a `version:` matching only one of them passed or failed at random | `6`, as for any `galaxy.lock` that does not load |
+| A git collection or git role whose `version:` is a commit, while the cache's recorded pin for it names another commit, which only a writer other than go-galaxy can leave, such as one sharing an S3 bucket | `0`, the other commit installed and locked | `2`, from `install`, `warm` and `lock` |
 | A `galaxy.lock` whose `server`, or a Galaxy collection or Galaxy role entry's `source`, carries a control character or a line break, which `lock` never writes | `0`, the value printed as written | `6`, as for any `galaxy.lock` that does not load |
 
 What to do about a new code:
@@ -31,6 +32,8 @@ What to do about a new code:
 - `6` for `is a commit and differs from commit`,
   `url entry locked from the same source as` or `carries a control character`:
   run `go-galaxy lock` to rewrite `galaxy.lock`, then review and commit it.
+- `2` for `recorded pin for ... names commit`: run once with `--clear-cache`,
+  which drops recorded pins, and keep other writers out of the cache.
 
 ## From v1.3.x
 

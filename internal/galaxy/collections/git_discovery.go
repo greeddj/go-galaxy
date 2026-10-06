@@ -279,8 +279,9 @@ func gitArtifactsCached(ctx context.Context, deps collectionDeps, req gitRootReq
 // identity it carries: the pin is cache state, and cache state is judged on
 // the way in exactly as a remote's answer is.
 func replayGitPin(deps collectionDeps, req gitRootRequest, pin store.GitPinEntry) ([]collection, error) {
-	if !gitsource.IsCommitHash(pin.Commit) {
-		return nil, fmt.Errorf("%w: recorded pin for %s names commit %q", helpers.ErrInvalidGitLocator, req.display, pin.Commit)
+	if !req.ref.Admits(pin.Commit) {
+		return nil, fmt.Errorf("%w: recorded pin for %s@%s names commit %q",
+			helpers.ErrInvalidGitLocator, req.display, req.ref.Name, helpers.TruncateForMessage(pin.Commit))
 	}
 	expanded := make([]collection, 0, len(pin.Collections))
 	pins := make(map[string]gitPin, len(pin.Collections))

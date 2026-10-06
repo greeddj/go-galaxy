@@ -75,7 +75,7 @@ Namespace and name come from the walked directories, never the manifest
 | Root | Keeps |
 | --- | --- |
 | Galaxy collection | versions meeting its constraint; all when empty or unparseable (`selectInstalled`) |
-| git collection | what its git pin records; no pin: installs from that repository at its subdir or a child (`gitRootKeys`) |
+| git collection | what its git pin records; no pin, or one its ref does not admit ([Git and url sources](boundaries.md#git-and-url-sources)): installs from that repository at its subdir or a child (`gitRootKeys`) |
 | url collection | its url pin's key; no pin: every install from that URL (`urlRootKeys`) |
 | role | its install name |
 

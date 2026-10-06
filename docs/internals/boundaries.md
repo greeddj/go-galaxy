@@ -269,6 +269,7 @@ and [URL sources and credentials](../guides/servers-and-auth.md#url-sources-and-
 | A git or url source | it carries a credential | `gitsource.ParseURL`, `urlsource.ParseURL` | `ErrGitURLUserinfo`, `ErrURLRequirementUserinfo` | 2 |
 | Its URL | both: a rune outside the alphabet, an empty or dot segment, a fragment; git also: a path opening with `-`, or a query | `ParseURL` in each | `ErrInvalidGitURL`, `ErrInvalidURLRequirement` | 2 |
 | A persisted locator | not canonical: the URL must round-trip, the pin be lowercase hex | `ParseLocator` in each | `ErrInvalidGitLocator`, `ErrInvalidURLLocator` | 2 |
+| A recorded git or role pin | its commit is not lowercase hex, or, under a commit ref, is any other commit (`gitsource.Ref.Admits`) | `collections.replayGitPin`, `replayRolePin` | `ErrInvalidGitLocator` | 2 |
 | A Galaxy entry's `source:` | a git pointer, or a git or url locator, which consumers would dispatch unjudged | `requirements.checkGalaxySourceShape` | `ErrUnsupportedCollectionSource` | 2 |
 | An ssh host key | not in known_hosts | `gitfetch.sshAuthFor`, `classifyTransportError` | `ErrGitAuthFailed` | 4 |
 | A tree entry | a bad name, `.git` in any case, or a case-folded duplicate | `gitfetch.validateEntries` | `ErrGitTreeEntryInvalid`, `ErrGitTreeDuplicateEntry` | 5 |
@@ -278,6 +279,13 @@ and [URL sources and credentials](../guides/servers-and-auth.md#url-sources-and-
   `/org/../x` while a credential binding matches the path as written.
 - The one admitted empty segment is an embedded upstream URL's `//`, which
   `urlsource` and the transport's `pathHasUnsafeSegment` recognize alike.
+- A pin is cache state, which another writer of a shared bucket can set. A
+  fetch by a commit ref records only that commit; replaying another would
+  install that one and lock it beside a ref naming a different commit.
+  `cleanup` reads a git pin its ref does not admit as no pin
+  (`cleanup.gitRootKeys`): every install from that repository at the
+  requirement's subdir or a child stays reachable, not only what the pin
+  lists.
 - No process runs (`gitfetch.harden`), nothing is checked out, and
   `fetch.NewGit` and `fetch.NewURLDownload` hold no Galaxy token or relaxed
   TLS, so a Galaxy role's github.com fetch carries none.

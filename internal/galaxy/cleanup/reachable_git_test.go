@@ -128,3 +128,32 @@ func checkGitRootKeys(t *testing.T, tc gitRootKeysCase) {
 		t.Fatalf("gitRootKeys = %v, want %v", got, tc.want)
 	}
 }
+
+// TestGitRootKeysReadsAPinItsRefDoesNotAdmitAsNone pins that a pin naming a
+// malformed commit, or under a commit ref another commit, keeps nothing of its
+// own: gitRootKeys falls back to the installed records, as with no pin.
+func TestGitRootKeysReadsAPinItsRefDoesNotAdmitAsNone(t *testing.T) {
+	t.Parallel()
+	fallback := []string{"acme.one@0.1.0", "acme.two@0.2.0", "acme.two@0.9.0"}
+	for _, tc := range []struct {
+		name, ref, commit string
+		want              []string
+	}{
+		{name: "commit ref, pin at another commit", ref: gitKeysCommit, commit: gitKeysOldCommit, want: fallback},
+		{name: "branch, pin at a malformed commit", ref: "main", commit: "not-a-commit", want: fallback},
+		{name: "commit ref, pin at that commit", ref: gitKeysCommit, commit: gitKeysCommit, want: []string{"acme.two@0.9.0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st, installedByKey := gitKeysStore(false)
+			st.SetGitPin(gitsource.PinKey(gitKeysRepoURL, tc.ref, "collections"), store.GitPinEntry{
+				Commit:      tc.commit,
+				Collections: []store.GitPinCollection{{Namespace: "acme", Name: "two", Version: "0.9.0", Subdir: "collections/two"}},
+			})
+			root := requirements.CollectionRequirement{Type: requirements.TypeGit, Source: gitKeysRepoURL, Ref: tc.ref, Subdir: "collections"}
+			if got := gitRootKeys(st, installedByKey, root); !slices.Equal(got, tc.want) {
+				t.Fatalf("gitRootKeys = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -147,7 +147,7 @@ span packages are under [Rules a change must keep](#rules-a-change-must-keep).
 | `internal/galaxy/projectfile` | galaxy.toml schema, `[tool.go-galaxy]`, `${VAR}` expansion, and `Encode`, the `[project]` writer | - |
 | [`internal/galaxy/lockfile`](lockfile-format.md) | galaxy.lock `Load`, `Save`, `Hash`, `Compare` | `Load` judges it as repository content |
 | [`internal/galaxy/solver`](solver.md) | the version solver | metadata only through `Provider` |
-| `internal/galaxy/gitsource` | git grammar, locator, pin key, credential matching, `Client` seam, `Offline` (the `--offline` client) | imports no go-git |
+| `internal/galaxy/gitsource` | git grammar, locator, pin key and the commit a pin may name (`Ref.Admits`), credential matching, `Client` seam, `Offline` (the `--offline` client) | imports no go-git |
 | `internal/galaxy/urlsource` | url grammar, locator, `GO_GALAXY_URL_*` prefix | no transport |
 | `internal/galaxy/gitfetch` | `gitsource.Client`: advertise, fetch by hash into a byte-capped store, read the tree | unregisters `file` and `git` transports; ignores `~/.ssh/config` |
 | `internal/galaxy/galaxyv1` | Galaxy v1 role name to GitHub repository and tag | never reads `download_url` |

@@ -116,6 +116,13 @@ func IsCommitHash(s string) bool {
 	return true
 }
 
+// Admits reports whether a pin recorded under r may name commit: a canonical
+// hash and, for a commit ref, that commit itself, the only one a fetch by it
+// records; any other is cache state no such fetch wrote.
+func (r Ref) Admits(commit string) bool {
+	return IsCommitHash(commit) && (r.Kind != RefCommit || commit == r.Name)
+}
+
 func isHex(s string) bool {
 	if s == "" {
 		return false
