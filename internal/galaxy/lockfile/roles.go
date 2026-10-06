@@ -110,15 +110,12 @@ func roleEntryProblem(e RoleEntry) string {
 	}
 }
 
-// roleCommitPinProblem judges the pin a git or Galaxy role entry carries: a
-// canonical ref, a full lowercase commit, and no sha256, which belongs to a
+// roleCommitPinProblem judges the pin a git or Galaxy role entry carries: the
+// ref and commit refCommitProblem judges, and no sha256, which belongs to a
 // url role alone.
 func roleCommitPinProblem(e RoleEntry) string {
-	if ref, err := gitsource.ParseRef(e.Ref); err != nil || e.Ref == "" || ref.Name != e.Ref {
-		return fmt.Sprintf("ref %q is not a canonical git ref", e.Ref)
-	}
-	if !gitsource.IsCommitHash(e.Commit) {
-		return fmt.Sprintf("commit %q is not a lowercase 40-hex commit", e.Commit)
+	if reason := refCommitProblem(e.Ref, e.Commit); reason != "" {
+		return reason
 	}
 	if e.SHA256 != "" {
 		return "a git or galaxy role entry carries no sha256"

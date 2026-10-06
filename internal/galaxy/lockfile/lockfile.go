@@ -234,7 +234,7 @@ func (f *File) canonicalClone() *File {
 
 // validate rejects a duplicate or malformed name, a non-exact version (a
 // --frozen install would then take the server's highest), a source with
-// userinfo, a malformed git or url pin, and an entry its schema predates.
+// userinfo, a malformed or contradictory pin, and an entry its schema predates.
 func (f *File) validate() error {
 	seen := make(map[string]struct{}, len(f.Collections))
 	for _, e := range f.Collections {
@@ -260,7 +260,28 @@ func (f *File) validate() error {
 			return err
 		}
 	}
+	if err := checkURLSourcesUnique(f.Collections); err != nil {
+		return err
+	}
 	return f.validateRoles()
+}
+
+// checkURLSourcesUnique refuses two url entries locked from one source: one
+// tarball is one collection, and --frozen finds a url root's entry by source
+// alone. Only the names are printed, since a source's query may be a secret.
+func checkURLSourcesUnique(entries []Entry) error {
+	byURL := make(map[string]string)
+	for _, e := range entries {
+		if !e.IsURL() {
+			continue
+		}
+		if first, dup := byURL[e.Source]; dup {
+			return fmt.Errorf("%w: %s: url entry locked from the same source as %s; one tarball is one collection",
+				helpers.ErrLockfileInvalid, e.Name, first)
+		}
+		byURL[e.Source] = e.Name
+	}
+	return nil
 }
 
 // checkEntryName holds a url entry's name, read from its artifact's own
@@ -370,17 +391,31 @@ func gitEntryProblem(e Entry) string {
 	if u, err := gitsource.ParseURL(e.Source); err != nil || u.String() != e.Source {
 		return "source is not a canonical git repository URL"
 	}
-	if ref, err := gitsource.ParseRef(e.Ref); err != nil || e.Ref == "" || ref.Name != e.Ref {
-		return fmt.Sprintf("ref %q is not a canonical git ref", e.Ref)
-	}
-	if !gitsource.IsCommitHash(e.Commit) {
-		return fmt.Sprintf("commit %q is not a lowercase 40-hex commit", e.Commit)
+	if reason := refCommitProblem(e.Ref, e.Commit); reason != "" {
+		return reason
 	}
 	if subdir, err := gitsource.ParseSubdir(e.Subdir); err != nil || subdir != e.Subdir {
 		return fmt.Sprintf("subdir %q is not a canonical subdir", e.Subdir)
 	}
 	if e.SHA256 != "" {
 		return "a git entry carries no sha256"
+	}
+	return ""
+}
+
+// refCommitProblem judges the ref and commit of a git-sourced pin: a canonical
+// ref, a lowercase 40-hex commit, and a commit ref at that same commit, since
+// --frozen checks a git ref against the requirement and installs the commit.
+func refCommitProblem(rawRef, commit string) string {
+	ref, err := gitsource.ParseRef(rawRef)
+	if err != nil || rawRef == "" || ref.Name != rawRef {
+		return fmt.Sprintf("ref %q is not a canonical git ref", rawRef)
+	}
+	if !gitsource.IsCommitHash(commit) {
+		return fmt.Sprintf("commit %q is not a lowercase 40-hex commit", commit)
+	}
+	if ref.IsCommit() && ref.Name != commit {
+		return fmt.Sprintf("ref %q is a commit and differs from commit %q", rawRef, commit)
 	}
 	return ""
 }

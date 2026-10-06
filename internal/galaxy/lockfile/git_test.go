@@ -273,3 +273,26 @@ func TestCompareReportsGitFields(t *testing.T) {
 		t.Fatalf("dropping the git entry reported %+v, want exactly one removal", d)
 	}
 }
+
+// gitOtherCommit is a second forty-hex commit, for a ref that names another
+// commit than the entry pins.
+const gitOtherCommit = "fedcba9876543210fedcba9876543210fedcba98"
+
+// TestLoadRefusesACommitRefLockedAtAnotherCommit pins that a git entry whose
+// ref is a commit pins that same commit: --frozen holds the ref to the
+// requirement and installs the commit, so the two may not disagree.
+func TestLoadRefusesACommitRefLockedAtAnotherCommit(t *testing.T) {
+	t.Parallel()
+	e := gitEntry()
+	e.Ref = gitOtherCommit
+	_, err := Load(writeRawLockfile(t, SchemaVersionGit, e))
+	const want = `lockfile is invalid: acme.app: ref "fedcba9876543210fedcba9876543210fedcba98" ` +
+		`is a commit and differs from commit "0123456789abcdef0123456789abcdef01234567"`
+	if !errors.Is(err, helpers.ErrLockfileInvalid) || err.Error() != want {
+		t.Fatalf("Load = %v, want ErrLockfileInvalid reading %q", err, want)
+	}
+	e.Ref = gitTestCommit
+	if _, err := Load(writeRawLockfile(t, SchemaVersionGit, e)); err != nil {
+		t.Fatalf("Load of a commit ref locked at that commit: %v", err)
+	}
+}

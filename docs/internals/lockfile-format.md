@@ -53,6 +53,14 @@ versions, commits and url digests to their alphabets: a lockfile is
 repository content. A name is checked before any message prints it, since a
 newline could forge an output line.
 
+They also refuse pins that contradict each other. A git collection, git role
+or Galaxy role entry whose `ref` is a commit must pin that same commit, since
+`--frozen` holds a git collection's or git role's ref to the requirement and
+then installs its `commit`. No two url collection entries share a `source`,
+since one tarball is one collection and `--frozen` finds a url root's entry by
+source alone; two url roles may, as two role names may install one tarball.
+That refusal names both entries, never the source, which may carry a query.
+
 Every collection needs an exact version, or `"*"` would let `--frozen` take the
 server's highest. `Save` does not validate: `buildLockfile` checks each
 version with `helpers.IsExactVersion` and keys entries by fqdn.

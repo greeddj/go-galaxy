@@ -132,6 +132,8 @@ Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-loc
 | A Galaxy entry's `download_url`, under `--frozen` | off its server's origin | `checkLockedDownloadURLs` | `ErrLockfileInvalid` | 6 |
 | The artifact a locked `download_url` serves | its `MANIFEST.json` names another namespace, name or version | `checkLockedArtifactIdentity` | `ErrLockedArtifactIdentityMismatch` | 7 |
 | A Galaxy entry's `sha256` | neither empty nor 64 lowercase hex digits | `lockfile.validateGalaxyEntry` | `ErrLockfileInvalid` | 6 |
+| A git collection, git role or Galaxy role entry's `ref` | a commit other than the entry's `commit` | `lockfile.refCommitProblem` | `ErrLockfileInvalid` | 6 |
+| Two url collection entries | one `source`, never printed | `lockfile.checkURLSourcesUnique` | `ErrLockfileInvalid` | 6 |
 
 - `lock` and `--frozen` hold `download_url` to its server's origin, because
   its bytes fill the
@@ -148,6 +150,10 @@ Behavior: [Install from the lockfile](../guides/lockfile.md#install-from-the-loc
 - `lock` also refuses a query: a presigned capability would be committed, then
   expire. Both `lock` refusals exit 5 and are listed under
   [URLs a Galaxy server supplies](#urls-a-galaxy-server-supplies).
+- `--frozen` checks a git `ref` or a url `source` against the requirement and
+  installs what the entry pins, so `Load` refuses a commit `ref` at another
+  `commit` and two url collection entries with one `source`
+  ([Loading](lockfile-format.md#loading)).
 
 ## Credentials and the token pairing rule
 

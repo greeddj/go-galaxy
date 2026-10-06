@@ -260,3 +260,34 @@ func TestCompareReportsRoleSHA256(t *testing.T) {
 		t.Fatalf("Fields() = %+v, want one sha256 change", fields)
 	}
 }
+
+// TestLoadRefusesTwoURLEntriesForOneSource pins that one tarball URL is locked
+// as one collection, since --frozen finds a url root's entry by source alone;
+// the refusal names both entries and never the source, whose query may be a secret.
+func TestLoadRefusesTwoURLEntriesForOneSource(t *testing.T) {
+	t.Parallel()
+	const shared = "https://example.com/dl/acme-app.tar.gz?sig=s3cr3t"
+	first, second := urlEntry(), urlEntry()
+	first.Source = shared
+	second.Name, second.Version, second.Source, second.Deps = "acme.lib", "2.0.0", shared, nil
+	path := filepath.Join(t.TempDir(), DefaultName)
+	rewriteRaw(t, path, &File{SchemaVersion: SchemaVersionURL, Collections: []Entry{first, second}})
+	_, err := Load(path)
+	const want = "lockfile is invalid: acme.lib: url entry locked from the same source as acme.app; one tarball is one collection"
+	if !errors.Is(err, helpers.ErrLockfileInvalid) || err.Error() != want {
+		t.Fatalf("Load = %v, want ErrLockfileInvalid reading %q", err, want)
+	}
+
+	second.Source = urlTestSource
+	rewriteRaw(t, path, &File{SchemaVersion: SchemaVersionURL, Collections: []Entry{first, second}})
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load of two url entries with their own sources: %v", err)
+	}
+	// Two roles may install one tarball under two names, so a url role shares.
+	other := urlRoleEntry()
+	other.Name = "myrole_copy"
+	rewriteRaw(t, path, &File{SchemaVersion: SchemaVersionURL, Roles: []RoleEntry{urlRoleEntry(), other}})
+	if _, err := Load(path); err != nil {
+		t.Fatalf("Load of two url roles with one source: %v", err)
+	}
+}

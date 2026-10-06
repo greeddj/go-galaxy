@@ -314,3 +314,34 @@ func TestCompareRolesIgnoresOrder(t *testing.T) {
 		t.Fatalf("role order alone reads as drift")
 	}
 }
+
+// TestLoadRefusesARoleCommitRefLockedAtAnotherCommit is the role half of
+// TestLoadRefusesACommitRefLockedAtAnotherCommit: a git or Galaxy role whose
+// ref is a commit pins that commit, and a commit ref at its own commit loads.
+func TestLoadRefusesARoleCommitRefLockedAtAnotherCommit(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		entry func() RoleEntry
+		want  string
+	}{
+		{entry: gitRoleEntry, want: `lockfile is invalid: role base: ref "fedcba9876543210fedcba9876543210fedcba98" ` +
+			`is a commit and differs from commit "0123456789abcdef0123456789abcdef01234567"`},
+		{entry: galaxyRoleEntry, want: `lockfile is invalid: role geerlingguy.docker: ref "fedcba9876543210fedcba9876543210fedcba98" ` +
+			`is a commit and differs from commit "0123456789abcdef0123456789abcdef01234567"`},
+	}
+	for _, tc := range cases {
+		e := tc.entry()
+		t.Run(e.Type, func(t *testing.T) {
+			t.Parallel()
+			e.Ref = gitOtherCommit
+			_, err := Load(writeRawRoleLockfile(t, SchemaVersionRoles, e))
+			if !errors.Is(err, helpers.ErrLockfileInvalid) || err.Error() != tc.want {
+				t.Fatalf("Load = %v, want ErrLockfileInvalid reading %q", err, tc.want)
+			}
+			e.Ref = gitTestCommit
+			if _, err := Load(writeRawRoleLockfile(t, SchemaVersionRoles, e)); err != nil {
+				t.Fatalf("Load of a commit ref locked at that commit: %v", err)
+			}
+		})
+	}
+}
