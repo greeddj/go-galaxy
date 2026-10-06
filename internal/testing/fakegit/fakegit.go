@@ -53,6 +53,9 @@ const (
 type Capabilities struct {
 	Shallow            bool
 	AllowReachableSHA1 bool
+	// AllowTipSHA1 advertises allow-tip-sha1-in-want and, as git does over ssh,
+	// still refuses a want behind a tip unless AllowReachableSHA1 is set too.
+	AllowTipSHA1 bool
 }
 
 // Fault is a scripted failure for one Fail rule; Count works as in fakegalaxy

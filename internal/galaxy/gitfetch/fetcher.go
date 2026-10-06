@@ -30,8 +30,9 @@ const (
 	// shallowDepth is the only depth this tool ever asks for: the one commit
 	// it builds from. Anything deeper would be history nobody reads.
 	shallowDepth = 1
-	// notOurRef is git's wording for refusing a want it does not hold or reach.
-	// go-git passes the remote's ERR line on as text alone, so the phrase is matched.
+	// notOurRef is git's refusal of a want: one it does not hold or reach, or,
+	// serving tips alone over ssh, one behind a tip. go-git passes the ERR line
+	// on as text alone, so the phrase is matched.
 	notOurRef = "not our ref"
 )
 
@@ -68,15 +69,18 @@ func New(httpClient *http.Client, tempDir func() string, opts ...Option) *Fetche
 	return f
 }
 
-// advertisement is what one advertised-references round trip told us.
+// advertisement is what one advertised-references round trip told us. A remote
+// may serve by hash any commit a ref reaches (reachableByHash) or only a ref's
+// tip (tipsByHash); under the latter alone git over ssh refuses a commit behind one.
 type advertisement struct {
-	refs       map[string]plumbing.Hash
-	peeled     map[string]plumbing.Hash
-	head       *plumbing.Hash
-	caps       *capability.List
-	headTarget string
-	shallow    bool
-	shaInWant  bool
+	refs            map[string]plumbing.Hash
+	peeled          map[string]plumbing.Hash
+	head            *plumbing.Hash
+	caps            *capability.List
+	headTarget      string
+	shallow         bool
+	reachableByHash bool
+	tipsByHash      bool
 }
 
 // Advertise resolves ref against the remote's advertised references with no
@@ -244,12 +248,13 @@ func (f *Fetcher) openAndAdvertise(ctx context.Context, u gitsource.URL, cred gi
 
 func newAdvertisement(ar *packp.AdvRefs) *advertisement {
 	adv := &advertisement{
-		refs:      ar.References,
-		peeled:    ar.Peeled,
-		head:      ar.Head,
-		caps:      ar.Capabilities,
-		shallow:   ar.Capabilities.Supports(capability.Shallow),
-		shaInWant: ar.Capabilities.Supports(capability.AllowReachableSHA1InWant) || ar.Capabilities.Supports(capability.AllowTipSHA1InWant),
+		refs:            ar.References,
+		peeled:          ar.Peeled,
+		head:            ar.Head,
+		caps:            ar.Capabilities,
+		shallow:         ar.Capabilities.Supports(capability.Shallow),
+		reachableByHash: ar.Capabilities.Supports(capability.AllowReachableSHA1InWant),
+		tipsByHash:      ar.Capabilities.Supports(capability.AllowTipSHA1InWant),
 	}
 	for _, v := range ar.Capabilities.Get(capability.SymRef) {
 		if name, target, ok := strings.Cut(v, ":"); ok && name == headName {
@@ -378,22 +383,13 @@ func chooseTarget(adv *advertisement, spec fetchSpec, display string) (plumbing.
 	return resolve(adv, spec.ref, display)
 }
 
-// fetchCommit wants target directly, shallow when allowed, if it is an advertised
-// tip or the remote serves it by hash, else searches. Never advertised, it is
-// ErrGitCommitNotFound when refused or missing; advertised, ErrGitCommitMismatch when missing.
+// fetchCommit brings target into store through fetchTarget and reads it back.
+// Missing, it is ErrGitCommitNotFound if never advertised, else ErrGitCommitMismatch.
 func (f *Fetcher) fetchCommit(ctx context.Context, sess transport.UploadPackSession, adv *advertisement,
 	store *objectStore, target plumbing.Hash, spec fetchSpec, display string,
 ) (*object.Commit, error) {
-	want := adv.wantFor(target)
-	advertised := adv.advertised(want)
-	if advertised || adv.shaInWant {
-		if err := fetchPack(ctx, sess, adv, store, []plumbing.Hash{want}, shallowDepthIf(adv.shallow), display); err != nil {
-			if !advertised && isRefusedWant(err) {
-				return nil, commitNotHeld(display, target)
-			}
-			return nil, err
-		}
-	} else if err := f.fetchBySearch(ctx, sess, adv, store, target, spec, display); err != nil {
+	advertised, err := f.fetchTarget(ctx, sess, adv, store, target, spec, display)
+	if err != nil {
 		return nil, err
 	}
 	commit, err := object.GetCommit(store.storer, target)
@@ -404,6 +400,39 @@ func (f *Fetcher) fetchCommit(ctx context.Context, sess transport.UploadPackSess
 		return nil, fmt.Errorf("%w: %s advertised %s but did not ship it: %w", helpers.ErrGitCommitMismatch, display, target, err)
 	}
 	return commit, nil
+}
+
+// fetchTarget wants target directly, shallow when allowed, if it is an advertised tip
+// or the remote serves commits by hash, else searches, as it does once a remote serving
+// tips alone refuses a want never advertised. It reports whether the want was advertised.
+func (f *Fetcher) fetchTarget(ctx context.Context, sess transport.UploadPackSession, adv *advertisement,
+	store *objectStore, target plumbing.Hash, spec fetchSpec, display string,
+) (bool, error) {
+	want := adv.wantFor(target)
+	advertised := adv.advertised(want)
+	if !advertised && !adv.reachableByHash && !adv.tipsByHash {
+		return false, f.fetchBySearch(ctx, sess, adv, store, target, spec, display)
+	}
+	err := fetchPack(ctx, sess, adv, store, []plumbing.Hash{want}, shallowDepthIf(adv.shallow), display)
+	switch {
+	case err == nil || advertised || !isRefusedWant(err):
+		return advertised, err
+	case adv.reachableByHash:
+		return false, commitNotHeld(display, target)
+	default:
+		return false, f.searchAfresh(ctx, store, target, spec, display)
+	}
+}
+
+// searchAfresh runs fetchBySearch on a fresh session, since over ssh a refused
+// want ends the session it was made on.
+func (f *Fetcher) searchAfresh(ctx context.Context, store *objectStore, target plumbing.Hash, spec fetchSpec, display string) error {
+	sess, freshAdv, err := f.openAndAdvertise(ctx, spec.url, spec.auth)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sess.Close() }()
+	return f.fetchBySearch(ctx, sess, freshAdv, store, target, spec, display)
 }
 
 // commitNotHeld is the error for a commit never advertised that the remote does

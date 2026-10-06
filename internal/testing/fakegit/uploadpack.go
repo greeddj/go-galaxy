@@ -58,6 +58,9 @@ func advertise(w io.Writer, repo *Repo, caps Capabilities, withServicePrefix boo
 	if caps.AllowReachableSHA1 {
 		_ = ar.Capabilities.Set(capability.AllowReachableSHA1InWant)
 	}
+	if caps.AllowTipSHA1 {
+		_ = ar.Capabilities.Set(capability.AllowTipSHA1InWant)
+	}
 
 	if err := addReferences(repo, ar); err != nil {
 		return err

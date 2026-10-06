@@ -72,9 +72,9 @@ func assertRefusedIsNotFound(t *testing.T, err error, u gitsource.URL, commit st
 	}
 }
 
-// TestRefusedCommitIsNotFound pins that a commit a remote serving by hash
-// refuses, never committed or no longer reachable, is ErrGitCommitNotFound
-// after the one direct want; a reachable commit behind the tip is the control.
+// TestRefusedCommitIsNotFound pins that a commit a remote serving any reachable
+// commit by hash refuses, never committed or no longer reachable, is
+// ErrGitCommitNotFound after the one direct want; one behind the tip is the control.
 func TestRefusedCommitIsNotFound(t *testing.T) {
 	t.Parallel()
 	for _, role := range []bool{false, true} {
