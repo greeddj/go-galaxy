@@ -23,9 +23,14 @@ import (
 const (
 	fixtureRepo   = "acme"
 	fixtureBranch = "main"
+	// unknownCommit is a well-formed commit hash no fixture repository holds.
+	unknownCommit = "0123456789abcdef0123456789abcdef01234567"
 	// abortAfter bounds a request a fault is expected to block: long enough
 	// for a loopback exchange to reach the fault, short enough for the suite.
 	abortAfter = 2 * time.Second
+	// exchangeBound bounds an exchange expected to finish. A slow machine only
+	// makes that exchange slower, so the bound is generous.
+	exchangeBound = 10 * time.Second
 )
 
 // fixture is one repository on a fresh server: two commits on main, HEAD
@@ -363,7 +368,7 @@ func exactSHACases() []exactSHACase {
 			// Reachability is judged by the server: a hash it never saw is
 			// answered with an ERR line.
 			name:      "unknown commit refused",
-			pick:      func(fixture) plumbing.Hash { return plumbing.NewHash("0123456789abcdef0123456789abcdef01234567") },
+			pick:      func(fixture) plumbing.Hash { return plumbing.NewHash(unknownCommit) },
 			caps:      Capabilities{AllowReachableSHA1: true},
 			wantError: true,
 		},

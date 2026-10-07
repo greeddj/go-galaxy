@@ -2,10 +2,16 @@ package fakegit
 
 import (
 	"context"
+	"errors"
+	"io"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/format/pktline"
+	"github.com/go-git/go-git/v5/plumbing/protocol/packp"
 	gogitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
 	"github.com/go-git/go-git/v5/storage/memory"
 	"golang.org/x/crypto/ssh"
@@ -190,5 +196,92 @@ func TestSSHUnknownRepositoryRefused(t *testing.T) {
 	opts.URL = f.ssh.RepoURL("nothing")
 	if _, err := git.CloneContext(ctx, memory.NewStorage(), nil, &opts); err == nil {
 		t.Fatal("clone of an unregistered repository over ssh succeeded")
+	}
+}
+
+// earlyCloseWindow is how long a session must stay open after its reply. A
+// server that closes right after replying does so well inside it, and one
+// that waits for the client's EOF passes at any length.
+const earlyCloseWindow = 100 * time.Millisecond
+
+// TestSSHSessionEndsAfterTheClientEOF pins that the server ends a session only
+// after the client closes its input: go-git's client fails a stdin close on a
+// session the server closed first, and drops the reply it already holds.
+func TestSSHSessionEndsAfterTheClientEOF(t *testing.T) {
+	f := newSSHFixture(t, "")
+	sess, stdin, stdout := startRawUploadPack(t, f)
+	requireRefusal(t, stdin, stdout, plumbing.NewHash(unknownCommit))
+
+	ended := make(chan error, 1)
+	go func() { ended <- sess.Wait() }()
+	select {
+	case err := <-ended:
+		t.Fatalf("the session ended before the client closed its input: %v", err)
+	case <-time.After(earlyCloseWindow):
+	}
+	if err := stdin.Close(); err != nil {
+		t.Fatalf("close the input after the reply: %v", err)
+	}
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Fatalf("session after the client's EOF: %v", err)
+		}
+	case <-time.After(exchangeBound):
+		t.Fatalf("the session did not end within %v of the client's EOF", exchangeBound)
+	}
+}
+
+// startRawUploadPack runs the upload-pack exec on the fixture repository over
+// a bare x/crypto/ssh session and reads the advertisement, leaving the rest of
+// the exchange to the caller.
+func startRawUploadPack(t *testing.T, f sshFixture) (*ssh.Session, io.WriteCloser, io.Reader) {
+	t.Helper()
+	client, err := ssh.Dial("tcp", f.ssh.Addr(), &ssh.ClientConfig{
+		User:            sshUser,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(f.signer)},
+		HostKeyCallback: ssh.FixedHostKey(f.ssh.HostKey()),
+		Timeout:         exchangeBound,
+	})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	sess, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("session: %v", err)
+	}
+	stdin, err := sess.StdinPipe()
+	if err != nil {
+		t.Fatalf("stdin: %v", err)
+	}
+	stdout, err := sess.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout: %v", err)
+	}
+	if err := sess.Start(execCommandPrefix + "/" + fixtureRepo + repoSuffix + execCommandSuffix); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+	if err := packp.NewAdvRefs().Decode(stdout); err != nil {
+		t.Fatalf("advertisement: %v", err)
+	}
+	return sess, stdin, stdout
+}
+
+// requireRefusal sends a request wanting want, then done, and fails t unless
+// the server answers with an ERR line.
+func requireRefusal(t *testing.T, stdin io.Writer, stdout io.Reader, want plumbing.Hash) {
+	t.Helper()
+	req := packp.NewUploadRequest()
+	req.Wants = []plumbing.Hash{want}
+	if err := req.Encode(stdin); err != nil {
+		t.Fatalf("send the want: %v", err)
+	}
+	if err := pktline.NewEncoder(stdin).Encodef("%s\n", donePayload); err != nil {
+		t.Fatalf("send done: %v", err)
+	}
+	var refusal *pktline.ErrorLine
+	if sc := pktline.NewScanner(stdout); sc.Scan() || !errors.As(sc.Err(), &refusal) {
+		t.Fatalf("reply to want %s: %v, want an ERR line", want, sc.Err())
 	}
 }

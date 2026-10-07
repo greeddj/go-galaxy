@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -288,8 +289,8 @@ func (s *SSHServer) handleSession(ctx context.Context, channel ssh.Channel, requ
 }
 
 // runExec is the ssh counterpart of the two HTTP handlers: count, record the
-// fingerprint, apply the fault, then advertise, read and reply over channel.
-// It returns the exit status to report.
+// fingerprint, apply the fault, then advertise, read, reply and await the
+// client's EOF over channel. It returns the exit status to report.
 func (s *SSHServer) runExec(ctx context.Context, channel ssh.Channel, name, fingerprint string) uint32 {
 	p := s.parent
 	p.incr(EndpointSSHExec)
@@ -308,6 +309,9 @@ func (s *SSHServer) runExec(ctx context.Context, channel ssh.Channel, name, fing
 		p.tb.Errorf("fakegit: advertise %s over ssh: %v", name, err)
 		return 1
 	}
+	// git upload-pack exits without waiting for the client's EOF, and go-git
+	// then drops a reply it already holds; waiting keeps the suite off that race.
+	defer func() { _, _ = io.Copy(io.Discard, channel) }()
 	req, closed, err := readUploadRequest(channel)
 	if err != nil {
 		_, _ = channel.Stderr().Write([]byte("fakegit: malformed upload request\n"))

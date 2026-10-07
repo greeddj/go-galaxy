@@ -177,7 +177,7 @@ Nothing in the suite dials a real host:
 | Double | Models | Rules |
 | --- | --- | --- |
 | `fakegalaxy` | Galaxy v3 (`New`) or a hub (`NewAtBasePath`); v1 roles after `AddRole` | counts, then auth, then fault; wire names are local literals |
-| `fakegit` | smart HTTP and ssh remotes, fixed commit times | counts, fault, then `RequireAuth`; validates nothing a repo carries |
+| `fakegit` | smart HTTP and ssh remotes, fixed commit times; an ssh session ends only after the client's EOF, which git does not wait for | counts, fault, then `RequireAuth`; validates nothing a repo carries |
 | `faketree` | an in-memory `treearchive.Source` | builders and the collections suite's git client double |
 
 <details markdown>
