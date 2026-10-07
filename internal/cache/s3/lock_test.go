@@ -40,8 +40,9 @@ func testLockTiming(ttl time.Duration) lockTiming {
 	}
 }
 
-// lockEventWaitCeiling is a liveness ceiling for waitForLockEvent: a slow
-// machine makes those tests slower, never wrong.
+// lockEventWaitCeiling is the liveness ceiling for waiting on a lock event,
+// in waitForLockEvent and waitForHeartbeatHead: a slow machine makes those
+// tests slower, never wrong.
 const lockEventWaitCeiling = 10 * time.Second
 
 // lockEventPollInterval is how often waitForLockEvent re-checks its

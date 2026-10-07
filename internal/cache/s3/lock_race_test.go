@@ -20,10 +20,6 @@ const (
 	// it; a machine outside that range loses detections, which fails loudly.
 	lockRaceSpreadSteps = 48
 	lockRaceSpreadUnit  = 2 * time.Microsecond
-	// lockRaceEventCeiling is a LIVENESS bound on waiting for a heartbeat
-	// HEAD, matching lockEventWaitCeiling's own contract: a slow machine only
-	// makes this slower, never wrong.
-	lockRaceEventCeiling = 2 * time.Second
 )
 
 // lockRaceTiming uses a 1ms heartbeat so the cycles stay fast, and a short
@@ -89,19 +85,19 @@ func lockRaceCycle(t *testing.T, b *Backend, fake *fakeS3, key string, cycle int
 	return true
 }
 
-// waitForHeartbeatHead busy-polls until the fake serves a new heartbeat HEAD,
-// or until the holder context ends, as the detecting tick's HEAD may predate
-// the baseline; a sleep would step over the microsecond window.
+// waitForHeartbeatHead busy-polls, up to lockEventWaitCeiling, until the fake
+// serves a new heartbeat HEAD or the holder context ends, as the detecting
+// tick's HEAD may predate the baseline; a sleep would step over the window.
 func waitForHeartbeatHead(t *testing.T, fake *fakeS3, key string, cycle int, holderErr func() error) {
 	t.Helper()
 	before := fake.requestCount(key, http.MethodHead)
-	deadline := time.Now().Add(lockRaceEventCeiling)
+	deadline := time.Now().Add(lockEventWaitCeiling)
 	for {
 		if fake.requestCount(key, http.MethodHead) > before || holderErr() != nil {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("cycle %d: no heartbeat HEAD within %v", cycle, lockRaceEventCeiling)
+			t.Fatalf("cycle %d: no heartbeat HEAD within %v", cycle, lockEventWaitCeiling)
 		}
 		runtime.Gosched()
 	}
