@@ -47,10 +47,16 @@ func newSSHFixture(t *testing.T, passphrase string) sshFixture {
 }
 
 // sshClone clones the fixture repository over ssh with auth into memory
-// storage.
+// storage, within exchangeBound.
 func sshClone(t *testing.T, f sshFixture, auth git.CloneOptions) (*git.Repository, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), abortAfter)
+	return sshCloneWithin(t, f, auth, exchangeBound)
+}
+
+// sshCloneWithin is sshClone ended after within, for a clone a fault blocks.
+func sshCloneWithin(t *testing.T, f sshFixture, auth git.CloneOptions, within time.Duration) (*git.Repository, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), within)
 	defer cancel()
 	auth.URL = f.ssh.RepoURL(fixtureRepo)
 	return git.CloneContext(ctx, memory.NewStorage(), nil, &auth)
@@ -171,7 +177,7 @@ func TestSSHHangFaultIsAbortedByContext(t *testing.T) {
 	}
 	opts := branchOpts(0)
 	opts.Auth = auth
-	if _, err := sshClone(t, f, opts); err == nil {
+	if _, err := sshCloneWithin(t, f, opts, abortAfter); err == nil {
 		t.Fatal("clone against a hung exec succeeded")
 	}
 	if f.web.srv.Count(EndpointSSHExec) != 1 {
@@ -189,7 +195,7 @@ func TestSSHUnknownRepositoryRefused(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPublicKeys: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), abortAfter)
+	ctx, cancel := context.WithTimeout(t.Context(), exchangeBound)
 	defer cancel()
 	opts := branchOpts(0)
 	opts.Auth = auth

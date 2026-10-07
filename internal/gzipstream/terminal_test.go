@@ -11,7 +11,7 @@ import (
 // terminalReadDeadline is how long a Read past a stream's ending may take
 // before it counts as a hang; generous costs nothing, since a Read that
 // returns at all returns in microseconds.
-const terminalReadDeadline = 3 * time.Second
+const terminalReadDeadline = 10 * time.Second
 
 // readPastTheEnd calls Read on r from a goroutine and fails the test if it
 // does not return within terminalReadDeadline. A parked goroutine is leaked,

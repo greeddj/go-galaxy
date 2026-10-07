@@ -20,7 +20,7 @@ const testIdle = 20 * time.Millisecond
 // waitBound is the generous upper bound every test gives itself to observe
 // a Read (or a goroutine) complete, so a genuine deadlock fails the test
 // instead of hanging the suite.
-const waitBound = 2 * time.Second
+const waitBound = 10 * time.Second
 
 // blockingReadCloser's Read blocks until ctx is done and returns ctx.Err(); it
 // closes started first, so a test can wait until the read is in flight.

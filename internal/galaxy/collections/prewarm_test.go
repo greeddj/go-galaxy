@@ -19,9 +19,14 @@ import (
 )
 
 // concurrencyBarrierTimeout bounds how long a request waits for the barrier
-// to open; only a run that never reaches want pays it, at most once per test,
-// so it is generous enough not to flake under CI load.
-const concurrencyBarrierTimeout = 2 * time.Second
+// to open. A run that reaches want never pays it, so it is generous: a slow
+// machine only makes a failing run slower.
+const concurrencyBarrierTimeout = 10 * time.Second
+
+// sequentialRunWindow replaces that timeout for a run expected to stay
+// sequential, which pays it once: long enough for a wrongly concurrent
+// request to overlap the first one.
+const sequentialRunWindow = 2 * time.Second
 
 // concurrencyBarrier is an http.RoundTripper that holds each request until
 // want are in flight at once, then opens for good. The base transport must not
@@ -195,6 +200,7 @@ func TestPrewarmSkippedUnderRefresh(t *testing.T) {
 	roots := unpinnedPrewarmRoots(srv, srv.URL(), 8)
 
 	runtime, barrier := newPrewarmBarrierRuntime(srv, 4)
+	barrier.timeout = sequentialRunWindow
 	cfg := &config.Config{Server: srv.URL(), Workers: 4, NoDeps: true, Refresh: true}
 	deps := newCollectionDeps(cfg, runtime, store.New())
 

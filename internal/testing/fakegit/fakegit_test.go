@@ -59,7 +59,7 @@ func newFixture(t *testing.T) fixture {
 // clone runs the stock go-git client against url into memory storage.
 func clone(t *testing.T, url string, opts git.CloneOptions) (*git.Repository, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), abortAfter)
+	ctx, cancel := context.WithTimeout(t.Context(), exchangeBound)
 	defer cancel()
 	opts.URL = url
 	return git.CloneContext(ctx, memory.NewStorage(), nil, &opts)
@@ -329,7 +329,7 @@ func fetchSHA(t *testing.T, url string, sha plumbing.Hash) (*memory.Storage, err
 	t.Helper()
 	st := memory.NewStorage()
 	remote := git.NewRemote(st, &config.RemoteConfig{Name: "origin", URLs: []string{url}})
-	ctx, cancel := context.WithTimeout(t.Context(), abortAfter)
+	ctx, cancel := context.WithTimeout(t.Context(), exchangeBound)
 	defer cancel()
 	spec := config.RefSpec(sha.String() + ":refs/heads/pinned")
 	return st, remote.FetchContext(ctx, &git.FetchOptions{RefSpecs: []config.RefSpec{spec}, Tags: git.NoTags})
@@ -531,7 +531,7 @@ func TestServeCommitFaultShipsAnotherCommit(t *testing.T) {
 	f.srv.Fail(EndpointUploadPack, fixtureRepo, Fault{ServeCommit: stranger, Count: 1})
 
 	st := memory.NewStorage()
-	ctx, cancel := context.WithTimeout(t.Context(), abortAfter)
+	ctx, cancel := context.WithTimeout(t.Context(), exchangeBound)
 	defer cancel()
 	opts := branchOpts(0)
 	opts.URL = f.srv.RepoURL(fixtureRepo)
