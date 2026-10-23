@@ -136,7 +136,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: https://github.com/greeddj/go-galaxy
-    description: "Fast Ansible Galaxy collections and roles installer for CI."
+    description: "Fast Ansible Galaxy collections and roles installer for CI"
     binaries:
       - go-galaxy
     skip_upload: auto
