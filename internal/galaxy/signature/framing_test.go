@@ -1775,9 +1775,10 @@ func TestSignatureVersionDecidesWhetherLengthsAreJudged(t *testing.T) {
 	}
 }
 
-// admittedShapeAllocCeiling bounds one admitted shape's walk and drive. It sits
-// between the 1800 bytes the costliest shape measured and the control's 10112.
-const admittedShapeAllocCeiling = 4 << 10
+// admittedShapeAllocCeiling bounds one admitted shape's walk and drive: it sits
+// between the costliest shape's 5040 bytes under the race detector and the
+// control's 14448.
+const admittedShapeAllocCeiling = 8 << 10
 
 // admittedShapes are the inputs the walk accepts because go-crypto has nothing
 // data-derived left to allocate from them: the accepting rows of the truncation
