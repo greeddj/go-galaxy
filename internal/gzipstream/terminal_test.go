@@ -66,8 +66,8 @@ func terminalCases(t *testing.T) []terminalCase {
 }
 
 // TestReaderRepeatsItsTerminalVerdict pins that a Read past a stream's ending,
-// accepted or refused, repeats the first verdict instead of parking forever on
-// pgzip's full block pool.
+// accepted or refused, repeats the first verdict: pgzip's own Read after a
+// failed Reset returns no error.
 func TestReaderRepeatsItsTerminalVerdict(t *testing.T) {
 	t.Parallel()
 
@@ -81,7 +81,7 @@ func TestReaderRepeatsItsTerminalVerdict(t *testing.T) {
 
 // assertTerminalVerdictRepeats drains one row's stream, checks only that it
 // was refused or accepted as declared (TestReaderMemberRules pins which), then
-// that one more Read repeats that verdict rather than blocking.
+// that one more Read repeats that verdict within terminalReadDeadline.
 func assertTerminalVerdictRepeats(t *testing.T, tt terminalCase) {
 	t.Helper()
 

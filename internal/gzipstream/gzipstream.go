@@ -20,7 +20,7 @@ type Reader struct {
 	z   *pgzip.Reader
 	src *bufio.Reader
 	// err is the terminal verdict, repeated by every later Read without
-	// touching pgzip, which blocks forever on a Read after a member's end.
+	// touching pgzip, whose Read after a failed Reset returns no error at all.
 	err error
 	// n counts the decompressed bytes the CURRENT member has produced, and is
 	// reset at every member boundary. Zero at a member's end is the refusal.
@@ -55,9 +55,9 @@ func NewReaderN(ctx context.Context, r io.Reader, blockSize, blocks int) (*Reade
 	return &Reader{z: z, src: src}, nil
 }
 
-// Read fills p from the current member and advances to the next one in a loop,
-// not by pgzip's recursion. Every terminal return sets r.err: pgzip under
-// Multistream(false) blocks uncancellably on any Read after a member's end.
+// Read walks members itself, since pgzip's own multistream skips a member that
+// produces nothing. Every terminal return sets r.err: after a failed Reset,
+// pgzip's Read reports no error.
 func (r *Reader) Read(p []byte) (int, error) {
 	if r.err != nil {
 		return 0, r.err
@@ -89,9 +89,9 @@ func (r *Reader) Read(p []byte) (int, error) {
 			r.err = err
 			return 0, err
 		}
-		// Reset re-enables multistream (gunzip.go sets z.multistream = true
-		// unconditionally), so the loop has to disarm it again or pgzip
-		// resumes the recursion this type replaced.
+		// Reset re-enables multistream (gunzip.go stores true unconditionally),
+		// so the loop has to disarm it again or pgzip resumes the member loop
+		// this type replaced.
 		r.z.Multistream(false)
 		r.n = 0
 	}

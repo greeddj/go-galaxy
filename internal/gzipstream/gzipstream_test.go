@@ -122,6 +122,8 @@ func memberCases(t *testing.T) []memberCase {
 	// One rendered member, reused wherever a row wants a second copy of it, so
 	// a refusal row and its positive control differ only in what follows.
 	carrier := contentMember(t, content)
+	// The carrier without its eight-byte trailer, the CRC-32 and ISIZE fields.
+	trailerless := carrier[:len(carrier)-8]
 
 	return []memberCase{
 		{
@@ -163,6 +165,16 @@ func memberCases(t *testing.T) []memberCase {
 			name:     "content then trailing garbage",
 			stream:   buildStream([][]byte{carrier}, []byte("no member starts here")),
 			wantText: "gzip: invalid header",
+		},
+		{
+			name:    "a member cut where its trailer begins",
+			stream:  buildStream([][]byte{trailerless}, nil),
+			wantErr: io.ErrUnexpectedEOF,
+		},
+		{
+			name:    "content, then a member cut where its trailer begins",
+			stream:  buildStream([][]byte{carrier, trailerless}, nil),
+			wantErr: io.ErrUnexpectedEOF,
 		},
 	}
 }

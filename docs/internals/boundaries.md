@@ -363,10 +363,10 @@ check and extractor a download does; no signature can vouch for it.
   `contextReader` may implement `io.Seeker`, or archive/tar would seek past both.
 - It is not `helpers.NewSizeLimitedReader`, whose sentinel exits 4. The two and
   manifest's `limitReader` keep one shape: change all three together.
-- `gzipstream` walks members in a loop: pgzip's `Read` recurses per member, and
-  a flood of empty ones overflows the stack beyond any `recover`.
-- `gzipstream` stores every terminal error before it returns it: pgzip has no
-  context and blocks forever on a read after a member's end.
+- `gzipstream` walks members in its own loop: the multistream mode of pgzip
+  skips a member that produces nothing, so only this loop can refuse one.
+- `gzipstream` stores every terminal error before it returns it: after a
+  failed `Reset`, the `Read` of pgzip returns no error at all.
 - `gzipstream` hands `Reset` only its own `*bufio.Reader`. Any other reader
   makes pgzip rebuffer and drop the bytes past the member boundary.
 - `gzipstream` checks the context on the compressed side: a member of empty
