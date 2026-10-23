@@ -122,8 +122,8 @@ func psAssertWorkers(t *testing.T, cfg *Config, row psWorkersRow) {
 // taken and credited when the flag is mounted and unset, range-checked with a
 // warning naming the file, and outranked by any set flag. Not parallel: t.Setenv.
 func TestApplyWorkersProjectSettings(t *testing.T) {
-	// The fixture flag's Value stands in for the production flag's at procs 8;
-	// only the exported-empty variable subtest reads it.
+	// The fixture flag's Value stands in for the production flag's at procs 8,
+	// the value an unset flag reads.
 	fixtureValue := helpers.DefaultInstallWorkers(8)
 
 	psUnsetEnv(t, "GO_GALAXY_WORKERS")
@@ -136,14 +136,14 @@ func TestApplyWorkersProjectSettings(t *testing.T) {
 		})
 	}
 
-	// urfave marks a declared-but-empty variable set, so the flag's own Value
-	// outranks galaxy.toml exactly as a written value would.
-	t.Run("an exported but empty GO_GALAXY_WORKERS outranks galaxy.toml", func(t *testing.T) {
+	// urfave skips a declared-but-empty variable of an int flag, so the flag
+	// stays unset and galaxy.toml applies, as with no variable at all.
+	t.Run("an exported but empty GO_GALAXY_WORKERS leaves galaxy.toml in charge", func(t *testing.T) {
 		t.Setenv("GO_GALAXY_WORKERS", "")
 		c := newIntFlagCmd(t, "workers", "GO_GALAXY_WORKERS", fixtureValue, true, nil)
 		cfg := &Config{}
 		applyWorkers(cfg, c, psWorkers(3), 8)
-		psAssertWorkers(t, cfg, psWorkersRow{wantWorkers: 8})
+		psAssertWorkers(t, cfg, psWorkersRow{wantWorkers: 3, wantUsed: []string{"workers"}})
 	})
 }
 
@@ -163,6 +163,7 @@ func TestApplyDownloadWorkersProjectSettings(t *testing.T) {
 		project   projectSettings
 		want      int
 		unmounted bool
+		emptyEnv  bool
 	}{
 		{
 			name:    "a positive value applies when the flag is unset",
@@ -185,10 +186,18 @@ func TestApplyDownloadWorkersProjectSettings(t *testing.T) {
 			name:    "a positive value is not read where the flag is not mounted",
 			project: projectSettings{DownloadWorkers: 4, HasDownloadWorkers: true}, unmounted: true, want: psDownloadWorkersDefault,
 		},
+		{
+			name:    "an exported but empty variable leaves galaxy.toml in charge",
+			project: projectSettings{DownloadWorkers: 4, HasDownloadWorkers: true}, emptyEnv: true,
+			want: 4, wantUsed: []string{"download_workers"},
+		},
 	}
 	psUnsetEnv(t, "GO_GALAXY_DOWNLOAD_WORKERS")
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.emptyEnv {
+				t.Setenv("GO_GALAXY_DOWNLOAD_WORKERS", "")
+			}
 			c := newIntFlagCmd(t, "download-workers", "GO_GALAXY_DOWNLOAD_WORKERS", psDownloadWorkersDefault, !tt.unmounted, tt.args)
 			// newConfigFromCLI's own step: an unmounted flag reads 0, which
 			// becomes the default before applyDownloadWorkers runs.

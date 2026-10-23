@@ -18,8 +18,10 @@ flowchart TB
   C -->|unset| D["Built-in default"]
 ```
 
-- A flag's variable exported empty counts as set: it hides the layers below,
-  and a numeric flag keeps its built-in default.
+- A flag's variable exported empty counts as set, and it hides the layers
+  below. The exception is a numeric or list flag: `--workers`,
+  `--download-workers` and `--ignore-signature-status-code`. For these flags,
+  an empty variable counts as unset, and the next layer applies.
 - Most settings have only some of these layers. [Options](cli.md#options)
   lists each flag's variables in order, and its default.
 - `--verbose` prints each `[defaults]` and `[galaxy]` value the run took from

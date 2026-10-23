@@ -122,9 +122,9 @@ func collectionBehaviorFlags() []cli.Flag {
 			Name: "workers",
 			Usage: "Number of concurrent workers; accepted from 1 up to the CPU this process may use " +
 				"(at least 2), and outside that range the derived default is used instead",
-			// Value is load-bearing: urfave marks an exported empty variable as
-			// set without parsing it, so applyWorkers range-checks this Value,
-			// which is always inside 1..MaxAcceptedInstallWorkers.
+			// Value is load-bearing: applyWorkers takes an unset flag's Value
+			// without a range check, so it must stay inside
+			// 1..MaxAcceptedInstallWorkers.
 			Value:   galaxyhelpers.DefaultInstallWorkers(runtime.GOMAXPROCS(0)),
 			Sources: cli.EnvVars("GO_GALAXY_WORKERS"),
 		},

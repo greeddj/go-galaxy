@@ -88,6 +88,23 @@ func TestIgnoreStatusCodesEnvSplit(t *testing.T) {
 	}
 }
 
+// TestIgnoreStatusCodesEmptyEnvFallsThrough pins that an exported-empty
+// GO_GALAXY_IGNORE_SIGNATURE_STATUS_CODE counts as unset, so the ansible
+// spelling behind it in the chain still supplies the list.
+func TestIgnoreStatusCodesEmptyEnvFallsThrough(t *testing.T) {
+	neutralizeAnsibleDiscovery(t)
+	t.Setenv("GO_GALAXY_IGNORE_SIGNATURE_STATUS_CODE", "")
+	t.Setenv("ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES", "BADSIG")
+
+	cfg, err := buildConfigFor(t, "install", signatureSurfaceFlags(), nil)
+	if err != nil {
+		t.Fatalf("BuildCollectionConfig() error = %v, want nil", err)
+	}
+	if got := cfg.Signature.IgnoreStatusCodes; !slices.Equal(got, []string{"BADSIG"}) {
+		t.Fatalf("Signature.IgnoreStatusCodes = %q, want [\"BADSIG\"]", got)
+	}
+}
+
 // runCommandWith runs the named command carrying flags and returns whatever
 // app.Run produced, without failing the test on an error - which is what
 // separates it from buildConfigFor, whose contract is that the parse succeeds.

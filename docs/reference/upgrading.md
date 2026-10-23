@@ -16,6 +16,7 @@ its result, except an input that used to be refused and is now accepted.
 | Change | What you do | If you do not |
 | --- | --- | --- |
 | `lock`, `lock --check` and `lock --dry-run` keep the pins `galaxy.lock` holds, on a cold cache and under `--no-cache` too, moving only those [Create the lockfile](../guides/lockfile.md#create-the-lockfile) lists. Before, they replayed what the cache recorded, from `install --refresh` too, and with nothing recorded, as on a fresh CI runner, or under `--no-cache`, resolved as if no lockfile existed, so newer releases, moved git refs and new role tags were locked, or reported as drift | Take upgrades with `go-galaxy lock --refresh`. A scheduled job or a gate that relied on a cold cache to pick up or report upstream releases adds `--refresh` ([Lockfile drift gate](../guides/ci.md#lockfile-drift-gate)) | A job meant to take upgrades keeps the versions and commits already locked, and a gate meant to report them passes |
+| An exported-empty `GO_GALAXY_WORKERS`, `GO_GALAXY_DOWNLOAD_WORKERS` or `GO_GALAXY_IGNORE_SIGNATURE_STATUS_CODE` counts as unset, so the next layer applies: the `[tool.go-galaxy]` key `workers` or `download_workers`, or `ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES`. Before, the empty variable counted as set and hid these layers: the worker counts took their built-in defaults, and the ignore list was empty ([Where a setting comes from](configuration.md#where-a-setting-comes-from)) | To keep a built-in worker count, remove its key from `[tool.go-galaxy]` or export the number. To ignore no status code, unset `ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES` | The run uses the worker counts in `galaxy.toml`, and it ignores each status code that `ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES` names |
 
 ### Exit codes that changed
 
@@ -34,6 +35,7 @@ Update any CI step that branches on the old code for these cases
 | `lock --check` over a cache whose last resolution holds a Galaxy version `galaxy.lock` pins and its server no longer serves, once the cache has dropped that version's metadata, as `--clear-cache` or 30 days do | `3`, from the replayed version | `6`, after one warning that it `is no longer published`. A plain `lock` resolves it anew, exit `0` |
 | A `galaxy.lock` whose `server`, or a Galaxy collection or Galaxy role entry's `source`, carries a control character or a line break, which `lock` never writes | `0`, the value printed as written | `6`, as for any `galaxy.lock` that does not load |
 | A project whose requirements name no git or url source for a collection a Galaxy dependency needs, on a cache whose last resolution took that collection from one, such as a resolution recorded for another project sharing the cache and some of these requirements, or for this project before an edit that dropped that source and changed another entry | `0`: `install` and `warm` took that git or url collection, and `lock` locked it | As on an empty cache: the collection resolves from the servers, so `3` where none has a version that fits, and `4` under `--offline` where its metadata is not cached. `lock --check` over a `galaxy.lock` locked so: `6` |
+| `GO_GALAXY_IGNORE_SIGNATURE_STATUS_CODE` exported empty beside `ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES`, under a required count of `all` or `+all`, for a collection whose only signature failures carry a status code that the `ANSIBLE_*` variable names | `10` | `0`: go-galaxy reads the variable and ignores those failures |
 
 What to do about a new code:
 
@@ -65,6 +67,8 @@ What to do about a new code:
   source. Otherwise the collection now comes from the servers: run once
   without `--offline`, then run `go-galaxy lock`, review `galaxy.lock` and
   commit it.
+- `0` where an exported-empty `GO_GALAXY_IGNORE_SIGNATURE_STATUS_CODE` used
+  to clear the ignore list: unset `ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES`.
 
 ## From v1.3.x
 

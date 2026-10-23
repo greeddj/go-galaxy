@@ -69,8 +69,8 @@ Defaults and accepted values: [Concurrency](../reference/cli.md#concurrency).
   `runtime.NumCPU()`, which ignores a CFS quota. No test pins it: narrowing
   it races parallel tests.
 - `MaxAcceptedInstallWorkers` bounds `--workers` only. The default must lie
-  inside it: urfave marks an exported empty `GO_GALAXY_WORKERS=` as set
-  without parsing it, so the range check sees the default.
+  inside it: `applyWorkers` takes an unset flag's default without the range
+  check.
 
 ## Git discovery
 

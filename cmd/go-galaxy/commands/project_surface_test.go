@@ -43,7 +43,7 @@ func projFlagEnvKeys() []string {
 }
 
 // projUnsetEnv unsets each key for the test through t.Setenv, which restores
-// it on cleanup; an exported-empty value counts as set, so Setenv("") alone
+// it on cleanup; an exported-empty value can count as set, so Setenv("") alone
 // would not do.
 func projUnsetEnv(t *testing.T, keys ...string) {
 	t.Helper()
