@@ -10,7 +10,7 @@ LDFLAGS := "-s -w" \
   + " -X main.BuiltBy=just"
 
 GOLANGCI_LINT_VERSION := "v2.15.0"
-ZENSICAL_VERSION := "0.0.67"
+ZENSICAL_VERSION := "0.0.71"
 BENCH_LDFLAGS := "-s -w"
 
 deps:

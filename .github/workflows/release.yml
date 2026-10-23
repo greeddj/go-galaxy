@@ -103,7 +103,7 @@ jobs:
         uses: extractions/setup-just@v4
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.2
 
       - name: Build docs site
         run: just docs_build
