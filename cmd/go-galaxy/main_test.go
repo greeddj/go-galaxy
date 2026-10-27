@@ -186,14 +186,16 @@ func TestRootCommandRecordsUrfaveUsageReports(t *testing.T) {
 // reports itself, before lock resolves or reads anything.
 func TestLockRefusesTheFrozenFlag(t *testing.T) {
 	var errOut bytes.Buffer
-	cmd, rec := newRootCommand(nil, &errOut)
+	var captured error
+	cmd, rec := newRootCommand(func(err error) { captured = err }, &errOut)
 	cmd.Writer = io.Discard
 
 	runErr := cmd.Run(context.Background(), []string{"go-galaxy", "lock", "--frozen"})
 	if runErr == nil {
 		t.Fatalf("Run() = nil, want a flag-parse error; errOut = %q", errOut.String())
 	}
-	if code, _ := handleResult(runErr, nil, nil, rec.written); code != exitcode.ExitUsage {
+	// An action that ran reports through captured, which main classifies by FromError.
+	if code, _ := handleResult(runErr, captured, nil, rec.written); code != exitcode.ExitUsage {
 		t.Errorf("exit code = %d, want %d", code, exitcode.ExitUsage)
 	}
 	if !strings.Contains(errOut.String()+runErr.Error(), "frozen") {
