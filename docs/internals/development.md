@@ -153,7 +153,7 @@ tests, three more rules keep an import or a call in one place:
 - Positive controls are mandatory: a detector that finds nothing passes a
   monopoly gate perfectly.
 - Expected values are literals, never derived from the constant under test,
-  which would move with it.
+  because such a value moves with the constant.
 - Never `t.Parallel` a `captureStdIO` test, or a signature test measuring
   `runtime.MemStats` or wall time: both are process-wide.
 - Lowering the solver's `oracleSeedCount` weakens `TestOracleMembership`, the

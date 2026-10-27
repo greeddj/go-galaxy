@@ -333,7 +333,7 @@ checks](../guides/lockfile.md#what-a-frozen-install-checks).
 | --- | --- | --- | --- |
 | `--keyring` | `GO_GALAXY_KEYRING`, `ANSIBLE_GALAXY_GPG_KEYRING` | unset: no checks | OpenPGP keyring to verify against |
 | `--required-valid-signature-count` | `GO_GALAXY_REQUIRED_VALID_SIGNATURE_COUNT`, `ANSIBLE_GALAXY_REQUIRED_VALID_SIGNATURE_COUNT` | `1` | A count or `all`; a `+` prefix also demands one valid signature |
-| `--ignore-signature-status-code` | `GO_GALAXY_IGNORE_SIGNATURE_STATUS_CODE`, `ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES` | | A status code to tolerate, such as `NO_PUBKEY`; repeatable |
+| `--ignore-signature-status-code` | `GO_GALAXY_IGNORE_SIGNATURE_STATUS_CODE`, `ANSIBLE_GALAXY_IGNORE_SIGNATURE_STATUS_CODES` | | A status code to tolerate, such as `NO_PUBKEY`. Give the flag more than one time for more codes |
 | `--disable-gpg-verify` | `GO_GALAXY_DISABLE_GPG_VERIFY`, `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` | `false` | Skips verification even with a keyring |
 
 No file sets these: an `ansible.cfg`'s signature keys draw a warning. How
