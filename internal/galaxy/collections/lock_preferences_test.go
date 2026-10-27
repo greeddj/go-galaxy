@@ -529,7 +529,7 @@ func mixedLockfile() *lockfile.File {
 // unless --offline, which skips --refresh, is set too.
 func TestNewLockPreferencesKeepsGalaxyPinsUnlessRefreshSetsThemAside(t *testing.T) {
 	t.Parallel()
-	prefs := newLockPreferences(&config.Config{}, mixedLockfile())
+	prefs := newLockPreferences(&config.Config{}, mixedLockfile(), nil)
 	if version, ok := prefs.galaxyVersion("acme.galaxy"); !ok || version != testVersion100 {
 		t.Errorf("galaxyVersion(acme.galaxy) = %q, %v; want 1.0.0, true", version, ok)
 	}
@@ -538,13 +538,13 @@ func TestNewLockPreferencesKeepsGalaxyPinsUnlessRefreshSetsThemAside(t *testing.
 			t.Errorf("galaxyVersion(%s) = %q, true; want no Galaxy pin", fqdn, version)
 		}
 	}
-	if got := newLockPreferences(&config.Config{Refresh: true}, mixedLockfile()); got != nil {
+	if got := newLockPreferences(&config.Config{Refresh: true}, mixedLockfile(), nil); got != nil {
 		t.Error("newLockPreferences under --refresh is not nil")
 	}
-	if got := newLockPreferences(&config.Config{Refresh: true, Offline: true}, mixedLockfile()); got == nil {
+	if got := newLockPreferences(&config.Config{Refresh: true, Offline: true}, mixedLockfile(), nil); got == nil {
 		t.Error("newLockPreferences under --refresh --offline is nil, want the pins")
 	}
-	if got := newLockPreferences(&config.Config{}, nil); got != nil {
+	if got := newLockPreferences(&config.Config{}, nil, nil); got != nil {
 		t.Error("newLockPreferences without a file is not nil")
 	}
 }
@@ -554,7 +554,7 @@ func TestNewLockPreferencesKeepsGalaxyPinsUnlessRefreshSetsThemAside(t *testing.
 // that version; not a git entry's, an unlocked one, or one now built from git.
 func TestLockPreferencesAgreesWithGalaxyVersionsOnly(t *testing.T) {
 	t.Parallel()
-	prefs := newLockPreferences(&config.Config{}, mixedLockfile())
+	prefs := newLockPreferences(&config.Config{}, mixedLockfile(), nil)
 	gitLocator := "git+https://git.example/acme.git#@" + strings.Repeat("a", 40)
 	agreeing := map[string]collection{
 		"acme.galaxy": {Namespace: "acme", Name: "galaxy", Version: testVersion100},
@@ -588,7 +588,7 @@ func TestLockPreferencesAgreesWithGalaxyVersionsOnly(t *testing.T) {
 // concurrent callers: one line per entry however often it is raised.
 func TestLockPreferencesWarnOncefWarnsOncePerEntry(t *testing.T) {
 	t.Parallel()
-	prefs := newLockPreferences(&config.Config{}, mixedLockfile())
+	prefs := newLockPreferences(&config.Config{}, mixedLockfile(), nil)
 	printer := &capturingPrinter{}
 	var wg sync.WaitGroup
 	for range 16 {

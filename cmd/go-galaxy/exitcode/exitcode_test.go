@@ -306,6 +306,53 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitUsage,
 	},
 	{
+		name:     "refresh selection names no collection",
+		err:      fmt.Errorf("%w: %s %q", helpers.ErrInvalidRefreshSelection, "--collection", "nodot"),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "refresh selection names no collection, wrapped",
+		err:      fmt.Errorf("lock: %w", fmt.Errorf("%w: %s %q", helpers.ErrInvalidRefreshSelection, "--role", "bad/name")),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "refresh selection without --refresh",
+		err:      helpers.ErrRefreshSelectionWithoutRefresh,
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "refresh selection without --refresh, wrapped",
+		err:      fmt.Errorf("lock: %w", helpers.ErrRefreshSelectionWithoutRefresh),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "refresh selection the lockfile pins nothing for",
+		err:      fmt.Errorf("%w %s: %s", helpers.ErrRefreshSelectionNotLocked, "galaxy.lock", "collection a.b, role foo"),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "refresh selection the lockfile pins nothing for, wrapped",
+		err:      fmt.Errorf("lock: %w", fmt.Errorf("%w %s: %s", helpers.ErrRefreshSelectionNotLocked, "galaxy.lock", "role foo")),
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "refresh selection over a lockfile that does not load",
+		err:      helpers.ErrRefreshSelectionLockfileUnreadable,
+		wantCode: ExitUsage,
+	},
+	{
+		name:     "refresh selection over a lockfile that does not load, wrapped",
+		err:      fmt.Errorf("lock: %w", helpers.ErrRefreshSelectionLockfileUnreadable),
+		wantCode: ExitUsage,
+	},
+	{
+		// The load error is rendered, not wrapped, so it cannot pull the exit to ExitLock.
+		name: "refresh selection over a lockfile that does not load, its cause rendered",
+		err: fmt.Errorf("%w: galaxy.lock cannot be read (%v); a plain `go-galaxy lock` replaces a file that does not load",
+			helpers.ErrRefreshSelectionLockfileUnreadable, fmt.Errorf("%w: bad", helpers.ErrLockfileInvalid)), //nolint:errorlint
+		wantCode: ExitUsage,
+	},
+	{
 		name:     "requirements path not a regular file",
 		err:      fmt.Errorf("failed to load requirements file: %w: dir.yml", helpers.ErrRequirementsNotRegular),
 		wantCode: ExitUsage,

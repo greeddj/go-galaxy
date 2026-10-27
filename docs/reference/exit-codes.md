@@ -25,7 +25,7 @@ code instead of parsing the log.
 
 | Input | Refused when |
 | --- | --- |
-| Flags and arguments | an unknown flag, a bad value (`GO_GALAXY_WORKERS=abc`), `warm --no-cache`, a stray argument |
+| Flags and arguments | an unknown flag, a bad value (`GO_GALAXY_WORKERS=abc`), `warm --no-cache`, a stray argument, `lock`'s `--collection` or `--role` without `--refresh`, with a name `galaxy.lock` does not pin, or over a `galaxy.lock` that does not load ([Set aside only some pins](../guides/lockfile.md#set-aside-only-some-pins)) |
 | Requirements file | named other than `*.yml`, `*.yaml` or `*.toml` ([Which file is read](../guides/requirements.md#which-file-is-read)), missing, `requirements file is ...` (unreadable, not a regular file, not YAML or TOML), or an entry [refused as written](../guides/requirements.md#what-is-refused) |
 | `migrate` | its `-r` named other than `*.yml` or `*.yaml`, anything already where `galaxy.toml` goes, or an entry `galaxy.toml` cannot hold ([Moving to galaxy.toml](../guides/requirements.md#moving-to-galaxytoml)) |
 | `galaxy.toml` settings | off the schema, or `project file references unset environment variables` |
@@ -143,6 +143,9 @@ error's code, `5` or `4`, unless its own code ranks higher
 | `migrate reads a requirements file named *.yml or *.yaml` | `2` | `migrate`'s `-r` names a `galaxy.toml` or another extension; name the `requirements.yml` to migrate ([migrate](cli.md#migrate)) |
 | `galaxy.toml already exists` | `2` | A file, directory or symlink stands where `migrate` writes, and it never replaces one; compare with `go-galaxy migrate --dry-run`, or move it away |
 | `the migrated galaxy.toml does not read back as the requirements file` | `1` | A go-galaxy defect: `migrate` wrote nothing. Report it with the requirements file |
+| `invalid --collection or --role value`, `--collection and --role select what --refresh moves, and --refresh is not set` | `2` | `lock`'s selection holds an empty name or one that is no collection or role name, or comes without `--refresh`; fix the flags ([Set aside only some pins](../guides/lockfile.md#set-aside-only-some-pins)) |
+| `--collection or --role names no entry of the lockfile` | `2` | `galaxy.lock` pins nothing for each name the message lists, as after a typo; name an entry of `galaxy.lock`, a role by its install or Galaxy name |
+| `--collection and --role need a lockfile that loads` | `2` | `galaxy.lock` exists but does not load, or is not a regular file, so `lock` cannot keep the other pins. Run `go-galaxy lock` without `--collection` and `--role` to write a file that does not load again. Remove a path that is not a regular file, or give another `--lock-file` |
 | `unknown collection source` | `2` | A Galaxy entry's `source:` is neither an id of a server this run uses nor an http(s) URL; name a configured id or the server's URL ([How a collection picks its server](../guides/servers-and-auth.md#how-a-collection-picks-its-server)) |
 | `project requirements file is unreadable`, `recorded project has no requirements file or lockfile` | `2` | `cleanup` cannot tell what a recorded project keeps, so it deletes nothing; fix or restore the file the message names, or delete that project's entry from the registry it names ([What cleanup keeps](../guides/caching.md#what-cleanup-keeps)) |
 | `unsupported snapshot schema version` | `2` | A newer release wrote this cache, which is sound: [run one release](../guides/ci.md#pin-one-release). Deleting the snapshot helps only until the newer release saves again |
@@ -178,6 +181,7 @@ error's code, `5` or `4`, unless its own code ranks higher
 | --- | --- | --- |
 | `install --frozen`, `warm --frozen`, `lock --check` (after resolving), `tree`, `explain` | `6` | `6` |
 | `lock`, `lock --dry-run` | resolves with no pins to keep | a warning, then resolves with no pins to keep |
+| `lock` with `--collection` or `--role`, `--check` and `--offline` included | as without them | `2`, before resolving ([Set aside only some pins](../guides/lockfile.md#set-aside-only-some-pins)) |
 | `hash` | the digest of what the requirements file asks for (`2` if it does not load) | `6` |
 | `outdated` | reads the collections path (`6` if missing) | `6` |
 

@@ -286,7 +286,7 @@ func expandLockedGitRoot(
 	if locked.commit == "" {
 		return nil, false, nil
 	}
-	if policy.Read {
+	if lockedPinReadable(deps, policy) {
 		if pin, ok := deps.st.GetGitPin(req.pinKey); ok && pin.Commit == locked.commit {
 			expanded, err := replayGitPin(deps, req, pin)
 			return expanded, true, err
@@ -355,6 +355,13 @@ func refreshGitPin(ctx context.Context, deps collectionDeps, req gitRootRequest,
 // --no-cache, which reads no pin, so the run acquires as --no-cache does.
 func refreshReadsPin(deps collectionDeps, ref gitsource.Ref) bool {
 	return deps.cfg != nil && deps.cfg.Refresh && !deps.cfg.NoCache && !ref.IsCommit()
+}
+
+// lockedPinReadable reports whether a kept galaxy.lock pin may replay a
+// recorded pin of its commit or sha256; --refresh asks what a ref names now,
+// which a kept pin never asks.
+func lockedPinReadable(deps collectionDeps, policy cacheManager.Policy) bool {
+	return policy.Read || (deps.cfg != nil && deps.cfg.Refresh && !deps.cfg.NoCache)
 }
 
 // lockedPinPolicy is policy for fetching commit, which galaxy.lock pins ref at:

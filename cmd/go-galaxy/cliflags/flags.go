@@ -56,7 +56,28 @@ func LockFlags() []cli.Flag {
 	flags := collectionPathFlags()
 	flags = append(flags, collectionBehaviorFlags()...)
 	flags = append(flags, lockFileFlag(), checkFlag(), metricsFileFlag())
-	return flags
+	return append(flags, refreshSelectionFlags()...)
+}
+
+// refreshSelectionFlags narrow lock --refresh to the named entries. They have
+// no variable: a selection is one run's intent, and a stale export would
+// silently narrow a scheduled lock --check --refresh.
+func refreshSelectionFlags() []cli.Flag {
+	return []cli.Flag{
+		&cli.StringSliceFlag{
+			Name:    "collection",
+			Aliases: []string{"c"},
+			Usage: "With --refresh, set aside the pins of this collection and of what it reaches: its dependencies " +
+				"and the other collections of its git source on a branch or tag (repeatable or comma-separated); the other entries keep their pins " +
+				"where the new versions allow them",
+		},
+		&cli.StringSliceFlag{
+			Name: "role",
+			Usage: "With --refresh, set aside the pins of this role, by install or Galaxy name, and of what it " +
+				"reaches: its dependencies and the roles of its tarball URL (repeatable or comma-separated); the other entries " +
+				"keep their pins where the new versions allow them",
+		},
+	}
 }
 
 func collectionPathFlags() []cli.Flag {
@@ -144,7 +165,8 @@ func collectionBehaviorFlags() []cli.Flag {
 			Usage: "Re-resolve against the Galaxy servers instead of reusing cached metadata or the previous " +
 				"resolution; a cached artifact and its own version-specific metadata are still reused even " +
 				"if the server changed them - use --no-cache to force those too. For lock, also set aside " +
-				"the pins the existing lockfile holds. Ignored with --offline and under --frozen",
+				"the pins the existing lockfile holds, or only those --collection and --role select. " +
+				"Ignored with --offline and under --frozen",
 			Sources: cli.EnvVars("GO_GALAXY_REFRESH"),
 		},
 		&cli.BoolFlag{

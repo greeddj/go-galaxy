@@ -25,7 +25,7 @@ ends the run with exit 2, and the finished `Config` goes to
 | 9 | `loadS3CacheConfig` | a bucket without both keys, `ErrS3EmptyCreds` |
 | 10 | `applySignatureConfig` | a refused keyring, count, status code or `ANSIBLE_GALAXY_DISABLE_GPG_VERIFY` |
 | 11 | `applyAnsibleTimeout` | a bad `[galaxy] server_timeout`, read when no `--timeout` source is set |
-| 12 | `checkS3CacheOffline` | an S3 bucket beside `--offline`, `ErrS3CacheOffline` |
+| 12 | `checkFlagCombinations`: `checkS3CacheOffline`, then `applyRefreshSelection`, which reads `lock`'s `--collection` and `--role` trimmed, sorted and deduplicated | an S3 bucket beside `--offline`, `ErrS3CacheOffline`; then an empty name, a collection name outside the url collection alphabet (the widest a lockfile entry carries) or a role name `IsRoleInstallName` refuses, `ErrInvalidRefreshSelection`; either flag without `--refresh`, `ErrRefreshSelectionWithoutRefresh` |
 
 `newConfigWithProject` runs steps 1 to 4. It loads galaxy.toml before
 `--timeout` because every later layer may draw on it, so a broken file is the

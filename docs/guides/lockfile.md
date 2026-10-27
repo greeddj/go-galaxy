@@ -44,7 +44,9 @@ resolution asks the servers nothing; a run that solves, as after an edit, reads
 a kept collection's metadata as any solve does
 ([Freshness and retention](caching.md#freshness-and-retention)). Run
 `go-galaxy lock --refresh` to set the file aside and take newer releases your
-constraints allow, moved git refs and new role tags.
+constraints allow, moved git refs and new role tags. To set aside only some
+pins, name their entries ([Set aside only some
+pins](#set-aside-only-some-pins)).
 
 | When | `lock` |
 | --- | --- |
@@ -53,7 +55,7 @@ constraints allow, moved git refs and new role tags.
 | A source no longer serves a pin: a Galaxy version answers `404`, a repository no longer serves a commit, a URL serves other bytes, or a Galaxy role's repository cannot be fetched while the v1 API names another | Resolves that entry anew, with one warning. `lock --check` then reports drift |
 | `--offline`, and the cache lacks a pin: a Galaxy version's metadata, a commit, or the bytes of a URL | Exits [`4`](../reference/exit-codes.md). A plain `lock` without `--offline` records them, a commit only while its branch or tag still names it ([What a rerun reuses](caching.md#what-a-rerun-reuses)) |
 | No `galaxy.lock` | Resolves with no pins to keep |
-| A `galaxy.lock` that does not load, or a path that is not a regular file | `lock` and `lock --dry-run` warn that it cannot be read and resolve with no pins to keep. `lock --check` exits `6` |
+| A `galaxy.lock` that does not load, or a path that is not a regular file | `lock` and `lock --dry-run` warn that it cannot be read and resolve with no pins to keep. `lock --check` exits `6`. With `--collection` or `--role`, each exits `2` ([Set aside only some pins](#set-aside-only-some-pins)) |
 
 `lock` exits [`5`](../reference/exit-codes.md) when a server names a `download_url` that
 carries a query string or leaves the server's origin. Such a server works only
@@ -121,6 +123,73 @@ schema_version: 5
 lists every field of each entry kind.
 
 </details>
+
+### Set aside only some pins
+
+`lock --refresh` sets aside every pin of `galaxy.lock`. To set aside only some
+pins, add `--collection` (`-c`) or `--role` with the names of their entries:
+
+```bash
+go-galaxy lock --refresh --collection community.general
+go-galaxy lock --refresh -c ansible.utils,community.general
+go-galaxy lock --refresh --role geerlingguy.docker
+```
+
+You can give each flag more than one time, and each flag takes a
+comma-separated list. `--role` takes the install name or the Galaxy name of a
+role.
+
+`lock` sets aside the pins of these entries:
+
+- Each entry that you name. You can name a dependency too.
+- Each entry that one of these entries reaches through the `deps` lists of
+  `galaxy.lock`.
+- Each collection of a git requirement on a branch or a tag that supplies one
+  of these collections. One commit holds all of them, so they move together.
+- Each url role with the same tarball URL as one of these roles. One tarball
+  supplies all of them, so they move together.
+
+`lock` applies the last three rules again to each entry that they add. Before
+it resolves, `lock` prints one line with all these entries: the collections in
+name order, then each role by its install name. This line stays on the
+screen, also under `--quiet`
+([Output and color](../reference/cli.md#output-and-color)). With the sample
+`galaxy.lock` above, the first command prints:
+
+```text
+· Setting aside the pins of community.general, community.library_inventory_filtering_v1
+```
+
+The other entries keep their pins while the new versions of these entries
+allow them. The dependencies of a new commit or tarball can exclude the
+version of a kept entry. Then that entry moves too, and the line does not name
+it.
+
+A kept commit or `sha256` comes from the cache when the cache holds it. Else
+`lock` fetches it. Under `--no-cache`, `lock` fetches each kept commit and
+`sha256` again, as a plain `lock --no-cache` does. When its source no longer
+serves it, `lock` resolves that entry anew with one warning, as a plain `lock`
+does ([Create the lockfile](#create-the-lockfile)). The other effects
+of `--refresh` stay: the run asks the servers for version lists again and does
+not replay the last resolution ([Cache flags](caching.md#cache-flags)).
+
+| When | `lock` with `--collection` or `--role` |
+| --- | --- |
+| `galaxy.lock` pins nothing for a name, as after a typo | Exits [`2`](../reference/exit-codes.md) before anything resolves. The error names each such name |
+| No `galaxy.lock` | Checks no name and resolves every entry anew, as without the flags |
+| A `galaxy.lock` that does not load | Exits `2` before anything resolves, with no warning. Run `go-galaxy lock` without `--collection` and `--role` to write the file again |
+| A lockfile path that is not a regular file, such as a directory | Exits `2` before anything resolves. Remove it, or give another path with `--lock-file` |
+| No `--refresh` and no `GO_GALAXY_REFRESH` | Exits `2` |
+| An empty name, as in `-c a,,b`, or a name that is not a collection or role name | Exits `2` |
+| `--offline` | Skips `--refresh` with a warning, so every pin stays and `lock` prints no line of pins |
+
+`lock` checks the names and `galaxy.lock` under `--check` and `--offline` too,
+with the same exits. The two flags have no variables, so a variable that stays
+set cannot change what a scheduled `lock --check --refresh` checks
+([Lockfile drift gate](ci.md#lockfile-drift-gate)).
+
+Add `--check` to see if these pins move ([Catch drift](#catch-drift)). Add
+`--dry-run` to see the changes before you write them.
 
 ## Install from the lockfile
 
@@ -217,7 +286,9 @@ go-galaxy lock --check
 
 `lock --check` fails when `lock` would write different pins: an entry added,
 removed or repinned, a changed role or default server. A missing or
-unloadable lockfile also exits `6`.
+unloadable lockfile also exits `6`, but an unloadable one exits `2` with
+`--collection` or `--role` ([Set aside only some
+pins](#set-aside-only-some-pins)).
 
 Plain `lock --check` keeps the pins `galaxy.lock` holds, as `lock` does
 ([Create the lockfile](#create-the-lockfile)), so a newer upstream release, a
@@ -337,7 +408,9 @@ go-galaxy outdated
 ([exceptions](../reference/exit-codes.md#special-cases-by-command)). It needs the network
 but neither the cache nor the cache lock, so it can run beside an install. Take
 an upgrade with `go-galaxy lock --refresh`, raising the constraint first if it
-excludes the new version.
+excludes the new version. To set aside fewer pins, add `--collection` or
+`--role` with the names that `outdated` shows
+([Set aside only some pins](#set-aside-only-some-pins)).
 
 <details markdown>
 <summary>Without a lockfile</summary>

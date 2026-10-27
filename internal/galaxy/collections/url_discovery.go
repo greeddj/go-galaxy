@@ -232,7 +232,7 @@ func expandURLRoot(ctx context.Context, deps collectionDeps, root collection) ([
 func expandLockedURLRoot(
 	ctx context.Context, deps collectionDeps, req urlRootRequest, policy cacheManager.Policy, locked lockfile.Entry,
 ) ([]collection, error) {
-	if policy.Read {
+	if lockedPinReadable(deps, policy) {
 		if pin, ok := deps.st.GetURLPin(req.pinKey); ok && pin.SHA256 == locked.SHA256 {
 			return replayURLPin(deps, req, pin)
 		}

@@ -11,10 +11,11 @@ file itself: [Lockfile format](lockfile-format.md).
 
 ```mermaid
 flowchart TD
-  L1(["Shared setup: lock held,<br/>snapshot loaded"]) --> L2["loadRoots"]
+  L1(["Shared setup: lock held,<br/>snapshot loaded"]) --> L2["readLockInputs: loadRoots"]
   L2 -->|"refused"| X2(["exit 2"])
   L2 --> L2R["RecordProject unless<br/>--dry-run, failure warns"]
-  L2R --> LF["read the lockfile once, see<br/>Keeping the lockfile's pins"]
+  L2R --> LF["readLockInputs: read the lockfile<br/>once, check the selection, announce;<br/>see Keeping the lockfile's pins"]
+  LF -->|"a selected name not locked,<br/>or a selection over a file<br/>that does not load"| X2
   LF --> L3["resolveCollectionsInternal,<br/>keeping its collection pins"]
   L3 -->|"failed"| XR(["exit 1, 2, 3, 4,<br/>5 or 7 by cause"])
   L3 --> L3W["warnUnpublished: a pin no<br/>longer published moved"]
@@ -29,8 +30,10 @@ flowchart TD
 ```
 
 `lockWithState` runs under [Shared setup](commands.md#shared-setup) with the
-banner `Resolving for lockfile`. Resolution and source discovery are install's,
-drawn on [install flow](flow-install.md): the same
+banner `Resolving for lockfile`. `readLockInputs` does all the work before the
+resolve: `loadRoots`, the project record, the one lockfile read, the selection
+check, the kept pins and the announcement. Resolution and source discovery are
+install's, drawn on [install flow](flow-install.md): the same
 `resolveCollectionsInternal` and `resolveRoles`, without `newVerifyContext` or
 `planCollections`, plus the lockfile's pins. It installs nothing but saves the
 snapshot, so later runs replay the resolve. It records its project once the
@@ -43,20 +46,60 @@ to install ([Project registry](cache.md#project-registry)).
 flowchart TD
   K0["readExistingLockfile: --lock-file,<br/>lock_file, else galaxy.lock beside"] --> K1{"lockfile.Load"}
   K1 -->|"absent"| K2(["no pins, no output"])
-  K1 -->|"not loadable"| K3{"--check?"}
+  K1 -->|"not loadable"| KS{"checkRefreshSelection:<br/>--collection or<br/>--role given?"}
+  KS -->|"yes"| X2U(["exit 2,<br/>ErrRefreshSelectionLockfileUnreadable"])
+  KS -->|"no"| K3{"--check?"}
   K3 -->|"yes"| K4(["no pins, no output;<br/>fails after resolving"])
   K3 -->|"no"| K5(["no pins, one warning"])
-  K1 -->|"loaded"| K6{"--refresh without<br/>--offline?"}
-  K6 -->|"yes"| K7(["no pins"])
+  K1 -->|"loaded"| K9{"checkRefreshSelection:<br/>each --collection and<br/>--role name locked?"}
+  K9 -->|"no"| X2(["exit 2,<br/>ErrRefreshSelectionNotLocked"])
+  K9 -->|"yes, or none given"| K6{"--refresh without<br/>--offline?"}
+  K6 -->|"yes, no selection"| K7(["no pins"])
+  K6 -->|"yes, a selection"| K10(["newRefreshRelease: the named entries<br/>and what they reach; newLockPreferences<br/>keeps the rest; announceRelease<br/>prints the released ones"])
   K6 -->|"no"| K8(["newLockPreferences: Galaxy entries<br/>by fqdn, url by source, git<br/>for matchGitRoots, roles by name"])
 ```
 
-The file is read after `loadRootsAndRecordProject`, so a refused requirements
-file reads nothing, and that one read serves the pins, the `--dry-run`
-baseline and the `--check` verdict. `withLockPreferences` puts the index on
-`collectionDeps`; only `lockWithState` sets it, so install, warm and outdated
-resolve without it. `--no-cache`, `--clear-cache`, `--offline`, `--no-deps` and
-`--dry-run` keep the pins, since the lockfile is no cache.
+`readLockInputs` reads the file after `loadRootsAndRecordProject`, so a
+refused requirements file reads nothing. That one read serves the selection
+check, the pins, the `--dry-run` baseline and the `--check` verdict.
+`readExistingLockfile` gives no warning when a selection is set, since
+`checkRefreshSelection` then refuses the file. `withLockPreferences` puts the
+index on `collectionDeps`; only `lockWithState` sets it, so install, warm and
+outdated resolve without it. `--no-cache`, `--clear-cache`, `--offline`,
+`--no-deps` and `--dry-run` keep the pins, since the lockfile is no cache.
+
+`--collection` and `--role` ([Set aside only some
+pins](../guides/lockfile.md#set-aside-only-some-pins)) narrow `--refresh`.
+`checkRefreshSelection` runs under `--check` and `--offline` too, and refuses
+in two ways:
+
+- A file that exists but does not load is
+  `ErrRefreshSelectionLockfileUnreadable`, since without its pins every entry
+  moves. The load error goes in with `%v`, not `%w`, so the exit is 2 and not
+  the lockfile class, 6.
+- Every name the file does not pin goes in one `ErrRefreshSelectionNotLocked`
+  error, so a typo never passes as a selection that moves nothing. A role
+  matches by its install or Galaxy name.
+
+`newRefreshRelease` reads only the selection, the file and the roots, since
+the release must exist before the resolve starts. It adds these entries to the
+named ones, and again to each entry it adds:
+
+- Each name in the `deps` of a released entry.
+- Each git entry that the same git root owns, since one commit holds them all.
+  `gitRootSiblings` matches them by `matchGitRoots`, the rule `gitRoots` pins
+  by. It skips a root asked at a commit, which never moves.
+- Each url role with the `source` of a released url role, since the cache keys
+  a url role pin by its URL alone.
+
+`indexLockPreferences` leaves the released Galaxy, url and role entries out of
+the index. Every git entry stays in `git` for `matchGitRoots`, so `gitRoots`
+still finds the root that owns a released one. `rootPinLocked` then gives that
+root no pin. `announceRelease` prints one report line through
+`PersistentPrintf` before the resolve. It reads `Setting aside the pins of`,
+then the collections in name order, then `role <install name>` in name order.
+That tier keeps the line past the spinner and under `--quiet`. Under `--offline`,
+`newLockPreferences` releases nothing, so the line does not print.
 
 | Reader | Rule |
 | --- | --- |
@@ -66,7 +109,7 @@ resolve without it. `--no-cache`, `--clear-cache`, `--offline`, `--no-deps` and
 | `resolveFromSnapshots`, `tryIncrementalResolveWithSnapshot` | A full or incremental replay holding a Galaxy collection at another version than its entry is dropped before it is recorded (`agreesWith`), and the solve runs: the recorded resolution may come from a run that never read the file, such as `install --refresh`. An entry whose root's own constraint excludes the locked version does not count, since that version moved on purpose. The resolution `lock` records holds each kept commit's and sha256's locator, which every command's replay hands only to a run whose own root expanded into it (`sourcesMatchRoots`, [Resolution replay](cache.md#resolution-replay)) |
 | `warnUnpublished` | After the resolve, one warning per collection recorded unpublished that resolved to another version; a version the constraints exclude is never confirmed, so it draws none |
 | `keptVersionGone`, in `lockWithState` | A replay agreeing with the file keeps a version without asking its server. When `buildLockfile` then meets a `404` for it, as once `--clear-cache` or 30 days dropped its metadata, the collections resolve once more without the replay, so `Confirm` finds the pin gone and the warning above follows |
-| `lockPreferences.gitRoots`, once per `expandGitRoots` | Matches the git roots to the git entries by `matchGitRoots`, the rule `--frozen` judges them by, over every root at once, since which entries a root owns depends on the roots beside it. A root keeps the commit every entry it owns shares. One asked at a commit keeps none, nor does one owning no entry, as after a ref change, or entries at two commits; each resolves as install does, with no warning |
+| `lockPreferences.gitRoots`, once per `expandGitRoots` | Matches the git roots to the git entries by `matchGitRoots`, the rule `--frozen` judges them by, over every root at once, since which entries a root owns depends on the roots beside it. A root keeps the commit every entry it owns shares. One asked at a commit keeps none, nor does one owning no entry, as after a ref change, entries at two commits, or an entry that `--collection` or `--role` released (`rootPinLocked`); each resolves as install does, with no warning |
 | `expandLockedGitRoot` | A recorded pin at the locked commit replays, one at another commit never; else `--offline` fails; else `acquireGitRoot` fetches that commit, its pin recorded as `lockedPinPolicy` allows. `ErrGitCommitNotFound` there warns once, naming the root's one collection or else its source and ref, and the root resolves as if unlocked |
 | `lockedPinPolicy`, before a locked commit is fetched | One advertisement, no pack, bounded by `GitDeadline` as a fetch is: the pin is recorded only while the ref names that commit and, for a role, while `roleVersionFor` makes the locked label of the ref name advertised, since a pin the file alone decided would reach every project on a shared cache. A ref the remote no longer has records none; any other advertisement failure ends the run as the fetch's would, an expired deadline as `ErrArtifactDownloadDeadline`. A debug line names why no pin is recorded: the ref not advertised, at another commit, or at that commit under another version. A policy that writes nothing, as under `--no-cache`, advertises nothing. So a moved ref's locked commit is fetched by every run, its artifact still committed under its locator |
 | `releaseRuledOutGitRoots`, in `resolveCollectionsInternal` | A resolve failing on a collection two roots expand into (`duplicateRootError`), or on a solver conflict whose proof names a collection a kept git root holds (`ConflictError.Packages`), releases each such root: one warning, then the resolve runs again from forgotten discoveries, the root as if unlocked but never replaying a recorded pin at the released commit. A failure naming no kept root ends the run as without the file |
@@ -76,6 +119,7 @@ resolve without it. `--no-cache`, `--clear-cache`, `--offline`, `--no-deps` and
 | `resolveLockedGalaxyRole` | Asks no v1 API when the entry's server is one `lookupGalaxyRole` asks (`lockedRoleServerAsked`) and its repository and ref pass `galaxyPinResolution`; otherwise one warning, and the role resolves as if unlocked, from a recorded Galaxy pin, else the v1 API. It records no Galaxy pin from the entry, since no v1 answer named that repository this run, and leaves a recorded one as it is |
 | A Galaxy role's repository that cannot be fetched | `unreachableRepository`: the role asks the v1 API past a recorded pin or a cached answer naming that repository. Another repository warns once and is taken; the same one fails the run with the fetch's error |
 | `resolveLockedURLRole` | A recorded pin of the locked sha256 whose artifact is cached under the request's label replays; else `--offline` fails; else the URL is downloaded, and other bytes warn once and are kept. The label is the request's, as for install, so a `version:` dropped from the requirement relabels the locked bytes and both commands record one pin |
+| `lockedPinReadable`, in `expandLockedGitRoot`, `expandLockedURLRoot`, `replayLockedRolePin` and `resolveLockedURLRole` | Under `--refresh` without `--no-cache`, a kept pin replays a recorded pin of its locked commit or sha256, though the refresh policy reads no recorded pin. So a selection does not advertise and fetch each kept git root or role again. A kept url pin also stays when its URL now serves other bytes and the cache recorded the locked sha256. With no recorded pin, `lock` fetches the kept pin as a plain `lock` does, and keeps other bytes from a URL with one warning. Only a selection reaches this rule: plain `--refresh` keeps no pin, and `--offline` reads recorded pins in all cases |
 
 The solver picks a passing preference before any unpreferred package
 ([The loop](solver.md#the-loop)), so the pins a valid resolution allows are
@@ -136,7 +180,7 @@ flowchart TD
   W0["the lockfile read<br/>before the resolve"] --> W1{"--check?"}
   W1 -->|"yes"| W2{"read failed?"}
   W1 -->|"no"| W4{"--dry-run?"}
-  W2 -->|"absent or invalid"| X6(["exit 6"])
+  W2 -->|"absent, or invalid<br/>with no selection"| X6(["exit 6"])
   W2 -->|"no"| W3["Compare: Would lines,<br/>Check or Dry run summary"]
   W4 -->|"yes"| W5["baseline: the file read,<br/>else empty"]
   W4 -->|"no"| W7["lockfile.Save: canonical<br/>bytes, atomic write"]
@@ -166,7 +210,10 @@ if the save fails.
 | Exit | Decided in | Cause |
 | --- | --- | --- |
 | 1, 2, 4, 8, 9 | [Shared setup](commands.md#shared-setup) | configuration, backend open, lock or snapshot load |
+| 2 | `applyRefreshSelection`, in `checkFlagCombinations`, last in `BuildCollectionConfig` | an empty or invalid `--collection` or `--role` value, `ErrInvalidRefreshSelection`; either flag without `--refresh`, `ErrRefreshSelectionWithoutRefresh` |
 | 2 | `loadRoots` | requirements file missing, unreadable or invalid, or a Galaxy `source:` naming no server of the run |
+| 2 | `checkRefreshSelection` | a `--collection` or `--role` name the loaded lockfile pins nothing for, all named in one error: `ErrRefreshSelectionNotLocked` |
+| 2 | `checkRefreshSelection` | a selection over a lockfile that exists but does not load, `--check` included: `ErrRefreshSelectionLockfileUnreadable` |
 | 1, 2, 3, 4, 5, 7 | resolution | by cause, as on [install flow](flow-install.md#exits) |
 | 4 | `MetadataProvider.Confirm` | under `--offline`, a locked Galaxy version the requirements allow whose root or version document is not cached: `ErrOfflineMode` |
 | 4 | `expandLockedGitRoot`, `expandLockedURLRoot` | under `--offline`, a locked git commit or url sha256 with no recorded pin: `ErrOfflineMode` |
@@ -180,7 +227,7 @@ if the save fails.
 | 5 | `lockableDownloadURL` | `download_url` with userinfo or a query |
 | 5 | `checkDownloadURLOrigin` | `download_url` off its server's origin |
 | 1 | `lockfile.Save` | a filesystem error; no snapshot or metrics written |
-| 6 | `lockCheck` | file missing or invalid; drift |
+| 6 | `lockCheck` | file missing, or invalid with no selection; drift |
 | 2, 4 | `SaveStore` | the save failed alone; appended to drift otherwise |
 
 ## Flags that change the flow
@@ -189,7 +236,8 @@ if the save fails.
 | --- | --- | --- |
 | `--check` | Write, preview or gate | compare with the file instead of writing; any difference exits 6 |
 | `--dry-run` | Write, preview or gate | diff against the file, write nothing; discovery discards its builds |
-| `--refresh` | Keeping the lockfile's pins | sets them aside unless `--offline`; otherwise as for install, on [install flow](flow-install.md#flags-that-change-the-flow) |
+| `--refresh` | Keeping the lockfile's pins | sets them aside unless `--offline`, or only the selected ones; otherwise as for install, on [install flow](flow-install.md#flags-that-change-the-flow) |
+| `--collection`, `-c`, `--role` | Keeping the lockfile's pins | with `--refresh`, select the pins set aside: the named entries and what they reach (`newRefreshRelease`); a name the file does not pin, a file that does not load, or either flag without `--refresh` exits 2 |
 | `--no-deps` | Overview | as for install; a root still keeps its pin |
 | `--offline` | Overview | recorded pins and resolve only, a miss exits 4, a locked version whose documents are not cached or a locked commit, sha256 or role pin not recorded included; no pin or metadata recorded |
 | `--no-cache` | Overview | no recorded pin or resolve read, the lockfile's pins still kept; builds kept for the run only |

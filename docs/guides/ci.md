@@ -325,9 +325,11 @@ takes `$CI_JOB_TOKEN`, bound as in
        your constraints allow, a moved git ref or a Galaxy role's new tag
        would otherwise fail every merge request, whatever it changes.
 
-On drift a step exits `6`: run `go-galaxy lock` (with `--refresh` for an
-upstream release) and commit. [Catch drift](lockfile.md#catch-drift) explains
-both checks.
+On drift a step exits `6`. Run `go-galaxy lock`. Then commit `galaxy.lock`.
+For an upstream release, add `--refresh`. To move only some pins, also add
+`--collection` or `--role` ([Set aside only some
+pins](lockfile.md#set-aside-only-some-pins)).
+[Catch drift](lockfile.md#catch-drift) explains both checks.
 
 ## Container image bake
 

@@ -55,9 +55,9 @@ or `--force`, exits `2` as an unknown flag.
 | `-p`, `--collections-path` | `-p`, `--download-path` |
 | `role install -p dir` | `--roles-path dir`: `-p` is the collections path |
 | `-s`, `--api-key`, `-n` | `--server`, `--token`, `--no-deps` |
-| `-U`, `--force`, `--force-with-deps` | None: the resolve decides, and `--refresh` asks the servers again |
+| `-U`, `--force`, `--force-with-deps` | None: the resolve decides, and `--refresh` asks the servers again. `lock --refresh --collection` sets aside the pins of the named collections and what they reach ([Set aside only some pins](../guides/lockfile.md#set-aside-only-some-pins)) |
 | `--pre` | None: an exact pin or a `>=X.Y.Z-0` floor ([Prereleases](#prereleases)) |
-| `-c`, `--ignore-certs` | None: trust the CA with `SSL_CERT_FILE`, or set a server's `validate_certs` ([TLS and a private CA](../guides/servers-and-auth.md#tls-and-a-private-ca)) |
+| `-c`, `--ignore-certs` | None: trust the CA with `SSL_CERT_FILE`, or set a server's `validate_certs` ([TLS and a private CA](../guides/servers-and-auth.md#tls-and-a-private-ca)). On `lock`, `-c` is `--collection` ([Set aside only some pins](../guides/lockfile.md#set-aside-only-some-pins)) |
 | `[galaxy] ignore_certs`, `ANSIBLE_GALAXY_IGNORE` | Ignored without a warning: trust the CA as above |
 | `--ignore-signature-status-codes A B` | `--ignore-signature-status-code`, once per code |
 | `-i`, `--ignore-errors`, `--clear-response-cache` | None |

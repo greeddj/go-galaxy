@@ -77,7 +77,7 @@ func resolveURLRole(ctx context.Context, deps collectionDeps, req requirements.R
 // pin of those bytes replays, --offline refuses a miss, else the URL is
 // downloaded, and other bytes than the locked ones warn once and are kept.
 func resolveLockedURLRole(ctx context.Context, deps collectionDeps, ureq urlRoleRequest, policy cacheManager.Policy) (rolePin, error) {
-	if policy.Read {
+	if lockedPinReadable(deps, policy) {
 		if pin, ok := deps.st.GetRolePin(ureq.pinKey); ok && pin.SHA256 == ureq.lockedSHA {
 			if replayed, err := replayURLRolePin(ctx, deps, ureq, pin); err != nil || replayed.locator != "" {
 				return replayed, err

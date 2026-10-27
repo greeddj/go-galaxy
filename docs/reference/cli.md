@@ -13,6 +13,7 @@ Start with the task table, then look up the command or option group.
 | Fail CI when the lockfile is stale | `go-galaxy lock --check` |
 | Fill a CI image's cache | `go-galaxy warm` |
 | See newer upstream versions | `go-galaxy outdated` |
+| Take a newer version of one locked collection | `go-galaxy lock --refresh -c community.general` |
 | Show the locked dependency tree | `go-galaxy tree` |
 | Why a collection is there | `go-galaxy explain community.general` |
 | Print a CI cache key | `go-galaxy hash` |
@@ -64,7 +65,8 @@ requirements file, and an extra word exits [`2`](exit-codes.md).
 go-galaxy install --frozen
 ```
 
-`install` takes every [option group](#options) except `lock`'s `--check`.
+`install` takes every [option group](#options) except `lock`'s `--check`,
+`--collection` and `--role`.
 Roles install after the collections, and only when every collection
 succeeded. `--frozen` installs from the lockfile: [Install from the
 lockfile](../guides/lockfile.md#install-from-the-lockfile).
@@ -78,8 +80,10 @@ go-galaxy lock --check
 `lock` resolves the requirements file and pins every entry, keeping the
 existing lockfile's pins as [Create the
 lockfile](../guides/lockfile.md#create-the-lockfile) describes. Only
-`--refresh` sets that file aside. `lock` takes the `install` options except
-`--frozen` and the signature flags.
+`--refresh` sets that file aside, or, with `--collection` or `--role`, some of
+its pins ([Set aside only some
+pins](../guides/lockfile.md#set-aside-only-some-pins)). `lock` takes the
+`install` options except `--frozen` and the signature flags.
 
 `--check` compares instead of writing and exits `6` on drift. `--dry-run`
 prints the difference. Workflow: [Create the
@@ -206,7 +210,7 @@ from](configuration.md#where-a-setting-comes-from). A `[section] key` is
 | [Servers and network](#servers-and-network) | yes | yes | yes | yes | | | |
 | [Concurrency](#concurrency) | yes | yes | yes | `--download-workers` ignored | | | |
 | [Cache behavior](#cache-behavior) | yes | `--no-cache` exits `2` | yes | ignored; `--offline` exits `4` | | | |
-| [Lockfile](#lockfile) | `--lock-file`, `--frozen` | `--lock-file`, `--frozen` | `--lock-file`, `--check` | `--lock-file`; `--frozen` ignored | | `--lock-file` | |
+| [Lockfile](#lockfile) | `--lock-file`, `--frozen` | `--lock-file`, `--frozen` | `--lock-file`, `--check`, `--collection`, `--role` | `--lock-file`; `--frozen` ignored | | `--lock-file` | |
 | [Signatures](#signatures) | yes | yes | | | | | |
 | [S3](#s3) | yes | yes | yes | validated, then ignored | yes | | |
 
@@ -284,7 +288,7 @@ resources](../internals/install-pipeline.md#two-pools-two-resources).
 | Flag | Variable | Effect |
 | --- | --- | --- |
 | `--no-cache` | `GO_GALAXY_NO_CACHE` | Bypasses the artifact cache and extracted store, and resolves again. `lock` still keeps the pins `galaxy.lock` holds |
-| `--refresh` | `GO_GALAXY_REFRESH` | Re-asks version-free answers: version lists, branches, tags, the v1 role API, url sources. `lock` also sets aside the pins `galaxy.lock` holds |
+| `--refresh` | `GO_GALAXY_REFRESH` | Re-asks version-free answers: version lists, branches, tags, the v1 role API, url sources. `lock` also sets aside the pins `galaxy.lock` holds, or only those `--collection` and `--role` select ([Set aside only some pins](../guides/lockfile.md#set-aside-only-some-pins)) |
 | `--clear-cache` | `GO_GALAXY_CLEAR_CACHE` | Before the run, deletes cached metadata, the commits and sha256s the cache recorded, and artifacts, S3 included. `galaxy.lock` is untouched, so `lock` still keeps its pins |
 | `--offline` | `GO_GALAXY_OFFLINE` | Uses cached state only; any network access fails |
 | `--no-deps` | `GO_GALAXY_NO_DEPS` | Installs only the requirements file's own entries |
@@ -302,6 +306,8 @@ flags](../guides/caching.md#cache-flags).
 | `--lock-file` | `GO_GALAXY_LOCK_FILE` | `lock_file` | The lockfile to read or write |
 | `--frozen` | `GO_GALAXY_FROZEN` | | `install`, `warm`: take every entry from the lockfile, pins enforced |
 | `--check` | `GO_GALAXY_CHECK` | | `lock`: compare with the lockfile instead of writing; drift exits `6` |
+| `--collection`, `-c` | | | `lock`: with `--refresh`, set aside the pins of this collection. Also set aside what it reaches: its dependencies and the other collections of its git source on a branch or a tag. Give the flag more than one time, or a comma-separated list ([Set aside only some pins](../guides/lockfile.md#set-aside-only-some-pins)) |
+| `--role` | | | `lock`: with `--refresh`, set aside the pins of this role, by install name or Galaxy name. Also set aside what it reaches: its dependencies and the other roles of its tarball URL. It takes names as `--collection` does |
 
 The path is the first of:
 
@@ -314,7 +320,8 @@ A path that exists but is not a regular file, such as a directory or a named
 pipe, `<(...)` included, is refused before it is opened: exit `6` from every
 command that reads the lockfile but `lock` and `lock --dry-run`, which warn
 and resolve with no pins to keep. `lock --dry-run` then reports every entry as
-added. A symlink to a regular file is read as that file.
+added. With `--collection` or `--role`, `lock` exits `2` instead, under
+`--check` too. A symlink to a regular file is read as that file.
 
 `lock --frozen` exits `2`, and `GO_GALAXY_FROZEN` never reaches `lock`. What
 the pins enforce: [What a frozen install

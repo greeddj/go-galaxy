@@ -352,7 +352,7 @@ func resolveLockedGitRole(
 func replayLockedRolePin(
 	ctx context.Context, deps collectionDeps, greq gitRoleRequest, policy cacheManager.Policy, commit, label string,
 ) (rolePin, bool, error) {
-	if !policy.Read {
+	if !lockedPinReadable(deps, policy) {
 		return rolePin{}, false, nil
 	}
 	pin, ok := deps.st.GetRolePin(greq.pinKey)

@@ -387,11 +387,15 @@ func isMigrateUsageError(err error) bool {
 }
 
 // isCommandLineUsageError reports whether go-galaxy, not urfave, refused the
-// positional arguments; a flag urfave cannot parse never reaches here, since
-// handleResult exits ExitUsage for that shape directly.
+// positional arguments or lock's --collection and --role; a flag urfave cannot
+// parse never reaches here, since handleResult exits ExitUsage for it directly.
 func isCommandLineUsageError(err error) bool {
 	return errors.Is(err, helpers.ErrUnexpectedArguments) ||
-		errors.Is(err, helpers.ErrMissingArgument)
+		errors.Is(err, helpers.ErrMissingArgument) ||
+		errors.Is(err, helpers.ErrInvalidRefreshSelection) ||
+		errors.Is(err, helpers.ErrRefreshSelectionWithoutRefresh) ||
+		errors.Is(err, helpers.ErrRefreshSelectionNotLocked) ||
+		errors.Is(err, helpers.ErrRefreshSelectionLockfileUnreadable)
 }
 
 // isRoleUsageError reports whether a roles: entry cannot be used as written,

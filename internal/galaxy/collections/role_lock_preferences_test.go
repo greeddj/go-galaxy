@@ -38,7 +38,7 @@ func roleLockfile() *lockfile.File {
 // and any version of a Galaxy role, the URL and any label of a url role.
 func TestLockPreferencesRoleMatchesWhatFrozenAccepts(t *testing.T) {
 	t.Parallel()
-	prefs := newLockPreferences(&config.Config{}, roleLockfile())
+	prefs := newLockPreferences(&config.Config{}, roleLockfile(), nil)
 	commit := strings.Repeat("a", 40)
 	git := func(name, src, ref string) requirements.RoleRequirement {
 		return requirements.RoleRequirement{Name: name, Src: src, Version: ref, Type: requirements.TypeGit}
@@ -116,7 +116,7 @@ func TestLockedRoleServerAsked(t *testing.T) {
 // keyed by kind as well as by name.
 func TestLockPreferencesWarnRolefKeepsRolesApartFromCollections(t *testing.T) {
 	t.Parallel()
-	prefs := newLockPreferences(&config.Config{}, roleLockfile())
+	prefs := newLockPreferences(&config.Config{}, roleLockfile(), nil)
 	printer := &capturingPrinter{}
 	for range 3 {
 		prefs.warnOncef(printer, lockEntryRef{name: "acme.web", kind: lockedCollection}, "collection %s", "acme.web")

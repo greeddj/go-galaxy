@@ -34,7 +34,11 @@ type lockPreferences struct {
 	// mu guards both.
 	kept     map[string]keptGitRoot
 	released map[string]string
-	// git holds the git entries, which matchGitRoots hands to the git roots.
+	// release is what --collection and --role set aside under --refresh;
+	// the zero value releases nothing.
+	release refreshRelease
+	// git holds the git entries, which matchGitRoots hands to the git roots,
+	// released ones included, so a root owning one is released whole.
 	git []lockfile.Entry
 	mu  sync.Mutex
 }
@@ -56,12 +60,26 @@ type lockEntryRef struct {
 	kind lockEntryKind
 }
 
-// newLockPreferences indexes lf's pins, or returns nil when there is no file
-// to keep pins from or --refresh sets them aside; --offline skips --refresh.
-func newLockPreferences(cfg *config.Config, lf *lockfile.File) *lockPreferences {
-	if lf == nil || (cfg.Refresh && !cfg.Offline) {
+// newLockPreferences indexes lf's pins: nil without a file or when --refresh
+// sets every pin aside, else all but what --collection and --role reach from
+// roots. --offline skips --refresh.
+func newLockPreferences(cfg *config.Config, lf *lockfile.File, roots []collection) *lockPreferences {
+	if lf == nil {
 		return nil
 	}
+	var release refreshRelease
+	if cfg.Refresh && !cfg.Offline {
+		if !hasRefreshSelection(cfg) {
+			return nil
+		}
+		release = newRefreshRelease(cfg, lf, roots)
+	}
+	return indexLockPreferences(lf, release)
+}
+
+// indexLockPreferences indexes every pin of lf that release does not set
+// aside; every git entry stays, for matchGitRoots to hand out.
+func indexLockPreferences(lf *lockfile.File, release refreshRelease) *lockPreferences {
 	prefs := &lockPreferences{
 		galaxy:      make(map[string]lockfile.Entry, len(lf.Collections)),
 		urls:        make(map[string]lockfile.Entry),
@@ -69,21 +87,32 @@ func newLockPreferences(cfg *config.Config, lf *lockfile.File) *lockPreferences 
 		unpublished: make(map[string]struct{}),
 		warned:      make(map[lockEntryRef]struct{}),
 		released:    make(map[string]string),
+		release:     release,
 	}
 	for _, e := range lf.Collections {
 		switch {
-		case e.IsGalaxy():
-			prefs.galaxy[e.Name] = e
 		case e.IsGit():
 			prefs.git = append(prefs.git, e)
+		case release.releasesCollection(e.Name):
+		case e.IsGalaxy():
+			prefs.galaxy[e.Name] = e
 		case e.IsURL():
 			prefs.urls[e.Source] = e
 		}
 	}
 	for _, e := range lf.Roles {
-		prefs.roles[e.Name] = e
+		if !release.releasesRole(e.Name) {
+			prefs.roles[e.Name] = e
+		}
 	}
 	return prefs
+}
+
+// announceRelease prints the pins --collection and --role set aside, if any.
+func (p *lockPreferences) announceRelease(out output.Printer) {
+	if p != nil {
+		p.release.announce(out)
+	}
 }
 
 // lockedGitRoot is the commit galaxy.lock pins one git root at and the names
@@ -111,13 +140,23 @@ func (p *lockPreferences) gitRoots(roots []collection) []lockedGitRoot {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for i, root := range roots {
-		if !root.isGit() || gitsource.IsCommitHash(root.Ref) {
-			continue
+		if root.isGit() && !gitsource.IsCommitHash(root.Ref) {
+			locked[i] = p.rootPinLocked(root, matches[i].Owned)
 		}
-		locked[i] = lockedFromOwned(matches[i].Owned)
-		if key, ok := gitRootKey(root); ok && locked[i].commit != "" && p.released[key] != "" {
-			locked[i] = lockedGitRoot{released: p.released[key], names: locked[i].names}
-		}
+	}
+	return locked
+}
+
+// rootPinLocked is gitRoots' answer for one root, with p.mu held: no pin once
+// the selection releases an entry it owns, the released commit once a resolve
+// ruled it out.
+func (p *lockPreferences) rootPinLocked(root collection, owned []lockfile.Entry) lockedGitRoot {
+	locked := lockedFromOwned(owned)
+	if slices.ContainsFunc(locked.names, p.release.releasesCollection) {
+		return lockedGitRoot{}
+	}
+	if key, ok := gitRootKey(root); ok && locked.commit != "" && p.released[key] != "" {
+		return lockedGitRoot{released: p.released[key], names: locked.names}
 	}
 	return locked
 }

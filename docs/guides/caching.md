@@ -141,8 +141,11 @@ still reads cached metadata, commits and sha256s, but anything it must install
 fails. `warm` refuses `--no-cache` (exit `2`). `galaxy.lock` is no cache:
 `lock` keeps its pins under every flag here but `--refresh`, so
 `lock --offline --refresh` keeps them too
-([Create the lockfile](lockfile.md#create-the-lockfile)). The variables are
-under [Cache behavior](../reference/cli.md#cache-behavior).
+([Create the lockfile](lockfile.md#create-the-lockfile)). With `--collection`
+or `--role`, `lock` sets aside only some pins. A kept commit or sha256 comes
+from the cache when the cache holds it, except under `--no-cache`
+([Set aside only some pins](lockfile.md#set-aside-only-some-pins)). The
+variables are under [Cache behavior](../reference/cli.md#cache-behavior).
 
 ## Clearing and cleanup
 

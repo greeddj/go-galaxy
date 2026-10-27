@@ -308,6 +308,18 @@ var (
 	// from what lock would write now. Unlike ErrLockfileMismatch, the file covers
 	// the roots but is out of date.
 	ErrLockfileDrift = errors.New("lockfile is out of date")
+	// ErrInvalidRefreshSelection indicates a --collection or --role value that
+	// names no collection or role install name, an empty list element included.
+	ErrInvalidRefreshSelection = errors.New("invalid --collection or --role value")
+	// ErrRefreshSelectionWithoutRefresh indicates --collection or --role without
+	// --refresh, whose pins they narrow: alone they would move nothing.
+	ErrRefreshSelectionWithoutRefresh = errors.New("--collection and --role select what --refresh moves, and --refresh is not set")
+	// ErrRefreshSelectionNotLocked indicates a --collection or --role name the
+	// lockfile pins nothing for, as a typo does; it is refused before resolving.
+	ErrRefreshSelectionNotLocked = errors.New("--collection or --role names no entry of the lockfile")
+	// ErrRefreshSelectionLockfileUnreadable indicates --collection or --role over a
+	// lockfile that exists but does not load: without its pins every entry would move.
+	ErrRefreshSelectionLockfileUnreadable = errors.New("--collection and --role need a lockfile that loads")
 
 	// ErrInvalidTimeout indicates the --timeout value is neither a positive
 	// integer number of seconds nor a valid positive Go duration string.

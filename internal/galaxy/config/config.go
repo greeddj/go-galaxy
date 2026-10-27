@@ -55,7 +55,12 @@ type Config struct {
 	// URLCredentials holds the GO_GALAXY_URL_* origin-bound credentials in list
 	// order, already validated by loadURLCredentials; nil when none is declared.
 	URLCredentials []URLCredential
-	S3Cache        S3CacheConfig
+	// RefreshCollections and RefreshRoles are lock's --collection and --role
+	// names, trimmed, sorted and unique; set, --refresh moves only them and
+	// what they reach. Only the lock command registers the flags.
+	RefreshCollections []string
+	RefreshRoles       []string
+	S3Cache            S3CacheConfig
 	// Signature is this run's resolved signature verification surface: the
 	// keyring location, how many signatures must verify, which failure
 	// statuses are tolerated, and whether verification is switched off.
@@ -169,13 +174,22 @@ func BuildCollectionConfig(c *cli.Command) (*Config, error) {
 		return nil, err
 	}
 
-	// Last, so every failure above keeps its precedence. cleanup mounts no
-	// --offline, so it reads false there and cleanup is never refused.
-	if err := checkS3CacheOffline(cfg); err != nil {
+	// Last, so every failure above keeps its precedence.
+	if err := checkFlagCombinations(cfg, c); err != nil {
 		return nil, err
 	}
 
 	return cfg, nil
+}
+
+// checkFlagCombinations refuses an S3 cache under --offline, then reads lock's
+// --collection and --role. cleanup mounts no --offline and only lock mounts the
+// selection, so every other command passes both.
+func checkFlagCombinations(cfg *Config, c *cli.Command) error {
+	if err := checkS3CacheOffline(cfg); err != nil {
+		return err
+	}
+	return applyRefreshSelection(cfg, c)
 }
 
 // newConfigWithProject reads the flags, then galaxy.toml ahead of --timeout:

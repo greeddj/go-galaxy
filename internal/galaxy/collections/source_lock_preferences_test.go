@@ -50,7 +50,7 @@ func TestLockPreferencesGitRootsKeepTheCommitOfOwnedEntries(t *testing.T) {
 		prefsGitEntry("acme.x", "split/x", "main", main),
 		prefsGitEntry("acme.y", "split/y", "main", other),
 		{Name: "acme.galaxy", Version: testVersion100},
-	}})
+	}}, nil)
 	galaxyRoot := collection{Namespace: "acme", Name: "galaxy", Type: typeGalaxy}
 	for _, tc := range []struct {
 		name  string
@@ -108,7 +108,7 @@ func TestLockPreferencesURLEntryMatchesWhatFrozenAccepts(t *testing.T) {
 	prefs := newLockPreferences(&config.Config{}, &lockfile.File{Collections: []lockfile.Entry{
 		{Name: "acme.kafka", Type: lockfile.TypeURL, Version: "0.24.0", Source: prefsTarURL, SHA256: sha},
 		prefsGitEntry("acme.one", "collections/one", "main", strings.Repeat("a", 40)),
-	}})
+	}}, nil)
 	for _, tc := range []struct {
 		name, url, requested string
 		want                 bool
