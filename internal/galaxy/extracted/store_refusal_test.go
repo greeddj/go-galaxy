@@ -222,8 +222,8 @@ func assertExtractionRefused(t *testing.T, err, want error) {
 }
 
 // TestReadyDirectoryInATarballIsNeverMarkedReady pins that a tarball whose
-// ".ready" is a non-empty directory cannot be finalized by either path, and
-// that the half-built temp is removed.
+// ".ready" is a directory is refused by its sentinel on either path, and that
+// the half-built temp is removed.
 func TestReadyDirectoryInATarballIsNeverMarkedReady(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -235,8 +235,9 @@ func TestReadyDirectoryInATarballIsNeverMarkedReady(t *testing.T) {
 	sha := mustHash(t, tarPath)
 
 	ensureStore := NewStore(filepath.Join(dir, "ensure-cache"))
-	if _, err := ensureStore.Ensure(context.Background(), sha, tarPath, SHAFromRecord); err == nil {
-		t.Error("Ensure finalized a tree whose ready marker is a directory")
+	_, err := ensureStore.Ensure(context.Background(), sha, tarPath, SHAFromRecord)
+	if !errors.Is(err, helpers.ErrArchiveEntryShadowsReadyMarker) {
+		t.Errorf("Ensure error = %v, want %v", err, helpers.ErrArchiveEntryShadowsReadyMarker)
 	}
 	if ensureStore.Ready(sha) {
 		t.Error("Ensure left a ready entry")
@@ -254,13 +255,30 @@ func TestReadyDirectoryInATarballIsNeverMarkedReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IngestReader: %v", err)
 	}
-	if _, err := promoteStore.Promote(tmp, sha); err == nil {
-		t.Error("Promote finalized a tree whose ready marker is a directory")
+	if _, err := promoteStore.Promote(tmp, sha); !errors.Is(err, helpers.ErrArchiveEntryShadowsReadyMarker) {
+		t.Errorf("Promote error = %v, want %v", err, helpers.ErrArchiveEntryShadowsReadyMarker)
 	}
 	if promoteStore.Ready(sha) {
 		t.Error("Promote left a ready entry")
 	}
 	assertNoStoreTemps(t, promoteStore)
+}
+
+// TestEmptyReadyDirectoryInATarballIsReplaced is the positive control beside
+// the refusal: an empty ".ready" directory gives way to the marker.
+func TestEmptyReadyDirectoryInATarballIsReplaced(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	tarPath := filepath.Join(dir, "src.tar.gz")
+	writeTarball(t, tarPath, map[string]string{"foo.txt": helloFileContent, ReadyMarker + "/": ""})
+	sha := mustHash(t, tarPath)
+	store := NewStore(filepath.Join(dir, "cache"))
+	if _, err := store.Ensure(context.Background(), sha, tarPath, SHAFromRecord); err != nil {
+		t.Fatalf("Ensure error = %v, want nil", err)
+	}
+	if !store.Ready(sha) {
+		t.Error("Ensure left no ready entry")
+	}
 }
 
 // promoteRefusalCase is one TestPromoteRefusals row: the store and temp to

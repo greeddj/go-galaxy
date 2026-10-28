@@ -573,6 +573,10 @@ func (s *Store) lockFor(sha string) *sync.Mutex {
 func writeReadyMarker(root *os.Root, dirRel string) error {
 	p := path.Join(dirRel, ReadyMarker)
 	if err := root.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// A directory Remove cannot clear came from the archive, so name it.
+		if info, statErr := root.Lstat(p); statErr == nil && info.IsDir() {
+			return fmt.Errorf("%w: %s", helpers.ErrArchiveEntryShadowsReadyMarker, ReadyMarker)
+		}
 		return err
 	}
 	return root.WriteFile(p, []byte(ReadyMarkerPayload), helpers.FileMod)

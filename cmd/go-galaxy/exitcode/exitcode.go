@@ -237,7 +237,8 @@ func isArchiveEntryPathError(err error) bool {
 		errors.Is(err, helpers.ErrArchiveEntryEscapesDestination) ||
 		errors.Is(err, helpers.ErrArchiveEntryIsAbsolutePath) ||
 		errors.Is(err, helpers.ErrArchiveEntryHasEmptyName) ||
-		errors.Is(err, helpers.ErrArchiveDuplicateEntry)
+		errors.Is(err, helpers.ErrArchiveDuplicateEntry) ||
+		errors.Is(err, helpers.ErrArchiveEntryShadowsReadyMarker)
 }
 
 // isArchiveBudgetError reports whether err is about how much an archive costs:

@@ -540,6 +540,11 @@ var fromErrorCases = []exitCase{
 		wantCode: ExitInstall,
 	},
 	{
+		name:     "archive directory where the ready marker goes",
+		err:      fmt.Errorf("%w: .ready", helpers.ErrArchiveEntryShadowsReadyMarker),
+		wantCode: ExitInstall,
+	},
+	{
 		name:     "archive too many entries",
 		err:      fmt.Errorf("%w: ctx", helpers.ErrArchiveTooManyEntries),
 		wantCode: ExitInstall,

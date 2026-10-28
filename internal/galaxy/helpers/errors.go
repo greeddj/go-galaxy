@@ -44,6 +44,9 @@ var (
 	// ErrArchiveTooManyEntries indicates an archive contains more entries
 	// than ArchiveMaxEntryCount allows.
 	ErrArchiveTooManyEntries = errors.New("archive contains too many entries")
+	// ErrArchiveEntryShadowsReadyMarker indicates an archive whose top level holds a
+	// directory named like the extracted store's ready marker, which would block it.
+	ErrArchiveEntryShadowsReadyMarker = errors.New("archive entry is a directory where the extracted store writes its ready marker")
 	// ErrArchiveDuplicateEntry indicates two archive entries claim one path, found
 	// on disk by the extractor or by name in manifest's archiveScan.claim. Refused,
 	// never last-wins, which would leave the collision undetectable afterwards.

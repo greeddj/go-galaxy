@@ -344,6 +344,7 @@ check and extractor a download does; no signature can vouch for it.
 | An entry or hardlink target | an existing component is a symlink | `ensureNoSymlinkParents` | `ErrArchivePathContainsSymlinkComponent` | 5 |
 | A symlink target | empty, absolute, or resolving outside, to the root or to itself | `safeSymlinkTarget` | `ErrSymlinkTarget` and siblings | 5 |
 | A regular file | an earlier entry created the path | `classifyOpenRegularFileError` | `ErrArchiveDuplicateEntry` | 5 |
+| A top-level `.ready` | a non-empty directory, where the extracted store writes its marker | `extracted.writeReadyMarker` | `ErrArchiveEntryShadowsReadyMarker` | 5 |
 | Headers of any type | past `ArchiveMaxEntryCount` | `extractTarEntries` | `ErrArchiveTooManyEntries` | 5 |
 | A declared size | negative, or past the per-entry or total cap | `chargeEntrySize` | `ErrArchiveEntryHasNegativeSize`, `ErrArchiveEntryIsTooLarge`, `ErrArchiveExceedsMaxSize` | 5 |
 | The decompressed stream | past `ArchiveMaxDecompressedSize` | `decompressedLimitReader` | `ErrArchiveDecompressedTooLarge` | 5 |

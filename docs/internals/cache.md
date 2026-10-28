@@ -66,7 +66,7 @@ changes with `ArtifactKey`. The flow is in
 | Rule | Why |
 | :-- | :-- |
 | One tree per digest in `extracted/<sha256>/`; `Materialize` hardlinks it, copying where a link fails | Installs share bytes, so files lose their write bit (`helpers.ReadOnlyPerm`) |
-| The `.ready` marker, written last, holds a version tag (`ReadyMarkerPayload`) | Readiness is checked before the per-digest lock; a new tag rebuilds older trees once |
+| The `.ready` marker, written last, holds a version tag (`ReadyMarkerPayload`); a tarball's own `.ready` file or empty directory is replaced, a non-empty one refused | Readiness is checked before the per-digest lock; a new tag rebuilds older trees once |
 | Every store write goes through an `os.Root` at the cache directory | Opening a root follows a symlink, so rooting at `extracted/` adopts its target |
 | The zero `SHAProvenance`, `SHAFromRecord`, hashes the tarball first | An undeclared digest is verified, not trusted |
 
