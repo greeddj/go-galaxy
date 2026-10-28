@@ -13,11 +13,11 @@ import (
 	"github.com/greeddj/go-galaxy/internal/galaxy/urlsource"
 )
 
-// recordingPrinter is a minimal output.Printer stub that records every
-// Debugf line verbatim (format expanded via fmt semantics), so a test can
-// assert on the exact rendered bytes rather than on call shape alone.
+// recordingPrinter is an output.Printer stub recording each Debugf and Warnf
+// line as rendered, so a test asserts the exact bytes, not the call shape.
 type recordingPrinter struct {
 	debugLines []string
+	warnLines  []string
 }
 
 func (p *recordingPrinter) Printf(string, ...any)                        {}
@@ -27,13 +27,16 @@ func (p *recordingPrinter) OkVersionf(string, string, ...any)            {}
 func (p *recordingPrinter) Updatef(string, ...any)                       {}
 func (p *recordingPrinter) Errorf(string, ...any)                        {}
 func (p *recordingPrinter) ErrorVersionf(string, string, string, ...any) {}
-func (p *recordingPrinter) Warnf(string, ...any)                         {}
 
 func (p *recordingPrinter) Debugf(format string, args ...any) {
 	p.debugLines = append(p.debugLines, fmt.Sprintf(format, args...))
 }
 
 func (p *recordingPrinter) DebugSincef(time.Time, string, ...any) {}
+
+func (p *recordingPrinter) Warnf(format string, args ...any) {
+	p.warnLines = append(p.warnLines, fmt.Sprintf(format, args...))
+}
 
 // assertContainsAll fails the test unless line contains every one of want,
 // kept apart so the caller stays under the cyclomatic-complexity budget.

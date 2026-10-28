@@ -258,6 +258,8 @@ func TestParseTimeout(t *testing.T) {
 		{name: "zero seconds is invalid", raw: "0", wantErr: true},
 		{name: "negative seconds is invalid", raw: "-5", wantErr: true},
 		{name: "not a number or duration is invalid", raw: "abc", wantErr: true},
+		{name: "zero go duration is invalid", raw: "0s", wantErr: true},
+		{name: "negative go duration is invalid", raw: "-5s", wantErr: true},
 	}
 
 	for _, tt := range tests {

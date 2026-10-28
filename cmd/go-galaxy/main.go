@@ -151,8 +151,8 @@ func run() int {
 		sig = *p
 	}
 
-	// Not covered by a test, since run executes a real command: report.written
-	// decides whether a flag failure is printed here or urfave already said it.
+	// report.written decides whether a flag failure is printed here or urfave
+	// already said it.
 	code, printErr := handleResult(runErr, cmdErr, sig, report.written)
 	if printErr != nil {
 		progress.Errorf("%s", printErr.Error())
