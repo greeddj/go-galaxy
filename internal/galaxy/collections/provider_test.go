@@ -260,7 +260,7 @@ func TestNoDepsProviderReturnsEmptyDependencies(t *testing.T) {
 // ok=false while Universe still reads the versions list.
 func TestProviderHighestEmptyFallsBackToUniverse(t *testing.T) {
 	t.Parallel()
-	srv := newEmptyHighestVersionServer(t)
+	srv := newHighestVersionServer(t, "")
 
 	cfg := &config.Config{Server: srv.URL}
 	runtime := infra.New(noopPrinter{}, srv.Client())
@@ -280,9 +280,10 @@ func TestProviderHighestEmptyFallsBackToUniverse(t *testing.T) {
 	}
 }
 
-// newEmptyHighestVersionServer serves acme/widgets' v3 root metadata, with
-// highest_version left empty, and its versions list; anything else 404s.
-func newEmptyHighestVersionServer(t *testing.T) *httptest.Server {
+// newHighestVersionServer serves acme/widgets' v3 root metadata, with
+// highest_version set to highest (a shape fakegalaxy never serves when empty
+// or unparsable), and its versions list; anything else 404s.
+func newHighestVersionServer(t *testing.T, highest string) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -291,7 +292,7 @@ func newEmptyHighestVersionServer(t *testing.T) *httptest.Server {
 		case "/api/v3/collections/acme/widgets/":
 			root := map[string]any{
 				"versions_url":    srv.URL + "/api/v3/collections/acme/widgets/versions/",
-				"highest_version": map[string]any{"href": "", "version": ""},
+				"highest_version": map[string]any{"href": "", "version": highest},
 			}
 			_ = json.NewEncoder(w).Encode(root)
 		case "/api/v3/collections/acme/widgets/versions/":
