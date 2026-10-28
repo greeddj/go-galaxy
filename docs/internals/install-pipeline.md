@@ -386,7 +386,8 @@ flat, writing through an `os.Root` at the roles path. `installRole` steps:
 
 1. `canSkipRoleInstall`: record, marker, install info and tally agree.
 2. `checkRoleDirectoryOwned`, before any fetch: a directory without this tool's
-   marker or ansible's install info is `ErrRoleDirectoryForeign`, exit 5
+   marker or ansible's install info, or a file in its place, is
+   `ErrRoleDirectoryForeign`, exit 5
    ([An existing role directory](../guides/requirements.md#an-existing-role-directory)).
 3. `fetchRoleArtifact`: prebuilt, cache hit, or a refetch refusing another
    commit or other bytes, exit 7.

@@ -211,6 +211,11 @@ func checkRoleDirectoryOwned(target installTarget) (roleDirectoryOwner, error) {
 		if errors.Is(err, fs.ErrNotExist) {
 			return roleDirectoryAbsent, nil
 		}
+		// A file where the directory belongs is no client's role either; a
+		// symlink keeps the escape refusal and its --roles-path remedy.
+		if info, statErr := target.root.Lstat(target.rel); statErr == nil && !info.IsDir() && info.Mode()&fs.ModeSymlink == 0 {
+			return roleDirectoryAbsent, foreignRoleDirectoryError(target)
+		}
 		return roleDirectoryAbsent, classifyRolesRootError(target.root, target.rel, err)
 	}
 	for _, e := range entries {
@@ -221,7 +226,13 @@ func checkRoleDirectoryOwned(target installTarget) (roleDirectoryOwner, error) {
 	if _, err := target.root.Stat(path.Join(target.rel, galaxyInstallInfoRel)); err == nil {
 		return roleDirectoryAnsible, nil
 	}
-	return roleDirectoryAbsent, fmt.Errorf("%w: %s appears to already exist and is not a Galaxy-installed role; "+
+	return roleDirectoryAbsent, foreignRoleDirectoryError(target)
+}
+
+// foreignRoleDirectoryError refuses what stands at target's path, which no
+// Galaxy client installed, naming the path and the remedy.
+func foreignRoleDirectoryError(target installTarget) error {
+	return fmt.Errorf("%w: %s appears to already exist and is not a Galaxy-installed role; "+
 		"remove it to let this tool manage it", helpers.ErrRoleDirectoryForeign, target.path)
 }
 

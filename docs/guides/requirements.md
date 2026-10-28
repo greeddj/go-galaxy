@@ -355,6 +355,8 @@ ansible-galaxy.
 | `meta/.galaxy_install_info` only, from `ansible-galaxy` | Replaced, with a warning |
 | Neither | Refused, exit `5`: remove the directory to let go-galaxy manage it |
 
+go-galaxy also refuses a file at the path of a role directory, with exit `5`.
+
 ## galaxy.toml
 
 `galaxy.toml` holds the two lists in a `[project]` table, and run settings in

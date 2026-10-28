@@ -201,7 +201,7 @@ func roleDirRefusalCases() []roleDirRefusalCase {
 				t.Helper()
 				mustWriteFile(t, filepath.Join(rolesPath, "web"), []byte("not a role"))
 			},
-			wantErr: syscall.ENOTDIR,
+			wantErr: helpers.ErrRoleDirectoryForeign,
 		},
 		{
 			name: "role directory symlinked outside roles_path",

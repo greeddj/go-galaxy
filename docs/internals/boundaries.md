@@ -432,7 +432,7 @@ blocks at line-start opening lines, one packet ceiling per file.
 | :-- | :-- | :-- | :-- | :-- |
 | `ansible_collections` | it leads out of the download path | `openCollectionsRoot` | `ErrCollectionsPathEscape` | 5 |
 | A namespace, name or version | not `helpers.IsPathElement` | `buildCollectionsMap`, `newInstallTarget` | `ErrUnsafeCollectionIdentifier` | 2 |
-| A role directory | carries neither the extract marker nor `.galaxy_install_info` | `checkRoleDirectoryOwned` | `ErrRoleDirectoryForeign` | 5 |
+| A role directory | carries neither the extract marker nor `.galaxy_install_info`, or is a file | `checkRoleDirectoryOwned` | `ErrRoleDirectoryForeign` | 5 |
 | A sha256 digest | not 64 lowercase hex (`helpers.IsSHA256Hex`) | extract, marker, `lock` | `ErrMalformedArtifactSHA256` | 7 |
 
 - The install `os.Root` opens at the download path, not `ansible_collections`,
