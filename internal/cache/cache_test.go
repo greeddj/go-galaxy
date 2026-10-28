@@ -106,8 +106,8 @@ func TestNewReturnsTheS3ConstructorError(t *testing.T) {
 	if err == nil {
 		t.Fatalf("New with no bucket = %T, want an error", backend)
 	}
-	if _, isLocal := backend.(*local.Backend); isLocal {
-		t.Fatal("New with no bucket fell back to the local backend")
+	if backend != nil {
+		t.Fatalf("New with no bucket = %T, want a nil Backend beside the error", backend)
 	}
 }
 

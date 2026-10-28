@@ -31,7 +31,12 @@ func New(cfg *config.Config, runtime *infra.Infra) (cacheManager.Backend, error)
 		if runtime.TempDir != nil {
 			tempDir = runtime.TempDir()
 		}
-		return s3.New(cfg.S3Cache, runtime.HTTP, tempDir)
+		backend, err := s3.New(cfg.S3Cache, runtime.HTTP, tempDir)
+		if err != nil {
+			// A nil *s3.Backend in the interface would compare non-nil.
+			return nil, err
+		}
+		return backend, nil
 	}
 	return local.New(cfg.CacheDir), nil
 }
