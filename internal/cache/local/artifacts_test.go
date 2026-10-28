@@ -2,6 +2,8 @@ package local
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -427,5 +429,132 @@ func assertVictimIntact(t *testing.T, victim string) {
 	}
 	if string(body) != victimContent {
 		t.Errorf("file outside the cache directory was rewritten: %q", body)
+	}
+}
+
+// TestArtifactsRefuseABlankKey pins that every keyed operation refuses a
+// blank key before touching disk, so no call can act on the cache dir itself.
+func TestArtifactsRefuseABlankKey(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	a := NewArtifacts(dir)
+	calls := map[string]func(key string) error{
+		"Has": func(key string) error {
+			_, err := a.Has(ctx, key)
+			return err
+		},
+		"Meta": func(key string) error {
+			_, _, err := a.Meta(ctx, key)
+			return err
+		},
+		"Fetch": func(key string) error {
+			_, err := a.Fetch(ctx, key)
+			return err
+		},
+		"Commit": func(key string) error {
+			_, err := a.Commit(ctx, key, filepath.Join(dir, "tmp"), nil)
+			return err
+		},
+		"Delete": func(key string) error { return a.Delete(ctx, key) },
+	}
+	for name, call := range calls {
+		for _, key := range []string{"", "  \t"} {
+			if err := call(key); !errors.Is(err, errArtifactKeyEmpty) {
+				t.Errorf("%s(%q) = %v, want errArtifactKeyEmpty", name, key, err)
+			}
+		}
+	}
+	assertNoEntries(t, dir)
+}
+
+// TestArtifactsRefuseAnEmptyCacheDir pins that a store with no cache dir
+// refuses with helpers.ErrCacheDirEmpty rather than acting on the working
+// directory.
+func TestArtifactsRefuseAnEmptyCacheDir(t *testing.T) {
+	t.Parallel()
+	a := NewArtifacts("  ")
+	if _, err := a.Has(context.Background(), testArtifactKey); !errors.Is(err, helpers.ErrCacheDirEmpty) {
+		t.Errorf("Has = %v, want helpers.ErrCacheDirEmpty", err)
+	}
+	file, cleanup, err := a.TempFile(context.Background(), ".download-")
+	if !errors.Is(err, helpers.ErrCacheDirEmpty) {
+		t.Errorf("TempFile = %v, want helpers.ErrCacheDirEmpty", err)
+	}
+	if file != nil || cleanup != nil {
+		t.Errorf("TempFile returned a file %v or cleanup with its error, want neither", file)
+	}
+}
+
+// TestArtifactsAbsenceStaysNotExist pins that a missing artifact, temp file
+// or cache dir surfaces as fs.ErrNotExist, the shape callers branch on, never
+// reclassified as a backend failure.
+func TestArtifactsAbsenceStaysNotExist(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	a := NewArtifacts(dir)
+	_, fetchErr := a.Fetch(ctx, testArtifactKey)
+	_, commitErr := a.Commit(ctx, testArtifactKey, filepath.Join(dir, "never-written"), nil)
+	_, _, tempErr := NewArtifacts(filepath.Join(dir, "missing")).TempFile(ctx, ".download-")
+	for name, err := range map[string]error{"Fetch": fetchErr, "Commit": commitErr, "TempFile": tempErr} {
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s = %v, want fs.ErrNotExist", name, err)
+		}
+		if errors.Is(err, helpers.ErrCacheBackendUnavailable) || errors.Is(err, helpers.ErrCacheBackendUnusable) {
+			t.Errorf("%s = %v, absence must not be reclassified", name, err)
+		}
+	}
+	assertNoEntries(t, dir)
+}
+
+// TestArtifactsClassifyFilesystemFailures pins that a failure other than
+// absence, a regular file where the cache dir belongs here, is unavailable.
+func TestArtifactsClassifyFilesystemFailures(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	if err := os.WriteFile(blocker, []byte("not a directory"), helpers.FileMod); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	a := NewArtifacts(blocker)
+	found, err := a.Has(ctx, testArtifactKey)
+	if !errors.Is(err, helpers.ErrCacheBackendUnavailable) || found {
+		t.Errorf("Has = %v, %v; want false and ErrCacheBackendUnavailable", found, err)
+	}
+	if err := a.Delete(ctx, testArtifactKey); !errors.Is(err, helpers.ErrCacheBackendUnavailable) {
+		t.Errorf("Delete = %v, want ErrCacheBackendUnavailable", err)
+	}
+}
+
+// TestArtifactsDeleteReportsWhatItCannotRemove pins that Delete fails, as
+// unavailable, when the tarball or its sidecar name holds a non-empty
+// directory, and leaves that directory in place.
+func TestArtifactsDeleteReportsWhatItCannotRemove(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{testArtifactKey, testArtifactKey + helpers.ArtifactSHASidecarSuffix} {
+		dir := t.TempDir()
+		occupied := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Join(occupied, "child"), helpers.DirMod); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := NewArtifacts(dir).Delete(context.Background(), testArtifactKey); !errors.Is(err, helpers.ErrCacheBackendUnavailable) {
+			t.Errorf("Delete with a directory at %s = %v, want ErrCacheBackendUnavailable", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(occupied, "child")); err != nil {
+			t.Errorf("Stat(%s/child) = %v, want the directory left in place", name, err)
+		}
+	}
+}
+
+// assertNoEntries fails unless dir is empty.
+func assertNoEntries(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("%s holds %v, want nothing", dir, entries)
 	}
 }

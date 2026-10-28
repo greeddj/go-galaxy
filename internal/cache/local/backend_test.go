@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -397,4 +398,190 @@ func assertRolesPathRoundTrip(t *testing.T, b *Backend) {
 	if record.RolesPath != want {
 		t.Fatalf("RolesPath = %q, want %q", record.RolesPath, want)
 	}
+}
+
+// TestBackendRefusesEveryOperationWithoutACacheDir pins that each operation
+// touching disk refuses an empty cache dir with helpers.ErrCacheDirEmpty,
+// the operator's mistake, never reclassified as a backend failure.
+func TestBackendRefusesEveryOperationWithoutACacheDir(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	b := New("")
+	calls := map[string]func() error{
+		"Lock": func() error {
+			_, _, err := b.Lock(ctx)
+			return err
+		},
+		"LoadStore": func() error {
+			_, err := b.LoadStore(ctx)
+			return err
+		},
+		"SaveStore":     func() error { return b.SaveStore(ctx, store.New()) },
+		"RecordProject": func() error { return b.RecordProject(ctx, store.ProjectRun{RequirementsFile: "requirements.yml"}) },
+		"LoadProjectRegistry": func() error {
+			_, err := b.LoadProjectRegistry(ctx)
+			return err
+		},
+		"SweepTemp": func() error { return b.SweepTemp(ctx) },
+	}
+	for name, call := range calls {
+		err := call()
+		if !errors.Is(err, helpers.ErrCacheDirEmpty) {
+			t.Errorf("%s with no cache dir = %v, want helpers.ErrCacheDirEmpty", name, err)
+		}
+		if errors.Is(err, helpers.ErrCacheBackendUnavailable) || errors.Is(err, helpers.ErrCacheBackendUnusable) {
+			t.Errorf("%s with no cache dir = %v, must not be reclassified", name, err)
+		}
+	}
+}
+
+// TestBackendLockUnderARegularFileIsUnavailable pins that a cache dir that
+// cannot be created fails Lock as ErrCacheBackendUnavailable with no release.
+func TestBackendLockUnderARegularFileIsUnavailable(t *testing.T) {
+	t.Parallel()
+	blocker := filepath.Join(t.TempDir(), "blocker")
+	writeCacheFile(t, filepath.Dir(blocker), filepath.Base(blocker), []byte("not a directory"))
+	_, release, err := New(filepath.Join(blocker, "cache")).Lock(context.Background())
+	if !errors.Is(err, helpers.ErrCacheBackendUnavailable) {
+		t.Fatalf("Lock under a regular file = %v, want ErrCacheBackendUnavailable", err)
+	}
+	if release != nil {
+		t.Fatal("Lock under a regular file returned a release, want nil")
+	}
+}
+
+// assertBoltHeld reports whether another handle fails to open the cache's
+// Bolt file within a short timeout, which is what an open snapshot causes.
+func assertBoltHeld(t *testing.T, dir string, wantHeld bool) {
+	t.Helper()
+	other, err := bolt.Open(filepath.Join(dir, helpers.StoreDBLocal), helpers.FileMod, &bolt.Options{Timeout: 50 * time.Millisecond})
+	if err == nil {
+		_ = other.Close()
+	}
+	if held := err != nil; held != wantHeld {
+		t.Fatalf("Bolt file held = %v (open error %v), want %v", held, err, wantHeld)
+	}
+}
+
+// TestBackendCloseReleasesTheSnapshotAndReopensLazily pins that Close frees
+// the Bolt file the first LoadStore opened, is idempotent, and that a later
+// LoadStore reopens it and reads what SaveStore wrote.
+func TestBackendCloseReleasesTheSnapshotAndReopensLazily(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	b := New(dir)
+	if err := b.Close(ctx); err != nil {
+		t.Fatalf("Close before any open = %v, want nil", err)
+	}
+
+	st := store.New()
+	st.SetInstalled("a.b@1.0.0", store.InstalledEntry{ArtifactSHA256: "abc"})
+	if err := b.SaveStore(ctx, st); err != nil {
+		t.Fatalf("SaveStore: %v", err)
+	}
+	assertBoltHeld(t, dir, true)
+	if err := b.Close(ctx); err != nil {
+		t.Fatalf("Close = %v, want nil", err)
+	}
+	assertBoltHeld(t, dir, false)
+	if err := b.Close(ctx); err != nil {
+		t.Fatalf("second Close = %v, want nil", err)
+	}
+
+	loaded, err := b.LoadStore(ctx)
+	if err != nil {
+		t.Fatalf("LoadStore after Close: %v", err)
+	}
+	if entry, ok := loaded.GetInstalled("a.b@1.0.0"); !ok || entry.ArtifactSHA256 != "abc" {
+		t.Fatalf("installed entry after reopen = %#v (ok=%v), want the saved one", entry, ok)
+	}
+	if err := b.Close(ctx); err != nil {
+		t.Fatalf("final Close: %v", err)
+	}
+}
+
+// TestBackendSnapshotThatWillNotOpenIsUnavailable pins that a directory where
+// the Bolt file belongs fails LoadStore and SaveStore as unavailable.
+func TestBackendSnapshotThatWillNotOpenIsUnavailable(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, helpers.StoreDBLocal), helpers.DirMod); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	b := New(dir)
+	if _, err := b.LoadStore(ctx); !errors.Is(err, helpers.ErrCacheBackendUnavailable) {
+		t.Errorf("LoadStore = %v, want ErrCacheBackendUnavailable", err)
+	}
+	if err := b.SaveStore(ctx, store.New()); !errors.Is(err, helpers.ErrCacheBackendUnavailable) {
+		t.Errorf("SaveStore = %v, want ErrCacheBackendUnavailable", err)
+	}
+}
+
+// TestBackendLoadStoreKeepsANewerSchemaUnclassified pins that a snapshot a
+// newer binary wrote keeps ErrUnsupportedSchemaVersion as its only class.
+func TestBackendLoadStoreKeepsANewerSchemaUnclassified(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	db, err := bolt.Open(filepath.Join(dir, helpers.StoreDBLocal), helpers.FileMod, nil)
+	if err != nil {
+		t.Fatalf("bolt.Open: %v", err)
+	}
+	err = db.Update(func(tx *bolt.Tx) error {
+		bucket, err := tx.CreateBucketIfNotExists([]byte(helpers.StoreBucketMeta))
+		if err != nil {
+			return err
+		}
+		newer := strconv.Itoa(helpers.StoreSnapshotSchemaVersion + 1)
+		return bucket.Put([]byte(helpers.StoreMetaSchemaVersion), []byte(newer))
+	})
+	if closeErr := db.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatalf("stamping a newer schema: %v", err)
+	}
+
+	b := New(dir)
+	t.Cleanup(func() { _ = b.Close(context.Background()) })
+	_, err = b.LoadStore(context.Background())
+	if !errors.Is(err, helpers.ErrUnsupportedSchemaVersion) {
+		t.Fatalf("LoadStore = %v, want ErrUnsupportedSchemaVersion", err)
+	}
+	if errors.Is(err, helpers.ErrCacheBackendUnavailable) || errors.Is(err, helpers.ErrCacheBackendUnusable) {
+		t.Fatalf("LoadStore = %v, a newer schema must not be reclassified", err)
+	}
+}
+
+// TestBackendLoadProjectRegistryKeepsCorruptionUnclassified pins that a
+// registry that does not decode stays ErrCorruptProjectRegistry alone.
+func TestBackendLoadProjectRegistryKeepsCorruptionUnclassified(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeCacheFile(t, dir, helpers.StoreDBProjects, []byte("{not json"))
+	registry, err := New(dir).LoadProjectRegistry(context.Background())
+	if !errors.Is(err, helpers.ErrCorruptProjectRegistry) {
+		t.Fatalf("LoadProjectRegistry = %v, want ErrCorruptProjectRegistry", err)
+	}
+	if errors.Is(err, helpers.ErrCacheBackendUnavailable) || errors.Is(err, helpers.ErrCacheBackendUnusable) {
+		t.Fatalf("LoadProjectRegistry = %v, corruption must not be reclassified", err)
+	}
+	if registry != nil {
+		t.Fatalf("LoadProjectRegistry registry = %#v, want nil", registry)
+	}
+}
+
+// TestBackendArtifactsLiveInTheCacheDir pins that the backend's artifact store
+// commits into the backend's own cache dir.
+func TestBackendArtifactsLiveInTheCacheDir(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	b := openedBackend(t, dir)
+	artifacts, ok := b.Artifacts().(*Artifacts)
+	if !ok {
+		t.Fatalf("Artifacts() = %T, want *Artifacts", b.Artifacts())
+	}
+	commitTempArtifact(t, artifacts, []byte("tarball"), nil)
+	assertFileExists(t, dir, testArtifactKey)
 }

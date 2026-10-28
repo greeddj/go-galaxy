@@ -130,3 +130,48 @@ func collectionNameCases() []collectionNameCase {
 		{name: "uppercase half", value: "Acme.widgets", want: false},
 	}
 }
+
+// TestIsURLCollectionNamePart pins ansible's FQCN word rule for url
+// collections: mixed case and a leading digit pass, while an empty value,
+// punctuation and non-ASCII letters do not.
+func TestIsURLCollectionNamePart(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		value string
+		want  bool
+	}{
+		{value: "Acme_Widgets2", want: true},
+		{value: "9lives", want: true},
+		{value: "_", want: true},
+		{value: "", want: false},
+		{value: "acme-widgets", want: false},
+		{value: "acme.widgets", want: false},
+		{value: "acme widgets", want: false},
+		{value: "café", want: false},
+	}
+	for _, tc := range cases {
+		if got := IsURLCollectionNamePart(tc.value); got != tc.want {
+			t.Errorf("IsURLCollectionNamePart(%q) = %v, want %v", tc.value, got, tc.want)
+		}
+	}
+}
+
+// TestUpperFirstRune pins that only the first rune is upper-cased, multibyte
+// runes included, and that an empty or invalid leading byte is left alone.
+func TestUpperFirstRune(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ in, want string }{
+		{in: "", want: ""},
+		{in: "sha256", want: "Sha256"},
+		{in: "Token", want: "Token"},
+		{in: "deadline-at", want: "Deadline-at"},
+		{in: "étag", want: "Étag"},
+		{in: "1st", want: "1st"},
+		{in: "\xffabc", want: "\xffabc"},
+	}
+	for _, tc := range cases {
+		if got := UpperFirstRune(tc.in); got != tc.want {
+			t.Errorf("UpperFirstRune(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

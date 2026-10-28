@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"sync/atomic"
@@ -317,4 +318,153 @@ func TestFetchJSONWithCachePolicyCorruptExpiredBodyDoesNotRide304(t *testing.T) 
 		t.Fatalf("expected out to decode {ok:true}, got %v", out)
 	}
 	assertAPICacheHealed(t, st, key, "v2")
+}
+
+// Validator fixtures for the revalidation tests below: the cached entry's and
+// the server's newer Last-Modified values.
+const (
+	testCachedLastModified = "Mon, 01 Jan 2024 00:00:00 GMT"
+	testServerLastModified = "Tue, 02 Jan 2024 00:00:00 GMT"
+)
+
+// seedExpiredAPIEntry stores an hour-old entry for testAPIURL whose body is
+// {"v":1}, with ETag v1 and testCachedLastModified as its validators.
+func seedExpiredAPIEntry(st *store.Store) string {
+	key := apiCacheKey(testAPIURL)
+	st.SetAPICache(key, store.APICacheEntry{
+		URL:          testAPIURL,
+		Body:         []byte(`{"v":1}`),
+		ETag:         "v1",
+		LastModified: testCachedLastModified,
+		FetchedAt:    time.Now().Add(-time.Hour).UTC(),
+	})
+	return key
+}
+
+// validatorRecordingClient answers every request with status, body and the
+// given validators, recording the conditional headers of the last request.
+func validatorRecordingClient(status int, body, etag, lastModified string, seen *http.Header) *http.Client {
+	return &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			*seen = req.Header.Clone()
+			header := make(http.Header)
+			header.Set("ETag", etag)
+			header.Set("Last-Modified", lastModified)
+			return &http.Response{
+				StatusCode: status,
+				Status:     http.StatusText(status),
+				Header:     header,
+				Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+			}, nil
+		}),
+	}
+}
+
+// assertConditionalHeaders fails unless seen carries the seeded entry's ETag
+// and Last-Modified as If-None-Match and If-Modified-Since.
+func assertConditionalHeaders(t *testing.T, seen http.Header) {
+	t.Helper()
+	if got := seen.Get("If-None-Match"); got != "v1" {
+		t.Errorf("If-None-Match = %q, want v1", got)
+	}
+	if got := seen.Get("If-Modified-Since"); got != testCachedLastModified {
+		t.Errorf("If-Modified-Since = %q, want %q", got, testCachedLastModified)
+	}
+}
+
+// TestFetchJSONWithCachePolicyRevalidationTakesAChangedBody pins that a 200 to
+// a revalidation is decoded over out and, only under policy.Write, replaces
+// the entry with the new body and validators.
+func TestFetchJSONWithCachePolicyRevalidationTakesAChangedBody(t *testing.T) {
+	t.Parallel()
+	for _, write := range []bool{true, false} {
+		var seen http.Header
+		client := validatorRecordingClient(http.StatusOK, `{"v":2}`, "v2", testServerLastModified, &seen)
+		st := store.New()
+		key := seedExpiredAPIEntry(st)
+		policy := Policy{Read: true, Write: write, TTL: time.Minute}
+
+		var out struct{ V int }
+		if err := FetchJSONWithCachePolicy(context.Background(), client, testAPIURL, st, &out, policy, 0); err != nil {
+			t.Fatalf("write=%v: FetchJSONWithCachePolicy error: %v", write, err)
+		}
+		assertConditionalHeaders(t, seen)
+		if out.V != 2 {
+			t.Errorf("write=%v: out.V = %d, want the changed body's 2", write, out.V)
+		}
+		assertRevalidatedEntry(t, st, key, policy)
+	}
+}
+
+// assertRevalidatedEntry fails unless key holds the server's new body and
+// validators under a fresh stamp when policy.Write is set, and the seeded
+// entry untouched otherwise.
+func assertRevalidatedEntry(t *testing.T, st *store.Store, key string, policy Policy) {
+	t.Helper()
+	entry, _ := st.GetAPICache(key)
+	wantBody, wantETag, wantLM := `{"v":1}`, "v1", testCachedLastModified
+	if policy.Write {
+		wantBody, wantETag, wantLM = `{"v":2}`, "v2", testServerLastModified
+	}
+	if string(entry.Body) != wantBody || entry.ETag != wantETag || entry.LastModified != wantLM {
+		t.Errorf("write=%v: entry = body %s, ETag %q, Last-Modified %q; want %s, %q, %q",
+			policy.Write, entry.Body, entry.ETag, entry.LastModified, wantBody, wantETag, wantLM)
+	}
+	if policy.Write && (entry.TTL != policy.TTL || time.Since(entry.FetchedAt) > time.Minute) {
+		t.Errorf("entry TTL %v FetchedAt %v, want the policy TTL and a fresh stamp", entry.TTL, entry.FetchedAt)
+	}
+}
+
+// TestFetchJSONWithCachePolicyNotModifiedRefreshesValidators pins that a 304
+// keeps the cached body and decode, takes the server's new validators and
+// restamps FetchedAt.
+func TestFetchJSONWithCachePolicyNotModifiedRefreshesValidators(t *testing.T) {
+	t.Parallel()
+	var seen http.Header
+	client := validatorRecordingClient(http.StatusNotModified, "", "v1b", testServerLastModified, &seen)
+	st := store.New()
+	key := seedExpiredAPIEntry(st)
+	policy := Policy{Read: true, Write: true, TTL: time.Minute}
+
+	var out struct{ V int }
+	if err := FetchJSONWithCachePolicy(context.Background(), client, testAPIURL, st, &out, policy, 0); err != nil {
+		t.Fatalf("FetchJSONWithCachePolicy error: %v", err)
+	}
+	assertConditionalHeaders(t, seen)
+	if out.V != 1 {
+		t.Errorf("out.V = %d, want the cached body's 1", out.V)
+	}
+	entry, _ := st.GetAPICache(key)
+	if string(entry.Body) != `{"v":1}` {
+		t.Errorf("entry body = %s, want the cached body kept", entry.Body)
+	}
+	if entry.ETag != "v1b" || entry.LastModified != testServerLastModified {
+		t.Errorf("entry validators = %q, %q; want v1b, %q", entry.ETag, entry.LastModified, testServerLastModified)
+	}
+	if time.Since(entry.FetchedAt) > time.Minute {
+		t.Errorf("entry FetchedAt = %v, want it restamped by the 304", entry.FetchedAt)
+	}
+}
+
+// TestFetchJSONWithCachePolicyRevalidationFailureKeepsTheEntry pins that a
+// failed revalidation returns the status error and leaves the entry alone.
+func TestFetchJSONWithCachePolicyRevalidationFailureKeepsTheEntry(t *testing.T) {
+	t.Parallel()
+	var seen http.Header
+	client := validatorRecordingClient(http.StatusNotFound, "", "", "", &seen)
+	st := store.New()
+	key := seedExpiredAPIEntry(st)
+	before, _ := st.GetAPICache(key)
+	policy := Policy{Read: true, Write: true, TTL: time.Minute}
+
+	var out struct{ V int }
+	err := FetchJSONWithCachePolicy(context.Background(), client, testAPIURL, st, &out, policy, 0)
+	statusErr, ok := errors.AsType[*HTTPStatusError](err)
+	if !ok || statusErr.Code != http.StatusNotFound {
+		t.Fatalf("FetchJSONWithCachePolicy = %v, want a 404 *HTTPStatusError", err)
+	}
+	after, _ := st.GetAPICache(key)
+	if string(after.Body) != string(before.Body) || after.ETag != before.ETag || !after.FetchedAt.Equal(before.FetchedAt) {
+		t.Errorf("entry = %+v after a failed revalidation, want %+v unchanged", after, before)
+	}
 }

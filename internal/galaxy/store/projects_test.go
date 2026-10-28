@@ -617,3 +617,107 @@ func TestRecordProjectResolvesPathsFromASymlinkedWorkingDirectory(t *testing.T) 
 		}
 	}
 }
+
+// TestRecordProjectWithoutACacheDirWritesNothing pins that an empty cache dir
+// is a no-op, not a registry in the working directory. Not parallel: t.Chdir.
+func TestRecordProjectWithoutACacheDirWritesNothing(t *testing.T) {
+	work := t.TempDir()
+	t.Chdir(work)
+	run := ProjectRun{RequirementsFile: filepath.Join(work, "requirements.yml"), CollectionsPath: "collections", Installs: true}
+	if err := RecordProject("", run); err != nil {
+		t.Fatalf("RecordProject(\"\") = %v, want nil", err)
+	}
+	entries, err := os.ReadDir(work)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("RecordProject(\"\") wrote %v into the working directory, want nothing", entries)
+	}
+}
+
+// TestRecordProjectLeavesACorruptRegistryAlone pins that a registry that does
+// not decode fails the record and is never overwritten, so cleanup still
+// refuses to treat its projects as gone.
+func TestRecordProjectLeavesACorruptRegistryAlone(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	corrupt := []byte("{not json")
+	writeRegistryFile(t, cacheDir, corrupt)
+
+	run := ProjectRun{RequirementsFile: filepath.Join(t.TempDir(), "requirements.yml")}
+	if err := RecordProject(cacheDir, run); !errors.Is(err, helpers.ErrCorruptProjectRegistry) {
+		t.Fatalf("RecordProject = %v, want ErrCorruptProjectRegistry", err)
+	}
+	//nolint:gosec // G304: the path is under this test's own t.TempDir.
+	got, err := os.ReadFile(filepath.Join(cacheDir, helpers.StoreDBProjects))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !bytes.Equal(got, corrupt) {
+		t.Fatalf("registry = %q after a refused record, want %q untouched", got, corrupt)
+	}
+}
+
+// TestLoadProjectRegistryReportsARegistryItCannotRead pins that a read failure
+// other than absence is an error, never an empty registry cleanup would trust.
+func TestLoadProjectRegistryReportsARegistryItCannotRead(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cacheDir, helpers.StoreDBProjects), helpers.DirMod); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	registry, err := LoadProjectRegistry(cacheDir)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("LoadProjectRegistry = %v, want a read error other than absence", err)
+	}
+	if registry != nil {
+		t.Fatalf("LoadProjectRegistry registry = %#v, want nil", registry)
+	}
+}
+
+// TestSaveProjectRegistrySkipsANilRegistry pins that nil writes no file.
+func TestSaveProjectRegistrySkipsANilRegistry(t *testing.T) {
+	t.Parallel()
+	cacheDir := t.TempDir()
+	if err := saveProjectRegistry(cacheDir, nil); err != nil {
+		t.Fatalf("saveProjectRegistry(nil) = %v, want nil", err)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, helpers.StoreDBProjects)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat(registry) = %v, want no file written", err)
+	}
+}
+
+// TestSaveProjectRegistryReportsWhereItCannotWrite pins that a cache dir that
+// cannot be created, or cannot take a temp file, fails the save and leaves
+// any registry already there as it was.
+func TestSaveProjectRegistryReportsWhereItCannotWrite(t *testing.T) {
+	t.Parallel()
+	registry := &ProjectRegistry{Projects: map[string]ProjectRecord{"/p": {RequirementsFile: "/p/requirements.yml"}}}
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "blocker"), nil, helpers.FileMod); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := saveProjectRegistry(filepath.Join(root, "blocker", "cache"), registry); err == nil {
+		t.Error("saveProjectRegistry under a regular file = nil, want an error")
+	}
+
+	locked := t.TempDir()
+	writeRegistryFile(t, locked, []byte(`{"projects":{}}`))
+	//nolint:gosec // G302: 0o555 is a directory mode (read and traverse, no write), the condition under test.
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, helpers.DirMod) })
+	if err := os.WriteFile(filepath.Join(locked, "probe"), nil, helpers.FileMod); err == nil {
+		t.Skip("this process can write to a 0o555 directory (running as root?)")
+	}
+	if err := saveProjectRegistry(locked, registry); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("saveProjectRegistry in a read-only dir = %v, want os.ErrPermission", err)
+	}
+	loaded, err := LoadProjectRegistry(locked)
+	if err != nil || len(loaded.Projects) != 0 {
+		t.Errorf("registry after a refused save = %#v, %v; want the empty one left in place", loaded, err)
+	}
+}

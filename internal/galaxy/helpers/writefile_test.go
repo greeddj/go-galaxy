@@ -351,3 +351,85 @@ func TestWriteFileExclusiveNeedsTheDirectory(t *testing.T) {
 		t.Fatalf("Lstat(missing) = %v, want the directory never created", err)
 	}
 }
+
+// TestWriteFileAtomicRefusesAParentThatIsAFile pins that a regular file where
+// the parent directory belongs fails the write and leaves that file intact.
+func TestWriteFileAtomicRefusesAParentThatIsAFile(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("keep"), FileMod); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	err := WriteFileAtomic(filepath.Join(blocker, "report.json"), []byte("data"))
+	if !errors.Is(err, syscall.ENOTDIR) {
+		t.Fatalf("WriteFileAtomic under a regular file = %v, want ENOTDIR", err)
+	}
+	if got := mustReadFile(t, blocker); !bytes.Equal(got, []byte("keep")) {
+		t.Fatalf("blocker content = %q, want it untouched", got)
+	}
+}
+
+// TestWriteFileAtomicReportsAnUnwritableDirectory pins that a directory the
+// process cannot write to is fs.ErrPermission and gains no entry.
+func TestWriteFileAtomicReportsAnUnwritableDirectory(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(dir, DirMod); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	//nolint:gosec // G302: 0o555 is a directory mode (read and traverse, no write), the condition under test.
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, DirMod) })
+	probe := filepath.Join(dir, "probe")
+	if err := os.WriteFile(probe, nil, FileMod); err == nil {
+		t.Skip("this process can write to a 0o555 directory (running as root?)")
+	}
+
+	err := WriteFileAtomic(filepath.Join(dir, "report.json"), []byte("data"))
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("WriteFileAtomic in a read-only directory = %v, want fs.ErrPermission", err)
+	}
+	assertOnlyEntries(t, dir)
+}
+
+// TestCreateExclusiveKeepsAMissingDirectoryError pins that only an existing
+// target becomes the exists error; a missing parent stays fs.ErrNotExist.
+func TestCreateExclusiveKeepsAMissingDirectoryError(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "missing", "galaxy.toml")
+	err := createExclusive(path, []byte("x"))
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("createExclusive in a missing directory = %v, want fs.ErrNotExist", err)
+	}
+	if errors.Is(err, fs.ErrExist) {
+		t.Fatalf("createExclusive in a missing directory = %v, must not read as an existing target", err)
+	}
+}
+
+// TestWriteSyncedFileClosesTheFileOnAFailedWrite pins that a write refused by
+// a read-only descriptor is returned and the file is closed all the same.
+func TestWriteSyncedFileClosesTheFileOnAFailedWrite(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "readonly")
+	if err := os.WriteFile(path, []byte("before"), FileMod); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	f, err := os.Open(path) //nolint:gosec // G304: path is this test's own t.TempDir fixture.
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	if err := writeSyncedFile(f, []byte("after")); err == nil {
+		t.Fatal("writeSyncedFile on a read-only descriptor = nil, want the write error")
+	}
+	if err := f.Close(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("second Close = %v, want os.ErrClosed: writeSyncedFile must close on failure", err)
+	}
+	if got := mustReadFile(t, path); !bytes.Equal(got, []byte("before")) {
+		t.Fatalf("content = %q, want it untouched", got)
+	}
+}

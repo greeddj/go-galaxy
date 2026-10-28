@@ -1,9 +1,13 @@
 package store
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
@@ -181,4 +185,108 @@ func TestClearCacheFilesUnlinksASymlinkedEntryWithoutFollowingIt(t *testing.T) {
 	if string(body) != "outside the cache directory" {
 		t.Errorf("file outside the cache directory was rewritten: %q", body)
 	}
+}
+
+// TestSweepDownloadTempsRemovesOnlyDownloadTemps pins that the sweep removes
+// top-level download temps alone: artifacts, sidecars, the database, the lock,
+// the registry and a directory carrying the prefix all stay.
+func TestSweepDownloadTempsRemovesOnlyDownloadTemps(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	temps := []string{helpers.ArtifactDownloadTempPrefix + "123", helpers.ArtifactDownloadTempPrefix + "abc.sha256"}
+	kept := []string{
+		"ns.name-1.0.0.tar.gz",
+		"ns.name-1.0.0.tar.gz" + helpers.ArtifactSHASidecarSuffix,
+		helpers.StoreDBLocal,
+		helpers.StoreDBLock,
+		helpers.StoreDBProjects,
+		"leftover.tmp",
+	}
+	for _, name := range append(slices.Clone(temps), kept...) {
+		writeCacheFile(t, dir, name, []byte("x"))
+	}
+	keptDir := helpers.ArtifactDownloadTempPrefix + "dir"
+	if err := os.Mkdir(filepath.Join(dir, keptDir), helpers.DirMod); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+
+	if err := SweepDownloadTemps(dir); err != nil {
+		t.Fatalf("SweepDownloadTemps: %v", err)
+	}
+	for _, name := range temps {
+		assertFileAbsent(t, dir, name)
+	}
+	for _, name := range append(kept, keptDir) {
+		assertFileExists(t, dir, name)
+	}
+}
+
+// TestCacheSweepsTreatAMissingDirAsEmpty pins that both sweeps succeed on a
+// cache dir that was never created.
+func TestCacheSweepsTreatAMissingDirAsEmpty(t *testing.T) {
+	t.Parallel()
+	missing := filepath.Join(t.TempDir(), "missing")
+	if err := ClearCacheFiles(missing); err != nil {
+		t.Errorf("ClearCacheFiles(missing) = %v, want nil", err)
+	}
+	if err := SweepDownloadTemps(missing); err != nil {
+		t.Errorf("SweepDownloadTemps(missing) = %v, want nil", err)
+	}
+}
+
+// TestCacheSweepsReportACacheDirThatIsAFile pins that a regular file where the
+// cache dir belongs is an error for both sweeps, not an empty cache.
+func TestCacheSweepsReportACacheDirThatIsAFile(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeCacheFile(t, root, "cache", []byte("not a directory"))
+	notDir := filepath.Join(root, "cache")
+	if err := ClearCacheFiles(notDir); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("ClearCacheFiles(file) = %v, want ENOTDIR", err)
+	}
+	if err := SweepDownloadTemps(notDir); !errors.Is(err, syscall.ENOTDIR) {
+		t.Errorf("SweepDownloadTemps(file) = %v, want ENOTDIR", err)
+	}
+	assertFileExists(t, root, "cache")
+}
+
+// TestClearCacheFilesSkipsDirectories pins that a directory whose name matches
+// a sweepable pattern is left alone along with its contents.
+func TestClearCacheFilesSkipsDirectories(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	nested := filepath.Join(dir, "ns.name-1.0.0.tar.gz")
+	if err := os.Mkdir(nested, helpers.DirMod); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	writeCacheFile(t, nested, "inner.tar.gz", []byte("x"))
+	if err := ClearCacheFiles(dir); err != nil {
+		t.Fatalf("ClearCacheFiles: %v", err)
+	}
+	assertFileExists(t, nested, "inner.tar.gz")
+}
+
+// TestCacheSweepsReportAFileTheyCannotRemove pins that a removal refused by a
+// read-only cache dir is returned as fs.ErrPermission and the file stays.
+func TestCacheSweepsReportAFileTheyCannotRemove(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	temp := helpers.ArtifactDownloadTempPrefix + "1"
+	writeCacheFile(t, dir, temp, []byte("x"))
+	//nolint:gosec // G302: 0o555 is a directory mode (read and traverse, no write), the condition under test.
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, helpers.DirMod) })
+	if err := os.WriteFile(filepath.Join(dir, "probe"), nil, helpers.FileMod); err == nil {
+		t.Skip("this process can write to a 0o555 directory (running as root?)")
+	}
+
+	if err := ClearCacheFiles(dir); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("ClearCacheFiles = %v, want fs.ErrPermission", err)
+	}
+	if err := SweepDownloadTemps(dir); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("SweepDownloadTemps = %v, want fs.ErrPermission", err)
+	}
+	assertFileExists(t, dir, temp)
 }
