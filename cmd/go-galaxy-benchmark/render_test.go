@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -367,5 +368,91 @@ func TestWriteSVGRefusesAScenarioWithNothingInIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bench.svg")
 	if err := writeSVG(sampleReport(), scenarioWarm, path); err == nil {
 		t.Fatal("writeSVG rendered a chart for a scenario the report does not carry")
+	}
+}
+
+// TestBuildPanelsSkipsASizeWithoutARatio pins that a size one tool never
+// finished drops out of the chart while the sizes beside it keep their bars.
+func TestBuildPanelsSkipsASizeWithoutARatio(t *testing.T) {
+	report := sampleReport()
+	report.Results = append(report.Results,
+		Result{Scenario: scenarioCold, Tool: "ansible-galaxy", Size: 10, Failed: 2},
+		Result{Scenario: scenarioCold, Tool: "go-galaxy", Size: 10, SamplesMS: []int64{4000}},
+	)
+
+	panels := buildPanels(report, scenarioCold)
+	if len(panels) != 1 || len(panels[0].rows) != 1 {
+		t.Fatalf("buildPanels = %+v, want one panel with one row", panels)
+	}
+
+	row := panels[0].rows[0]
+	if row.label != "1 collection" || row.detail != "8.990s "+glyphArrow+" 2.930s" {
+		t.Fatalf("row = %+v, want the size 1 pair", row)
+	}
+}
+
+// failingWriter accepts its first allowed writes and refuses the rest.
+type failingWriter struct {
+	allowed int
+}
+
+var errWriterClosed = errors.New("writer closed")
+
+func (w *failingWriter) Write(payload []byte) (int, error) {
+	if w.allowed == 0 {
+		return 0, errWriterClosed
+	}
+
+	w.allowed--
+
+	return len(payload), nil
+}
+
+// TestRenderTableReportsAFailingWriter covers both places a write can fail:
+// the provenance header, written directly, and the table, which tabwriter
+// buffers until Flush.
+func TestRenderTableReportsAFailingWriter(t *testing.T) {
+	cases := []struct {
+		name    string
+		want    string
+		allowed int
+	}{
+		{name: "header", allowed: 0, want: "writing report header"},
+		{name: "table", allowed: 1, want: "flushing table"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := renderTable(&failingWriter{allowed: tc.allowed}, sampleReport())
+			if !errors.Is(err, errWriterClosed) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("renderTable error = %v, want %q wrapping the writer's error", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestWriteSVGNamesWhatItCannotWrite(t *testing.T) {
+	dir := t.TempDir()
+
+	blocker := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocker, nil, fileMode); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "directory under a file", path: filepath.Join(blocker, "bench.svg"), want: "creating chart directory"},
+		{name: "path is a directory", path: dir, want: "writing " + dir},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := writeSVG(sampleReport(), "", tc.path); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("writeSVG(%s) error = %v, want %q", tc.path, err, tc.want)
+			}
+		})
 	}
 }

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,5 +173,105 @@ func sampleReport() *Report {
 			{Scenario: scenarioCold, Tool: "ansible-galaxy", Size: 1, SamplesMS: []int64{9000, 8980}},
 			{Scenario: scenarioCold, Tool: "go-galaxy", Size: 1, SamplesMS: []int64{3000, 2860}},
 		},
+	}
+}
+
+// TestFilesystemOfPrefersStatThenFallsBackToDf drives both probes through fake
+// stat and df binaries on PATH: GNU stat's type wins, otherwise df's device
+// column, otherwise "unknown".
+func TestFilesystemOfPrefersStatThenFallsBackToDf(t *testing.T) {
+	const (
+		gnuStat  = `[ "$1 $2 $3" = '-f -c %T' ] || exit 1; echo xfs`
+		dfHeader = "echo 'Filesystem 512-blocks Used Available Capacity Mounted on'"
+		dfRow    = "[ \"$1\" = -P ] || exit 1\n" + dfHeader + "\necho '/dev/sda1 100 50 50 50% /mnt/work'"
+	)
+
+	cases := []struct {
+		name string
+		stat string
+		df   string
+		want string
+	}{
+		{name: "GNU stat names the type", stat: gnuStat, df: "exit 1", want: "xfs"},
+		{name: "blank stat answer falls back to df", stat: "echo '   '", df: dfRow, want: "/dev/sda1"},
+		{name: "BSD stat refuses the flags", stat: "echo -c; exit 1", df: dfRow, want: "/dev/sda1"},
+		{name: "no stat on PATH", df: dfRow, want: "/dev/sda1"},
+		{name: "df prints only its header", stat: "exit 1", df: dfHeader, want: unknownValue},
+		{name: "both probes fail", stat: "exit 1", df: "exit 1", want: unknownValue},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := t.TempDir()
+			if tc.stat != "" {
+				writeExecutable(t, bin, "stat", "#!/bin/sh\n"+tc.stat+"\n")
+			}
+
+			writeExecutable(t, bin, "df", "#!/bin/sh\n"+tc.df+"\n")
+			t.Setenv("PATH", bin)
+
+			if got := filesystemOf(t.Context(), t.TempDir()); got != tc.want {
+				t.Fatalf("filesystemOf = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFilesystemOfGivesUpWithItsContext(t *testing.T) {
+	bin := t.TempDir()
+	writeExecutable(t, bin, "stat", "#!/bin/sh\necho xfs\n")
+	writeExecutable(t, bin, "df", "#!/bin/sh\necho header; echo '/dev/sda1 1 1 0 100% /'\n")
+	t.Setenv("PATH", bin)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	if got := filesystemOf(ctx, t.TempDir()); got != unknownValue {
+		t.Fatalf("filesystemOf(canceled) = %q, want %q", got, unknownValue)
+	}
+}
+
+func TestLoadReportNamesTheFileItCannotUse(t *testing.T) {
+	dir := t.TempDir()
+	malformed := filepath.Join(dir, "malformed.json")
+
+	if err := os.WriteFile(malformed, []byte(`{"schema": 1, "results": [`), fileMode); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+
+	missing := filepath.Join(dir, "missing.json")
+
+	if _, err := loadReport(missing); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "reading "+missing) {
+		t.Fatalf("loadReport(missing) error = %v, want a read error naming the file", err)
+	}
+
+	if _, err := loadReport(malformed); err == nil || !strings.Contains(err.Error(), "parsing "+malformed) {
+		t.Fatalf("loadReport(malformed) error = %v, want a parse error naming the file", err)
+	}
+}
+
+func TestSaveReportNamesWhatItCannotWrite(t *testing.T) {
+	dir := t.TempDir()
+
+	blocker := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocker, nil, fileMode); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "directory under a file", path: filepath.Join(blocker, reportName), want: "creating report directory"},
+		{name: "path is a directory", path: dir, want: "writing " + dir},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := saveReport(tc.path, sampleReport()); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("saveReport(%s) error = %v, want %q", tc.path, err, tc.want)
+			}
+		})
 	}
 }
