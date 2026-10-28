@@ -181,8 +181,8 @@ func findEntry(tree *object.Tree, name string) (object.TreeEntry, bool) {
 }
 
 // validateEntries refuses an unsafe path element, a backslash, a git metadata
-// name in any case, a malformed mode, or two names equal once case-folded,
-// since the install destination may be a case-insensitive filesystem.
+// name in any case, or two names equal once case-folded, since the install
+// destination may be a case-insensitive filesystem.
 func validateEntries(entries []object.TreeEntry) error {
 	seen := make(map[string]string, len(entries))
 	for _, e := range entries {
@@ -206,6 +206,9 @@ func validateEntries(entries []object.TreeEntry) error {
 	return nil
 }
 
+// entryKind maps a tree mode to a build kind. go-git's decoder maps an
+// unknown mode to a submodule, which is skipped, so the refusals guard only
+// trees built another way.
 func entryKind(mode filemode.FileMode) (collectionbuild.EntryKind, error) {
 	switch mode {
 	case filemode.Regular, filemode.Deprecated:
