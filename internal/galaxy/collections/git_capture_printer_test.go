@@ -20,8 +20,8 @@ func (p *lineCapturingPrinter) PersistentPrintf(format string, args ...any) {
 	p.recordf(format, args...)
 }
 func (p *lineCapturingPrinter) Okf(format string, args ...any) { p.recordf(format, args...) }
-func (p *lineCapturingPrinter) OkVersionf(version, format string, args ...any) {
-	p.record(renderVersionLine(version, "", format, args...))
+func (p *lineCapturingPrinter) OkVersionf(version, note, format string, args ...any) {
+	p.record(renderVersionLine(version, note, format, args...))
 }
 func (p *lineCapturingPrinter) Updatef(format string, args ...any) { p.recordf(format, args...) }
 func (p *lineCapturingPrinter) Errorf(format string, args ...any)  { p.recordf(format, args...) }

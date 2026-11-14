@@ -33,8 +33,8 @@ func (p *recordingPrinter) Debugf(format string, args ...any)           { p.Prin
 // OkVersionf and ErrorVersionf render the version tag as internal/progress
 // does, minus color. This binary prints no such line; they satisfy
 // output.Printer without a tier that silently drops what it is handed.
-func (p *recordingPrinter) OkVersionf(version, format string, args ...any) {
-	p.Printf("%s", renderVersionLine(version, "", format, args...))
+func (p *recordingPrinter) OkVersionf(version, note, format string, args ...any) {
+	p.Printf("%s", renderVersionLine(version, note, format, args...))
 }
 
 func (p *recordingPrinter) ErrorVersionf(version, cause, format string, args ...any) {

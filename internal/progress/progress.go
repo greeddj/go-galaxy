@@ -252,16 +252,17 @@ func (p *Progress) Okf(format string, args ...any) {
 	p.emit(p.out, decorated{prefix: p.out.ok(), msg: safeout.Clean(fmt.Sprintf(format, args...))})
 }
 
-// OkVersionf is Okf plus a dimmed "== <version>"; an empty version prints
-// Okf's line byte for byte. The version is a parameter because an escape
-// spelled into format would be sanitized to U+FFFD rather than colored.
-func (p *Progress) OkVersionf(version, format string, args ...any) {
+// OkVersionf is Okf plus a dimmed "== <version>" and an uncolored note; empty
+// ones print Okf's line. The version is a parameter so sanitizing cannot break
+// its color.
+func (p *Progress) OkVersionf(version, note, format string, args ...any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.emit(p.out, decorated{
 		prefix: p.out.ok(),
 		msg:    safeout.Clean(fmt.Sprintf(format, args...)),
 		tag:    p.out.versionTag(safeout.Clean(version)),
+		tail:   spaced(note),
 	})
 }
 

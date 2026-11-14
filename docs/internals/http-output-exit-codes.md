@@ -72,6 +72,9 @@ What a user sees: [Output and color](../reference/cli.md#output-and-color).
   the markers and the version tag. That is why `OkVersionf` and
   `ErrorVersionf` take the version as a separate argument: a color escape
   spelled into the format would be cleaned to U+FFFD.
+- `OkVersionf` takes a note and `ErrorVersionf` takes a cause. Each comes
+  after the version tag, uncolored, so `== <version>` stays a pair that you
+  can paste into a requirements file.
 - The spinner writes `os.Stdout` directly when it is a character device (so
   `/dev/null` counts), with autowrap off for one frame's bytes only.
 - `Close` drops the spinner, because the next line would restart a kept one.

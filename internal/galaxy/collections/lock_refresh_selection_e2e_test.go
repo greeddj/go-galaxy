@@ -70,8 +70,8 @@ func (p *tierPrinter) PersistentPrintf(format string, args ...any) {
 	p.recordf(tierPersist, format, args...)
 }
 func (p *tierPrinter) Okf(format string, args ...any) { p.recordf(tierOk, format, args...) }
-func (p *tierPrinter) OkVersionf(version, format string, args ...any) {
-	p.record(tierOk, renderVersionLine(version, "", format, args...))
+func (p *tierPrinter) OkVersionf(version, note, format string, args ...any) {
+	p.record(tierOk, renderVersionLine(version, note, format, args...))
 }
 func (p *tierPrinter) Updatef(format string, args ...any) { p.recordf(tierUpdate, format, args...) }
 func (p *tierPrinter) Errorf(format string, args ...any)  { p.recordf(tierError, format, args...) }

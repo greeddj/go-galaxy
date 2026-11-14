@@ -6,12 +6,13 @@ import (
 	"testing"
 )
 
-// Version-tier fixtures: the benign pair is what a real install passes, the
-// hostile pair carries hostileCallerText's control characters so a missing
-// Clean on either parameter shows up as raw escape bytes.
+// Version-tier fixtures: the benign values are what a real install passes; the
+// hostile pair carries control characters, so a missing Clean shows up as raw
+// escape bytes.
 const (
 	benignVersion       = "1.0.0"
 	benignCause         = "error: boom"
+	benignNote          = "(d4e99adaaa78, 2026-10-29T13:55:00Z)"
 	hostileVersion      = "1.0.0\x1b[31m\rowned"
 	hostileVersionClean = "1.0.0�[31m�owned"
 	hostileCause        = "error: \x1b[31mred\rgone"
@@ -33,7 +34,7 @@ func TestVersionTagFollowsItsDestination(t *testing.T) {
 		stream{w: &out, color: false}, stream{w: &errOut, color: true})
 	defer p.Close()
 
-	p.OkVersionf(benignVersion, "Installed: acme.app")
+	p.OkVersionf(benignVersion, "", "Installed: acme.app")
 	p.ErrorVersionf(benignVersion, benignCause, "Failed: acme.app")
 
 	assertBuf(t, &out, okGlyph+" Installed: acme.app == "+benignVersion+"\n")
@@ -80,7 +81,7 @@ func TestEmptyVersionRendersTheUndecoratedLine(t *testing.T) {
 
 		tagged, taggedOut, _ := stateB()
 		defer tagged.Close()
-		tagged.OkVersionf("", "Installed: acme.app")
+		tagged.OkVersionf("", "", "Installed: acme.app")
 
 		assertBuf(t, taggedOut, out.String())
 	})
@@ -132,6 +133,31 @@ func TestVersionAndCauseAreSanitizedIndependently(t *testing.T) {
 	}
 }
 
+// TestOkNoteFollowsTheVersionUncolored pins that a success line's note comes
+// after its version tag and outside its color, so "== <version>" stays the
+// pair that pastes into a requirements file.
+func TestOkNoteFollowsTheVersionUncolored(t *testing.T) {
+	t.Parallel()
+
+	p, out, _ := stateB()
+	defer p.Close()
+	p.OkVersionf(benignVersion, benignNote, "Installed: acme.app")
+
+	assertBuf(t, out, okMark()+"Installed: acme.app"+colorVersionTag()+" "+benignNote+"\n")
+}
+
+// TestOkNoteIsSanitized pins that a note is cleaned as untrusted payload, as a
+// failure line's cause is, while the version tag's own escapes survive.
+func TestOkNoteIsSanitized(t *testing.T) {
+	t.Parallel()
+
+	p, out, _ := stateB()
+	defer p.Close()
+	p.OkVersionf(benignVersion, hostileCause, "Installed: acme.app")
+
+	assertBuf(t, out, okMark()+"Installed: acme.app"+colorVersionTag()+" "+hostileCauseClean+"\n")
+}
+
 // TestVersionTiersEmitInEveryState pins that OkVersionf and ErrorVersionf
 // emit in all four states on their undecorated siblings' streams, quiet
 // included, since a --quiet CI run must still say what it installed.
@@ -151,7 +177,7 @@ func TestVersionTiersEmitInEveryState(t *testing.T) {
 		t.Run(st.name+"/OkVersionf", func(t *testing.T) {
 			p, out, errOut := st.build()
 			defer p.Close()
-			p.OkVersionf(benignVersion, "Installed: acme.app")
+			p.OkVersionf(benignVersion, "", "Installed: acme.app")
 			assertBuf(t, out, okPrefixFor(st.name)+"Installed: acme.app"+st.tag+"\n")
 			assertEmpty(t, errOut)
 		})

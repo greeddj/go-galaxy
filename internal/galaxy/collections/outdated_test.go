@@ -146,8 +146,8 @@ func (p recordingPrinter) PersistentPrintf(format string, args ...any) {
 	p.recordf("PersistentPrintf", format, args...)
 }
 func (p recordingPrinter) Okf(format string, args ...any) { p.recordf("Okf", format, args...) }
-func (p recordingPrinter) OkVersionf(version, format string, args ...any) {
-	p.recordf("OkVersionf", "%s", renderVersionLine(version, "", format, args...))
+func (p recordingPrinter) OkVersionf(version, note, format string, args ...any) {
+	p.recordf("OkVersionf", "%s", renderVersionLine(version, note, format, args...))
 }
 func (p recordingPrinter) Updatef(format string, args ...any) { p.recordf("Updatef", format, args...) }
 func (p recordingPrinter) Errorf(format string, args ...any)  { p.recordf("Errorf", format, args...) }

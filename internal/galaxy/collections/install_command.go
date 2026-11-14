@@ -197,7 +197,7 @@ func runInstallLevel(
 					"Failed: %s.%s", col.Namespace, col.Name)
 				failures.record(err)
 			} else {
-				depsCtx.runtime.Output.OkVersionf(col.Version, "Installed: %s.%s", col.Namespace, col.Name)
+				depsCtx.runtime.Output.OkVersionf(col.Version, "", "Installed: %s.%s", col.Namespace, col.Name)
 			}
 		})
 	}

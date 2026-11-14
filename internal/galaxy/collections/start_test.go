@@ -53,10 +53,10 @@ func (p *capturingPrinter) Okf(format string, args ...any) {
 
 // OkVersionf records a success-tier line into the same slice Okf does, so an
 // assertion that nothing reached the success tier covers both methods.
-func (p *capturingPrinter) OkVersionf(version, format string, args ...any) {
+func (p *capturingPrinter) OkVersionf(version, note, format string, args ...any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.oks = append(p.oks, renderVersionLine(version, "", format, args...))
+	p.oks = append(p.oks, renderVersionLine(version, note, format, args...))
 }
 
 // Updatef records an update-tier line (intact, but something newer exists) in

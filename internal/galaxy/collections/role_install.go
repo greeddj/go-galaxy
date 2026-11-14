@@ -98,7 +98,7 @@ func installRoles(ctx context.Context, deps installDeps, res roleResolution, fai
 					"Failed: role %s", role.Name)
 				failures.recordRole(err)
 			} else {
-				deps.runtime.Output.OkVersionf(role.Version, "Installed: role %s", role.Name)
+				deps.runtime.Output.OkVersionf(role.Version, "", "Installed: role %s", role.Name)
 			}
 		})
 	}

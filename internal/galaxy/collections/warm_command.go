@@ -106,7 +106,7 @@ func warmRoles(ctx context.Context, cfg *config.Config, runtime *infra.Infra, st
 					"Failed: role %s", role.Name)
 				failures.recordRole(err)
 			} else {
-				runtime.Output.OkVersionf(role.Version, "Cached: role %s", role.Name)
+				runtime.Output.OkVersionf(role.Version, "", "Cached: role %s", role.Name)
 			}
 		})
 	}
@@ -209,7 +209,7 @@ func warmCollections(
 					"Failed: %s.%s", col.Namespace, col.Name)
 				failures.record(err)
 			} else {
-				runtime.Output.OkVersionf(col.Version, "Cached: %s.%s", col.Namespace, col.Name)
+				runtime.Output.OkVersionf(col.Version, "", "Cached: %s.%s", col.Namespace, col.Name)
 			}
 		})
 	}

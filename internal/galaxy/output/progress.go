@@ -12,7 +12,8 @@ type Printer interface {
 	Printf(format string, args ...any)
 	PersistentPrintf(format string, args ...any)
 	Okf(format string, args ...any)
-	OkVersionf(version, format string, args ...any)
+	// OkVersionf's note follows the version tag, as ErrorVersionf's cause does.
+	OkVersionf(version, note, format string, args ...any)
 	// Updatef is the verdict beside Okf and Errorf for a subject that is intact
 	// but superseded; it lands on stdout with the rest of the report.
 	Updatef(format string, args ...any)

@@ -611,7 +611,7 @@ func sanitizingTiers() []tierCase {
 		},
 		{
 			name:    "OkVersionf",
-			invoke:  func(p *Progress, msg string) { p.OkVersionf(benignVersion, "%s", msg) },
+			invoke:  func(p *Progress, msg string) { p.OkVersionf(benignVersion, "", "%s", msg) },
 			wantOut: func(_, clean string) string { return okMark() + clean + colorVersionTag() + "\n" },
 		},
 		{
@@ -798,7 +798,7 @@ func TestResultMarkerEscapesSurviveAHostileMessage(t *testing.T) {
 		},
 		{
 			name: "OkVersionf", prefix: okMark(), suffix: colorVersionTag(),
-			invoke: func(p *Progress, msg string) { p.OkVersionf(benignVersion, "%s", msg) },
+			invoke: func(p *Progress, msg string) { p.OkVersionf(benignVersion, "", "%s", msg) },
 			stream: func(out, _ *bytes.Buffer) *bytes.Buffer { return out },
 		},
 		{

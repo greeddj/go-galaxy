@@ -291,7 +291,7 @@ func reportOutdated(runtime *infra.Infra, results []outdatedEntry, lockPath stri
 			outdated++
 		default:
 			if verbose {
-				runtime.Output.OkVersionf(r.Locked, "Up to date: %s", r.Name)
+				runtime.Output.OkVersionf(r.Locked, "", "Up to date: %s", r.Name)
 			}
 			upToDate++
 		}

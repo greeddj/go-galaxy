@@ -23,7 +23,7 @@ type recordingPrinter struct {
 func (p *recordingPrinter) Printf(string, ...any)                        {}
 func (p *recordingPrinter) PersistentPrintf(string, ...any)              {}
 func (p *recordingPrinter) Okf(string, ...any)                           {}
-func (p *recordingPrinter) OkVersionf(string, string, ...any)            {}
+func (p *recordingPrinter) OkVersionf(string, string, string, ...any)    {}
 func (p *recordingPrinter) Updatef(string, ...any)                       {}
 func (p *recordingPrinter) Errorf(string, ...any)                        {}
 func (p *recordingPrinter) ErrorVersionf(string, string, string, ...any) {}
