@@ -110,6 +110,9 @@ func TestWriteGalaxyInfoConformsToAnsibleSchema(t *testing.T) {
 		},
 		"not an object",
 		map[string]any{"pubkey_fingerprint": "no signature text"},
+		// A literal "<<" key must stay a key: read as a YAML merge, it would
+		// splice in a signature serverSignatureBlobs never saw.
+		map[string]any{"<<": map[string]any{"signature": "spliced"}},
 	}
 
 	tests := []struct {

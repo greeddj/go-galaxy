@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/fetch"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
@@ -89,13 +90,20 @@ func TestTimedAuthBoundsTheDial(t *testing.T) {
 	}
 }
 
+// skipKnownHostsOffUnix skips a test of known_hosts handling, which is
+// exercised on unix only.
+func skipKnownHostsOffUnix(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("known_hosts handling is exercised on unix only")
+	}
+}
+
 // TestSSHAuthKnownHosts pins that a missing known_hosts is a transport
 // failure and a portless URL is looked up at port 22. It sets the
 // environment, so it is not parallel.
 func TestSSHAuthKnownHosts(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("known_hosts handling is exercised on unix only")
-	}
+	skipKnownHostsOffUnix(t)
 	pem, signer := fakegit.GenerateKey(t, "")
 	u := gitsource.URL{Scheme: protocolSSH, User: "git", Host: "git.example.invalid", Path: "/acme/app.git"}
 	cred := gitsource.Credential{SSHKey: pem}
@@ -132,6 +140,44 @@ func TestSSHAuthKnownHosts(t *testing.T) {
 		if keys.HostKeyCallback == nil {
 			t.Fatal("no host key callback: the host would be trusted on first use")
 		}
+	}
+}
+
+// TestSSHAuthKnownHostsSkipsUnparsableLines pins x/crypto's parse policy: a
+// line that does not parse is skipped, but a listed file with no usable line
+// fails every ssh fetch as a transport failure naming known_hosts.
+func TestSSHAuthKnownHostsSkipsUnparsableLines(t *testing.T) {
+	skipKnownHostsOffUnix(t)
+	pem, signer := fakegit.GenerateKey(t, "")
+	u := gitsource.URL{Scheme: protocolSSH, User: "git", Host: "git.example.invalid", Path: "/acme/app.git"}
+	cred := gitsource.Credential{SSHKey: pem}
+	t.Setenv("SSH_AUTH_SOCK", "")
+	valid := fakegit.WriteKnownHosts(t, "git.example.invalid:22", signer.PublicKey())
+	line := knownhosts.Line([]string{knownhosts.Normalize("git.example.invalid:22")}, signer.PublicKey()) + "\n"
+	const unparsable = "not a known_hosts line\n"
+
+	mixed := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(mixed, []byte(unparsable+line), 0o600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+	t.Setenv("SSH_KNOWN_HOSTS", mixed)
+	auth, err := sshAuthFor(u, cred)
+	if err != nil {
+		t.Fatalf("sshAuthFor with an unparsable line before the host's = %v, want the line skipped", err)
+	}
+	timed, ok := auth.(timedAuth)
+	keys, isKey := timed.AuthMethod.(publicKeys)
+	if !ok || !isKey || len(keys.HostKeyAlgorithms) == 0 {
+		t.Fatalf("the host's line after an unparsable one gave %T with no host key algorithms", auth)
+	}
+
+	garbage := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(garbage, []byte(unparsable), 0o600); err != nil {
+		t.Fatalf("write known_hosts: %v", err)
+	}
+	t.Setenv("SSH_KNOWN_HOSTS", garbage+string(os.PathListSeparator)+valid)
+	if _, err := sshAuthFor(u, cred); !errors.Is(err, helpers.ErrGitTransportFailed) || !strings.Contains(err.Error(), "known_hosts") {
+		t.Fatalf("sshAuthFor with a file of no usable line = %v, want ErrGitTransportFailed naming known_hosts", err)
 	}
 }
 

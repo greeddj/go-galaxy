@@ -5,6 +5,34 @@ go-galaxy release. One rule holds at every upgrade. Every job and machine that
 shares a cache or a lockfile runs the same release, since an older binary
 refuses what a newer one writes ([Pin one release](../guides/ci.md#pin-one-release)).
 
+## From v1.5.x
+
+Start here from v1.5.0. From an older release, follow
+[From v1.4.x](#from-v14x) first.
+
+The table below lists every change since v1.5.0 that can break a job or change
+its result, except an input that used to be refused and is now accepted.
+
+### Exit codes that changed
+
+Update any CI step that branches on the old code for these cases
+([Using exit codes in CI](exit-codes.md#using-exit-codes-in-ci)).
+
+| Situation | Was | Now |
+| --- | --- | --- |
+| An ssh git source whose bound key, `GO_GALAXY_GIT_<ID>_SSH_KEY` or `_SSH_KEY_FILE`, is a DSA key | `0`, or `4` where the server refused the key | `2`, `the ssh key bound to ... does not parse` |
+| An ssh git host with only a DSA (`ssh-dss`) host key, or a `known_hosts` file whose every entry is `ssh-dss` | `0` | `4`, a git transport failure |
+| An ssh git host whose host certificate names no principal | `0` | `4`, a git transport failure |
+
+What to do about a new code:
+
+- `2` for a DSA key: bind an Ed25519, ECDSA or RSA key
+  ([Git sources and credentials](../guides/servers-and-auth.md#git-sources-and-credentials)).
+- `4` for a DSA host key: ask the host for an Ed25519, ECDSA or RSA host key.
+  Record it in `known_hosts`, and remove the `ssh-dss` lines.
+- `4` for a host certificate: ask the host to reissue the certificate with its
+  principals, for example with `ssh-keygen -n`.
+
 ## From v1.4.x
 
 Start here from v1.4.0. From an older release, follow

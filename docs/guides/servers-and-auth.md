@@ -438,6 +438,11 @@ refused. No secret is printed or stored, and no flag takes one
 Entries are spelled under [Collections](requirements.md#collections) and
 [Roles](requirements.md#roles).
 
+An ssh key and an ssh host key must be Ed25519, ECDSA or RSA. A bound DSA key
+exits `2`, and a host with only a DSA host key exits `4`. A `known_hosts`
+line that does not parse is skipped. A listed file with no line that parses
+exits `4`.
+
 > [!NOTE]
 > An unknown or changed ssh host key exits `4`: there is no trust on first
 > use. Record the key with `ssh-keyscan` and check its fingerprint first.
