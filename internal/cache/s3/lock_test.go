@@ -25,15 +25,15 @@ const foreignToken = "foreign-token"
 // TestWaitCeilingErrClassification; waitCeilingErr only checks it is non-nil.
 var errRawInFlightPlaceholder = errors.New("raw in-flight transport failure")
 
-// testLockTiming returns fast lock timing with the given ttl. waitCeiling is a
-// liveness margin a test asserting it fires overrides; releaseTimeout stays
-// short because abandonLockObject spends all of it on a silent endpoint.
+// testLockTiming returns fast lock timing with the given ttl. waitCeiling and
+// releaseTimeout are liveness margins a loaded runner fits; a test that needs
+// either to fire sets its own.
 func testLockTiming(ttl time.Duration) lockTiming {
 	return lockTiming{
 		ttl:                ttl,
 		heartbeatInterval:  30 * time.Millisecond,
 		heartbeatOpTimeout: 200 * time.Millisecond,
-		releaseTimeout:     200 * time.Millisecond,
+		releaseTimeout:     10 * time.Second,
 		waitCeiling:        10 * time.Second,
 		backoffBase:        10 * time.Millisecond,
 		backoffCap:         50 * time.Millisecond,
@@ -335,6 +335,8 @@ func newSilentEndpointBackend(t *testing.T, waitCeiling time.Duration) *Backend 
 	}
 	timing := testLockTiming(time.Minute)
 	timing.waitCeiling = waitCeiling
+	// abandonLockObject spends all of releaseTimeout on this endpoint.
+	timing.releaseTimeout = waitCeiling
 	return &Backend{client: client, lock: timing}
 }
 
