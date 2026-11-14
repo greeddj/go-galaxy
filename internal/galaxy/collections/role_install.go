@@ -98,7 +98,7 @@ func installRoles(ctx context.Context, deps installDeps, res roleResolution, fai
 					"Failed: role %s", role.Name)
 				failures.recordRole(err)
 			} else {
-				deps.runtime.Output.OkVersionf(role.Version, "", "Installed: role %s", role.Name)
+				deps.runtime.Output.OkVersionf(role.Version, installedRoleNote(deps.st, role), "Installed: role %s", role.Name)
 			}
 		})
 	}
@@ -142,7 +142,8 @@ func installRole(ctx context.Context, deps installDeps, r resolvedRole) error {
 		return fmt.Errorf("failed to extract role %s: %w", r.Name, err)
 	}
 	runtime.Output.DebugSincef(extractStart, "%s", "Extract role "+r.Name)
-	recordRoleInstall(deps.st, r, target.path, sha, runtime.Now())
+	commitTime := gitArtifactCommitTime(ctx, runtime.Output, "role "+r.Name, r.Source, artifact.Path)
+	recordRoleInstall(deps.st, r, target.path, sha, runtime.Now(), commitTime)
 	return nil
 }
 
@@ -401,8 +402,8 @@ func classifyRolesRootError(root *os.Root, rel string, err error) error {
 }
 
 // recordRoleInstall records the installed role in the snapshot by install
-// name.
-func recordRoleInstall(st *store.Store, r resolvedRole, installPath, artifactSHA string, now time.Time) {
+// name, with the commit time gitArtifactCommitTime read, zero when unknown.
+func recordRoleInstall(st *store.Store, r resolvedRole, installPath, artifactSHA string, now, commitTime time.Time) {
 	if st == nil {
 		return
 	}
@@ -413,6 +414,7 @@ func recordRoleInstall(st *store.Store, r resolvedRole, installPath, artifactSHA
 		Version:        r.Version,
 		GalaxyName:     r.GalaxyName,
 		InstalledAt:    now.UTC(),
+		CommitTime:     commitTime.UTC(),
 		Deps:           r.Deps,
 	})
 }

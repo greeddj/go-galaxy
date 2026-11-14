@@ -11,7 +11,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/greeddj/go-galaxy/internal/galaxy/archive"
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/testing/faketree"
@@ -152,6 +154,24 @@ func TestBuildArtifactShape(t *testing.T) {
 	assertEntryModes(t, entries)
 	if e := findEntry(t, entries, "tasks/main.yml"); string(e.data) != tasksMain {
 		t.Fatalf("tasks/main.yml = %q", e.data)
+	}
+}
+
+// TestBuildCommitTimeReadsBackFromTheFirstEntry pins the round trip an install
+// line's date depends on: the committer time a build stamps is what
+// archive.FirstEntryModTime reads back, in UTC.
+func TestBuildCommitTimeReadsBackFromTheFirstEntry(t *testing.T) {
+	t.Parallel()
+
+	when := time.Date(2026, time.October, 29, 16, 55, 0, 0, time.FixedZone("", 3*60*60))
+	built := build(t, minimalRole().SetCommitTime(when))
+
+	got, err := archive.FirstEntryModTime(t.Context(), built.ArtifactPath)
+	if err != nil {
+		t.Fatalf("FirstEntryModTime = %v, want nil", err)
+	}
+	if !got.Equal(when) || got.Location() != time.UTC {
+		t.Fatalf("FirstEntryModTime = %v (%v), want %v in UTC", got, got.Location(), when.UTC())
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/archive"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
@@ -158,6 +159,24 @@ func checkContents(t *testing.T, entries []archiveEntry) {
 	}
 	if string(findEntry(t, entries, "README.md").data) != readmeContent {
 		t.Errorf("README content mismatch")
+	}
+}
+
+// TestBuildCommitTimeReadsBackFromTheFirstEntry pins that the lead document,
+// the first entry, carries the committer time archive.FirstEntryModTime reads
+// back for an install line's date.
+func TestBuildCommitTimeReadsBackFromTheFirstEntry(t *testing.T) {
+	t.Parallel()
+
+	when := time.Date(2026, time.October, 29, 16, 55, 0, 0, time.FixedZone("", 3*60*60))
+	built := buildFrom(t, fixtureSource().SetCommitTime(when), "")
+
+	got, err := archive.FirstEntryModTime(t.Context(), built.ArtifactPath)
+	if err != nil {
+		t.Fatalf("FirstEntryModTime = %v, want nil", err)
+	}
+	if !got.Equal(when) || got.Location() != time.UTC {
+		t.Fatalf("FirstEntryModTime = %v (%v), want %v in UTC", got, got.Location(), when.UTC())
 	}
 }
 

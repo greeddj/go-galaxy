@@ -143,6 +143,10 @@ ref, which always takes the tag, unless `--keep-scm-meta` packs the checkout
 instead. Spell `refs/tags/<name>` for the tag
 ([Collections](../guides/requirements.md#collections)).
 
+`ansible-galaxy` names no commit in its install lines. go-galaxy adds the
+commit and its time to the `Installed:` line when the ref of a git source can
+move ([Output and color](../reference/cli.md#output-and-color)).
+
 <details markdown>
 <summary>Git collections ansible accepts and go-galaxy refuses</summary>
 

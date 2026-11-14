@@ -301,11 +301,13 @@ once a signature verified ([boundaries](boundaries.md#reading-a-manifest)).
   ansible-core's exact schema or ansible discards it; git and url provenance
   goes to `go-galaxy.yml`.
 
-`recordInstall` stores path, source, sha256 and deps in `installed`. A skip
-(`canSkipInstall`) needs that record, the marker and a matching sidecar, and
-verifies nothing. Its one repair, `reconcileGalaxyInfo`, writes
-`go-galaxy.yml` before `GALAXY.yml`, so a failed write keeps the provenance's
-only copy.
+`recordInstall` stores path, source, sha256 and deps in `installed`. For a
+git source it also stores the commit time. `gitArtifactCommitTime` reads that
+time from the first tar entry of the artifact, which every git build stamps
+with the committer time. A skip (`canSkipInstall`) needs that record, the
+marker and a matching sidecar, and verifies nothing. Its one repair,
+`reconcileGalaxyInfo`, writes `go-galaxy.yml` before `GALAXY.yml`, so a failed
+write keeps the provenance's only copy.
 
 <details markdown>
 <summary>Signature gather invariants</summary>
@@ -395,7 +397,13 @@ flat, writing through an `os.Root` at the roles path. `installRole` steps:
    over a kept tree. The tally then includes the file, and the file names the
    version this run installs.
 5. `recordRoleInstall` with an absolute path: cleanup matches a record by the
-   path it scans.
+   path it scans. A git or Galaxy role's record also keeps the commit time
+   read from the artifact, as for a collection.
+
+The `Installed:` line reads its note from the install record, which an install
+and a skip both leave matching the role or collection (`installedRoleNote`,
+`installedCollectionNote`). The artifact can come from a shared cache, so
+go-galaxy only prints the time and decides nothing by it.
 
 The install info and the marker are removed before they are written: either
 can be a hard link into the [extracted store](cache.md#extracted-store-content-addressed-materialized-by-hardlink).

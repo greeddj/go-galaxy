@@ -457,6 +457,7 @@ over a warm bucket reports `Would warm: <name> (artifact cached)`. Internals:
 · Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/community-general-13.4.0.tar.gz
 ✔ Installed: community.general == 13.4.0
 ✔ Installed: role geerlingguy.docker == 8.0.0
+✔ Installed: role grafana == main (d4e99adaaa78, 2026-10-29T13:55:00Z)
 ✔ All done. Took 26s
 ```
 
@@ -468,6 +469,22 @@ over a warm bucket reports `Would warm: <name> (artifact cached)`. Internals:
 | `!` | A warning | stderr |
 | `·` | Progress, or a report line such as `Would remove` or a run's summary. `--quiet` drops only progress | stdout |
 | `== <version>` | The version a result settled on | its line's |
+| `(<commit>, <time>)` | The commit a git source installed from a ref that can move | stdout |
+
+An `Installed:` line names the commit of a git collection, a git role or a
+Galaxy role when its ref can move. Such a ref is `HEAD`, a branch spelled
+`refs/heads/<name>`, or a name that does not read as a version, such as `main`
+or `release-1.x`.
+
+go-galaxy reads a name such as `v1.2.0`, `1.2` or `v2` as a release tag, also
+when the repository has a branch with that name. Spell such a branch
+`refs/heads/<name>` to get the note. A full commit hash cannot move, so it
+gets no note either.
+
+The note shows the first 12 hex digits of the commit and its committer time
+in UTC. go-galaxy reads that time from the artifact at install and keeps it
+in the cache. When the cache has no time for an install that is already in
+place, the note shows the commit alone.
 
 Each stream is colored only when it is a terminal: with
 `go-galaxy install > install.log` the log is plain and stderr keeps its color.

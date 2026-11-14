@@ -500,13 +500,13 @@ func TestWriteGalaxyInstallInfoIntoReadOnlyMeta(t *testing.T) {
 // records nothing, and that a record keeps the role's fields in UTC.
 func TestRecordRoleInstall(t *testing.T) {
 	t.Parallel()
-	recordRoleInstall(nil, refetchRole(), "/roles/web", strings.Repeat("a", 64), time.Now())
+	recordRoleInstall(nil, refetchRole(), "/roles/web", strings.Repeat("a", 64), time.Now(), time.Time{})
 
 	st := store.New()
 	r := refetchRole()
 	r.Deps = []string{"base"}
 	installedAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.FixedZone("UTC+1", 60*60))
-	recordRoleInstall(st, r, "/roles/web", strings.Repeat("a", 64), installedAt)
+	recordRoleInstall(st, r, "/roles/web", strings.Repeat("a", 64), installedAt, time.Time{})
 	entry, ok := st.GetInstalledRole("web")
 	if !ok || entry.Source != r.Source || entry.Version != refetchRef || !entry.InstalledAt.Equal(installedAt) ||
 		entry.InstalledAt.Location() != time.UTC || len(entry.Deps) != 1 {

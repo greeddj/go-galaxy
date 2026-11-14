@@ -1,6 +1,6 @@
 package archive
 
-// This file parses archive.go to check how ProbeTarGz builds its decompressor,
+// This file parses archive.go to check how the probe builds its decompressor,
 // and bounds its sizing constants and helpers.ArchiveProbeMaxBytes.
 
 import (
@@ -81,9 +81,9 @@ func argSpelling(expr ast.Expr) string {
 	}
 }
 
-// TestProbeTarGzUsesTheProbeSizedDecompressor pins that ProbeTarGz calls only
-// gzipstream.NewReaderN, with probeGzipBlockSize and probeGzipBlocks. It reads
-// the source because the reservation is unobservable: pgzip exposes no pool.
+// TestProbeTarGzUsesTheProbeSizedDecompressor pins that probeFirstHeader, behind
+// ProbeTarGz and FirstEntryModTime, calls only gzipstream.NewReaderN with the
+// probe constants; it reads the source since pgzip exposes no pool to observe.
 func TestProbeTarGzUsesTheProbeSizedDecompressor(t *testing.T) {
 	t.Parallel()
 
@@ -92,9 +92,9 @@ func TestProbeTarGzUsesTheProbeSizedDecompressor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parsing archive.go: %v", err)
 	}
-	fn := findFuncDecl(file, "ProbeTarGz")
+	fn := findFuncDecl(file, "probeFirstHeader")
 	if fn == nil {
-		t.Fatalf("archive.go declares no top-level ProbeTarGz to audit")
+		t.Fatalf("archive.go declares no top-level probeFirstHeader to audit")
 	}
 
 	calls := decompressorCalls(fn)
@@ -103,10 +103,10 @@ func TestProbeTarGzUsesTheProbeSizedDecompressor(t *testing.T) {
 		names = append(names, call.name)
 	}
 	if !slices.Equal(names, []string{"NewReaderN"}) {
-		t.Fatalf("ProbeTarGz builds its decompressor with %v, want exactly [NewReaderN]", names)
+		t.Fatalf("probeFirstHeader builds its decompressor with %v, want exactly [NewReaderN]", names)
 	}
 	if got := calls[0].args; !slices.Equal(got, []string{"probeGzipBlockSize", "probeGzipBlocks"}) {
-		t.Fatalf("ProbeTarGz sizes its decompressor with %v, want [probeGzipBlockSize probeGzipBlocks]", got)
+		t.Fatalf("probeFirstHeader sizes its decompressor with %v, want [probeGzipBlockSize probeGzipBlocks]", got)
 	}
 }
 

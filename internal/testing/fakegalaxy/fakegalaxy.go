@@ -1164,6 +1164,10 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// ArtifactModTime is the time every entry of a built artifact carries, which
+// a git double's artifact therefore reports as its committer time.
+func ArtifactModTime() time.Time { return fixedModTime }
+
 // BuildArtifact returns the bytes and sha256 AddVersion would serve for the
 // same identity, for doubles such as the collections suite's in-memory git
 // client; it needs no testing.TB because it touches no server state.

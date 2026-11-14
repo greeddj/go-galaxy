@@ -52,12 +52,15 @@ type DepsCacheEntry struct {
 	Deps      map[string]string `json:"deps"`
 }
 
-// InstalledEntry records an installed collection entry.
+// InstalledEntry records an installed collection entry. CommitTime is a git
+// source's committer time read from its artifact, zero when unknown; an
+// install line prints it, nothing decides by it.
 type InstalledEntry struct {
 	InstallPath    string    `json:"install_path"`
 	Source         string    `json:"source"`
 	ArtifactSHA256 string    `json:"artifact_sha256"`
 	InstalledAt    time.Time `json:"installed_at"`
+	CommitTime     time.Time `json:"commit_time,omitzero"`
 	Deps           []string  `json:"deps"`
 }
 
@@ -89,11 +92,12 @@ type GitPinEntry struct {
 	Collections []GitPinCollection `json:"collections"`
 }
 
-// InstalledRoleEntry records one installed role, keyed by install name (its
-// directory under the roles path). Source is the locator its artifact was
-// built from, the one string artifact key, record and lockfile all key on.
+// InstalledRoleEntry records one installed role by install name, its directory
+// under the roles path. Source is its artifact's locator, which artifact, record
+// and lockfile key on; CommitTime is InstalledEntry's.
 type InstalledRoleEntry struct {
 	InstalledAt    time.Time `json:"installed_at"`
+	CommitTime     time.Time `json:"commit_time,omitzero"`
 	InstallPath    string    `json:"install_path"`
 	Source         string    `json:"source"`
 	ArtifactSHA256 string    `json:"artifact_sha256"`

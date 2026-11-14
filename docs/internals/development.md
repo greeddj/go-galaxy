@@ -83,7 +83,7 @@ comment-length gates skip when `git` cannot list the tree.
 | `lockaudit` | a lock-taking command works under the holder context, judged by `LockLostError` | add a new or renamed command to `holderCases` or `delegateCases` |
 | `ciaudit` | CI's golangci-lint `version` is exact and equals `GOLANGCI_LINT_VERSION` | bump both in one commit |
 | `store`: dirty flag | every write-locked `*Store` method in `snapshot.go` sets `dirty`, bar `UnmarshalJSON` | a mutator elsewhere needs a `TestEveryMutatorMarksDirty` row |
-| `archive`: probe decompressor | `ProbeTarGz` calls only `gzipstream.NewReaderN(..., probeGzipBlockSize, probeGzipBlocks)` | keep the constants: block above 512 bytes, reservation within 256 KiB |
+| `archive`: probe decompressor | `probeFirstHeader`, behind `ProbeTarGz` and `FirstEntryModTime`, calls only `gzipstream.NewReaderN(..., probeGzipBlockSize, probeGzipBlocks)` | keep the constants: block above 512 bytes, reservation within 256 KiB |
 | `gzipstream`: pgzip monopoly | no non-test file elsewhere uses pgzip beyond its writer API, by import path | open gzip readers through `gzipstream` |
 | `projectfile`: toml monopoly | no non-test file elsewhere imports `BurntSushi/toml` | decode through `projectfile` |
 | `cache/s3`: sentinel classes | every package-level `err`/`Err` sentinel has a `sentinelClassCases` row | add it: unavailable, unusable, busy or none |

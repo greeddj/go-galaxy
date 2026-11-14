@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
 	"github.com/greeddj/go-galaxy/internal/gzipstream"
@@ -294,10 +295,32 @@ func extractHardlink(dstDir, targetPath string, header *tar.Header, verifiedDirs
 // first tar header within helpers.ArchiveProbeMaxBytes. It keeps error pages
 // out of a shared cache slot; truncation or corruption past that goes unseen.
 func ProbeTarGz(ctx context.Context, path string) error {
-	//nolint:gosec // path is an artifact temp file this process just wrote.
+	_, err := probeFirstHeader(ctx, path)
+	return err
+}
+
+// FirstEntryModTime returns the UTC modification time of path's first tar
+// entry, under ProbeTarGz's bounds. A git build stamps it with the committer
+// time.
+func FirstEntryModTime(ctx context.Context, path string) (time.Time, error) {
+	header, err := probeFirstHeader(ctx, path)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if header == nil {
+		return time.Time{}, fmt.Errorf("%w: %s holds no entry", helpers.ErrArtifactTarHeaderNotFound, path)
+	}
+	return header.ModTime.UTC(), nil
+}
+
+// probeFirstHeader reads path's first tar header through the probe-sized
+// decompressor. An archive with no entry returns nil and no error, since it is
+// well-formed.
+func probeFirstHeader(ctx context.Context, path string) (*tar.Header, error) {
+	//nolint:gosec // path is a temp file this process wrote or one the artifact store resolved; only a header is read.
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("failed to open artifact for a shape probe: %w", err)
+		return nil, fmt.Errorf("failed to open artifact for a shape probe: %w", err)
 	}
 	defer func() {
 		_ = file.Close()
@@ -305,22 +328,26 @@ func ProbeTarGz(ctx context.Context, path string) error {
 
 	gz, err := gzipstream.NewReaderN(ctx, file, probeGzipBlockSize, probeGzipBlocks)
 	if err != nil {
-		return notTarGzError(path, err)
+		return nil, notTarGzError(path, err)
 	}
 	defer func() {
 		_ = gz.Close()
 	}()
 
 	limited := &decompressedLimitReader{r: gz, over: helpers.ErrArtifactTarHeaderNotFound, max: helpers.ArchiveProbeMaxBytes}
-	if _, err := tar.NewReader(limited).Next(); err != nil && !errors.Is(err, io.EOF) {
+	header, err := tar.NewReader(limited).Next()
+	if errors.Is(err, io.EOF) {
+		return nil, nil //nolint:nilnil // an empty tar stream is well-formed and has no first header.
+	}
+	if err != nil {
 		// A crossed scan bound gets its own headline: the stream is gzip and tar,
 		// so calling it neither would mislead the operator.
 		if errors.Is(err, helpers.ErrArtifactTarHeaderNotFound) {
-			return fmt.Errorf("%w: %s", helpers.ErrArtifactTarHeaderNotFound, path)
+			return nil, fmt.Errorf("%w: %s", helpers.ErrArtifactTarHeaderNotFound, path)
 		}
-		return notTarGzError(path, err)
+		return nil, notTarGzError(path, err)
 	}
-	return nil
+	return header, nil
 }
 
 // notTarGzError wraps a shape failure in helpers.ErrArtifactNotTarGz with the

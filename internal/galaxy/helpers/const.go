@@ -235,9 +235,9 @@ const (
 	// between requests. It bounds the default only, not --download-workers.
 	MaxDefaultDownloadWorkers = 32
 
-	// StoreSnapshotSchemaVersion is the snapshot schema version. Bump it for any
-	// change, additive included: an older binary sharing a cache must fail with
-	// ErrUnsupportedSchemaVersion rather than drop buckets it does not know.
+	// StoreSnapshotSchemaVersion is the snapshot schema version. Bump it for a new
+	// bucket or a change older binaries must refuse; an optional field they may
+	// drop needs none.
 	StoreSnapshotSchemaVersion = 9
 
 	// CacheEntryMaxAge is the retention window for persisted cache entries; one

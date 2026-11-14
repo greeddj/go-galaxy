@@ -81,8 +81,9 @@ func installCollection(
 	// every losing attempt, so no temp is freed twice or leaked.
 	defer cleanupIfNeeded(payload.artifact.Cleanup)
 
+	commitTime := gitArtifactCommitTime(ctx, runtime.Output, col.key(), col.Source, payload.artifact.Path)
 	writeGalaxyInfoIfPresent(runtime, target, cfg, col, payload.meta)
-	recordInstall(st, col, target.path, payload.artifactSHA, resolvedDeps)
+	recordInstall(st, col, target.path, payload.artifactSHA, resolvedDeps, commitTime)
 	return nil
 }
 
@@ -395,7 +396,7 @@ func writeGalaxyInfoIfPresent(
 	runtime.Output.Printf("Failed to write GALAXY.yml: %v", err)
 }
 
-func recordInstall(st *store.Store, col collection, installPath, artifactSHA string, deps []string) {
+func recordInstall(st *store.Store, col collection, installPath, artifactSHA string, deps []string, commitTime time.Time) {
 	if st == nil {
 		return
 	}
@@ -404,6 +405,7 @@ func recordInstall(st *store.Store, col collection, installPath, artifactSHA str
 		Source:         col.Source,
 		ArtifactSHA256: artifactSHA,
 		InstalledAt:    time.Now().UTC(),
+		CommitTime:     commitTime.UTC(),
 		Deps:           deps,
 	})
 	if deps != nil {

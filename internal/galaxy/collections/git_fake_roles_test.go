@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/greeddj/go-galaxy/internal/galaxy/gitsource"
 	"github.com/greeddj/go-galaxy/internal/galaxy/helpers"
@@ -11,10 +12,11 @@ import (
 	"github.com/greeddj/go-galaxy/internal/testing/faketree"
 )
 
-// fakeGitRole is the role a fake repository carries at one commit: its
-// meta/main.yml dependencies as ansible writes them, an optional role_name, and
-// extra files beside the minimal meta, tasks and defaults tree.
+// fakeGitRole is a fake repository's role at one commit: meta dependencies as
+// ansible writes them, an optional role_name and committer time, and extra
+// files beside the minimal tree.
 type fakeGitRole struct {
+	when     time.Time
 	files    map[string]string
 	roleName string
 	deps     []string
@@ -47,6 +49,9 @@ func (r fakeGitRole) tree() *faketree.Tree {
 		File("defaults/main.yml", "greeting: hi\n")
 	for p, data := range r.files {
 		t.File(p, data)
+	}
+	if !r.when.IsZero() {
+		t.SetCommitTime(r.when)
 	}
 	return t
 }

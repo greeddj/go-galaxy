@@ -92,17 +92,21 @@ collection copy by, lives beside the install, not in the cache:
 | `versions_cache` | Versions URL | Version list |
 | `deps_cache` | `ScopedDepsCacheKey` | Dependency constraints per server and version |
 | `requirements`, `resolved`, `graph` | fqdn, fqdn, fqdn@version | The last resolution: root spec, picks, edges |
-| `installed`, `warmed` | fqdn@version; a warmed role `role:<name>@<version>` | Install record; warmed sha256 and time |
+| `installed`, `warmed` | fqdn@version; a warmed role `role:<name>@<version>` | Install record, with a git source's commit time; warmed sha256 and time |
 | `git_pins`, `url_pins` | `gitsource.PinKey`, the URL | Commit or sha256, with identities and deps |
-| `installed_roles`, `role_pins` | Install name; one key per [role source](install-pipeline.md#role-resolution) | Role record; the repository and commit, or URL and sha256, a role resolved to, with its version and dependencies |
+| `installed_roles`, `role_pins` | Install name; one key per [role source](install-pipeline.md#role-resolution) | Role record, with a git source's commit time; the repository and commit, or URL and sha256, a role resolved to, with its version and dependencies |
 | `meta` | Fixed keys | Schema version, `last_snapshot`, `content_recorded`, requirements hash |
 
 A local save writes every bucket in one bbolt transaction (`store.Save`), S3
 one gzipped JSON object (`MarshalSnapshot`), both through `snapshotData`, the
 one copy path, which applies retention and cuts signature queries.
 
-- `helpers.StoreSnapshotSchemaVersion` is bumped for any change, additive
-  included: `ValidateSchema` drops an older snapshot and refuses a newer one.
+- Bump `helpers.StoreSnapshotSchemaVersion` for a new bucket and for any
+  change that an older binary on the same cache must refuse, not drop.
+  `ValidateSchema` drops an older snapshot and refuses a newer one.
+- An optional field needs no bump when its loss is harmless. An older binary
+  ignores the field and drops it at its next save. `content_recorded` and the
+  `commit_time` of an install record are such fields.
 - A new bucket joins `jsonBuckets` (appended), `New`, `ensureMaps`,
   `snapshotData` and `MarshalSnapshot`. It also joins `hasContentEntries` if
   it records on-disk content, and `ClearCaches` if `--clear-cache` must drop
